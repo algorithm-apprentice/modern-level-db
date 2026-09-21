@@ -1,0 +1,45 @@
+cmake_minimum_required(VERSION 3.25)
+
+project(
+  modern_leveldb
+  VERSION 0.1.0
+  DESCRIPTION "A ground-up C++23 reimplementation of LevelDB"
+  LANGUAGES CXX
+)
+
+option(
+  MODERN_LEVELDB_BUILD_TESTS
+  "Build Modern LevelDB tests"
+  ${PROJECT_IS_TOP_LEVEL}
+)
+option(
+  MODERN_LEVELDB_WARNINGS_AS_ERRORS
+  "Treat Modern LevelDB compiler warnings as errors"
+  ON
+)
+
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompilerWarnings.cmake")
+
+add_library(
+  modern_leveldb
+  STATIC
+    src/base/coding.cc
+    src/base/comparator.cc
+)
+add_library(modern_leveldb::modern_leveldb ALIAS modern_leveldb)
+
+target_compile_features(modern_leveldb PUBLIC cxx_std_23)
+target_include_directories(
+  modern_leveldb
+  PUBLIC
+    "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+modern_leveldb_set_project_warnings(modern_leveldb PRIVATE)
+
+if(MODERN_LEVELDB_BUILD_TESTS)
+  include(CTest)
+  if(BUILD_TESTING)
+    add_subdirectory(tests)
+  endif()
+endif()
