@@ -32,6 +32,13 @@ add_library(
     src/platform/clock.cc
     src/platform/serial_executor.cc
 )
+if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(
+    modern_leveldb
+    PRIVATE
+      src/platform/posix_file_system.cc
+  )
+endif()
 add_library(modern_leveldb::modern_leveldb ALIAS modern_leveldb)
 
 target_compile_features(modern_leveldb PUBLIC cxx_std_23)
