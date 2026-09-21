@@ -31,17 +31,35 @@ new executor model:
 - **Boost.Asio `thread_pool`:** adopt explicit completion through joining and
   the separation between task submission and worker ownership. Do not adopt a
   multi-thread pool because the initial engine requires serialized background
-  work. Unlike Boost.Asio's concurrent `join()` restriction, this internal
-  executor deliberately makes concurrent external `Shutdown()` calls wait on
-  one shutdown owner.
+  work or a public join protocol because the DB exclusively owns the executor.
 
-The `Running`/`Stopping`/`Stopped` state machine is the minimal adaptation
-needed to combine those established rules with synchronous stop-callback
-reentrancy and a completion barrier for concurrent shutdown callers.
+RAII destruction is the minimal adaptation needed to combine those established
+rules with Modern LevelDB's single-owner lifecycle.
 
 ## Decision
 
 Add internal platform-layer clock and background-executor abstractions.
+
+## Intended engine use
+
+`SerialExecutor` is not a general-purpose application executor. The future DB
+engine will use it under these constraints:
+
+- One DB instance exclusively owns one serial executor.
+- Foreground read/write threads may call `Schedule` concurrently.
+- Scheduled work consists of coarse internal maintenance callbacks such as
+  memtable flush and compaction, not arbitrary user callbacks.
+- Engine state prevents duplicate background scheduling and decides whether
+  more work is needed after a callback completes.
+- Before destroying the executor, the DB owner prevents new scheduling.
+- Executor destruction happens before any state that a background callback may
+  access is destroyed.
+- A running callback observes the stop token and returns promptly; queued work
+  may be canceled because the owning DB is closing.
+
+This model does not require a public shutdown API, concurrent shutdown calls,
+executor restart, or reuse after stopping. Those capabilities would add states
+and synchronization that the current engine cannot use.
 
 ### Clock
 
@@ -78,7 +96,6 @@ programmer or runtime-library failures into storage `Status`.
 using BackgroundTask = std::function<void(std::stop_token)>;
 
 virtual Status Schedule(BackgroundTask task) = 0;
-virtual Status Shutdown() = 0;
 ```
 
 `SerialExecutor` owns one `std::jthread` and executes accepted tasks one at a
@@ -86,47 +103,36 @@ time in FIFO order.
 
 - `Schedule` is thread-safe.
 - An empty task returns `InvalidArgument`.
-- Scheduling after the executor stops accepting work returns `Aborted`.
-- A task accepted concurrently with shutdown may be canceled before it starts.
-- `Shutdown` rejects calls from the worker thread with `InvalidArgument`.
-- External `Shutdown` is thread-safe and idempotent.
-- Shutdown stops accepting work, destroys queued tasks without executing them,
-  requests stop for the running task, wakes the worker, and joins it.
+- The executor is exclusively owned. Its owner stops producers before
+  destroying it; scheduling concurrently with destruction is outside the
+  object-lifetime contract.
+- Destruction stops accepting work, destroys queued tasks without executing
+  them, requests stop for the running task, wakes the worker, and joins it.
 - Canceled task objects are destroyed after executor locks are released, so
-  callable cleanup may safely attempt another executor operation.
-- One external caller owns shutdown. Other external callers wait until worker
-  join and canceled-task destruction are complete. Reentrant shutdown on the
-  owner thread, including from synchronous stop callbacks or callable cleanup,
-  returns success without waiting on itself.
+  callable cleanup does not run inside a critical section. A cleanup callback
+  that attempts to schedule work observes that the executor is no longer
+  accepting tasks and receives `Aborted`.
 - Callable construction, copying, movement, and destruction occur outside the
   queue mutex. The queue stores only owning task pointers while locked.
 - A running task receives the worker's stop token and must cooperate for prompt
-  shutdown. Shutdown waits if it ignores the request.
+  destruction. The destructor waits if it ignores the request.
 - Tasks must not let exceptions escape. An uncaught task exception follows the
   C++ thread contract and terminates the process.
 - The executor must not be destroyed by one of its own tasks. Its owner
-  destroys it from an external thread; the destructor performs shutdown.
+  destroys it from an external thread.
 
-#### Shutdown state machine
+#### RAII shutdown sequence
 
-| State | `Schedule` | `Shutdown` |
-|---|---|---|
-| `Running` | Linearizes under the queue mutex. An accepted task enters the FIFO queue. | One external caller becomes the shutdown owner and changes the state to `Stopping`. |
-| `Stopping` | Returns `Aborted` after the queue stops accepting work. A racing call that linearized earlier may already be queued and will be canceled. | Owner-thread reentry returns success immediately. Other external callers wait for `Stopped`. Worker-thread calls return `InvalidArgument`. |
-| `Stopped` | Returns `Aborted`. | Returns success immediately. |
+The owner destroys the executor after preventing new external scheduling:
 
-The shutdown owner performs these steps:
-
-1. Publish `Stopping` under the shutdown-state mutex.
-2. Under the queue mutex, stop accepting tasks and detach the pending queue.
-3. Without either mutex held, request stop, run synchronous stop callbacks,
+1. Under the queue mutex, stop accepting tasks and detach the pending queue.
+2. Without the queue mutex held, request stop, run synchronous stop callbacks,
    wake and join the worker, and destroy canceled tasks.
-4. Publish `Stopped` under the shutdown-state mutex and notify waiters.
+3. Destroy the remaining synchronization state after the worker has exited.
 
 The queue mutex protects only the acceptance flag and owning task pointers.
 Task construction, copy/move/destruction, invocation, and stop callbacks never
-run while either executor mutex is held. This prevents callable lifecycle or
-synchronous stop callbacks from deadlocking through reentrant executor calls.
+run while it is held.
 
 `BackgroundTask` uses `std::function` because the current supported macOS
 standard library does not yet provide C++23 `std::move_only_function`.
@@ -146,6 +152,8 @@ The initial runtime layer does not provide:
 - Priorities, delayed scheduling, periodic tasks, or work stealing.
 - Detached fire-and-forget threads.
 - Futures, task return values, or exception transport.
+- A public shutdown protocol, concurrent shutdown calls, or executor reuse
+  after stopping.
 - Engine-specific background-error state or compaction scheduling policy.
 - A fake clock or deterministic executor implementation.
 
@@ -158,7 +166,8 @@ need deterministic control.
   a monolithic environment object.
 - FIFO serialization matches the initial single-background-worker engine
   design and avoids premature parallel-compaction policy.
-- Shutdown and cancellation have explicit ownership and observation points.
+- RAII ownership makes shutdown a single-owner lifecycle operation instead of
+  a general concurrent protocol.
 - Copyable tasks are a temporary portability constraint.
 
 ## Validation
@@ -167,9 +176,9 @@ Clock tests cover monotonic reads, non-positive durations, and pre-requested or
 asynchronously requested stop without long sleeps.
 
 Executor tests cover FIFO serialization, a stable worker thread, concurrent
-scheduling, copyable callable ownership, empty-task and stopped-executor
-errors, stop-token delivery, cancellation of queued work, self-shutdown
-rejection, idempotent external shutdown, and destructor-driven shutdown.
+scheduling, copyable callable ownership, empty-task errors, callable lifecycle
+outside locks, stop-token delivery, rejection of cleanup scheduling during
+destruction, queued-task cancellation, and destructor-driven shutdown.
 Asynchronous tests use latches and bounded CTest timeouts instead of arbitrary
 sleeps.
 

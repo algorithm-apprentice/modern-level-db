@@ -2,11 +2,9 @@
 
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <cstddef>
 #include <latch>
 #include <memory>
-#include <semaphore>
 #include <stop_token>
 #include <string>
 #include <thread>
@@ -19,8 +17,6 @@
 
 namespace modern_leveldb {
 namespace {
-
-using namespace std::chrono_literals;
 
 struct ReentrantLifecycleState {
   SerialExecutor* executor;
@@ -49,11 +45,16 @@ class ReentrantLifecycleCallable {
   std::shared_ptr<ReentrantLifecycleState> state_;
 };
 
+template <typename T>
+concept HasShutdown = requires(T& executor) { executor.Shutdown(); };
+
 static_assert(std::is_abstract_v<BackgroundExecutor>);
 static_assert(!std::is_copy_constructible_v<SerialExecutor>);
 static_assert(!std::is_copy_assignable_v<SerialExecutor>);
 static_assert(!std::is_move_constructible_v<SerialExecutor>);
 static_assert(!std::is_move_assignable_v<SerialExecutor>);
+static_assert(!HasShutdown<BackgroundExecutor>);
+static_assert(!HasShutdown<SerialExecutor>);
 
 TEST(SerialExecutorTest, RejectsEmptyTask) {
   SerialExecutor executor;
@@ -62,7 +63,6 @@ TEST(SerialExecutorTest, RejectsEmptyTask) {
 
   ASSERT_FALSE(status.has_value());
   EXPECT_EQ(status.error().code(), ErrorCode::InvalidArgument);
-  ASSERT_TRUE(executor.Shutdown());
 }
 
 TEST(SerialExecutorTest, ExecutesTasksInFifoOrderOnOneWorker) {
@@ -92,8 +92,6 @@ TEST(SerialExecutorTest, ExecutesTasksInFifoOrderOnOneWorker) {
   release_blocker.count_down();
 
   completed.wait();
-  ASSERT_TRUE(executor.Shutdown());
-
   EXPECT_EQ(order, (std::array<int, 3>{1, 2, 3}));
   EXPECT_NE(worker_ids[0], caller);
   EXPECT_EQ(worker_ids[0], worker_ids[1]);
@@ -113,7 +111,6 @@ TEST(SerialExecutorTest, OwnsCopiesOfScheduledCallables) {
   value = "changed";
 
   completed.wait();
-  ASSERT_TRUE(executor.Shutdown());
   EXPECT_EQ(observed, "owned");
 }
 
@@ -145,52 +142,8 @@ TEST(SerialExecutorTest, AcceptsConcurrentScheduling) {
   producers.clear();
 
   completed.wait();
-  ASSERT_TRUE(executor.Shutdown());
   EXPECT_EQ(schedule_errors.load(std::memory_order_relaxed), 0);
   EXPECT_EQ(executed.load(std::memory_order_relaxed), TaskCount);
-}
-
-TEST(SerialExecutorTest, ShutdownRequestsStopAndCancelsQueuedTasks) {
-  SerialExecutor executor;
-  std::latch running(1);
-  std::atomic<bool> running_task_saw_stop = false;
-  std::atomic<bool> queued_task_ran = false;
-
-  ASSERT_TRUE(executor.Schedule([&](std::stop_token stop_token) {
-    running.count_down();
-    while (!stop_token.stop_requested()) {
-      std::this_thread::yield();
-    }
-    running_task_saw_stop.store(true, std::memory_order_relaxed);
-  }));
-  running.wait();
-  ASSERT_TRUE(executor.Schedule(
-      [&](std::stop_token) { queued_task_ran.store(true, std::memory_order_relaxed); }));
-
-  ASSERT_TRUE(executor.Shutdown());
-
-  EXPECT_TRUE(running_task_saw_stop.load(std::memory_order_relaxed));
-  EXPECT_FALSE(queued_task_ran.load(std::memory_order_relaxed));
-}
-
-TEST(SerialExecutorTest, StopCallbackMayReenterShutdown) {
-  SerialExecutor executor;
-  std::latch callback_registered(1);
-  std::atomic<bool> nested_shutdown_succeeded = false;
-
-  ASSERT_TRUE(executor.Schedule([&](std::stop_token stop_token) {
-    std::stop_callback callback(stop_token, [&] {
-      nested_shutdown_succeeded.store(executor.Shutdown().has_value(), std::memory_order_relaxed);
-    });
-    callback_registered.count_down();
-    while (!stop_token.stop_requested()) {
-      std::this_thread::yield();
-    }
-  }));
-  callback_registered.wait();
-
-  ASSERT_TRUE(executor.Shutdown());
-  EXPECT_TRUE(nested_shutdown_succeeded.load(std::memory_order_relaxed));
 }
 
 TEST(SerialExecutorTest, RunsCallableLifecycleOutsideQueueLock) {
@@ -214,132 +167,12 @@ TEST(SerialExecutorTest, RunsCallableLifecycleOutsideQueueLock) {
 
   state->lifecycle_ran.wait();
   EXPECT_TRUE(state->schedule_succeeded.load(std::memory_order_relaxed));
-  ASSERT_TRUE(executor.Shutdown());
 }
 
-TEST(SerialExecutorTest, DestroysCanceledTasksAfterReleasingShutdownLock) {
-  SerialExecutor executor;
+TEST(SerialExecutorTest, DestructorRequestsStopAndCancelsQueuedTasks) {
   std::latch running(1);
-  std::atomic<bool> cleanup_shutdown_succeeded = false;
-
-  ASSERT_TRUE(executor.Schedule([&](std::stop_token stop_token) {
-    running.count_down();
-    while (!stop_token.stop_requested()) {
-      std::this_thread::yield();
-    }
-  }));
-  running.wait();
-
-  auto cleanup = std::shared_ptr<int>(new int(1), [&](int* value) {
-    delete value;
-    cleanup_shutdown_succeeded.store(executor.Shutdown().has_value(), std::memory_order_relaxed);
-  });
-  ASSERT_TRUE(executor.Schedule([cleanup](std::stop_token) {}));
-  cleanup.reset();
-
-  ASSERT_TRUE(executor.Shutdown());
-  EXPECT_TRUE(cleanup_shutdown_succeeded.load(std::memory_order_relaxed));
-}
-
-TEST(SerialExecutorTest, ConcurrentShutdownWaitsForCanceledTaskCleanup) {
-  SerialExecutor executor;
-  std::latch running(1);
-  std::latch cleanup_started(1);
-  std::latch release_cleanup(1);
-  std::latch second_shutdown_entered(1);
-  std::binary_semaphore second_shutdown_completed(0);
-
-  ASSERT_TRUE(executor.Schedule([&](std::stop_token stop_token) {
-    running.count_down();
-    while (!stop_token.stop_requested()) {
-      std::this_thread::yield();
-    }
-  }));
-  running.wait();
-
-  auto cleanup = std::shared_ptr<int>(new int(1), [&](int* value) {
-    delete value;
-    cleanup_started.count_down();
-    release_cleanup.wait();
-  });
-  ASSERT_TRUE(executor.Schedule([cleanup](std::stop_token) {}));
-  cleanup.reset();
-
-  std::jthread first_shutdown([&] { (void)executor.Shutdown(); });
-  cleanup_started.wait();
-  std::jthread second_shutdown([&] {
-    second_shutdown_entered.count_down();
-    (void)executor.Shutdown();
-    second_shutdown_completed.release();
-  });
-
-  second_shutdown_entered.wait();
-  const bool completed_early = second_shutdown_completed.try_acquire_for(50ms);
-  EXPECT_FALSE(completed_early);
-  release_cleanup.count_down();
-  if (!completed_early) {
-    second_shutdown_completed.acquire();
-  }
-}
-
-TEST(SerialExecutorTest, RejectsTasksAfterShutdown) {
-  SerialExecutor executor;
-  ASSERT_TRUE(executor.Shutdown());
-
-  const Status status = executor.Schedule([](std::stop_token) {});
-
-  ASSERT_FALSE(status.has_value());
-  EXPECT_EQ(status.error().code(), ErrorCode::Aborted);
-}
-
-TEST(SerialExecutorTest, RejectsShutdownFromWorkerThread) {
-  SerialExecutor executor;
-  std::atomic<int> error_code = -1;
-  std::latch completed(1);
-
-  ASSERT_TRUE(executor.Schedule([&](std::stop_token) {
-    const Status status = executor.Shutdown();
-    if (!status.has_value()) {
-      error_code.store(static_cast<int>(status.error().code()), std::memory_order_relaxed);
-    }
-    completed.count_down();
-  }));
-
-  completed.wait();
-  EXPECT_EQ(error_code.load(std::memory_order_relaxed),
-            static_cast<int>(ErrorCode::InvalidArgument));
-  ASSERT_TRUE(executor.Shutdown());
-}
-
-TEST(SerialExecutorTest, ShutdownIsIdempotent) {
-  SerialExecutor executor;
-
-  EXPECT_TRUE(executor.Shutdown());
-  EXPECT_TRUE(executor.Shutdown());
-}
-
-TEST(SerialExecutorTest, AcceptsConcurrentShutdownCalls) {
-  constexpr int CallerCount = 4;
-  SerialExecutor executor;
-  std::atomic<int> shutdown_errors = 0;
-  std::vector<std::jthread> callers;
-  callers.reserve(CallerCount);
-
-  for (int caller = 0; caller < CallerCount; ++caller) {
-    callers.emplace_back([&] {
-      if (!executor.Shutdown().has_value()) {
-        shutdown_errors.fetch_add(1, std::memory_order_relaxed);
-      }
-    });
-  }
-  callers.clear();
-
-  EXPECT_EQ(shutdown_errors.load(std::memory_order_relaxed), 0);
-}
-
-TEST(SerialExecutorTest, DestructorRequestsStopAndJoinsWorker) {
-  std::latch running(1);
-  std::atomic<bool> task_saw_stop = false;
+  std::atomic<bool> running_task_saw_stop = false;
+  std::atomic<bool> queued_task_ran = false;
   auto executor = std::make_unique<SerialExecutor>();
 
   ASSERT_TRUE(executor->Schedule([&](std::stop_token stop_token) {
@@ -347,13 +180,73 @@ TEST(SerialExecutorTest, DestructorRequestsStopAndJoinsWorker) {
     while (!stop_token.stop_requested()) {
       std::this_thread::yield();
     }
-    task_saw_stop.store(true, std::memory_order_relaxed);
+    running_task_saw_stop.store(true, std::memory_order_relaxed);
   }));
   running.wait();
+  ASSERT_TRUE(executor->Schedule(
+      [&](std::stop_token) { queued_task_ran.store(true, std::memory_order_relaxed); }));
 
   executor.reset();
 
-  EXPECT_TRUE(task_saw_stop.load(std::memory_order_relaxed));
+  EXPECT_TRUE(running_task_saw_stop.load(std::memory_order_relaxed));
+  EXPECT_FALSE(queued_task_ran.load(std::memory_order_relaxed));
+}
+
+TEST(SerialExecutorTest, DestructorRunsStopCallbacksWithoutQueueLock) {
+  std::latch callback_registered(1);
+  std::atomic<int> callback_error_code = -1;
+  auto executor = std::make_unique<SerialExecutor>();
+  SerialExecutor* executor_pointer = executor.get();
+
+  ASSERT_TRUE(executor->Schedule([&](std::stop_token stop_token) {
+    std::stop_callback callback(stop_token, [&] {
+      const Status status = executor_pointer->Schedule([](std::stop_token) {});
+      if (!status.has_value()) {
+        callback_error_code.store(static_cast<int>(status.error().code()),
+                                  std::memory_order_relaxed);
+      }
+    });
+    callback_registered.count_down();
+    while (!stop_token.stop_requested()) {
+      std::this_thread::yield();
+    }
+  }));
+  callback_registered.wait();
+
+  executor.reset();
+
+  EXPECT_EQ(callback_error_code.load(std::memory_order_relaxed),
+            static_cast<int>(ErrorCode::Aborted));
+}
+
+TEST(SerialExecutorTest, DestructorRunsCanceledTaskCleanupWithoutQueueLock) {
+  std::latch running(1);
+  std::atomic<int> cleanup_error_code = -1;
+  auto executor = std::make_unique<SerialExecutor>();
+  SerialExecutor* executor_pointer = executor.get();
+
+  ASSERT_TRUE(executor->Schedule([&](std::stop_token stop_token) {
+    running.count_down();
+    while (!stop_token.stop_requested()) {
+      std::this_thread::yield();
+    }
+  }));
+  running.wait();
+
+  auto cleanup = std::shared_ptr<int>(new int(1), [&](int* value) {
+    delete value;
+    const Status status = executor_pointer->Schedule([](std::stop_token) {});
+    if (!status.has_value()) {
+      cleanup_error_code.store(static_cast<int>(status.error().code()), std::memory_order_relaxed);
+    }
+  });
+  ASSERT_TRUE(executor->Schedule([cleanup](std::stop_token) {}));
+  cleanup.reset();
+
+  executor.reset();
+
+  EXPECT_EQ(cleanup_error_code.load(std::memory_order_relaxed),
+            static_cast<int>(ErrorCode::Aborted));
 }
 
 }  // namespace

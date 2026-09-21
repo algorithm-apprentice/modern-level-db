@@ -4,7 +4,6 @@
 #include <condition_variable>
 #include <deque>
 #include <functional>
-#include <latch>
 #include <memory>
 #include <mutex>
 #include <stop_token>
@@ -24,9 +23,7 @@ class BackgroundExecutor {
   BackgroundExecutor(BackgroundExecutor&&) = delete;
   BackgroundExecutor& operator=(BackgroundExecutor&&) = delete;
   virtual ~BackgroundExecutor() = default;
-
   [[nodiscard]] virtual Status Schedule(BackgroundTask task) = 0;
-  [[nodiscard]] virtual Status Shutdown() = 0;
 };
 
 class SerialExecutor final : public BackgroundExecutor {
@@ -41,15 +38,8 @@ class SerialExecutor final : public BackgroundExecutor {
   ~SerialExecutor() override;
 
   [[nodiscard]] Status Schedule(BackgroundTask task) override;
-  [[nodiscard]] Status Shutdown() override;
 
  private:
-  enum class ShutdownState {
-    Running,
-    Stopping,
-    Stopped,
-  };
-
   void Run(std::stop_token stop_token);
 
   std::mutex queue_mutex_;
@@ -57,11 +47,6 @@ class SerialExecutor final : public BackgroundExecutor {
   std::deque<std::unique_ptr<BackgroundTask>> tasks_;
   bool accepting_tasks_ = true;
 
-  std::mutex shutdown_mutex_;
-  std::condition_variable shutdown_complete_;
-  ShutdownState shutdown_state_ = ShutdownState::Running;
-  std::thread::id shutdown_owner_;
-  std::latch worker_started_{1};
   std::jthread worker_;
 };
 
