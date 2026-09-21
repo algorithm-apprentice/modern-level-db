@@ -26,7 +26,7 @@ TEST(ResultTest, StoresTypedError) {
   const Result<std::uint64_t> result = std::unexpected(Error::NotFound("missing database key"));
 
   ASSERT_FALSE(result.has_value());
-  EXPECT_EQ(result.error().code(), ErrorCode::kNotFound);
+  EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
   EXPECT_EQ(result.error().message(), "missing database key");
 }
 
@@ -46,13 +46,13 @@ TEST(ResultTest, CapturesFactoryCallSite) {
 }
 
 TEST(ResultTest, ExposesStableErrorCodeNames) {
-  EXPECT_EQ(ErrorCodeName(ErrorCode::kNotFound), "not_found");
-  EXPECT_EQ(ErrorCodeName(ErrorCode::kCorruption), "corruption");
-  EXPECT_EQ(ErrorCodeName(ErrorCode::kInvalidArgument), "invalid_argument");
-  EXPECT_EQ(ErrorCodeName(ErrorCode::kIo), "io");
-  EXPECT_EQ(ErrorCodeName(ErrorCode::kNotSupported), "not_supported");
-  EXPECT_EQ(ErrorCodeName(ErrorCode::kBusy), "busy");
-  EXPECT_EQ(ErrorCodeName(ErrorCode::kAborted), "aborted");
+  EXPECT_EQ(ErrorCodeName(ErrorCode::NotFound), "not_found");
+  EXPECT_EQ(ErrorCodeName(ErrorCode::Corruption), "corruption");
+  EXPECT_EQ(ErrorCodeName(ErrorCode::InvalidArgument), "invalid_argument");
+  EXPECT_EQ(ErrorCodeName(ErrorCode::Io), "io");
+  EXPECT_EQ(ErrorCodeName(ErrorCode::NotSupported), "not_supported");
+  EXPECT_EQ(ErrorCodeName(ErrorCode::Busy), "busy");
+  EXPECT_EQ(ErrorCodeName(ErrorCode::Aborted), "aborted");
 }
 
 }  // namespace

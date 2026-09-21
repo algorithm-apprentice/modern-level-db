@@ -52,7 +52,7 @@ TEST(CodingTest, RejectsTruncatedFixed32WithoutConsumingInput) {
   const Result<std::uint32_t> value = ConsumeFixed32(input);
 
   ASSERT_FALSE(value.has_value());
-  EXPECT_EQ(value.error().code(), ErrorCode::kCorruption);
+  EXPECT_EQ(value.error().code(), ErrorCode::Corruption);
   EXPECT_EQ(input.size(), input_storage.size());
 }
 
@@ -124,7 +124,7 @@ TEST(CodingTest, RejectsTruncatedVarintWithoutConsumingInput) {
   const Result<std::uint32_t> value = ConsumeVarint32(input);
 
   ASSERT_FALSE(value.has_value());
-  EXPECT_EQ(value.error().code(), ErrorCode::kCorruption);
+  EXPECT_EQ(value.error().code(), ErrorCode::Corruption);
   EXPECT_EQ(input.size(), input_storage.size());
 }
 
@@ -137,7 +137,7 @@ TEST(CodingTest, RejectsOverflowingVarint32) {
   const Result<std::uint32_t> value = ConsumeVarint32(input);
 
   ASSERT_FALSE(value.has_value());
-  EXPECT_EQ(value.error().code(), ErrorCode::kCorruption);
+  EXPECT_EQ(value.error().code(), ErrorCode::Corruption);
   EXPECT_EQ(input.size(), input_storage.size());
 }
 
@@ -151,7 +151,7 @@ TEST(CodingTest, RejectsOverflowingVarint64) {
   const Result<std::uint64_t> value = ConsumeVarint64(input);
 
   ASSERT_FALSE(value.has_value());
-  EXPECT_EQ(value.error().code(), ErrorCode::kCorruption);
+  EXPECT_EQ(value.error().code(), ErrorCode::Corruption);
   EXPECT_EQ(input.size(), input_storage.size());
 }
 
@@ -180,7 +180,7 @@ TEST(CodingTest, RejectsTruncatedLengthPrefixedBytesWithoutConsumingInput) {
   const Result<ByteView> value = ConsumeLengthPrefixed(input);
 
   ASSERT_FALSE(value.has_value());
-  EXPECT_EQ(value.error().code(), ErrorCode::kCorruption);
+  EXPECT_EQ(value.error().code(), ErrorCode::Corruption);
   EXPECT_EQ(input.size(), input_storage.size());
 }
 
