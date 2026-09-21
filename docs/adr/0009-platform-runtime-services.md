@@ -13,6 +13,32 @@ This implements only the `implement-platform-runtime` DAG node. Filesystem
 services, compaction policy, write throttling, and engine shutdown remain
 separate future nodes.
 
+## Prior art and adopted decisions
+
+This runtime design combines established behavior rather than introducing a
+new executor model:
+
+- **Google LevelDB `Env`:** adopt one background worker and FIFO execution.
+  Replace its detached process-lifetime thread, raw function pointer, `void*`
+  argument, and lack of shutdown with scoped ownership and typed callables.
+- **C++20 `std::jthread` and stop tokens:** adopt RAII joining and cooperative
+  cancellation. `request_stop()` invokes registered callbacks synchronously on
+  the requesting thread, so stop requests must execute without executor locks
+  held.
+- **C++ Core Guidelines CP.22:** adopt the rule that callbacks and other
+  unknown code must not run while holding a lock. Callable lifecycle and task
+  invocation therefore occur outside executor mutexes.
+- **Boost.Asio `thread_pool`:** adopt explicit completion through joining and
+  the separation between task submission and worker ownership. Do not adopt a
+  multi-thread pool because the initial engine requires serialized background
+  work. Unlike Boost.Asio's concurrent `join()` restriction, this internal
+  executor deliberately makes concurrent external `Shutdown()` calls wait on
+  one shutdown owner.
+
+The `Running`/`Stopping`/`Stopped` state machine is the minimal adaptation
+needed to combine those established rules with synchronous stop-callback
+reentrancy and a completion barrier for concurrent shutdown callers.
+
 ## Decision
 
 Add internal platform-layer clock and background-executor abstractions.
@@ -146,3 +172,11 @@ errors, stop-token delivery, cancellation of queued work, self-shutdown
 rejection, idempotent external shutdown, and destructor-driven shutdown.
 Asynchronous tests use latches and bounded CTest timeouts instead of arbitrary
 sleeps.
+
+## References
+
+- [Google LevelDB POSIX background queue](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/util/env_posix.cc#L808-L852)
+- [C++ Core Guidelines CP.22: never call unknown code while holding a lock](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#cp22-never-call-unknown-code-while-holding-a-lock-eg-a-callback)
+- [`std::stop_source::request_stop` synchronous callback semantics](https://en.cppreference.com/w/cpp/thread/stop_source/request_stop)
+- [`std::jthread`](https://en.cppreference.com/w/cpp/thread/jthread)
+- [Boost.Asio `thread_pool`](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference/thread_pool.html)

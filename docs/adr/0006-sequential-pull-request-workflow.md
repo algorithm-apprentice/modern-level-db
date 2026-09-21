@@ -37,6 +37,18 @@ written and before production implementation starts. High-risk work includes:
 - Persistent formats, durability ordering, recovery, and file lifecycle.
 - Public API lifetime or compatibility contracts.
 
+Before proposing a new mechanism, survey prior art:
+
+- The corresponding upstream LevelDB implementation and tests.
+- Applicable C++ standard-library semantics and C++ Core Guidelines.
+- At least one relevant mature library or production implementation when the
+  standard library does not define the complete behavior.
+
+The ADR records which established behavior is adopted, which behavior is
+changed, and the concrete requirement behind every deviation. A locally
+invented mechanism is a last resort; if no suitable prior art exists, document
+that fact and treat the design as experimental rather than established.
+
 The design review checks the proposed invariants and failure model, not code
 that does not yet exist. Where applicable, the ADR must define:
 
