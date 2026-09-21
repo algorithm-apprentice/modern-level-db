@@ -23,6 +23,8 @@ add_executable(
   unit/base/bytes_test.cc
   unit/base/coding_test.cc
   unit/base/comparator_test.cc
+  unit/base/crc32c_test.cc
+  unit/base/hash_test.cc
   unit/base/result_test.cc
   unit/toolchain_test.cc
 )
