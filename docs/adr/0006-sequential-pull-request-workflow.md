@@ -49,6 +49,11 @@ changed, and the concrete requirement behind every deviation. A locally
 invented mechanism is a last resort; if no suitable prior art exists, document
 that fact and treat the design as experimental rather than established.
 
+Following [ADR-0010](0010-need-driven-simplicity.md), the design also lists its
+current callers, ownership, lifetime, and explicitly unsupported use cases.
+Prior art is a source of proven mechanisms, not a reason to copy capabilities
+that Modern LevelDB cannot currently use.
+
 The design review checks the proposed invariants and failure model, not code
 that does not yet exist. Where applicable, the ADR must define:
 

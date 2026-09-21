@@ -26,6 +26,8 @@ and compaction are not yet implemented.
   first-class engineering constraints.
 - Keep the implementation substantially smaller and more approachable than a
   feature-complete RocksDB-style engine.
+- Design abstractions only for concrete Modern LevelDB call sites; do not add
+  general-purpose capabilities or complexity without a current requirement.
 
 ## Non-goals
 
