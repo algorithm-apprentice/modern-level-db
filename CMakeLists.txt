@@ -19,6 +19,7 @@ option(
 )
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompilerWarnings.cmake")
+find_package(Threads REQUIRED)
 
 add_library(
   modern_leveldb
@@ -28,6 +29,8 @@ add_library(
     src/base/crc32c.cc
     src/base/hash.cc
     src/memory/arena.cc
+    src/platform/clock.cc
+    src/platform/serial_executor.cc
 )
 add_library(modern_leveldb::modern_leveldb ALIAS modern_leveldb)
 
@@ -40,6 +43,7 @@ target_include_directories(
   PRIVATE
     "${PROJECT_SOURCE_DIR}/src"
 )
+target_link_libraries(modern_leveldb PUBLIC Threads::Threads)
 modern_leveldb_set_project_warnings(modern_leveldb PRIVATE)
 
 if(MODERN_LEVELDB_BUILD_TESTS)

@@ -28,6 +28,50 @@ All development is delivered through sequential pull requests.
 
 ## Review gate
 
+### Pre-implementation design gate
+
+High-risk nodes require one bounded independent design review after the ADR is
+written and before production implementation starts. High-risk work includes:
+
+- Concurrency, cancellation, shutdown, and shared ownership.
+- Persistent formats, durability ordering, recovery, and file lifecycle.
+- Public API lifetime or compatibility contracts.
+
+Before proposing a new mechanism, survey prior art:
+
+- The corresponding upstream LevelDB implementation and tests.
+- Applicable C++ standard-library semantics and C++ Core Guidelines.
+- At least one relevant mature library or production implementation when the
+  standard library does not define the complete behavior.
+
+The ADR records which established behavior is adopted, which behavior is
+changed, and the concrete requirement behind every deviation. A locally
+invented mechanism is a last resort; if no suitable prior art exists, document
+that fact and treat the design as experimental rather than established.
+
+Following [ADR-0010](0010-need-driven-simplicity.md), the design also lists its
+current callers, ownership, lifetime, and explicitly unsupported use cases.
+Prior art is a source of proven mechanisms, not a reason to copy capabilities
+that Modern LevelDB cannot currently use.
+
+The design review checks the proposed invariants and failure model, not code
+that does not yet exist. Where applicable, the ADR must define:
+
+- State transitions and the owner of each transition.
+- Lock ownership and which operations linearize under each lock.
+- Whether callbacks, destructors, or other user-controlled code may run while
+  an internal lock is held.
+- Reentrant and concurrent-call behavior.
+- Failure atomicity, synchronization order, and cleanup completion.
+- The focused tests that will demonstrate each invariant.
+
+Resolve actionable design findings before writing the first failing production
+test. Keep this review to one static pass with no builds, test runs, broad
+repository exploration, or repeated personas. Routine low-risk nodes do not
+need an extra pre-implementation reviewer.
+
+### Pre-owner code gate
+
 Before asking the project owner to review a pull request:
 
 1. Obtain independent reviews from personas relevant to the change, such as
