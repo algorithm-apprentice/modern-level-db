@@ -10,8 +10,9 @@ The project is currently pre-alpha and is not suitable for production data.
 
 The implemented foundation covers byte views, typed results, comparison,
 binary coding, CRC32C, LevelDB-compatible seeded hashing, and a monotonic
-arena. Database operations, WAL/SSTable persistence, and compaction are not
-yet implemented.
+arena. The platform foundation also provides a steady clock and a serial,
+stop-aware background executor. Database operations, WAL/SSTable persistence,
+and compaction are not yet implemented.
 
 ## Goals
 

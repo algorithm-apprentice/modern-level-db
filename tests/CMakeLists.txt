@@ -27,6 +27,8 @@ add_executable(
   unit/base/hash_test.cc
   unit/base/result_test.cc
   unit/memory/arena_test.cc
+  unit/platform/clock_test.cc
+  unit/platform/serial_executor_test.cc
   unit/toolchain_test.cc
 )
 target_include_directories(modern_leveldb_unit_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
@@ -41,7 +43,9 @@ modern_leveldb_set_project_warnings(modern_leveldb_unit_tests PRIVATE)
 include(GoogleTest)
 gtest_discover_tests(
   modern_leveldb_unit_tests
-  PROPERTIES LABELS unit
+  PROPERTIES
+    LABELS unit
+    TIMEOUT 10
 )
 
 foreach(scenario IN ITEMS module_shadow default_tests tests_disabled gtest_options)
