@@ -17,6 +17,8 @@ bool SystemClock::SleepFor(Duration duration, std::stop_token stop_token) {
     return true;
   }
 
+  // No shared state is protected here. The stop-token wait overload installs
+  // the wake-up callback; this local mutex only participates in its wait protocol.
   std::mutex mutex;
   std::condition_variable_any condition;
   std::unique_lock lock(mutex);
