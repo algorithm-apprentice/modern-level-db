@@ -57,15 +57,15 @@ TEST(CodingTest, RejectsTruncatedFixed32WithoutConsumingInput) {
 }
 
 TEST(CodingTest, RoundTripsFixed64) {
-  constexpr std::uint64_t expected = 0xfedcba9876543210ULL;
+  constexpr std::uint64_t Expected = 0xfedcba9876543210ULL;
   std::vector<std::byte> output;
-  AppendFixed64(output, expected);
+  AppendFixed64(output, Expected);
   ByteView input = output;
 
   const Result<std::uint64_t> value = ConsumeFixed64(input);
 
   ASSERT_TRUE(value.has_value());
-  EXPECT_EQ(*value, expected);
+  EXPECT_EQ(*value, Expected);
   EXPECT_TRUE(input.empty());
 }
 

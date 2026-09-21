@@ -56,6 +56,9 @@ does not begin until the current pull request has been reviewed and merged.
 All source code, identifiers, comments, documentation, ADRs, and commit
 messages are written in English.
 
+See [Code style](docs/code-style.md) for naming, formatting, and review
+conventions.
+
 ## Upstream reference
 
 The original [Google LevelDB](https://github.com/google/leveldb) implementation

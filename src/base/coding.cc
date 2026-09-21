@@ -16,22 +16,22 @@ template <typename UInt>
 [[nodiscard]] Result<UInt> ConsumeVarint(ByteView& input) {
   static_assert(std::is_unsigned_v<UInt>);
 
-  constexpr std::size_t kPayloadBits = 7;
-  constexpr std::size_t kValueBits = std::numeric_limits<UInt>::digits;
-  constexpr std::size_t kMaxBytes = (kValueBits + kPayloadBits - 1U) / kPayloadBits;
+  constexpr std::size_t PayloadBits = 7;
+  constexpr std::size_t ValueBits = std::numeric_limits<UInt>::digits;
+  constexpr std::size_t MaxBytes = (ValueBits + PayloadBits - 1U) / PayloadBits;
 
   UInt value = 0;
-  for (std::size_t index = 0; index < kMaxBytes; ++index) {
+  for (std::size_t index = 0; index < MaxBytes; ++index) {
     if (index >= input.size()) {
       return std::unexpected(Error::Corruption("truncated varint"));
     }
 
     const auto byte = std::to_integer<unsigned int>(input[index]);
     const auto payload = byte & 0x7fU;
-    const std::size_t shift = index * kPayloadBits;
-    const std::size_t remaining_bits = kValueBits - shift;
+    const std::size_t shift = index * PayloadBits;
+    const std::size_t remaining_bits = ValueBits - shift;
     const unsigned int maximum_payload =
-        remaining_bits >= kPayloadBits ? 0x7fU : (1U << remaining_bits) - 1U;
+        remaining_bits >= PayloadBits ? 0x7fU : (1U << remaining_bits) - 1U;
 
     if (payload > maximum_payload) {
       return std::unexpected(Error::Corruption("varint overflow"));
@@ -43,7 +43,7 @@ template <typename UInt>
       return value;
     }
 
-    if (index + 1U == kMaxBytes) {
+    if (index + 1U == MaxBytes) {
       return std::unexpected(Error::Corruption("varint overflow"));
     }
   }
@@ -66,30 +66,30 @@ void AppendFixed64(std::vector<std::byte>& output, std::uint64_t value) {
 }
 
 Result<std::uint32_t> ConsumeFixed32(ByteView& input) {
-  constexpr std::size_t kEncodedSize = sizeof(std::uint32_t);
-  if (input.size() < kEncodedSize) {
+  constexpr std::size_t EncodedSize = sizeof(std::uint32_t);
+  if (input.size() < EncodedSize) {
     return std::unexpected(Error::Corruption("truncated fixed32"));
   }
 
   std::uint32_t value = 0;
-  for (std::size_t index = 0; index < kEncodedSize; ++index) {
+  for (std::size_t index = 0; index < EncodedSize; ++index) {
     value |= std::to_integer<std::uint32_t>(input[index]) << (index * 8U);
   }
-  input = input.subspan(kEncodedSize);
+  input = input.subspan(EncodedSize);
   return value;
 }
 
 Result<std::uint64_t> ConsumeFixed64(ByteView& input) {
-  constexpr std::size_t kEncodedSize = sizeof(std::uint64_t);
-  if (input.size() < kEncodedSize) {
+  constexpr std::size_t EncodedSize = sizeof(std::uint64_t);
+  if (input.size() < EncodedSize) {
     return std::unexpected(Error::Corruption("truncated fixed64"));
   }
 
   std::uint64_t value = 0;
-  for (std::size_t index = 0; index < kEncodedSize; ++index) {
+  for (std::size_t index = 0; index < EncodedSize; ++index) {
     value |= std::to_integer<std::uint64_t>(input[index]) << (index * 8U);
   }
-  input = input.subspan(kEncodedSize);
+  input = input.subspan(EncodedSize);
   return value;
 }
 

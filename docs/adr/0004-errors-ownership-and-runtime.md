@@ -16,8 +16,9 @@ these failures into corruption.
 - Fallible value-returning operations use `std::expected<T, Error>`.
 - Operations with no success value use `Status`, defined as
   `std::expected<void, Error>`.
-- `ErrorCode` enumerators use PascalCase without a `k` prefix, for example
-  `ErrorCode::NotFound`. Diagnostic code names such as `not_found` remain unchanged.
+- Naming and formatting follow [Code style](../code-style.md). Enum members and
+  named compile-time constants use PascalCase without a `k` prefix. Diagnostic
+  code names such as `not_found` remain unchanged.
 - Exceptions are not used for normal storage-engine control flow.
 - Owning raw pointers are forbidden.
 - Exclusive ownership uses values or `std::unique_ptr`.
