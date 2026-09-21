@@ -9,8 +9,9 @@ architecture.
 The project is currently pre-alpha and is not suitable for production data.
 
 The implemented foundation covers byte views, typed results, comparison,
-binary coding, CRC32C, and LevelDB-compatible seeded hashing. Database
-operations, WAL/SSTable persistence, and compaction are not yet implemented.
+binary coding, CRC32C, LevelDB-compatible seeded hashing, and a monotonic
+arena. Database operations, WAL/SSTable persistence, and compaction are not
+yet implemented.
 
 ## Goals
 

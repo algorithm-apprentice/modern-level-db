@@ -53,7 +53,7 @@ flowchart TD
 | `implement-comparator` | Bytewise comparator contract | `implement-bytes` |
 | `implement-coding` | Fixed-width and varint coding | `implement-bytes`, `implement-error-result` |
 | `implement-checksum-hash` | CRC32C calculation/extension/masking and LevelDB-compatible seeded hash | `implement-coding` |
-| `implement-arena` | Monotonic arena | `bootstrap-build` |
+| `implement-arena` | Non-movable monotonic arena with small-block allocation, max-alignment, and reserved-byte accounting | `implement-bytes` |
 | `implement-platform-runtime` | Clock and background executor | `implement-error-result` |
 | `implement-platform-fs` | Filesystem and file interfaces | `implement-bytes`, `implement-error-result` |
 | `implement-internal-key` | Internal-key format and ordering | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-comparator` |
