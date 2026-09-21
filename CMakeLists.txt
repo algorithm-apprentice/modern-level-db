@@ -25,6 +25,8 @@ add_library(
   STATIC
     src/base/coding.cc
     src/base/comparator.cc
+    src/base/crc32c.cc
+    src/base/hash.cc
 )
 add_library(modern_leveldb::modern_leveldb ALIAS modern_leveldb)
 
