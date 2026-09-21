@@ -81,6 +81,27 @@ time in FIFO order.
 - The executor must not be destroyed by one of its own tasks. Its owner
   destroys it from an external thread; the destructor performs shutdown.
 
+#### Shutdown state machine
+
+| State | `Schedule` | `Shutdown` |
+|---|---|---|
+| `Running` | Linearizes under the queue mutex. An accepted task enters the FIFO queue. | One external caller becomes the shutdown owner and changes the state to `Stopping`. |
+| `Stopping` | Returns `Aborted` after the queue stops accepting work. A racing call that linearized earlier may already be queued and will be canceled. | Owner-thread reentry returns success immediately. Other external callers wait for `Stopped`. Worker-thread calls return `InvalidArgument`. |
+| `Stopped` | Returns `Aborted`. | Returns success immediately. |
+
+The shutdown owner performs these steps:
+
+1. Publish `Stopping` under the shutdown-state mutex.
+2. Under the queue mutex, stop accepting tasks and detach the pending queue.
+3. Without either mutex held, request stop, run synchronous stop callbacks,
+   wake and join the worker, and destroy canceled tasks.
+4. Publish `Stopped` under the shutdown-state mutex and notify waiters.
+
+The queue mutex protects only the acceptance flag and owning task pointers.
+Task construction, copy/move/destruction, invocation, and stop callbacks never
+run while either executor mutex is held. This prevents callable lifecycle or
+synchronous stop callbacks from deadlocking through reentrant executor calls.
+
 `BackgroundTask` uses `std::function` because the current supported macOS
 standard library does not yet provide C++23 `std::move_only_function`.
 Therefore scheduled callables must be copy-constructible. This may be revisited

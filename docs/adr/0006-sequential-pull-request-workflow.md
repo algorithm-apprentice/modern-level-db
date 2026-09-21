@@ -28,6 +28,33 @@ All development is delivered through sequential pull requests.
 
 ## Review gate
 
+### Pre-implementation design gate
+
+High-risk nodes require one bounded independent design review after the ADR is
+written and before production implementation starts. High-risk work includes:
+
+- Concurrency, cancellation, shutdown, and shared ownership.
+- Persistent formats, durability ordering, recovery, and file lifecycle.
+- Public API lifetime or compatibility contracts.
+
+The design review checks the proposed invariants and failure model, not code
+that does not yet exist. Where applicable, the ADR must define:
+
+- State transitions and the owner of each transition.
+- Lock ownership and which operations linearize under each lock.
+- Whether callbacks, destructors, or other user-controlled code may run while
+  an internal lock is held.
+- Reentrant and concurrent-call behavior.
+- Failure atomicity, synchronization order, and cleanup completion.
+- The focused tests that will demonstrate each invariant.
+
+Resolve actionable design findings before writing the first failing production
+test. Keep this review to one static pass with no builds, test runs, broad
+repository exploration, or repeated personas. Routine low-risk nodes do not
+need an extra pre-implementation reviewer.
+
+### Pre-owner code gate
+
 Before asking the project owner to review a pull request:
 
 1. Obtain independent reviews from personas relevant to the change, such as
