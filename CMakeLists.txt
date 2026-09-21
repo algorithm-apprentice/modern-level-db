@@ -27,6 +27,7 @@ add_library(
     src/base/comparator.cc
     src/base/crc32c.cc
     src/base/hash.cc
+    src/memory/arena.cc
 )
 add_library(modern_leveldb::modern_leveldb ALIAS modern_leveldb)
 
@@ -36,6 +37,8 @@ target_include_directories(
   PUBLIC
     "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:include>"
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}/src"
 )
 modern_leveldb_set_project_warnings(modern_leveldb PRIVATE)
 

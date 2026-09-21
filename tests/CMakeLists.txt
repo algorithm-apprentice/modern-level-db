@@ -26,8 +26,10 @@ add_executable(
   unit/base/crc32c_test.cc
   unit/base/hash_test.cc
   unit/base/result_test.cc
+  unit/memory/arena_test.cc
   unit/toolchain_test.cc
 )
+target_include_directories(modern_leveldb_unit_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
   modern_leveldb_unit_tests
   PRIVATE
