@@ -1,8 +1,14 @@
 include(FetchContent)
 
-set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
-set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+if(NOT DEFINED BUILD_GMOCK)
+  set(BUILD_GMOCK OFF)
+endif()
+if(NOT DEFINED INSTALL_GTEST)
+  set(INSTALL_GTEST OFF)
+endif()
+if(NOT DEFINED gtest_force_shared_crt)
+  set(gtest_force_shared_crt ON)
+endif()
 
 FetchContent_Declare(
   googletest
@@ -33,3 +39,19 @@ gtest_discover_tests(
   modern_leveldb_unit_tests
   PROPERTIES LABELS unit
 )
+
+foreach(scenario IN ITEMS module_shadow default_tests tests_disabled gtest_options)
+  add_test(
+    NAME "cmake.${scenario}"
+    COMMAND "${CMAKE_COMMAND}"
+      --fresh
+      -S "${CMAKE_CURRENT_SOURCE_DIR}/cmake/consumer"
+      -B "${CMAKE_CURRENT_BINARY_DIR}/cmake/${scenario}"
+      -G "${CMAKE_GENERATOR}"
+      "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+      "-DMODERN_LEVELDB_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
+      "-DTEST_SCENARIO=${scenario}"
+      "-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=${googletest_SOURCE_DIR}"
+  )
+  set_tests_properties("cmake.${scenario}" PROPERTIES LABELS cmake TIMEOUT 120)
+endforeach()

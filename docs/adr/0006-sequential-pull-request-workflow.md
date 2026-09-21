@@ -26,6 +26,30 @@ All development is delivered through sequential pull requests.
   has been reviewed and merged.
 - Unrelated implementation branches are not developed in parallel.
 
+## Review gate
+
+Before asking the project owner to review a pull request:
+
+1. Obtain independent reviews from personas relevant to the change, such as
+   C++/storage correctness, build/integration, and architecture/test contracts.
+   Reviews may run concurrently; implementation and fixes remain sequential.
+2. Treat each finding as a candidate, not an instruction. Check the actual
+   contract, triggering code path, realistic impact, and fix cost. Reproduce
+   the issue where feasible; a precise static counterexample is also evidence.
+3. Accept demonstrated defects and justified, directly related improvements.
+   Decline unsupported claims and speculative redesigns with an explicit reason.
+   Passing tests alone neither prove correctness nor invalidate a sound finding.
+4. Add a regression test for each accepted behavior bug, observe its failure,
+   and apply the smallest complete fix.
+5. Reuse the reviewers for focused follow-up passes after fixes. Repeat until
+   no actionable findings remain unresolved. Report a blocked defect as blocked,
+   not as a clean review.
+6. Record the review scope, accepted fixes, declined findings and reasons, and
+   actual validation commands in the PR handoff before requesting owner review.
+
+A clean review means no remaining actionable findings were identified in the
+reviewed revision; it is not a proof that the software has no defects.
+
 ## Consequences
 
 - Review feedback is incorporated before dependent nodes are designed in

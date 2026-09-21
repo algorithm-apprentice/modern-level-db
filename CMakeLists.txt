@@ -7,15 +7,18 @@ project(
   LANGUAGES CXX
 )
 
-option(MODERN_LEVELDB_BUILD_TESTS "Build Modern LevelDB tests" ON)
+option(
+  MODERN_LEVELDB_BUILD_TESTS
+  "Build Modern LevelDB tests"
+  ${PROJECT_IS_TOP_LEVEL}
+)
 option(
   MODERN_LEVELDB_WARNINGS_AS_ERRORS
   "Treat Modern LevelDB compiler warnings as errors"
   ON
 )
 
-list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
-include(CompilerWarnings)
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompilerWarnings.cmake")
 
 add_library(
   modern_leveldb
@@ -36,5 +39,7 @@ modern_leveldb_set_project_warnings(modern_leveldb PRIVATE)
 
 if(MODERN_LEVELDB_BUILD_TESTS)
   include(CTest)
-  add_subdirectory(tests)
+  if(BUILD_TESTING)
+    add_subdirectory(tests)
+  endif()
 endif()

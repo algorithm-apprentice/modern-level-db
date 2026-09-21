@@ -11,6 +11,8 @@ remain pending until the current node is complete.
 
 ## Layer graph
 
+Arrows point from a dependent layer to a prerequisite layer.
+
 ```mermaid
 flowchart TD
   API[api]
@@ -54,30 +56,34 @@ flowchart TD
 | `implement-arena` | Monotonic arena | `bootstrap-build` |
 | `implement-platform-runtime` | Clock and background executor | `implement-error-result` |
 | `implement-platform-fs` | Filesystem and file interfaces | `implement-bytes`, `implement-error-result` |
-| `implement-internal-key` | Internal-key format and ordering | bytes, result, coding, comparator |
-| `implement-wal-format` | WAL physical-record format | bytes, result, coding, checksum |
-| `implement-cache` | Sharded RAII block cache | bytes, result, checksum/hash |
-| `implement-skiplist` | Concurrent-read skip list | arena |
-| `implement-write-batch` | Atomic batch format | internal key, coding, result |
-| `implement-memtable` | Arena-backed mutable table | internal key, arena, skip list |
-| `implement-wal-io` | WAL reader and writer | filesystem, WAL format |
-| `implement-filenames` | Database filename model | result |
-| `implement-version-edit` | MANIFEST edit format | internal key, coding, result |
-| `implement-block-format` | Data blocks, handles, footer, trailers | bytes, result, coding, checksum, comparator |
-| `implement-filter` | Bloom and filter blocks | bytes, checksum/hash |
-| `implement-sstable-writer` | SSTable construction | filesystem, block format, filter |
-| `implement-sstable-reader` | SSTable reads and iteration | filesystem, block format, filter, cache |
-| `implement-table-cache` | Cached SSTable handles | SSTable reader, cache, filenames |
-| `implement-version-set` | Versions and MANIFEST state | version edit, filenames, SSTable reader, WAL I/O |
-| `implement-recovery` | MANIFEST and WAL recovery | WAL I/O, write batch, memtable, version set |
-| `implement-read-path` | Point reads and merged iteration | memtable, table cache, version set |
-| `implement-write-path` | Group commit and memtable insertion | WAL I/O, write batch, memtable, version set |
-| `implement-flush` | Immutable memtable to L0 | memtable, SSTable writer, version set |
-| `implement-compaction` | Leveled compaction | SSTable reader/writer, version set |
-| `implement-db-engine` | Integrated DB lifecycle | recovery, read/write, flush, compaction, runtime |
-| `implement-public-api` | Public RAII C++ API | DB engine |
-| `build-compatibility-harness` | Model, golden, differential, crash, and fuzz tests | public API |
-| `harden-engine` | Sanitizer, crash, fuzz, and benchmark gates | compatibility harness |
+| `implement-internal-key` | Internal-key format and ordering | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-comparator` |
+| `implement-wal-format` | WAL physical-record format | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-checksum-hash` |
+| `implement-cache` | Sharded RAII block cache | `implement-bytes`, `implement-error-result`, `implement-checksum-hash` |
+| `implement-skiplist` | Concurrent-read skip list | `implement-arena` |
+| `implement-write-batch` | Atomic batch format | `implement-internal-key`, `implement-coding`, `implement-error-result` |
+| `implement-memtable` | Arena-backed mutable table | `implement-internal-key`, `implement-arena`, `implement-skiplist` |
+| `implement-wal-io` | WAL reader and writer | `implement-platform-fs`, `implement-wal-format` |
+| `implement-filenames` | Database filename model | `implement-error-result` |
+| `implement-version-edit` | MANIFEST edit format | `implement-internal-key`, `implement-coding`, `implement-error-result` |
+| `implement-block-format` | Data blocks, handles, footer, trailers | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-checksum-hash`, `implement-comparator` |
+| `implement-filter` | Bloom and filter blocks | `implement-bytes`, `implement-checksum-hash` |
+| `implement-sstable-writer` | SSTable construction | `implement-platform-fs`, `implement-block-format`, `implement-filter` |
+| `implement-sstable-reader` | SSTable reads and iteration | `implement-platform-fs`, `implement-block-format`, `implement-filter`, `implement-cache` |
+| `implement-table-cache` | Cached SSTable handles | `implement-sstable-reader`, `implement-cache`, `implement-filenames` |
+| `implement-version-set` | Versions and MANIFEST state | `implement-version-edit`, `implement-filenames`, `implement-sstable-reader`, `implement-wal-io` |
+| `implement-recovery` | MANIFEST and WAL recovery | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set` |
+| `implement-read-path` | Point reads and merged iteration | `implement-memtable`, `implement-table-cache`, `implement-version-set` |
+| `implement-write-path` | Group commit and memtable insertion | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set` |
+| `implement-flush` | Immutable memtable to L0 | `implement-memtable`, `implement-sstable-writer`, `implement-version-set` |
+| `implement-compaction` | Leveled compaction | `implement-sstable-reader`, `implement-sstable-writer`, `implement-version-set` |
+| `implement-db-engine` | Integrated DB lifecycle | `implement-recovery`, `implement-read-path`, `implement-write-path`, `implement-flush`, `implement-compaction`, `implement-platform-runtime` |
+| `implement-public-api` | Public RAII C++ API | `implement-db-engine` |
+| `build-compatibility-harness` | Model, golden, differential, crash, and fuzz tests | `implement-public-api` |
+| `harden-engine` | Sanitizer, crash, fuzz, and benchmark gates | `build-compatibility-harness` |
+
+Each node includes its own unit and applicable format/fault tests. The later
+compatibility-harness node integrates end-to-end scenarios; it does not defer
+lower-level validation.
 
 ## Canonical topological order
 
@@ -131,7 +137,8 @@ A node is complete only when:
 - Its dependency direction follows the architecture rules.
 - Focused tests cover successful, boundary, malformed, and failure behavior.
 - Sanitizer-compatible code contains no owning raw pointers.
-- Persistent-format nodes have LevelDB golden-vector tests.
+- Persistent-format nodes and shared binary codecs have independent LevelDB
+  golden-vector tests.
 - Performance-sensitive nodes have a baseline before optimization.
 
 Algorithm changes are not combined with unrelated ownership or API refactors.

@@ -69,6 +69,36 @@ TEST(CodingTest, RoundTripsFixed64) {
   EXPECT_TRUE(input.empty());
 }
 
+TEST(CodingTest, MatchesFixed64GoldenVector) {
+  constexpr std::uint64_t Value = 0xfedcba9876543210ULL;
+  const std::vector<std::byte> golden{
+      std::byte{0x10}, std::byte{0x32}, std::byte{0x54}, std::byte{0x76},
+      std::byte{0x98}, std::byte{0xba}, std::byte{0xdc}, std::byte{0xfe},
+  };
+  std::vector<std::byte> output;
+  AppendFixed64(output, Value);
+  EXPECT_EQ(output, golden);
+
+  for (std::size_t size = 0; size < golden.size(); ++size) {
+    SCOPED_TRACE(size);
+    ByteView input = ByteView(golden).first(size);
+    const auto decoded = ConsumeFixed64(input);
+    ASSERT_FALSE(decoded.has_value());
+    EXPECT_EQ(decoded.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(input.data(), golden.data());
+    EXPECT_EQ(input.size(), size);
+  }
+
+  std::vector<std::byte> storage = golden;
+  storage.push_back(std::byte{0x55});
+  ByteView input = storage;
+  const auto decoded = ConsumeFixed64(input);
+  ASSERT_TRUE(decoded.has_value());
+  EXPECT_EQ(*decoded, Value);
+  ASSERT_EQ(input.size(), 1U);
+  EXPECT_EQ(input.front(), std::byte{0x55});
+}
+
 TEST(CodingTest, EncodesLevelDbCompatibleVarint32Values) {
   std::vector<std::byte> output;
 
@@ -91,6 +121,73 @@ TEST(CodingTest, EncodesLevelDbCompatibleVarint32Values) {
                         std::byte{0xff},
                         std::byte{0x0f},
                     }));
+}
+
+TEST(CodingTest, DecodesMaximumVarint32GoldenVector) {
+  const std::vector<std::byte> golden{
+      std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0x0f},
+  };
+  for (std::size_t size = 0; size < golden.size(); ++size) {
+    SCOPED_TRACE(size);
+    ByteView input = ByteView(golden).first(size);
+    const auto decoded = ConsumeVarint32(input);
+    ASSERT_FALSE(decoded.has_value());
+    EXPECT_EQ(decoded.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(input.data(), golden.data());
+    EXPECT_EQ(input.size(), size);
+  }
+
+  std::vector<std::byte> storage = golden;
+  storage.push_back(std::byte{0x55});
+  ByteView input = storage;
+  const auto decoded = ConsumeVarint32(input);
+  ASSERT_TRUE(decoded.has_value());
+  EXPECT_EQ(*decoded, std::numeric_limits<std::uint32_t>::max());
+  ASSERT_EQ(input.size(), 1U);
+  EXPECT_EQ(input.front(), std::byte{0x55});
+}
+
+TEST(CodingTest, MatchesVarint64GoldenVectors) {
+  struct GoldenVector {
+    std::uint64_t value;
+    std::vector<std::byte> bytes;
+  };
+  const std::vector<GoldenVector> vectors{
+      {0U, {std::byte{0x00}}},
+      {127U, {std::byte{0x7f}}},
+      {128U, {std::byte{0x80}, std::byte{0x01}}},
+      {std::uint64_t{1} << 32U,
+       {std::byte{0x80}, std::byte{0x80}, std::byte{0x80}, std::byte{0x80}, std::byte{0x10}}},
+      {std::numeric_limits<std::uint64_t>::max(),
+       {std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0xff},
+        std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0x01}}},
+  };
+
+  for (const auto& golden : vectors) {
+    SCOPED_TRACE(golden.value);
+    std::vector<std::byte> output;
+    AppendVarint64(output, golden.value);
+    EXPECT_EQ(output, golden.bytes);
+
+    for (std::size_t size = 0; size < golden.bytes.size(); ++size) {
+      SCOPED_TRACE(size);
+      ByteView input = ByteView(golden.bytes).first(size);
+      const auto decoded = ConsumeVarint64(input);
+      ASSERT_FALSE(decoded.has_value());
+      EXPECT_EQ(decoded.error().code(), ErrorCode::Corruption);
+      EXPECT_EQ(input.data(), golden.bytes.data());
+      EXPECT_EQ(input.size(), size);
+    }
+
+    std::vector<std::byte> storage = golden.bytes;
+    storage.push_back(std::byte{0x55});
+    ByteView input = storage;
+    const auto decoded = ConsumeVarint64(input);
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_EQ(*decoded, golden.value);
+    ASSERT_EQ(input.size(), 1U);
+    EXPECT_EQ(input.front(), std::byte{0x55});
+  }
 }
 
 TEST(CodingTest, RoundTripsVarint64Boundaries) {
@@ -155,6 +252,32 @@ TEST(CodingTest, RejectsOverflowingVarint64) {
   EXPECT_EQ(input.size(), input_storage.size());
 }
 
+TEST(CodingTest, RejectsOverlongVarint32WithoutConsumingInput) {
+  std::vector<std::byte> storage(6, std::byte{0x80});
+  storage.back() = std::byte{0};
+  ByteView input = storage;
+
+  const auto decoded = ConsumeVarint32(input);
+
+  ASSERT_FALSE(decoded.has_value());
+  EXPECT_EQ(decoded.error().code(), ErrorCode::Corruption);
+  EXPECT_EQ(input.data(), storage.data());
+  EXPECT_EQ(input.size(), storage.size());
+}
+
+TEST(CodingTest, RejectsOverlongVarint64WithoutConsumingInput) {
+  std::vector<std::byte> storage(11, std::byte{0x80});
+  storage.back() = std::byte{0};
+  ByteView input = storage;
+
+  const auto decoded = ConsumeVarint64(input);
+
+  ASSERT_FALSE(decoded.has_value());
+  EXPECT_EQ(decoded.error().code(), ErrorCode::Corruption);
+  EXPECT_EQ(input.data(), storage.data());
+  EXPECT_EQ(input.size(), storage.size());
+}
+
 TEST(CodingTest, RoundTripsLengthPrefixedBytes) {
   std::vector<std::byte> output;
   ASSERT_TRUE(AppendLengthPrefixed(output, AsBytes(std::string_view{"a\0b", 3})));
@@ -167,6 +290,58 @@ TEST(CodingTest, RoundTripsLengthPrefixedBytes) {
   EXPECT_EQ(AsStringView(*value), std::string_view("a\0b", 3));
   ASSERT_EQ(input.size(), 1U);
   EXPECT_EQ(input.front(), std::byte{0xff});
+}
+
+TEST(CodingTest, AppendsLengthPrefixedBytesFromSameVector) {
+  for (const bool reallocate : {false, true}) {
+    SCOPED_TRACE(reallocate);
+    std::vector<std::byte> output{std::byte{'a'}, std::byte{0}, std::byte{'b'}};
+    if (reallocate) {
+      output.resize(output.capacity(), std::byte{'x'});
+    } else {
+      output.reserve(64);
+    }
+    const std::vector<std::byte> original = output;
+    std::vector<std::byte> expected = original;
+    AppendVarint32(expected, static_cast<std::uint32_t>(original.size()));
+    expected.insert(expected.end(), original.begin(), original.end());
+
+    ASSERT_TRUE(AppendLengthPrefixed(output, ByteView(output)));
+
+    EXPECT_EQ(output, expected);
+  }
+}
+
+TEST(CodingTest, AppendsLengthPrefixedBytesFromSubspan) {
+  for (const bool reallocate : {false, true}) {
+    SCOPED_TRACE(reallocate);
+    std::vector<std::byte> output{std::byte{'a'}, std::byte{'b'}, std::byte{'c'}, std::byte{'d'}};
+    if (reallocate) {
+      output.resize(output.capacity(), std::byte{'x'});
+    } else {
+      output.reserve(64);
+    }
+    std::vector<std::byte> expected = output;
+    expected.insert(expected.end(), {std::byte{2}, std::byte{'b'}, std::byte{'c'}});
+
+    ASSERT_TRUE(AppendLengthPrefixed(output, ByteView(output).subspan(1, 2)));
+
+    EXPECT_EQ(output, expected);
+  }
+}
+
+TEST(CodingTest, AppendsEmptyLengthPrefixedBytes) {
+  std::vector<std::byte> output;
+  ASSERT_TRUE(AppendLengthPrefixed(output, {}));
+  EXPECT_EQ(output, (std::vector<std::byte>{std::byte{0}}));
+
+  output.resize(output.capacity(), std::byte{'x'});
+  std::vector<std::byte> expected = output;
+  expected.push_back(std::byte{0});
+
+  ASSERT_TRUE(AppendLengthPrefixed(output, ByteView(output).subspan(output.size())));
+
+  EXPECT_EQ(output, expected);
 }
 
 TEST(CodingTest, RejectsTruncatedLengthPrefixedBytesWithoutConsumingInput) {

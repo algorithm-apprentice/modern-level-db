@@ -35,5 +35,5 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      - name: Run unit tests
-        run: ctest --test-dir build --output-on-failure -L unit
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure

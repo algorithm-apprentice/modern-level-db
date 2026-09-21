@@ -46,12 +46,24 @@ cmake --build --preset dev-debug
 ctest --preset dev-debug -L unit
 ```
 
+Tests are enabled by default for a standalone build and disabled when the
+library is added as a subproject. Either `MODERN_LEVELDB_BUILD_TESTS=OFF` or
+`BUILD_TESTING=OFF` disables test targets and their dependencies. When tests
+are explicitly enabled by a parent project, its GoogleTest options are
+preserved.
+
+Run `ctest --preset dev-debug` to include the `cmake` consumer-configuration
+checks as well as the fast `unit` suite.
+
 Development follows test-driven development. Every implementation change starts
 with a focused failing unit test, proceeds to the smallest correct
 implementation, and is refactored only while the test suite remains green.
 
 Development is delivered through sequential pull requests. The next DAG slice
 does not begin until the current pull request has been reviewed and merged.
+Before owner review, independent personas review the slice, each finding is
+evaluated against evidence, and accepted fixes receive follow-up review as
+described in [ADR-0006](docs/adr/0006-sequential-pull-request-workflow.md).
 
 All source code, identifiers, comments, documentation, ADRs, and commit
 messages are written in English.

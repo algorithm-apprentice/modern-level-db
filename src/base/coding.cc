@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <type_traits>
 #include <vector>
@@ -122,8 +123,18 @@ Status AppendLengthPrefixed(std::vector<std::byte>& output, ByteView value) {
     return std::unexpected(Error::InvalidArgument("length-prefixed value exceeds uint32"));
   }
 
+  std::vector<std::byte> stable_value;
+  const auto before = std::less<const std::byte*>{};
+  if (!value.empty() && !output.empty() && before(value.data(), output.data() + output.size()) &&
+      before(output.data(), value.data() + value.size())) {
+    stable_value.assign(value.begin(), value.end());
+    value = stable_value;
+  }
+
   AppendVarint32(output, static_cast<std::uint32_t>(value.size()));
-  output.insert(output.end(), value.begin(), value.end());
+  if (!value.empty()) {
+    output.insert(output.end(), value.begin(), value.end());
+  }
   return {};
 }
 

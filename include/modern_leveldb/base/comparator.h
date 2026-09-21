@@ -25,7 +25,8 @@ class Comparator {
   virtual void FindShortSuccessor(std::vector<std::byte>& key) const = 0;
 };
 
-// Returns the process-lifetime bytewise comparator.
+// Returns the shared bytewise comparator. It is destroyed during static teardown;
+// callers in static destructors must ensure it was initialized before their owner.
 [[nodiscard]] const Comparator& BytewiseComparator() noexcept;
 
 }  // namespace modern_leveldb

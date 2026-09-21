@@ -40,6 +40,7 @@ Every module test suite must cover, where applicable:
 Tests are divided into execution tiers:
 
 - `unit`: deterministic and fast enough for every local change.
+- `cmake`: isolated consumer-configuration checks for build integration.
 - `model`: randomized state-machine tests with deterministic seeds.
 - `compatibility`: golden and differential tests against upstream LevelDB.
 - `crash`: durability and fault-injection scenarios.
@@ -47,7 +48,9 @@ Tests are divided into execution tiers:
 - `benchmark`: performance and allocation baselines.
 
 Only the `unit` tier is mandatory in the inner red-green-refactor loop. CI runs
-the broader tiers according to their cost.
+the broader tiers according to their cost. The bootstrap currently runs `unit`
+and `cmake` in CI; the remaining tiers are introduced with the components they
+exercise.
 
 ## Consequences
 
