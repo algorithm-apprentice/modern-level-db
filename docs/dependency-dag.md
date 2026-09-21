@@ -81,9 +81,9 @@ flowchart TD
 | `build-compatibility-harness` | Model, golden, differential, crash, and fuzz tests | `implement-public-api` |
 | `harden-engine` | Sanitizer, crash, fuzz, and benchmark gates | `build-compatibility-harness` |
 
-Each node includes its own unit and applicable format/fault tests. The later
-compatibility-harness node integrates end-to-end scenarios; it does not defer
-lower-level validation.
+Each production-code node includes its own unit and applicable format/fault
+tests. The later compatibility-harness node integrates end-to-end scenarios;
+it does not defer lower-level validation.
 
 ## Canonical topological order
 
@@ -127,12 +127,19 @@ canonical order to keep development sequential and reviewable:
 
 ## Completion rule
 
-A node is complete only when:
+Validation depends on the kind of node. Production-code behavior uses TDD;
+build-system nodes use appropriate configure, build, and test-integration
+checks. Documentation-only nodes, including `document-architecture`, require
+review of accuracy, consistency, references, and dependency ordering, not an
+artificial failing unit test.
 
-- Its observable behavior is first expressed by a failing unit test.
-- The failing test is observed before production implementation begins.
-- The smallest implementation needed to make the new test pass is added.
-- Refactoring occurs only after the focused and existing unit tests are green.
+A production-code node is complete only when:
+
+- New or changed behavior is first expressed by a failing unit test.
+- For behavior changes, the expected failure is observed before implementing
+  the smallest correct change.
+- Behavior-preserving refactors keep the focused and existing unit tests green
+  before and after the change.
 - Its public contract is documented.
 - Its dependency direction follows the architecture rules.
 - Focused tests cover successful, boundary, malformed, and failure behavior.

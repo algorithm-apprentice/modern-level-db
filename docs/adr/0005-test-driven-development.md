@@ -16,7 +16,7 @@ development loop.
 
 ## Decision
 
-All implementation nodes follow test-driven development:
+New or changed executable production behavior follows test-driven development:
 
 1. Specify one observable behavior in a focused unit test.
 2. Run the test and observe the expected failure.
@@ -24,8 +24,15 @@ All implementation nodes follow test-driven development:
 4. Run the focused test and the complete fast unit-test suite.
 5. Refactor only while all tests remain green.
 
-Unit tests are part of the implementation node and are never deferred to a
-separate testing phase.
+Unit tests are part of each production-code node and are never deferred to a
+separate testing phase. Behavior-preserving refactors start from a green
+baseline and keep it green; they do not require an artificial failing test.
+
+Build-system changes use appropriate configure, build, and test-integration
+checks, reproducing the failure before fixing a configuration bug.
+Documentation-only changes are reviewed for accuracy, consistency, references,
+and dependency ordering rather than subjected to unit tests with no executable
+behavior.
 
 Every module test suite must cover, where applicable:
 
@@ -47,10 +54,10 @@ Tests are divided into execution tiers:
 - `fuzz`: parser and stateful fuzz targets.
 - `benchmark`: performance and allocation baselines.
 
-Only the `unit` tier is mandatory in the inner red-green-refactor loop. CI runs
-the broader tiers according to their cost. The bootstrap currently runs `unit`
-and `cmake` in CI; the remaining tiers are introduced with the components they
-exercise.
+The `unit` tier is the inner loop for production-code changes; build-system
+changes run the relevant `cmake` checks. CI runs the broader tiers according to
+their cost. The bootstrap currently runs `unit` and `cmake` in CI; the remaining
+tiers are introduced with the components they exercise.
 
 ## Consequences
 

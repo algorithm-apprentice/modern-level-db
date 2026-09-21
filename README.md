@@ -55,9 +55,10 @@ preserved.
 Run `ctest --preset dev-debug` to include the `cmake` consumer-configuration
 checks as well as the fast `unit` suite.
 
-Development follows test-driven development. Every implementation change starts
-with a focused failing unit test, proceeds to the smallest correct
-implementation, and is refactored only while the test suite remains green.
+New or changed production behavior follows test-driven development: start with
+a focused failing unit test, implement the smallest correct change, and
+refactor while tests remain green. Configuration and documentation changes use
+the applicable checks defined in [ADR-0005](docs/adr/0005-test-driven-development.md).
 
 Development is delivered through sequential pull requests. The next DAG slice
 does not begin until the current pull request has been reviewed and merged.
