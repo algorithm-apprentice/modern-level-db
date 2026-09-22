@@ -30,6 +30,7 @@ add_executable(
   unit/format/internal_key_test.cc
   unit/format/wal_format_test.cc
   unit/memory/arena_test.cc
+  unit/memory/skiplist_test.cc
   unit/platform/clock_test.cc
   unit/platform/file_system_test.cc
   unit/platform/serial_executor_test.cc

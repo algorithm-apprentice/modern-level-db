@@ -15,7 +15,9 @@ stop-aware background executor, portable file interfaces, and the first
 Linux/macOS POSIX filesystem backend. The format layer now includes the
 LevelDB-compatible internal-key trailer and WAL physical-record framing.
 The cache layer provides a typed sharded LRU with RAII pin handles. Database
-operations, WAL/SSTable I/O, and compaction are not yet implemented.
+memory structures now include an arena-backed, single-writer concurrent-reader
+skip list. Database operations, WAL/SSTable I/O, and compaction are not yet
+implemented.
 
 ## Goals
 
