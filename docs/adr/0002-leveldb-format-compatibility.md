@@ -13,8 +13,10 @@ There is currently no deployed data requiring a migration framework.
 
 ## Decision
 
-The initial implementation will read and write the LevelDB v1 WAL, MANIFEST,
-internal-key, write-batch, and SSTable formats.
+The initial implementation will read and write the original LevelDB WAL,
+MANIFEST, internal-key, write-batch, and SSTable formats. “Original LevelDB
+format” identifies the stable upstream format family; it does not imply that
+Google publishes numbered v1/v2 format generations.
 
 Compatibility is a development constraint and verification tool, not a promise
 of permanent source, ABI, or bidirectional format compatibility.

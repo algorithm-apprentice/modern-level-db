@@ -28,6 +28,7 @@ add_library(
     src/base/comparator.cc
     src/base/crc32c.cc
     src/base/hash.cc
+    src/format/internal_key.cc
     src/memory/arena.cc
     src/platform/clock.cc
     src/platform/serial_executor.cc
