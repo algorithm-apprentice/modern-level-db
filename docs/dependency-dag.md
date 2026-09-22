@@ -59,7 +59,7 @@ flowchart TD
 | `implement-internal-key` | LevelDB-compatible immutable internal keys, parsing, and ordering | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-comparator` |
 | `implement-wal-format` | LevelDB-compatible pure WAL fragmentation and physical-record decoding | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-checksum-hash` |
 | `implement-cache` | Typed 16-shard RAII LRU cache with charge-based eviction and pin handles | `implement-bytes`, `implement-error-result`, `implement-checksum-hash` |
-| `implement-skiplist` | Concurrent-read skip list | `implement-arena` |
+| `implement-skiplist` | Single-writer concurrent-reader arena-backed skip list | `implement-arena` |
 | `implement-write-batch` | Atomic batch format | `implement-internal-key`, `implement-coding`, `implement-error-result` |
 | `implement-memtable` | Arena-backed mutable table | `implement-internal-key`, `implement-arena`, `implement-skiplist` |
 | `implement-wal-io` | WAL reader and writer | `implement-platform-fs`, `implement-wal-format` |
