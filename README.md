@@ -13,8 +13,8 @@ binary coding, CRC32C, LevelDB-compatible seeded hashing, and a monotonic
 arena. The platform foundation also provides a steady clock and a serial,
 stop-aware background executor, portable file interfaces, and the first
 Linux/macOS POSIX filesystem backend. The format layer now includes the
-LevelDB-compatible internal-key trailer and ordering. Database operations,
-WAL/SSTable persistence, and compaction are not yet implemented.
+LevelDB-compatible internal-key trailer and WAL physical-record framing.
+Database operations, WAL/SSTable I/O, and compaction are not yet implemented.
 
 ## Goals
 
