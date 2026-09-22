@@ -306,13 +306,14 @@ TEST(InternalKeyComparatorTest, MatchesLevelDbShortSuccessorCases) {
 TEST(InternalKeyComparatorTest, LeavesMalformedKeysUnchangedWhenShortening) {
   InternalKeyComparator comparator(BytewiseComparator());
   std::vector<std::byte> malformed{std::byte{'x'}};
-  const auto original = malformed;
   const InternalKey limit = MakeKey("z", 1, ValueKind::Value);
 
   comparator.FindShortestSeparator(malformed, limit.encoded());
-  EXPECT_EQ(malformed, original);
+  ASSERT_EQ(malformed.size(), 1U);
+  EXPECT_EQ(malformed.front(), std::byte{'x'});
   comparator.FindShortSuccessor(malformed);
-  EXPECT_EQ(malformed, original);
+  ASSERT_EQ(malformed.size(), 1U);
+  EXPECT_EQ(malformed.front(), std::byte{'x'});
 }
 
 }  // namespace
