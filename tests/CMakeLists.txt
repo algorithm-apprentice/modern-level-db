@@ -26,6 +26,7 @@ add_executable(
   unit/base/crc32c_test.cc
   unit/base/hash_test.cc
   unit/base/result_test.cc
+  unit/cache/sharded_lru_cache_test.cc
   unit/format/internal_key_test.cc
   unit/format/wal_format_test.cc
   unit/memory/arena_test.cc

@@ -14,7 +14,8 @@ arena. The platform foundation also provides a steady clock and a serial,
 stop-aware background executor, portable file interfaces, and the first
 Linux/macOS POSIX filesystem backend. The format layer now includes the
 LevelDB-compatible internal-key trailer and WAL physical-record framing.
-Database operations, WAL/SSTable I/O, and compaction are not yet implemented.
+The cache layer provides a typed sharded LRU with RAII pin handles. Database
+operations, WAL/SSTable I/O, and compaction are not yet implemented.
 
 ## Goals
 
