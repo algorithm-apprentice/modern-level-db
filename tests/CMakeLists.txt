@@ -28,9 +28,17 @@ add_executable(
   unit/base/result_test.cc
   unit/memory/arena_test.cc
   unit/platform/clock_test.cc
+  unit/platform/file_system_test.cc
   unit/platform/serial_executor_test.cc
   unit/toolchain_test.cc
 )
+if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(
+    modern_leveldb_unit_tests
+    PRIVATE
+      unit/platform/posix_file_system_test.cc
+  )
+endif()
 target_include_directories(modern_leveldb_unit_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
   modern_leveldb_unit_tests

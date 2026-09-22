@@ -55,7 +55,7 @@ flowchart TD
 | `implement-checksum-hash` | CRC32C calculation/extension/masking and LevelDB-compatible seeded hash | `implement-coding` |
 | `implement-arena` | Non-movable monotonic arena with small-block allocation, max-alignment, and reserved-byte accounting | `implement-bytes` |
 | `implement-platform-runtime` | Steady clock, stop-aware sleep, and serial RAII background executor | `implement-error-result` |
-| `implement-platform-fs` | Filesystem and file interfaces | `implement-bytes`, `implement-error-result` |
+| `implement-platform-fs` | Minimal file interfaces and Linux/macOS POSIX backend with explicit durability primitives | `implement-bytes`, `implement-error-result` |
 | `implement-internal-key` | Internal-key format and ordering | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-comparator` |
 | `implement-wal-format` | WAL physical-record format | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-checksum-hash` |
 | `implement-cache` | Sharded RAII block cache | `implement-bytes`, `implement-error-result`, `implement-checksum-hash` |
