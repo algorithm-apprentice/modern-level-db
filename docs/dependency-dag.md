@@ -57,7 +57,7 @@ flowchart TD
 | `implement-platform-runtime` | Steady clock, stop-aware sleep, and serial RAII background executor | `implement-error-result` |
 | `implement-platform-fs` | Minimal file interfaces and Linux/macOS POSIX backend with explicit durability primitives | `implement-bytes`, `implement-error-result` |
 | `implement-internal-key` | LevelDB-compatible immutable internal keys, parsing, and ordering | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-comparator` |
-| `implement-wal-format` | WAL physical-record format | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-checksum-hash` |
+| `implement-wal-format` | LevelDB-compatible pure WAL fragmentation and physical-record decoding | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-checksum-hash` |
 | `implement-cache` | Sharded RAII block cache | `implement-bytes`, `implement-error-result`, `implement-checksum-hash` |
 | `implement-skiplist` | Concurrent-read skip list | `implement-arena` |
 | `implement-write-batch` | Atomic batch format | `implement-internal-key`, `implement-coding`, `implement-error-result` |

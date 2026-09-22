@@ -27,6 +27,7 @@ add_executable(
   unit/base/hash_test.cc
   unit/base/result_test.cc
   unit/format/internal_key_test.cc
+  unit/format/wal_format_test.cc
   unit/memory/arena_test.cc
   unit/platform/clock_test.cc
   unit/platform/file_system_test.cc
