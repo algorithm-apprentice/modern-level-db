@@ -12,8 +12,9 @@ The implemented foundation covers byte views, typed results, comparison,
 binary coding, CRC32C, LevelDB-compatible seeded hashing, and a monotonic
 arena. The platform foundation also provides a steady clock and a serial,
 stop-aware background executor, portable file interfaces, and the first
-Linux/macOS POSIX filesystem backend. Database operations, WAL/SSTable
-persistence, and compaction are not yet implemented.
+Linux/macOS POSIX filesystem backend. The format layer now includes the
+LevelDB-compatible internal-key trailer and ordering. Database operations,
+WAL/SSTable persistence, and compaction are not yet implemented.
 
 ## Goals
 
@@ -21,8 +22,8 @@ persistence, and compaction are not yet implemented.
   atomic write batches, snapshots, and ordered iteration.
 - Use modern C++ ownership and error handling without exceptions in normal
   storage-engine control flow.
-- Preserve the LevelDB v1 WAL, MANIFEST, and SSTable formats during the first
-  implementation phase.
+- Preserve the original LevelDB WAL, MANIFEST, and SSTable formats during the
+  first implementation phase.
 - Make crash consistency, fault injection, fuzzing, and differential testing
   first-class engineering constraints.
 - Keep the implementation substantially smaller and more approachable than a
