@@ -13,10 +13,11 @@ binary coding, CRC32C, LevelDB-compatible seeded hashing, and a monotonic
 arena. The platform foundation also provides a steady clock and a serial,
 stop-aware background executor, portable file interfaces, and the first
 Linux/macOS POSIX filesystem backend. The format layer now includes the
-LevelDB-compatible internal-key trailer and WAL physical-record framing.
-The cache layer provides a typed sharded LRU with RAII pin handles. Database
-memory structures now include an arena-backed, single-writer concurrent-reader
-skip list. Database operations, WAL/SSTable I/O, and compaction are not yet
+LevelDB-compatible internal-key trailer, WAL physical-record framing, and
+Put/Delete write-batch payload with a validated zero-copy reader. The cache
+layer provides a typed sharded LRU with RAII pin handles. Database memory
+structures now include an arena-backed, single-writer concurrent-reader skip
+list. Database operations, WAL/SSTable I/O, and compaction are not yet
 implemented.
 
 ## Goals

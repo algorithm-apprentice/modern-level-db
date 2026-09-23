@@ -29,6 +29,7 @@ add_executable(
   unit/cache/sharded_lru_cache_test.cc
   unit/format/internal_key_test.cc
   unit/format/wal_format_test.cc
+  unit/format/write_batch_test.cc
   unit/memory/arena_test.cc
   unit/memory/skiplist_test.cc
   unit/platform/clock_test.cc

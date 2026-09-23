@@ -3,12 +3,22 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
 
 namespace modern_leveldb {
+
+void EncodeFixed32(std::span<std::byte, sizeof(std::uint32_t)> output,
+                   std::uint32_t value) noexcept;
+void EncodeFixed64(std::span<std::byte, sizeof(std::uint64_t)> output,
+                   std::uint64_t value) noexcept;
+[[nodiscard]] std::uint32_t DecodeFixed32(
+    std::span<const std::byte, sizeof(std::uint32_t)> input) noexcept;
+[[nodiscard]] std::uint64_t DecodeFixed64(
+    std::span<const std::byte, sizeof(std::uint64_t)> input) noexcept;
 
 void AppendFixed32(std::vector<std::byte>& output, std::uint32_t value);
 void AppendFixed64(std::vector<std::byte>& output, std::uint64_t value);
