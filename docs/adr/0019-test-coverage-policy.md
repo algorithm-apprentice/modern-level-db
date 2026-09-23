@@ -73,14 +73,17 @@ A repository-root `gcovr.cfg` defines the report for CI and local runs:
 
 ### CI gate
 
-A `coverage` job runs on Ubuntu with the default GCC for every push and pull
-request:
+A `coverage` job runs for every push and pull request on the fixed
+`ubuntu-24.04` image with GCC 13. The compiler is pinned because different GCC
+versions emit different branch graphs, and exact branch counts appear in
+exclusion markers.
 
 1. Check out full history so the merge base with `main` is available.
 2. Install pinned `gcovr==8.6` and `diff-cover==10.6.0`.
-3. Configure, build, and test the `coverage` preset.
-4. Print the gcovr summary and upload the Cobertura XML and HTML reports as an
-   artifact.
+3. Configure, build, and test the `coverage` preset with `g++-13`.
+4. Print the gcovr report with `gcov-13` and upload the Cobertura XML and HTML
+   reports as an artifact. Any error logged by gcovr, such as an exclusion
+   marker whose branch counts no longer match, fails the job.
 5. Run `diff-cover` against `origin/main` with branch coverage and a required
    score of 100.
 
@@ -88,6 +91,11 @@ Every added or modified coverable line in `src/` or `include/` must execute,
 and every branch on those lines must be taken, unless explicitly excluded.
 Code that is not compiled by the Linux coverage build does not appear in the
 report and is outside the gate. Deleted lines do not count.
+
+The gate compares a change with its merge base on `main`, so it applies to
+pull requests and feature-branch pushes. On `main` itself the comparison is
+empty; changes reach `main` only through pull requests that already passed the
+gate.
 
 Overall line and branch coverage are reported but not gated, so legacy gaps do
 not block unrelated pull requests. Coverage rises as code is touched.
@@ -112,12 +120,18 @@ needs a fault-injection double, a crafted input, or a slower test.
 Every marker carries its justification in the same comment:
 
 ```cpp
-switch (type) {  // GCOVR_EXCL_BR_LINE: exhaustive switch over decoded types
+switch (type) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/5 implicit default of an exhaustive switch
 ```
 
 - `GCOVR_EXCL_LINE: <reason>` excludes one line.
-- `GCOVR_EXCL_BR_LINE: <reason>` excludes only the branches of one line.
 - `GCOVR_EXCL_START: <reason>` and `GCOVR_EXCL_STOP` bracket a region.
+- `GCOVR_EXCL_BR_WITHOUT_HIT: <unhit>/<total> <reason>` excludes the branches
+  of one line only when exactly `<unhit>` of `<total>` branches were not
+  taken. Any other count is a gcovr error that fails CI, so a reachable branch
+  that stops being covered cannot hide behind the marker.
+
+Do not use `GCOVR_EXCL_BR_LINE`: it removes every branch of the line,
+including reachable ones.
 
 Reviewers evaluate every new marker like production code.
 
@@ -126,6 +140,7 @@ Reviewers evaluate every new marker like production code.
 ```bash
 cmake --preset coverage
 cmake --build --preset coverage
+find build/coverage -name '*.gcda' -delete
 ctest --preset coverage
 mkdir -p build/coverage/html
 gcovr --txt-summary --cobertura build/coverage/coverage.xml \
@@ -134,9 +149,11 @@ diff-cover build/coverage/coverage.xml --compare-branch=origin/main \
   --branch-coverage --fail-under=100
 ```
 
-With Apple Clang on macOS, add `--gcov-executable "xcrun llvm-cov gcov"` to
-the `gcovr` command. Clang and GCC can report slightly different branches;
-the GCC report in CI is authoritative.
+Deleting `.gcda` files first prevents counters from earlier runs from being
+merged into the report. With Apple Clang on macOS, add
+`--gcov-executable "xcrun llvm-cov gcov"` to the `gcovr` command. Clang and
+GCC can report slightly different branches; the GCC report in CI is
+authoritative.
 
 ## Consequences
 

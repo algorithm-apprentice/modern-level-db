@@ -94,7 +94,7 @@ tests that inspect private identifier spellings.
 Coverage exclusions follow [ADR-0019](adr/0019-test-coverage-policy.md):
 prefer deleting unreachable code, and give every `GCOVR_EXCL_*` marker its
 justification in the same comment, for example
-`// GCOVR_EXCL_BR_LINE: exhaustive switch over decoded types`.
+`// GCOVR_EXCL_BR_WITHOUT_HIT: 1/5 implicit default of an exhaustive switch`.
 
 Keep style changes scoped to the requested change. Update this guide before
 introducing a different convention, and retain the sequential pull-request

@@ -39,7 +39,9 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      CXX: g++-13
 
     steps:
       - uses: actions/checkout@v4
@@ -63,11 +65,17 @@ jobs:
         run: ctest --preset coverage
 
       - name: Report coverage
+        shell: bash
         run: |
           mkdir -p build/coverage/html
-          gcovr --txt --txt-summary \
+          gcovr --gcov-executable gcov-13 --txt --txt-summary \
             --cobertura build/coverage/coverage.xml \
-            --html-details build/coverage/html/index.html
+            --html-details build/coverage/html/index.html 2>&1 \
+            | tee build/coverage/gcovr.log
+          if grep -q '(ERROR)' build/coverage/gcovr.log; then
+            echo "::error::gcovr reported errors; check exclusion markers"
+            exit 1
+          fi
 
       - name: Check changed-code coverage
         run: >
