@@ -38,6 +38,8 @@ add_executable(
   unit/platform/clock_test.cc
   unit/platform/file_system_test.cc
   unit/platform/serial_executor_test.cc
+  unit/table/block_format_test.cc
+  unit/table/block_test.cc
   unit/toolchain_test.cc
   unit/wal/wal_io_test.cc
 )
