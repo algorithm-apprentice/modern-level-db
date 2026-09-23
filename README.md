@@ -20,8 +20,9 @@ structures now include an arena-backed, single-writer concurrent-reader skip
 list and a packed MemTable with snapshot lookup and ordered iteration. An owned
 WAL stream layer provides flushed appends, explicit sync, logical-record
 reassembly, and typed corruption events. The metadata layer names and
-classifies LevelDB-compatible database files and validates `CURRENT`
-contents. Database orchestration, SSTable I/O, and compaction are not yet
+classifies LevelDB-compatible database files, validates `CURRENT` contents,
+and encodes and strictly decodes LevelDB-compatible MANIFEST version edits.
+Database orchestration, SSTable I/O, and compaction are not yet
 implemented.
 
 ## Goals
