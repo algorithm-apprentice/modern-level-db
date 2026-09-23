@@ -34,6 +34,7 @@ add_executable(
   unit/memory/memtable_test.cc
   unit/memory/skiplist_test.cc
   unit/metadata/filenames_test.cc
+  unit/metadata/version_edit_test.cc
   unit/platform/clock_test.cc
   unit/platform/file_system_test.cc
   unit/platform/serial_executor_test.cc

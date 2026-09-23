@@ -64,7 +64,7 @@ flowchart TD
 | `implement-memtable` | Packed arena-backed, single-writer/concurrent-reader MemTable with snapshot lookup and iteration | `implement-internal-key`, `implement-coding`, `implement-arena`, `implement-skiplist` |
 | `implement-wal-io` | Owned WAL stream reader/writer with logical reassembly, corruption events, flush, sync, and close | `implement-platform-fs`, `implement-wal-format` |
 | `implement-filenames` | Pure database file-name generation and parsing, and validated `CURRENT` contents | `implement-error-result` |
-| `implement-version-edit` | MANIFEST edit format | `implement-internal-key`, `implement-coding`, `implement-error-result` |
+| `implement-version-edit` | LevelDB-compatible MANIFEST version-edit encoding and validated decoding | `implement-internal-key`, `implement-coding`, `implement-error-result` |
 | `implement-block-format` | Data blocks, handles, footer, trailers | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-checksum-hash`, `implement-comparator` |
 | `implement-filter` | Bloom and filter blocks | `implement-bytes`, `implement-checksum-hash` |
 | `implement-sstable-writer` | SSTable construction | `implement-platform-fs`, `implement-block-format`, `implement-filter` |
