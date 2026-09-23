@@ -37,6 +37,9 @@ add_library(
     src/metadata/version_edit.cc
     src/platform/clock.cc
     src/platform/serial_executor.cc
+    src/table/block.cc
+    src/table/block_builder.cc
+    src/table/block_format.cc
     src/wal/wal_io.cc
 )
 if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")

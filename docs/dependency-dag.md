@@ -65,7 +65,7 @@ flowchart TD
 | `implement-wal-io` | Owned WAL stream reader/writer with logical reassembly, corruption events, flush, sync, and close | `implement-platform-fs`, `implement-wal-format` |
 | `implement-filenames` | Pure database file-name generation and parsing, and validated `CURRENT` contents | `implement-error-result` |
 | `implement-version-edit` | LevelDB-compatible MANIFEST version-edit encoding and validated decoding | `implement-internal-key`, `implement-coding`, `implement-error-result` |
-| `implement-block-format` | Data blocks, handles, footer, trailers | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-checksum-hash`, `implement-comparator` |
+| `implement-block-format` | LevelDB-compatible sorted blocks, block handles, footer, and checksummed trailers | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-checksum-hash`, `implement-comparator` |
 | `implement-filter` | Bloom and filter blocks | `implement-bytes`, `implement-checksum-hash` |
 | `implement-sstable-writer` | SSTable construction | `implement-platform-fs`, `implement-block-format`, `implement-filter` |
 | `implement-sstable-reader` | SSTable reads and iteration | `implement-platform-fs`, `implement-block-format`, `implement-filter`, `implement-cache` |
@@ -78,7 +78,8 @@ flowchart TD
 | `implement-compaction` | Leveled compaction | `implement-sstable-reader`, `implement-sstable-writer`, `implement-version-set` |
 | `implement-db-engine` | Integrated DB lifecycle | `implement-recovery`, `implement-read-path`, `implement-write-path`, `implement-flush`, `implement-compaction`, `implement-platform-runtime` |
 | `implement-public-api` | Public RAII C++ API | `implement-db-engine` |
-| `build-compatibility-harness` | Model, golden, differential, crash, and fuzz tests | `implement-public-api` |
+| `implement-compression` | Snappy and Zstd SSTable block compression | `implement-sstable-writer`, `implement-sstable-reader` |
+| `build-compatibility-harness` | Model, golden, differential, crash, and fuzz tests | `implement-public-api`, `implement-compression` |
 | `harden-engine` | Sanitizer, crash, fuzz, and benchmark gates | `build-compatibility-harness` |
 
 Each production-code node includes its own unit and applicable format/fault
@@ -122,8 +123,9 @@ canonical order to keep development sequential and reviewable:
 30. `implement-compaction`
 31. `implement-db-engine`
 32. `implement-public-api`
-33. `build-compatibility-harness`
-34. `harden-engine`
+33. `implement-compression`
+34. `build-compatibility-harness`
+35. `harden-engine`
 
 ## Completion rule
 
