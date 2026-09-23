@@ -51,7 +51,10 @@ storage, per-test attribution, MC/DC coverage, or mutation testing.
 
 Add a `coverage` CMake preset: a Debug build with `--coverage` for compilation
 and linking, warnings as errors, and only the `unit` test label. The preset
-sets the instrumentation; no CMake option or project code is added.
+also passes `-fprofile-update=atomic`: concurrent unit tests update counters
+from several threads, and non-atomic counters produce inconsistent, even
+negative, gcov branch counts ([GCC bug 68080](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=68080)).
+The preset sets the instrumentation; no CMake option or project code is added.
 
 ### Report configuration
 

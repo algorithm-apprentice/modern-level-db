@@ -36,7 +36,7 @@
       "binaryDir": "${sourceDir}/build/coverage",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_CXX_FLAGS": "--coverage",
+        "CMAKE_CXX_FLAGS": "--coverage -fprofile-update=atomic",
         "CMAKE_EXE_LINKER_FLAGS": "--coverage",
         "MODERN_LEVELDB_BUILD_TESTS": "ON",
         "MODERN_LEVELDB_WARNINGS_AS_ERRORS": "ON"
