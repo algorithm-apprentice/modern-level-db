@@ -21,8 +21,6 @@ inline constexpr std::uint64_t TableMagicNumber = 0xdb4775248b80fb57ULL;
 struct BlockHandle {
   std::uint64_t offset;
   std::uint64_t size;
-
-  friend bool operator==(const BlockHandle&, const BlockHandle&) = default;
 };
 
 void AppendBlockHandle(std::vector<std::byte>& output, BlockHandle handle);
@@ -32,8 +30,6 @@ void AppendBlockHandle(std::vector<std::byte>& output, BlockHandle handle);
 struct Footer {
   BlockHandle metaindex;
   BlockHandle index;
-
-  friend bool operator==(const Footer&, const Footer&) = default;
 };
 
 [[nodiscard]] std::array<std::byte, FooterSize> EncodeFooter(const Footer& footer);

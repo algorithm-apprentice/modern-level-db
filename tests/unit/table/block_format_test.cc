@@ -55,6 +55,11 @@ std::vector<std::byte> StoredBlock(ByteView contents) {
   return stored;
 }
 
+void ExpectHandle(const BlockHandle& actual, const BlockHandle& expected) {
+  EXPECT_EQ(actual.offset, expected.offset);
+  EXPECT_EQ(actual.size, expected.size);
+}
+
 template <typename T>
 void ExpectError(const Result<T>& result, ErrorCode code) {
   ASSERT_FALSE(result.has_value());
@@ -87,7 +92,7 @@ TEST(BlockHandleTest, RoundTripsVarintBoundaries) {
       ByteView input = encoded;
       const Result<BlockHandle> decoded = ConsumeBlockHandle(input);
       ASSERT_TRUE(decoded.has_value());
-      EXPECT_EQ(*decoded, handle);
+      ExpectHandle(*decoded, handle);
       EXPECT_TRUE(input.empty());
     }
   }
@@ -101,7 +106,7 @@ TEST(BlockHandleTest, LeavesFollowingBytesForTheCaller) {
   const Result<BlockHandle> decoded = ConsumeBlockHandle(input);
 
   ASSERT_TRUE(decoded.has_value());
-  EXPECT_EQ(*decoded, (BlockHandle{.offset = 7, .size = 9}));
+  ExpectHandle(*decoded, {.offset = 7, .size = 9});
   EXPECT_EQ(Materialize(input), Bytes({0x7f}));
 }
 
@@ -139,7 +144,8 @@ TEST(FooterTest, RoundTripsMaximumHandles) {
   const Result<Footer> decoded = DecodeFooter(encoded);
 
   ASSERT_TRUE(decoded.has_value());
-  EXPECT_EQ(*decoded, footer);
+  ExpectHandle(decoded->metaindex, footer.metaindex);
+  ExpectHandle(decoded->index, footer.index);
 }
 
 TEST(FooterTest, RejectsBadMagicNumbers) {
