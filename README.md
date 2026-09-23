@@ -19,8 +19,10 @@ layer provides a typed sharded LRU with RAII pin handles. Database memory
 structures now include an arena-backed, single-writer concurrent-reader skip
 list and a packed MemTable with snapshot lookup and ordered iteration. An owned
 WAL stream layer provides flushed appends, explicit sync, logical-record
-reassembly, and typed corruption events. Database orchestration, SSTable I/O,
-and compaction are not yet implemented.
+reassembly, and typed corruption events. The metadata layer names and
+classifies LevelDB-compatible database files and validates `CURRENT`
+contents. Database orchestration, SSTable I/O, and compaction are not yet
+implemented.
 
 ## Goals
 

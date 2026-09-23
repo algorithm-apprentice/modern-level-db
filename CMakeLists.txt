@@ -33,6 +33,7 @@ add_library(
     src/format/write_batch.cc
     src/memory/arena.cc
     src/memory/memtable.cc
+    src/metadata/filenames.cc
     src/platform/clock.cc
     src/platform/serial_executor.cc
     src/wal/wal_io.cc
