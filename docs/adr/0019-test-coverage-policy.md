@@ -65,6 +65,11 @@ A repository-root `gcovr.cfg` defines the report for CI and local runs:
 - Honor only `GCOVR_`-prefixed exclusion markers.
 - Remove compiler-generated exception branches and branches on lines without
   source code.
+- Remove unexecuted lines that contain only braces or `else`. GCC and Clang
+  attribute the exception cleanup of named locals to a function's closing
+  brace, which therefore executes only when an exception propagates. Such
+  lines carry no statements, and an unexecuted block still reports its body
+  lines as uncovered.
 - Remove the branches of lines that start with `assert(`. A failing assertion
   calls `abort()`, which terminates before gcov writes its counters, so not
   even a death test can record that branch. The asserted expression still
