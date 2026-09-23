@@ -39,8 +39,8 @@ orchestration.
 | Compatibility/fault tests | Inject short reads, I/O failures, corruption, and truncation |
 
 No current caller requires async group sync, WAL recycling, compression,
-log-number headers, direct I/O, preallocation, tailing a growing file, or
-concurrent writer calls.
+log-number headers, direct I/O, preallocation, tailing a growing file,
+concurrent writer calls, or reading from a nonzero initial offset.
 
 ## Prior art and adopted decisions
 
@@ -54,7 +54,6 @@ Adopt:
 - Mandatory checksum verification.
 - Benign treatment of a truncated final header/payload and an incomplete final
   fragmented record.
-- Initial-offset seeking that skips a logical record already in progress.
 - Silent compatibility with the historical empty `First` fragment at an exact
   seven-byte block boundary.
 - Corruption isolation that never joins fragments across a bad physical record.
@@ -68,6 +67,12 @@ Change:
 - Flush once after the complete logical record rather than after every physical
   fragment. This preserves the WAL-before-MemTable boundary while avoiding
   redundant flush calls.
+
+Reject:
+
+- Initial-offset seeking and resynchronization. Every LevelDB production
+  reader (DB recovery, MANIFEST recovery, repair, and dump) starts at offset
+  zero; only LevelDB's log tests use a nonzero offset.
 
 ### RocksDB
 
@@ -136,13 +141,9 @@ Allocation failure while fragmenting occurs before I/O and does not poison the
 writer. The owned file's destructor remains the best-effort fallback when
 explicit `Close` is omitted.
 
-### Reader options and events
+### Reader events
 
 ```cpp
-struct WalReaderOptions {
-  std::uint64_t initial_offset = 0;
-};
-
 struct WalLogicalRecord {
   ByteView data;
   std::uint64_t offset;
@@ -159,9 +160,7 @@ using WalReadResult = Result<std::optional<WalReadEvent>>;
 
 class WalReader final {
  public:
-  explicit WalReader(
-      std::unique_ptr<SequentialFile> file,
-      WalReaderOptions options = {});
+  explicit WalReader(std::unique_ptr<SequentialFile> file);
 
   WalReadResult ReadNext();
 };
@@ -169,7 +168,7 @@ class WalReader final {
 
 The constructor takes sole ownership. A null handle creates a terminal reader
 whose calls return `InvalidArgument`; it never dereferences null. WalReader is
-non-copyable and non-movable.
+non-copyable and non-movable. Reading always starts at file offset zero.
 
 `ReadNext()` returns:
 
@@ -177,7 +176,7 @@ non-copyable and non-movable.
 - `WalCorruption` for one recoverable corruption event. The next call resumes
   from the reader's already-updated stream position.
 - `nullopt` at EOF. EOF is idempotent.
-- `unexpected(Error)` for a file `Read`/`Skip` failure or offset overflow. I/O
+- `unexpected(Error)` for a file `Read` failure or an oversized read count. I/O
   failure is terminal and later calls return the same error.
 
 The record view borrows reader-owned block or scratch storage and remains valid
@@ -195,8 +194,8 @@ repeats reads into the remaining block space until:
 - A read fails.
 
 Returned byte counts larger than the supplied output view are treated as `Io`
-interface violations. Absolute-offset arithmetic is checked for uint64
-overflow.
+interface violations. Byte offsets are bounded by the file length and need no
+overflow handling.
 
 Fewer than seven remaining bytes in a non-final block are zero-padding/trailer
 and are discarded silently. At final EOF, a short header is also ignored as a
@@ -234,7 +233,7 @@ The reader maintains at most one partial logical record.
 - `Last` completes and returns the scratch-backed record.
 - `Middle` or `Last` without `First` emits corruption.
 - A non-empty partial record interrupted by `Full` emits corruption first and
-  returns that `Full` record on the next call without rereading bytes.
+  returns that `Full` record on the next call without additional file I/O.
 - A non-empty partial record interrupted by another `First` emits corruption
   while retaining the new `First` as the beginning of the next record.
 - An empty `First` followed by `Full` or `First` is silently replaced to
@@ -243,24 +242,24 @@ The reader maintains at most one partial logical record.
   records can never be joined.
 - EOF while a record is incomplete silently discards the tail.
 
-### Initial offset
-
-The reader skips complete blocks before `initial_offset`. Matching legacy
-LevelDB, it starts at the next block when the in-block offset is greater than
-`WalBlockSize - 6`; at exactly `WalBlockSize - 6`, it still scans the current
-block and filters physical starts against `initial_offset`.
-
-Physical fragments whose starting offset is below `initial_offset` are
-discarded. Decode failures whose affected physical start is below
-`initial_offset` are also consumed without a corruption event, partial state
-remains clear, and resynchronization continues. While resynchronizing,
-`Middle` fragments are skipped and the first `Last` ends resynchronization; the
-next `Full` or `First` begins eligible records. The first returned record
-therefore starts at or after `initial_offset`; a record already in progress at
-that offset is not returned or reported as corrupt.
-
 The `offset` in every `WalLogicalRecord` is the physical offset of its `Full`
 or `First` fragment.
+
+### Reader structure
+
+The reader has two private stages, mirroring LevelDB's
+`ReadPhysicalRecord`/`ReadRecord` division:
+
+- A physical block scanner owns block refill, trailers, crash-truncated tails,
+  decoder recovery, and zero markers. It returns one physical fragment, one
+  physical corruption, or EOF.
+- A logical assembler owns fragment state and conversion of abandoned partial
+  records into corruption events.
+
+When a `Full` or `First` fragment interrupts a non-empty partial record, the
+assembler emits the corruption event and leaves that fragment unconsumed in the
+current block. The next call decodes it again from memory, so no separate
+pending-record state is required.
 
 ### Threading
 
@@ -277,6 +276,7 @@ through another owner.
 - Applying `WriteBatchReader` records.
 - MANIFEST/version replay semantics.
 - Tailing files that may grow after EOF.
+- Initial-offset seeking and resynchronization.
 - Concurrent writer calls, asynchronous sync, or group-commit queues.
 - Compressed, recyclable, log-number, and sync-offset record types.
 - Metrics, logging callbacks, or general event-subscriber frameworks.
@@ -295,10 +295,10 @@ Unit tests use in-memory file doubles and cover:
 - Unknown types, checksum mismatch, bad lengths, zero markers, unexpected
   fragment types, interrupted fragmented records, and corruption isolation.
 - Benign truncated final headers/payloads and missing final fragments.
-- Initial offsets at record starts, inside records, in block trailers, at EOF,
-  and past EOF.
 - Record-view lifetime until the next read.
-- Read/skip I/O errors and terminal reader failure.
+- Read I/O errors, oversized read counts, and terminal reader failure.
+- Every coverable line and branch of the WAL stream implementation, measured
+  with a local coverage build.
 
 POSIX integration writes, syncs, closes, reopens, and reads an actual WAL file.
 A session-only differential helper compares writer bytes, logical records,

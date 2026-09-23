@@ -44,10 +44,6 @@ class WalWriter final {
   bool closed_ = false;
 };
 
-struct WalReaderOptions {
-  std::uint64_t initial_offset = 0;
-};
-
 struct WalLogicalRecord {
   ByteView data;
   std::uint64_t offset;
@@ -64,8 +60,7 @@ using WalReadResult = Result<std::optional<WalReadEvent>>;
 
 class WalReader final {
  public:
-  explicit WalReader(std::unique_ptr<SequentialFile> file,
-                     WalReaderOptions options = {});
+  explicit WalReader(std::unique_ptr<SequentialFile> file);
 
   WalReader(const WalReader&) = delete;
   WalReader& operator=(const WalReader&) = delete;
@@ -76,30 +71,31 @@ class WalReader final {
   [[nodiscard]] WalReadResult ReadNext();
 
  private:
-  [[nodiscard]] Status Initialize();
+  struct PhysicalFragment {
+    WalRecordType type;
+    ByteView payload;
+    std::uint64_t offset;
+    std::size_t block_position;
+  };
+  using PhysicalRead = std::variant<PhysicalFragment, WalCorruption>;
+
+  [[nodiscard]] Result<std::optional<PhysicalRead>> ReadPhysical();
   [[nodiscard]] Result<bool> FillBlock();
-  [[nodiscard]] WalReadResult ReturnTerminal(Error error);
-  [[nodiscard]] WalReadResult ReturnRecord(ByteView data,
-                                           std::uint64_t offset);
-  [[nodiscard]] WalReadResult ReturnCorruption(
-      Error error, std::uint64_t dropped_bytes, std::uint64_t offset);
+  [[nodiscard]] bool HasPartialPayload() const noexcept {
+    return in_fragmented_record_ && !scratch_.empty();
+  }
+  [[nodiscard]] WalReadResult AbandonPartial(std::string_view reason);
   void ClearPartial() noexcept;
 
   std::unique_ptr<SequentialFile> file_;
-  const std::uint64_t initial_offset_;
   std::array<std::byte, WalBlockSize> block_{};
   std::size_t block_size_ = 0;
   std::size_t block_position_ = 0;
   std::uint64_t block_start_offset_ = 0;
-  std::uint64_t next_block_offset_ = 0;
   std::vector<std::byte> scratch_;
-  std::optional<WalLogicalRecord> pending_record_;
   std::optional<Error> terminal_error_;
   std::uint64_t partial_record_offset_ = 0;
-  bool initialized_ = false;
   bool eof_seen_ = false;
-  bool exhausted_ = false;
-  bool resyncing_;
   bool in_fragmented_record_ = false;
 };
 

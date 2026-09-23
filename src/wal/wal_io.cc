@@ -1,10 +1,8 @@
 #include "wal/wal_io.h"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -21,28 +19,13 @@
 namespace modern_leveldb {
 namespace {
 
-constexpr std::uint64_t WalBlockSize64 = WalBlockSize;
-
-std::uint64_t SaturatingSize(std::size_t value) noexcept {
-  if constexpr (sizeof(std::size_t) > sizeof(std::uint64_t)) {
-    if (value > std::numeric_limits<std::uint64_t>::max()) {
-      return std::numeric_limits<std::uint64_t>::max();
-    }
-  }
-  return static_cast<std::uint64_t>(value);
-}
-
-std::uint64_t SaturatingAdd(std::uint64_t left,
-                            std::uint64_t right) noexcept {
-  if (right > std::numeric_limits<std::uint64_t>::max() - left) {
-    return std::numeric_limits<std::uint64_t>::max();
-  }
-  return left + right;
-}
-
 Error ClosedError(std::string_view operation) {
   return Error::InvalidArgument(std::string(operation) +
                                 " called after WAL writer close");
+}
+
+WalReadResult Event(WalReadEvent event) {
+  return std::optional<WalReadEvent>(std::move(event));
 }
 
 }  // namespace
@@ -141,24 +124,17 @@ Status WalWriter::CheckUsable(std::string_view operation) const {
 }
 
 Status WalWriter::RememberError(Status status) {
-  if (!status.has_value() && !first_error_.has_value()) {
+  if (!status.has_value()) {
     first_error_ = status.error();
   }
-  if (first_error_.has_value()) {
-    return std::unexpected(*first_error_);
-  }
-  return {};
+  return status;
 }
 
 Status WalWriter::Append(ByteView data) {
   return RememberError(file_->Append(data));
 }
 
-WalReader::WalReader(std::unique_ptr<SequentialFile> file,
-                     WalReaderOptions options)
-    : file_(std::move(file)),
-      initial_offset_(options.initial_offset),
-      resyncing_(options.initial_offset > 0) {
+WalReader::WalReader(std::unique_ptr<SequentialFile> file) : file_(std::move(file)) {
   if (file_ == nullptr) {
     terminal_error_ = Error::InvalidArgument("WAL reader requires a file");
   }
@@ -168,208 +144,128 @@ WalReadResult WalReader::ReadNext() {
   if (terminal_error_.has_value()) {
     return std::unexpected(*terminal_error_);
   }
-  if (pending_record_.has_value()) {
-    const WalLogicalRecord record = *pending_record_;
-    pending_record_.reset();
-    return ReturnRecord(record.data, record.offset);
-  }
-  if (exhausted_) {
-    return std::optional<WalReadEvent>{};
-  }
-  if (!initialized_) {
-    Status initialized = Initialize();
-    if (!initialized.has_value()) {
-      return ReturnTerminal(initialized.error());
-    }
-  }
 
   while (true) {
-    if (block_position_ == block_size_) {
-      Result<bool> filled = FillBlock();
-      if (!filled.has_value()) {
-        return ReturnTerminal(filled.error());
-      }
-      if (!*filled) {
-        ClearPartial();
-        exhausted_ = true;
-        return std::optional<WalReadEvent>{};
-      }
+    Result<std::optional<PhysicalRead>> physical = ReadPhysical();
+    if (!physical.has_value()) {
+      terminal_error_ = std::move(physical.error());
+      return std::unexpected(*terminal_error_);
+    }
+    if (!physical->has_value()) {
+      // An incomplete final record is a crash-truncated tail, not corruption.
+      ClearPartial();
+      return std::optional<WalReadEvent>{};
     }
 
-    const std::size_t bytes_left = block_size_ - block_position_;
-    if (bytes_left < WalHeaderSize) {
-      block_position_ = block_size_;
-      if (eof_seen_) {
-        ClearPartial();
-        exhausted_ = true;
-        return std::optional<WalReadEvent>{};
-      }
-      continue;
-    }
-
-    const std::uint64_t physical_offset =
-        block_start_offset_ + static_cast<std::uint64_t>(block_position_);
-    const ByteView unread =
-        ByteView(block_).subspan(block_position_, bytes_left);
-    WalDecodeResult decoded = DecodeWalFragment(unread);
-    if (!decoded.has_value()) {
-      const WalDecodeError& decode_error = decoded.error();
-      if (eof_seen_ &&
-          (decode_error.failure == WalDecodeFailure::TruncatedPayload ||
-           decode_error.failure == WalDecodeFailure::PayloadTooLarge)) {
-        block_position_ = block_size_;
-        ClearPartial();
-        exhausted_ = true;
-        return std::optional<WalReadEvent>{};
-      }
-
-      std::size_t discarded = 0;
-      if (decode_error.recovery == WalRecoveryAction::SkipPhysicalRecord) {
-        discarded = decode_error.encoded_size;
-        block_position_ += discarded;
-      } else {
-        discarded = bytes_left;
-        block_position_ = block_size_;
-      }
-
-      if (physical_offset < initial_offset_) {
-        ClearPartial();
-        continue;
-      }
-
-      std::uint64_t dropped = SaturatingSize(discarded);
-      const std::uint64_t error_offset =
-          in_fragmented_record_ ? partial_record_offset_ : physical_offset;
+    if (auto* corruption = std::get_if<WalCorruption>(&**physical)) {
       if (in_fragmented_record_) {
-        dropped =
-            SaturatingAdd(dropped, SaturatingSize(scratch_.size()));
-      }
-      Error error = decode_error.error;
-      ClearPartial();
-      return ReturnCorruption(std::move(error), dropped, error_offset);
-    }
-
-    const WalDecodeOutcome& outcome = *decoded;
-    if (outcome.kind == WalDecodeKind::EndOfBlock) {
-      block_position_ = block_size_;
-      if (physical_offset < initial_offset_) {
-        ClearPartial();
-        continue;
-      }
-      if (in_fragmented_record_ && !scratch_.empty()) {
-        const std::uint64_t dropped = SaturatingSize(scratch_.size());
-        const std::uint64_t error_offset = partial_record_offset_;
-        ClearPartial();
-        return ReturnCorruption(
-            Error::Corruption(
-                "WAL fragmented record ended at a zero marker"),
-            dropped, error_offset);
+        corruption->dropped_bytes += scratch_.size();
+        corruption->offset = partial_record_offset_;
       }
       ClearPartial();
-      continue;
+      return Event(std::move(*corruption));
     }
 
-    block_position_ += outcome.encoded_size;
-    if (physical_offset < initial_offset_) {
-      ClearPartial();
-      continue;
-    }
-
-    if (resyncing_) {
-      if (outcome.type == WalRecordType::Middle) {
-        continue;
-      }
-      if (outcome.type == WalRecordType::Last) {
-        resyncing_ = false;
-        continue;
-      }
-      resyncing_ = false;
-    }
-
-    switch (outcome.type) {
-      case WalRecordType::Full:
-        if (in_fragmented_record_ && !scratch_.empty()) {
-          const std::uint64_t dropped = SaturatingSize(scratch_.size());
-          const std::uint64_t error_offset = partial_record_offset_;
-          pending_record_ =
-              WalLogicalRecord{.data = outcome.payload,
-                               .offset = physical_offset};
-          ClearPartial();
-          return ReturnCorruption(
-              Error::Corruption(
-                  "WAL fragmented record was interrupted by a full record"),
-              dropped, error_offset);
+    const PhysicalFragment& fragment = std::get<PhysicalFragment>(**physical);
+    switch (fragment.type) {
+      case WalRecordType::Zero:
+        if (HasPartialPayload()) {
+          return AbandonPartial("WAL fragmented record ended at a zero marker");
         }
         ClearPartial();
-        return ReturnRecord(outcome.payload, physical_offset);
+        continue;
+
+      case WalRecordType::Full:
+        if (HasPartialPayload()) {
+          // Leave this fragment unconsumed so the next call returns it.
+          block_position_ = fragment.block_position;
+          return AbandonPartial("WAL fragmented record was interrupted by a full record");
+        }
+        ClearPartial();
+        return Event(WalLogicalRecord{.data = fragment.payload, .offset = fragment.offset});
 
       case WalRecordType::First:
-        if (in_fragmented_record_ && !scratch_.empty()) {
-          const std::uint64_t dropped = SaturatingSize(scratch_.size());
-          const std::uint64_t error_offset = partial_record_offset_;
-          scratch_.assign(outcome.payload.begin(), outcome.payload.end());
-          partial_record_offset_ = physical_offset;
-          in_fragmented_record_ = true;
-          return ReturnCorruption(
-              Error::Corruption(
-                  "WAL fragmented record was interrupted by a first fragment"),
-              dropped, error_offset);
+        if (HasPartialPayload()) {
+          block_position_ = fragment.block_position;
+          return AbandonPartial("WAL fragmented record was interrupted by a first fragment");
         }
-        scratch_.assign(outcome.payload.begin(), outcome.payload.end());
-        partial_record_offset_ = physical_offset;
+        scratch_.assign(fragment.payload.begin(), fragment.payload.end());
+        partial_record_offset_ = fragment.offset;
         in_fragmented_record_ = true;
-        break;
+        continue;
 
       case WalRecordType::Middle:
-        if (!in_fragmented_record_) {
-          return ReturnCorruption(
-              Error::Corruption(
-                  "WAL middle fragment has no starting fragment"),
-              SaturatingSize(outcome.payload.size()), physical_offset);
-        }
-        scratch_.insert(scratch_.end(), outcome.payload.begin(),
-                        outcome.payload.end());
-        break;
-
       case WalRecordType::Last:
         if (!in_fragmented_record_) {
-          return ReturnCorruption(
-              Error::Corruption(
-                  "WAL last fragment has no starting fragment"),
-              SaturatingSize(outcome.payload.size()), physical_offset);
+          return Event(WalCorruption{
+              .error = Error::Corruption("WAL fragment has no starting fragment"),
+              .dropped_bytes = fragment.payload.size(),
+              .offset = fragment.offset,
+          });
         }
-        scratch_.insert(scratch_.end(), outcome.payload.begin(),
-                        outcome.payload.end());
+        scratch_.insert(scratch_.end(), fragment.payload.begin(), fragment.payload.end());
+        if (fragment.type == WalRecordType::Middle) {
+          continue;
+        }
         in_fragmented_record_ = false;
-        return ReturnRecord(scratch_, partial_record_offset_);
-
-      case WalRecordType::Zero:
-        break;
+        return Event(WalLogicalRecord{.data = scratch_, .offset = partial_record_offset_});
     }
   }
 }
 
-Status WalReader::Initialize() {
-  const std::uint64_t offset_in_block = initial_offset_ % WalBlockSize64;
-  std::uint64_t block_start = initial_offset_ - offset_in_block;
-  if (offset_in_block > WalBlockSize64 - 6U) {
-    if (block_start >
-        std::numeric_limits<std::uint64_t>::max() - WalBlockSize64) {
-      return std::unexpected(
-          Error::InvalidArgument("WAL initial offset overflows block start"));
+Result<std::optional<WalReader::PhysicalRead>> WalReader::ReadPhysical() {
+  while (true) {
+    if (block_position_ == block_size_) {
+      Result<bool> filled = FillBlock();
+      if (!filled.has_value()) {
+        return std::unexpected(filled.error());
+      }
+      if (!*filled) {
+        return std::nullopt;
+      }
     }
-    block_start += WalBlockSize64;
-  }
 
-  if (block_start != 0) {
-    Status skipped = file_->Skip(block_start);
-    if (!skipped.has_value()) {
-      return skipped;
+    const std::size_t position = block_position_;
+    const std::size_t remaining = block_size_ - position;
+    if (remaining < WalHeaderSize) {
+      // Zero trailer of a full block, or a crash-truncated header at EOF.
+      block_position_ = block_size_;
+      continue;
     }
+
+    const std::uint64_t offset = block_start_offset_ + position;
+    WalDecodeResult decoded = DecodeWalFragment(ByteView(block_).subspan(position, remaining));
+    if (!decoded.has_value()) {
+      WalDecodeError& failure = decoded.error();
+      const std::size_t discarded = failure.recovery == WalRecoveryAction::SkipPhysicalRecord
+                                        ? failure.encoded_size
+                                        : remaining;
+      block_position_ += discarded;
+      // A payload extending past the final partial block is a crash-truncated tail.
+      const bool truncated_tail =
+          eof_seen_ && (failure.failure == WalDecodeFailure::TruncatedPayload ||
+                        failure.failure == WalDecodeFailure::PayloadTooLarge);
+      if (truncated_tail) {
+        continue;
+      }
+      return PhysicalRead(WalCorruption{
+          .error = std::move(failure.error),
+          .dropped_bytes = discarded,
+          .offset = offset,
+      });
+    }
+
+    // A zero marker discards the rest of its block.
+    block_position_ = decoded->kind == WalDecodeKind::EndOfBlock
+                          ? block_size_
+                          : position + decoded->encoded_size;
+    return PhysicalRead(PhysicalFragment{
+        .type = decoded->type,
+        .payload = decoded->payload,
+        .offset = offset,
+        .block_position = position,
+    });
   }
-  next_block_offset_ = block_start;
-  initialized_ = true;
-  return {};
 }
 
 Result<bool> WalReader::FillBlock() {
@@ -377,57 +273,37 @@ Result<bool> WalReader::FillBlock() {
     return false;
   }
 
-  block_start_offset_ = next_block_offset_;
+  block_start_offset_ += block_size_;
   block_size_ = 0;
   block_position_ = 0;
 
   while (block_size_ < WalBlockSize) {
-    MutableByteView output =
-        MutableByteView(block_).subspan(block_size_);
+    MutableByteView output = MutableByteView(block_).subspan(block_size_);
     Result<std::size_t> read = file_->Read(output);
     if (!read.has_value()) {
       return std::unexpected(read.error());
     }
     if (*read > output.size()) {
-      return std::unexpected(
-          Error::Io("sequential file returned an oversized WAL read"));
+      return std::unexpected(Error::Io("sequential file returned an oversized WAL read"));
     }
     if (*read == 0) {
       eof_seen_ = true;
       break;
     }
-    if (*read >
-        std::numeric_limits<std::uint64_t>::max() - next_block_offset_) {
-      return std::unexpected(
-          Error::InvalidArgument("WAL read offset overflow"));
-    }
     block_size_ += *read;
-    next_block_offset_ += *read;
   }
 
   return block_size_ != 0;
 }
 
-WalReadResult WalReader::ReturnTerminal(Error error) {
-  if (!terminal_error_.has_value()) {
-    terminal_error_ = std::move(error);
-  }
-  return std::unexpected(*terminal_error_);
-}
-
-WalReadResult WalReader::ReturnRecord(ByteView data, std::uint64_t offset) {
-  return std::optional<WalReadEvent>(
-      WalReadEvent(WalLogicalRecord{.data = data, .offset = offset}));
-}
-
-WalReadResult WalReader::ReturnCorruption(Error error,
-                                          std::uint64_t dropped_bytes,
-                                          std::uint64_t offset) {
-  return std::optional<WalReadEvent>(WalReadEvent(WalCorruption{
-      .error = std::move(error),
-      .dropped_bytes = dropped_bytes,
-      .offset = offset,
-  }));
+WalReadResult WalReader::AbandonPartial(std::string_view reason) {
+  WalCorruption corruption{
+      .error = Error::Corruption(std::string(reason)),
+      .dropped_bytes = scratch_.size(),
+      .offset = partial_record_offset_,
+  };
+  ClearPartial();
+  return Event(std::move(corruption));
 }
 
 void WalReader::ClearPartial() noexcept {

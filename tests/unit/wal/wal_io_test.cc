@@ -95,9 +95,7 @@ struct SequentialState {
   std::size_t position = 0;
   std::size_t maximum_chunk = std::numeric_limits<std::size_t>::max();
   int read_calls = 0;
-  int skip_calls = 0;
   std::optional<int> fail_read_call;
-  bool fail_skip = false;
   bool return_oversized_count = false;
 };
 
@@ -127,18 +125,9 @@ class TrackingSequentialFile final : public SequentialFile {
     return size;
   }
 
-  Status Skip(std::uint64_t bytes) override {
-    ++state_->skip_calls;
-    if (state_->fail_skip) {
-      return std::unexpected(Error::Io("injected skip failure"));
-    }
-    const std::uint64_t remaining = state_->data.size() - state_->position;
-    if (bytes >= remaining) {
-      state_->position = state_->data.size();
-    } else {
-      state_->position += static_cast<std::size_t>(bytes);
-    }
-    return {};
+  Status Skip(std::uint64_t) override {
+    ADD_FAILURE() << "WAL reader must read from offset zero without skipping";
+    return std::unexpected(Error::NotSupported("skip"));
   }
 
  private:
@@ -331,6 +320,61 @@ TEST(WalWriterTest, FirstIoErrorPoisonsWriterButCloseStillRuns) {
   EXPECT_EQ(close.error().message(), first.error().message());
   EXPECT_EQ(state->append_calls, append_calls);
   EXPECT_EQ(state->sync_calls, 0);
+  EXPECT_EQ(state->close_calls, 1);
+}
+
+TEST(WalWriterTest, FailureInEveryAppendStepPoisonsWriter) {
+  struct AppendFailureCase {
+    const char* step;
+    std::uint64_t initial_file_size;
+    std::optional<std::size_t> preceding_record_size;
+    int failing_append_call;
+    std::size_t failing_append_size;
+  };
+  const std::vector<AppendFailureCase> cases{
+      {"reopen padding", 5, std::nullopt, 1, WalBlockSize - 5U},
+      {"fragment padding", 0, WalBlockSize - WalHeaderSize - 3U, 3, 3U},
+      {"header", 0, std::nullopt, 1, WalHeaderSize},
+      {"payload", 0, std::nullopt, 2, 6U},
+  };
+
+  for (const AppendFailureCase& test_case : cases) {
+    SCOPED_TRACE(test_case.step);
+    const auto state = std::make_shared<WritableState>();
+    state->data.resize(static_cast<std::size_t>(test_case.initial_file_size));
+    WalWriter writer(Writable(state), test_case.initial_file_size);
+    if (test_case.preceding_record_size.has_value()) {
+      const std::vector<std::byte> preceding(*test_case.preceding_record_size);
+      ASSERT_TRUE(writer.AddRecord(preceding).has_value());
+    }
+    state->fail_append_call = test_case.failing_append_call;
+    const int flush_calls = state->flush_calls;
+
+    const Status failed = writer.AddRecord(AsBytes("record"));
+
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().message(), "injected append failure");
+    EXPECT_EQ(state->append_sizes.back(), test_case.failing_append_size);
+    EXPECT_EQ(state->flush_calls, flush_calls);
+    const int append_calls = state->append_calls;
+    EXPECT_EQ(writer.AddRecord(AsBytes("ignored")).error().message(),
+              failed.error().message());
+    EXPECT_EQ(state->append_calls, append_calls);
+  }
+}
+
+TEST(WalWriterTest, CloseReportsFileCloseFailure) {
+  const auto state = std::make_shared<WritableState>();
+  state->fail_close = true;
+  WalWriter writer(Writable(state));
+  ASSERT_TRUE(writer.AddRecord(AsBytes("record")).has_value());
+
+  const Status close = writer.Close();
+
+  ASSERT_FALSE(close.has_value());
+  EXPECT_EQ(close.error().message(), "injected close failure");
+  EXPECT_EQ(state->close_calls, 1);
+  EXPECT_EQ(writer.Close().error().code(), ErrorCode::InvalidArgument);
   EXPECT_EQ(state->close_calls, 1);
 }
 
@@ -542,6 +586,54 @@ TEST(WalReaderTest, UnexpectedAndInterruptedFragmentsEmitSeparateEvents) {
   EXPECT_EQ(AsStringView(record->data), "good");
 }
 
+TEST(WalReaderTest, FirstFragmentRestartsInterruptedRecord) {
+  std::vector<std::byte> encoded =
+      PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::First),
+                     AsBytes("stale"));
+  const std::vector<std::byte> first =
+      PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::First),
+                     AsBytes("new-"));
+  const std::vector<std::byte> last =
+      PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Last),
+                     AsBytes("record"));
+  encoded.insert(encoded.end(), first.begin(), first.end());
+  encoded.insert(encoded.end(), last.begin(), last.end());
+  const auto source = std::make_shared<SequentialState>();
+  source->data = encoded;
+  WalReader reader(Sequential(source));
+
+  const auto interrupted = NextCorruption(reader);
+  ASSERT_TRUE(interrupted.has_value());
+  EXPECT_EQ(interrupted->dropped_bytes, 5U);
+  EXPECT_EQ(interrupted->offset, 0U);
+  const auto record = NextRecord(reader);
+  ASSERT_TRUE(record.has_value());
+  EXPECT_EQ(AsStringView(record->data), "new-record");
+  EXPECT_EQ(record->offset, WalHeaderSize + 5U);
+  ExpectEof(reader);
+}
+
+TEST(WalReaderTest, ZeroMarkerWithoutPartialRecordSkipsBlockSilently) {
+  std::vector<std::byte> encoded =
+      PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full),
+                     AsBytes("before"));
+  encoded.resize(WalBlockSize, std::byte{0});
+  const std::vector<std::byte> after =
+      PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full),
+                     AsBytes("after"));
+  encoded.insert(encoded.end(), after.begin(), after.end());
+  const auto source = std::make_shared<SequentialState>();
+  source->data = encoded;
+  WalReader reader(Sequential(source));
+
+  EXPECT_EQ(AsStringView(NextRecord(reader)->data), "before");
+  const auto record = NextRecord(reader);
+  ASSERT_TRUE(record.has_value());
+  EXPECT_EQ(AsStringView(record->data), "after");
+  EXPECT_EQ(record->offset, WalBlockSize);
+  ExpectEof(reader);
+}
+
 TEST(WalReaderTest, EmptyFirstCompatibilityAndZeroMarkerStateReset) {
   std::vector<std::byte> compatible =
       PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::First), {});
@@ -577,7 +669,7 @@ TEST(WalReaderTest, EmptyFirstCompatibilityAndZeroMarkerStateReset) {
   EXPECT_EQ(AsStringView(NextRecord(zero_reader)->data), "good");
 }
 
-TEST(WalReaderTest, InitialOffsetsSkipInProgressRecordsAndReportRecordOffsets) {
+TEST(WalReaderTest, ReportsPhysicalOffsetsOfLogicalRecords) {
   const auto destination = std::make_shared<WritableState>();
   WalWriter writer(Writable(destination));
   const std::vector<std::byte> first(10'000, std::byte{'a'});
@@ -587,113 +679,54 @@ TEST(WalReaderTest, InitialOffsetsSkipInProgressRecordsAndReportRecordOffsets) {
   const std::vector<std::byte> near_block_end(13'716, std::byte{'e'});
   const std::vector<std::byte> full_block_record(WalBlockSize - WalHeaderSize,
                                                  std::byte{'f'});
-  ASSERT_TRUE(writer.AddRecord(first).has_value());
-  ASSERT_TRUE(writer.AddRecord(second).has_value());
-  ASSERT_TRUE(writer.AddRecord(spanning).has_value());
-  ASSERT_TRUE(writer.AddRecord(AsBytes("d")).has_value());
-  ASSERT_TRUE(writer.AddRecord(near_block_end).has_value());
-  ASSERT_TRUE(writer.AddRecord(full_block_record).has_value());
+  const std::vector<std::vector<std::byte>> records{
+      first,
+      second,
+      spanning,
+      {std::byte{'d'}},
+      near_block_end,
+      full_block_record,
+  };
+  for (const auto& record : records) {
+    ASSERT_TRUE(writer.AddRecord(record).has_value());
+  }
 
   constexpr std::uint64_t SecondOffset = WalHeaderSize + 10'000U;
-  constexpr std::uint64_t ThirdOffset = 2U * (WalHeaderSize + 10'000U);
+  constexpr std::uint64_t ThirdOffset = 2U * SecondOffset;
   constexpr std::uint64_t FourthOffset =
       ThirdOffset + (2U * WalBlockSize - 1'000U) + 3U * WalHeaderSize;
-
-  auto read_from = [&](std::uint64_t offset) {
-    const auto source = std::make_shared<SequentialState>();
-    source->data = destination->data;
-    WalReader reader(Sequential(source), {.initial_offset = offset});
-    return NextRecord(reader);
+  constexpr std::uint64_t FifthOffset = FourthOffset + WalHeaderSize + 1U;
+  // The fifth record leaves a two-byte trailer before the next block.
+  const std::array<std::uint64_t, 6> offsets{
+      0, SecondOffset, ThirdOffset, FourthOffset, FifthOffset, 3U * WalBlockSize,
   };
 
-  const auto at_start = read_from(0);
-  ASSERT_TRUE(at_start.has_value());
-  EXPECT_EQ(at_start->data, first);
-  EXPECT_EQ(at_start->offset, 0U);
-
-  const auto inside_first = read_from(1);
-  ASSERT_TRUE(inside_first.has_value());
-  EXPECT_EQ(inside_first->data, second);
-  EXPECT_EQ(inside_first->offset, SecondOffset);
-
-  const auto exact_second = read_from(SecondOffset);
-  ASSERT_TRUE(exact_second.has_value());
-  EXPECT_EQ(exact_second->data, second);
-  EXPECT_EQ(exact_second->offset, SecondOffset);
-
-  const auto inside_spanning = read_from(WalBlockSize + 1U);
-  ASSERT_TRUE(inside_spanning.has_value());
-  EXPECT_EQ(AsStringView(inside_spanning->data), "d");
-  EXPECT_EQ(inside_spanning->offset, FourthOffset);
-
-  const auto in_block_trailer = read_from(3U * WalBlockSize - 3U);
-  ASSERT_TRUE(in_block_trailer.has_value());
-  EXPECT_EQ(in_block_trailer->data, full_block_record);
-  EXPECT_EQ(in_block_trailer->offset, 3U * WalBlockSize);
-
-  const auto past_end_source = std::make_shared<SequentialState>();
-  past_end_source->data = destination->data;
-  WalReader past_end(
-      Sequential(past_end_source),
-      {.initial_offset = static_cast<std::uint64_t>(destination->data.size()) + 5U});
-  ExpectEof(past_end);
-}
-
-TEST(WalReaderTest, SuppressesCorruptionBeforeInitialOffset) {
-  std::vector<std::byte> encoded =
-      PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full),
-                     AsBytes("bad"), false);
-  encoded.resize(WalBlockSize, std::byte{0x7f});
-  const std::vector<std::byte> good =
-      PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full),
-                     AsBytes("good"));
-  encoded.insert(encoded.end(), good.begin(), good.end());
   const auto source = std::make_shared<SequentialState>();
-  source->data = encoded;
-  WalReader reader(Sequential(source), {.initial_offset = 1});
-
-  const auto record = NextRecord(reader);
-
-  ASSERT_TRUE(record.has_value());
-  EXPECT_EQ(AsStringView(record->data), "good");
-  EXPECT_EQ(record->offset, WalBlockSize);
+  source->data = destination->data;
+  WalReader reader(Sequential(source));
+  for (std::size_t index = 0; index < records.size(); ++index) {
+    SCOPED_TRACE(index);
+    const auto record = NextRecord(reader);
+    ASSERT_TRUE(record.has_value());
+    EXPECT_EQ(record->data, records[index]);
+    EXPECT_EQ(record->offset, offsets[index]);
+  }
   ExpectEof(reader);
 }
 
-TEST(WalReaderTest, ReadAndSkipErrorsAreTerminal) {
-  const auto read_state = std::make_shared<SequentialState>();
-  read_state->fail_read_call = 1;
-  WalReader read_error(Sequential(read_state));
+TEST(WalReaderTest, ReadErrorsAreTerminal) {
+  const auto state = std::make_shared<SequentialState>();
+  state->fail_read_call = 1;
+  WalReader reader(Sequential(state));
 
-  const WalReadResult first_read = read_error.ReadNext();
-  ASSERT_FALSE(first_read.has_value());
-  EXPECT_EQ(first_read.error().message(), "injected read failure");
-  const int read_calls = read_state->read_calls;
-  const WalReadResult second_read = read_error.ReadNext();
-  ASSERT_FALSE(second_read.has_value());
-  EXPECT_EQ(second_read.error().message(), first_read.error().message());
-  EXPECT_EQ(read_state->read_calls, read_calls);
-
-  const auto skip_state = std::make_shared<SequentialState>();
-  skip_state->fail_skip = true;
-  WalReader skip_error(
-      Sequential(skip_state), {.initial_offset = WalBlockSize});
-  const WalReadResult first_skip = skip_error.ReadNext();
-  ASSERT_FALSE(first_skip.has_value());
-  EXPECT_EQ(first_skip.error().message(), "injected skip failure");
-  const WalReadResult second_skip = skip_error.ReadNext();
-  ASSERT_FALSE(second_skip.has_value());
-  EXPECT_EQ(second_skip.error().message(), first_skip.error().message());
-  EXPECT_EQ(skip_state->skip_calls, 1);
-
-  const auto overflow_state = std::make_shared<SequentialState>();
-  WalReader overflow(
-      Sequential(overflow_state),
-      {.initial_offset = std::numeric_limits<std::uint64_t>::max()});
-  const WalReadResult overflow_result = overflow.ReadNext();
-  ASSERT_FALSE(overflow_result.has_value());
-  EXPECT_EQ(overflow_result.error().code(), ErrorCode::InvalidArgument);
-  EXPECT_EQ(overflow_state->skip_calls, 0);
+  const WalReadResult first = reader.ReadNext();
+  ASSERT_FALSE(first.has_value());
+  EXPECT_EQ(first.error().message(), "injected read failure");
+  const int read_calls = state->read_calls;
+  const WalReadResult second = reader.ReadNext();
+  ASSERT_FALSE(second.has_value());
+  EXPECT_EQ(second.error().message(), first.error().message());
+  EXPECT_EQ(state->read_calls, read_calls);
 }
 
 TEST(WalReaderTest, InvalidFileAndReadCountViolationsAreTerminal) {
