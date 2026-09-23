@@ -126,7 +126,7 @@ TEST(PosixFileSystemTest, RejectsEmptyAndEmbeddedNullPaths) {
   EXPECT_EQ(invalid.error().code(), ErrorCode::InvalidArgument);
 }
 
-TEST(PosixFileSystemTest, ReadsSequentiallySkipsAndReportsEof) {
+TEST(PosixFileSystemTest, ReadsSequentiallyAndReportsEof) {
   TemporaryDirectory directory;
   PosixFileSystem file_system;
   const auto path = directory.path() / "sequential";
@@ -142,12 +142,11 @@ TEST(PosixFileSystemTest, ReadsSequentiallySkipsAndReportsEof) {
   EXPECT_EQ(*first_size, 3U);
   EXPECT_EQ(AsStringView(first), "abc");
 
-  ASSERT_TRUE(file->Skip(2));
   std::array<std::byte, 4> last{};
   const auto last_size = file->Read(last);
   ASSERT_TRUE(last_size.has_value());
-  EXPECT_EQ(*last_size, 1U);
-  EXPECT_EQ(AsStringView(ByteView(last).first(*last_size)), "f");
+  EXPECT_EQ(*last_size, 3U);
+  EXPECT_EQ(AsStringView(ByteView(last).first(*last_size)), "def");
 
   const auto eof = file->Read(last);
   ASSERT_TRUE(eof.has_value());
@@ -155,25 +154,6 @@ TEST(PosixFileSystemTest, ReadsSequentiallySkipsAndReportsEof) {
   const auto empty = file->Read({});
   ASSERT_TRUE(empty.has_value());
   EXPECT_EQ(*empty, 0U);
-
-  ASSERT_TRUE(file->Skip(1'000));
-  const auto beyond_eof = file->Read(last);
-  ASSERT_TRUE(beyond_eof.has_value());
-  EXPECT_EQ(*beyond_eof, 0U);
-}
-
-TEST(PosixFileSystemTest, RejectsUnrepresentableSequentialSkip) {
-  TemporaryDirectory directory;
-  PosixFileSystem file_system;
-  const auto path = directory.path() / "skip";
-  WriteFixture(path, {});
-  auto opened = file_system.OpenSequential(path);
-  ASSERT_TRUE(opened.has_value());
-
-  const Status status = (*opened)->Skip(std::numeric_limits<std::uint64_t>::max());
-
-  ASSERT_FALSE(status.has_value());
-  EXPECT_EQ(status.error().code(), ErrorCode::InvalidArgument);
 }
 
 TEST(PosixFileSystemTest, PerformsConcurrentPositionedReads) {

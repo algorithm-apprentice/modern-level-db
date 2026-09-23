@@ -125,11 +125,6 @@ class TrackingSequentialFile final : public SequentialFile {
     return size;
   }
 
-  Status Skip(std::uint64_t) override {
-    ADD_FAILURE() << "WAL reader must read from offset zero without skipping";
-    return std::unexpected(Error::NotSupported("skip"));
-  }
-
  private:
   std::shared_ptr<SequentialState> state_;
 };

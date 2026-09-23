@@ -218,22 +218,6 @@ class PosixSequentialFile final : public SequentialFile {
     return static_cast<std::size_t>(result);
   }
 
-  Status Skip(std::uint64_t bytes) override {
-    const auto offset = PosixOffset(bytes, "skip distance");
-    if (!offset.has_value()) {
-      return std::unexpected(offset.error());
-    }
-
-    off_t result;
-    do {
-      result = ::lseek(descriptor_, *offset, SEEK_CUR);
-    } while (result == static_cast<off_t>(-1) && errno == EINTR);
-    if (result == static_cast<off_t>(-1)) {
-      return std::unexpected(FileError("skip", path_, errno));
-    }
-    return {};
-  }
-
  private:
   const int descriptor_;
   const std::filesystem::path path_;

@@ -31,8 +31,6 @@ static_assert(IsOwnedPolymorphicInterface<FileSystem>);
 
 static_assert(std::same_as<decltype(std::declval<SequentialFile&>().Read(MutableByteView{})),
                            Result<std::size_t>>);
-static_assert(
-    std::same_as<decltype(std::declval<SequentialFile&>().Skip(std::uint64_t{})), Status>);
 static_assert(std::same_as<decltype(std::declval<const RandomAccessFile&>().Read(
                                std::uint64_t{}, MutableByteView{})),
                            Result<std::size_t>>);
