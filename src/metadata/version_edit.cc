@@ -277,7 +277,9 @@ Status VersionEdit::DecodeField(std::uint32_t tag, ByteView& input) {
           !ReadInternalKey(input, largest)) {
         return Malformed("new file");
       }
-      new_files_.push_back(NewFile{
+      // Build the entry first. Inside the push_back expression, GCC adds member
+      // cleanup branches that only an allocation failure could take.
+      NewFile entry{
           .level = level,
           .file =
               FileMetadata{
@@ -286,7 +288,8 @@ Status VersionEdit::DecodeField(std::uint32_t tag, ByteView& input) {
                   .smallest = std::move(*smallest),
                   .largest = std::move(*largest),
               },
-      });
+      };
+      new_files_.push_back(std::move(entry));
       return {};
     }
   }
