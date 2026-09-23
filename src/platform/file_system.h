@@ -22,7 +22,6 @@ class SequentialFile {
   virtual ~SequentialFile() = default;
 
   [[nodiscard]] virtual Result<std::size_t> Read(MutableByteView output) = 0;
-  [[nodiscard]] virtual Status Skip(std::uint64_t bytes) = 0;
 };
 
 class RandomAccessFile {

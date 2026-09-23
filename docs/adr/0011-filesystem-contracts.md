@@ -1,6 +1,8 @@
 # ADR-0011: Filesystem Contracts and POSIX Backend
 
-- Status: Accepted
+- Status: Accepted; amended on 2026-09-23 to remove `SequentialFile::Skip`
+  after [ADR-0018](0018-wal-stream-io.md) rejected initial-offset WAL reads,
+  its only planned caller
 - Date: 2026-09-22
 
 ## Context
@@ -21,7 +23,7 @@ The interfaces are limited to known engine paths:
 
 | Future caller | Required operations |
 |---|---|
-| WAL reader | Sequential read and skip |
+| WAL reader | Sequential read |
 | WAL writer | Buffered append, flush, file sync, and close |
 | SSTable reader | Concurrent positioned read and file size |
 | SSTable writer | Buffered append, flush, file sync, and close |
@@ -75,9 +77,9 @@ Do not adopt runtime VFS registration or multiple lock strategies.
 
 ### POSIX
 
-Adopt `open`, `read`, `pread`, `write`, `lseek`, `fdatasync`/`fsync`,
-`rename`, directory `fsync`, `mkdir`, `unlink`, `rmdir`, `stat`, `opendir`,
-and non-blocking `fcntl(F_SETLK)` locks.
+Adopt `open`, `read`, `pread`, `write`, `fdatasync`/`fsync`, `rename`,
+directory `fsync`, `mkdir`, `unlink`, `rmdir`, `stat`, `opendir`, and
+non-blocking `fcntl(F_SETLK)` locks.
 
 POSIX `rename` atomically replaces an existing destination in the same
 filesystem, but crash durability requires syncing the affected directory.
@@ -100,7 +102,6 @@ class SequentialFile {
   virtual ~SequentialFile() = default;
 
   virtual Result<std::size_t> Read(MutableByteView output) = 0;
-  virtual Status Skip(std::uint64_t bytes) = 0;
 };
 
 class RandomAccessFile {
@@ -208,10 +209,8 @@ byte sequences; this layer does not impose UTF-8 normalization.
 - On an error, the returned `Result` contains no byte count. Previously read
   file contents and the caller's buffer outside the bytes written by the
   failed system call are not given transactional guarantees.
-- `Skip` advances the sequential position without reading. Reaching or moving
-  beyond EOF is not an error; subsequent reads return EOF.
-- Offsets or skip distances that cannot be represented by POSIX `off_t`
-  return `InvalidArgument`.
+- Offsets that cannot be represented by POSIX `off_t` return
+  `InvalidArgument`.
 - System-call byte counts are capped at `SSIZE_MAX` even if a larger
   `MutableByteView` is representable.
 
@@ -351,7 +350,7 @@ fault test needs it.
 Interface tests verify ownership traits and signatures on every platform.
 POSIX tests use isolated temporary directories and cover:
 
-- Empty, short, sequential, skipped, positioned, concurrent, and unaligned
+- Empty, short, sequential, positioned, concurrent, and unaligned
   reads.
 - Buffered, large, appendable, flushed, synced, closed, and reopened writes.
 - Namespace operations, overwrite rename, directory listing, size, and

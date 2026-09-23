@@ -59,6 +59,11 @@ changes run the relevant `cmake` checks. CI runs the broader tiers according to
 their cost. The bootstrap currently runs `unit` and `cmake` in CI; the remaining
 tiers are introduced with the components they exercise.
 
+CI additionally requires the `unit` tier to execute every added or modified
+production line and branch, as defined by
+[ADR-0019](0019-test-coverage-policy.md). Coverage complements, and never
+replaces, behavioral assertions.
+
 ## Consequences
 
 - Production interfaces are designed for observability and dependency
