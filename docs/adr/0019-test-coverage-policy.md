@@ -65,6 +65,10 @@ A repository-root `gcovr.cfg` defines the report for CI and local runs:
 - Honor only `GCOVR_`-prefixed exclusion markers.
 - Remove compiler-generated exception branches and branches on lines without
   source code.
+- Remove the branches of lines that start with `assert(`. A failing assertion
+  calls `abort()`, which terminates before gcov writes its counters, so not
+  even a death test can record that branch. The asserted expression still
+  executes and remains subject to line coverage.
 - Warn when an excluded line was executed, so stale exclusions surface.
 
 ### CI gate
@@ -93,11 +97,17 @@ not block unrelated pull requests. Coverage rises as code is touched.
 Prefer removing uncoverable code over excluding it: delete impossible checks
 and restructure logic when doing so does not reduce clarity or safety.
 
-An exclusion is allowed only when no deterministic test can execute the code,
-for example the implicit default exit of an exhaustive `switch` over values
-that earlier validation already restricts. An exclusion is not allowed for a
-reachable path merely because testing it needs a fault-injection double, a
-crafted input, or a slower test.
+An exclusion is allowed only when no deterministic unit test can execute the
+code:
+
+- The implicit default exit of an exhaustive `switch` over values that earlier
+  validation already restricts.
+- A size or count guard that only an input larger than 4 GiB, or more than
+  2^32 elements, can trigger. Such inputs exceed the memory and time budget of
+  the unit tier.
+
+An exclusion is not allowed for a reachable path merely because testing it
+needs a fault-injection double, a crafted input, or a slower test.
 
 Every marker carries its justification in the same comment:
 

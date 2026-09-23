@@ -167,7 +167,7 @@ WalReadResult WalReader::ReadNext() {
     }
 
     const PhysicalFragment& fragment = std::get<PhysicalFragment>(**physical);
-    switch (fragment.type) {
+    switch (fragment.type) {  // GCOVR_EXCL_BR_LINE: exhaustive switch over decoded types
       case WalRecordType::Zero:
         if (HasPartialPayload()) {
           return AbandonPartial("WAL fragmented record ended at a zero marker");
