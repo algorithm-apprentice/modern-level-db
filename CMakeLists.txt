@@ -35,6 +35,7 @@ add_library(
     src/memory/memtable.cc
     src/platform/clock.cc
     src/platform/serial_executor.cc
+    src/wal/wal_io.cc
 )
 if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(

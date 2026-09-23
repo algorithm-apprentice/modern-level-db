@@ -205,7 +205,7 @@ layers below it.
 | 0 | `base` | Byte views, errors, results, coding, checksums, hashing, assertions |
 | 1 | `platform` | Filesystem, files, locking, clock, executor, logging |
 | 2 | `format` | Internal keys, WAL records, block/SST formats, MANIFEST records |
-| 3 | `memory` | Arena, skip list, write batch, memtable |
+| 3 | `wal`, `memory` | WAL stream I/O; arena, skip list, write batch, memtable |
 | 4 | `table` | Blocks, filters, SST reader/writer, table cache |
 | 5 | `metadata` | Filenames, versions, version edits, version set |
 | 6 | `engine` | Recovery, read/write paths, flush, compaction, snapshots, DB state |
@@ -240,6 +240,7 @@ src/
   base/
   platform/
   format/
+  wal/
   memory/
   table/
   metadata/
