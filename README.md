@@ -17,8 +17,10 @@ LevelDB-compatible internal-key trailer, WAL physical-record framing, and
 Put/Delete write-batch payload with a validated zero-copy reader. The cache
 layer provides a typed sharded LRU with RAII pin handles. Database memory
 structures now include an arena-backed, single-writer concurrent-reader skip
-list and a packed MemTable with snapshot lookup and ordered iteration. Database
-operations, WAL/SSTable I/O, and compaction are not yet implemented.
+list and a packed MemTable with snapshot lookup and ordered iteration. An owned
+WAL stream layer provides flushed appends, explicit sync, logical-record
+reassembly, and typed corruption events. Database orchestration, SSTable I/O,
+and compaction are not yet implemented.
 
 ## Goals
 
