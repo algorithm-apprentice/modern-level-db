@@ -1,9 +1,11 @@
 #include "modern_leveldb/base/coding.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <span>
 #include <type_traits>
 #include <vector>
 
@@ -12,6 +14,25 @@
 
 namespace modern_leveldb {
 namespace {
+
+template <typename UInt, std::size_t Extent>
+void EncodeFixed(std::span<std::byte, Extent> output, UInt value) noexcept {
+  static_assert(Extent == sizeof(UInt));
+  for (std::size_t index = 0; index < Extent; ++index) {
+    output[index] =
+        static_cast<std::byte>((value >> (index * 8U)) & static_cast<UInt>(0xffU));
+  }
+}
+
+template <typename UInt, std::size_t Extent>
+UInt DecodeFixed(std::span<const std::byte, Extent> input) noexcept {
+  static_assert(Extent == sizeof(UInt));
+  UInt value = 0;
+  for (std::size_t index = 0; index < Extent; ++index) {
+    value |= std::to_integer<UInt>(input[index]) << (index * 8U);
+  }
+  return value;
+}
 
 template <typename UInt>
 [[nodiscard]] Result<UInt> ConsumeVarint(ByteView& input) {
@@ -30,14 +51,8 @@ template <typename UInt>
     const auto byte = std::to_integer<unsigned int>(input[index]);
     const auto payload = byte & 0x7fU;
     const std::size_t shift = index * PayloadBits;
-    const std::size_t remaining_bits = ValueBits - shift;
-    const unsigned int maximum_payload =
-        remaining_bits >= PayloadBits ? 0x7fU : (1U << remaining_bits) - 1U;
 
-    if (payload > maximum_payload) {
-      return std::unexpected(Error::Corruption("varint overflow"));
-    }
-
+    // Match LevelDB: unsigned shifting discards excess terminal payload bits.
     value |= static_cast<UInt>(payload) << shift;
     if ((byte & 0x80U) == 0U) {
       input = input.subspan(index + 1U);
@@ -54,16 +69,36 @@ template <typename UInt>
 
 }  // namespace
 
+void EncodeFixed32(std::span<std::byte, sizeof(std::uint32_t)> output,
+                   std::uint32_t value) noexcept {
+  EncodeFixed(output, value);
+}
+
+void EncodeFixed64(std::span<std::byte, sizeof(std::uint64_t)> output,
+                   std::uint64_t value) noexcept {
+  EncodeFixed(output, value);
+}
+
+std::uint32_t DecodeFixed32(
+    std::span<const std::byte, sizeof(std::uint32_t)> input) noexcept {
+  return DecodeFixed<std::uint32_t>(input);
+}
+
+std::uint64_t DecodeFixed64(
+    std::span<const std::byte, sizeof(std::uint64_t)> input) noexcept {
+  return DecodeFixed<std::uint64_t>(input);
+}
+
 void AppendFixed32(std::vector<std::byte>& output, std::uint32_t value) {
-  for (std::size_t shift = 0; shift < 32U; shift += 8U) {
-    output.push_back(static_cast<std::byte>((value >> shift) & 0xffU));
-  }
+  std::array<std::byte, sizeof(value)> encoded;
+  EncodeFixed32(encoded, value);
+  output.insert(output.end(), encoded.begin(), encoded.end());
 }
 
 void AppendFixed64(std::vector<std::byte>& output, std::uint64_t value) {
-  for (std::size_t shift = 0; shift < 64U; shift += 8U) {
-    output.push_back(static_cast<std::byte>((value >> shift) & 0xffU));
-  }
+  std::array<std::byte, sizeof(value)> encoded;
+  EncodeFixed64(encoded, value);
+  output.insert(output.end(), encoded.begin(), encoded.end());
 }
 
 Result<std::uint32_t> ConsumeFixed32(ByteView& input) {
@@ -72,10 +107,7 @@ Result<std::uint32_t> ConsumeFixed32(ByteView& input) {
     return std::unexpected(Error::Corruption("truncated fixed32"));
   }
 
-  std::uint32_t value = 0;
-  for (std::size_t index = 0; index < EncodedSize; ++index) {
-    value |= std::to_integer<std::uint32_t>(input[index]) << (index * 8U);
-  }
+  const std::uint32_t value = DecodeFixed32(input.first<EncodedSize>());
   input = input.subspan(EncodedSize);
   return value;
 }
@@ -86,10 +118,7 @@ Result<std::uint64_t> ConsumeFixed64(ByteView& input) {
     return std::unexpected(Error::Corruption("truncated fixed64"));
   }
 
-  std::uint64_t value = 0;
-  for (std::size_t index = 0; index < EncodedSize; ++index) {
-    value |= std::to_integer<std::uint64_t>(input[index]) << (index * 8U);
-  }
+  const std::uint64_t value = DecodeFixed64(input.first<EncodedSize>());
   input = input.subspan(EncodedSize);
   return value;
 }

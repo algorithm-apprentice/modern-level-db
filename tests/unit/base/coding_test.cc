@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -13,6 +14,24 @@
 
 namespace modern_leveldb {
 namespace {
+
+TEST(CodingTest, EncodesAndDecodesFixedValuesInPreallocatedStorage) {
+  std::array<std::byte, 12> storage;
+
+  EncodeFixed64(std::span<std::byte, 8>(storage.data(), 8), 0x0102030405060708ULL);
+  EncodeFixed32(std::span<std::byte, 4>(storage.data() + 8, 4), 0x0a0b0c0dU);
+
+  EXPECT_EQ(storage,
+            (std::array{
+                std::byte{0x08}, std::byte{0x07}, std::byte{0x06}, std::byte{0x05},
+                std::byte{0x04}, std::byte{0x03}, std::byte{0x02}, std::byte{0x01},
+                std::byte{0x0d}, std::byte{0x0c}, std::byte{0x0b}, std::byte{0x0a},
+            }));
+  EXPECT_EQ(DecodeFixed64(std::span<const std::byte, 8>(storage.data(), 8)),
+            0x0102030405060708ULL);
+  EXPECT_EQ(DecodeFixed32(std::span<const std::byte, 4>(storage.data() + 8, 4)),
+            0x0a0b0c0dU);
+}
 
 TEST(CodingTest, EncodesFixed32InLittleEndianOrder) {
   std::vector<std::byte> output;
@@ -225,7 +244,7 @@ TEST(CodingTest, RejectsTruncatedVarintWithoutConsumingInput) {
   EXPECT_EQ(input.size(), input_storage.size());
 }
 
-TEST(CodingTest, RejectsOverflowingVarint32) {
+TEST(CodingTest, TruncatesTerminalVarint32PayloadLikeLevelDb) {
   const std::vector input_storage{
       std::byte{0x80}, std::byte{0x80}, std::byte{0x80}, std::byte{0x80}, std::byte{0x10},
   };
@@ -233,12 +252,12 @@ TEST(CodingTest, RejectsOverflowingVarint32) {
 
   const Result<std::uint32_t> value = ConsumeVarint32(input);
 
-  ASSERT_FALSE(value.has_value());
-  EXPECT_EQ(value.error().code(), ErrorCode::Corruption);
-  EXPECT_EQ(input.size(), input_storage.size());
+  ASSERT_TRUE(value.has_value());
+  EXPECT_EQ(*value, 0U);
+  EXPECT_TRUE(input.empty());
 }
 
-TEST(CodingTest, RejectsOverflowingVarint64) {
+TEST(CodingTest, TruncatesTerminalVarint64PayloadLikeLevelDb) {
   const std::vector input_storage{
       std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0xff},
       std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0x02},
@@ -247,9 +266,9 @@ TEST(CodingTest, RejectsOverflowingVarint64) {
 
   const Result<std::uint64_t> value = ConsumeVarint64(input);
 
-  ASSERT_FALSE(value.has_value());
-  EXPECT_EQ(value.error().code(), ErrorCode::Corruption);
-  EXPECT_EQ(input.size(), input_storage.size());
+  ASSERT_TRUE(value.has_value());
+  EXPECT_EQ(*value, std::numeric_limits<std::uint64_t>::max() >> 1U);
+  EXPECT_TRUE(input.empty());
 }
 
 TEST(CodingTest, RejectsOverlongVarint32WithoutConsumingInput) {

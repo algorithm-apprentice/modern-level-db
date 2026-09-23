@@ -30,6 +30,7 @@ add_library(
     src/base/hash.cc
     src/format/internal_key.cc
     src/format/wal_format.cc
+    src/format/write_batch.cc
     src/memory/arena.cc
     src/platform/clock.cc
     src/platform/serial_executor.cc
