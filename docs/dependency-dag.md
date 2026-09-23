@@ -61,7 +61,7 @@ flowchart TD
 | `implement-cache` | Typed 16-shard RAII LRU cache with charge-based eviction and pin handles | `implement-bytes`, `implement-error-result`, `implement-checksum-hash` |
 | `implement-skiplist` | Single-writer concurrent-reader arena-backed skip list | `implement-arena` |
 | `implement-write-batch` | Original-LevelDB-compatible Put/Delete batch builder and zero-copy reader | `implement-internal-key`, `implement-coding`, `implement-error-result` |
-| `implement-memtable` | Arena-backed mutable table | `implement-internal-key`, `implement-arena`, `implement-skiplist` |
+| `implement-memtable` | Packed arena-backed, single-writer/concurrent-reader MemTable with snapshot lookup and iteration | `implement-internal-key`, `implement-coding`, `implement-arena`, `implement-skiplist` |
 | `implement-wal-io` | WAL reader and writer | `implement-platform-fs`, `implement-wal-format` |
 | `implement-filenames` | Database filename model | `implement-error-result` |
 | `implement-version-edit` | MANIFEST edit format | `implement-internal-key`, `implement-coding`, `implement-error-result` |

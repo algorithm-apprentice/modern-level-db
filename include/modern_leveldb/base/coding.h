@@ -28,6 +28,8 @@ void AppendFixed64(std::vector<std::byte>& output, std::uint64_t value);
 
 void AppendVarint32(std::vector<std::byte>& output, std::uint32_t value);
 void AppendVarint64(std::vector<std::byte>& output, std::uint64_t value);
+[[nodiscard]] bool EncodeVarint32(MutableByteView& output,
+                                  std::uint32_t value) noexcept;
 
 [[nodiscard]] Result<std::uint32_t> ConsumeVarint32(ByteView& input);
 [[nodiscard]] Result<std::uint64_t> ConsumeVarint64(ByteView& input);

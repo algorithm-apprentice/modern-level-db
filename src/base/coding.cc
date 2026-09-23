@@ -1,6 +1,7 @@
 #include "modern_leveldb/base/coding.h"
 
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -124,11 +125,12 @@ Result<std::uint64_t> ConsumeFixed64(ByteView& input) {
 }
 
 void AppendVarint32(std::vector<std::byte>& output, std::uint32_t value) {
-  while (value >= 0x80U) {
-    output.push_back(static_cast<std::byte>((value & 0x7fU) | 0x80U));
-    value >>= 7U;
-  }
-  output.push_back(static_cast<std::byte>(value));
+  std::array<std::byte, 5> encoded;
+  MutableByteView remaining = encoded;
+  const bool success = EncodeVarint32(remaining, value);
+  assert(success);
+  (void)success;
+  output.insert(output.end(), encoded.data(), remaining.data());
 }
 
 void AppendVarint64(std::vector<std::byte>& output, std::uint64_t value) {
@@ -137,6 +139,23 @@ void AppendVarint64(std::vector<std::byte>& output, std::uint64_t value) {
     value >>= 7U;
   }
   output.push_back(static_cast<std::byte>(value));
+}
+
+bool EncodeVarint32(MutableByteView& output, std::uint32_t value) noexcept {
+  const std::size_t encoded_size = VarintLength(value);
+  if (output.size() < encoded_size) {
+    return false;
+  }
+
+  MutableByteView remaining = output;
+  while (value >= 0x80U) {
+    remaining.front() = static_cast<std::byte>((value & 0x7fU) | 0x80U);
+    remaining = remaining.subspan(1);
+    value >>= 7U;
+  }
+  remaining.front() = static_cast<std::byte>(value);
+  output = remaining.subspan(1);
+  return true;
 }
 
 Result<std::uint32_t> ConsumeVarint32(ByteView& input) {

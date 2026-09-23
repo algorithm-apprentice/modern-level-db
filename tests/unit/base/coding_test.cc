@@ -33,6 +33,33 @@ TEST(CodingTest, EncodesAndDecodesFixedValuesInPreallocatedStorage) {
             0x0a0b0c0dU);
 }
 
+TEST(CodingTest, EncodesVarint32IntoPreallocatedStorage) {
+  std::array storage{
+      std::byte{0xaa}, std::byte{0xaa}, std::byte{0xaa},
+      std::byte{0xaa}, std::byte{0xaa}, std::byte{0xaa},
+  };
+  MutableByteView output = storage;
+
+  ASSERT_TRUE(EncodeVarint32(output, 300));
+
+  EXPECT_EQ(storage[0], std::byte{0xac});
+  EXPECT_EQ(storage[1], std::byte{0x02});
+  EXPECT_EQ(output.data(), storage.data() + 2);
+  EXPECT_EQ(output.size(), storage.size() - 2U);
+  EXPECT_EQ(storage[2], std::byte{0xaa});
+}
+
+TEST(CodingTest, ShortVarint32OutputIsUnchanged) {
+  std::array storage{std::byte{0xaa}};
+  MutableByteView output = storage;
+
+  EXPECT_FALSE(EncodeVarint32(output, 128));
+
+  EXPECT_EQ(output.data(), storage.data());
+  EXPECT_EQ(output.size(), storage.size());
+  EXPECT_EQ(storage[0], std::byte{0xaa});
+}
+
 TEST(CodingTest, EncodesFixed32InLittleEndianOrder) {
   std::vector<std::byte> output;
 

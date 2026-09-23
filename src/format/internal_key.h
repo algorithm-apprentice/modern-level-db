@@ -1,8 +1,10 @@
 #ifndef MODERN_LEVELDB_FORMAT_INTERNAL_KEY_H_
 #define MODERN_LEVELDB_FORMAT_INTERNAL_KEY_H_
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -32,6 +34,36 @@ struct ParsedInternalKey {
 };
 
 [[nodiscard]] Result<ParsedInternalKey> ParseInternalKey(ByteView encoded);
+
+class LookupKey final {
+ public:
+  [[nodiscard]] static Result<LookupKey> Create(ByteView user_key,
+                                                SequenceNumber sequence);
+
+  LookupKey(const LookupKey&) = delete;
+  LookupKey& operator=(const LookupKey&) = delete;
+  LookupKey(LookupKey&& source) noexcept;
+  LookupKey& operator=(LookupKey&& source) noexcept;
+  ~LookupKey() = default;
+
+  [[nodiscard]] ByteView memtable_key() const noexcept;
+  [[nodiscard]] ByteView internal_key() const noexcept;
+  [[nodiscard]] ByteView user_key() const noexcept;
+
+ private:
+  static constexpr std::size_t InlineCapacity = 200;
+
+  LookupKey() noexcept;
+
+  [[nodiscard]] std::byte* data() noexcept;
+  [[nodiscard]] const std::byte* data() const noexcept;
+  void ResetToCanonicalEmpty() noexcept;
+
+  std::array<std::byte, InlineCapacity> inline_storage_{};
+  std::unique_ptr<std::byte[]> heap_storage_;
+  std::size_t encoded_size_ = 0;
+  std::size_t internal_key_offset_ = 0;
+};
 
 class InternalKey final {
  public:
