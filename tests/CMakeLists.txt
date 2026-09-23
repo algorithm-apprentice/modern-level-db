@@ -33,6 +33,7 @@ add_executable(
   unit/memory/arena_test.cc
   unit/memory/memtable_test.cc
   unit/memory/skiplist_test.cc
+  unit/metadata/filenames_test.cc
   unit/platform/clock_test.cc
   unit/platform/file_system_test.cc
   unit/platform/serial_executor_test.cc

@@ -146,14 +146,19 @@ mkdir -p build/coverage/html
 gcovr --txt-summary --cobertura build/coverage/coverage.xml \
   --html-details build/coverage/html/index.html
 diff-cover build/coverage/coverage.xml --compare-branch=origin/main \
-  --branch-coverage --fail-under=100
+  --branch-coverage --fail-under=100 --include-untracked
 ```
 
 Deleting `.gcda` files first prevents counters from earlier runs from being
-merged into the report. With Apple Clang on macOS, add
-`--gcov-executable "xcrun llvm-cov gcov"` to the `gcovr` command. Clang and
-GCC can report slightly different branches; the GCC report in CI is
-authoritative.
+merged into the report. `--include-untracked` makes diff-cover also measure
+new files that are not yet committed; CI has no untracked sources.
+
+With Apple Clang on macOS, add `--gcov-executable "xcrun llvm-cov gcov"` to
+the `gcovr` command. Clang's gcov emulation does not label exception edges,
+so `exclude-throw-branches` cannot remove them: calls in functions with
+non-trivial cleanups can appear as half-covered branches, and closing braces
+as unexecuted lines. Treat such local gaps as approximations. The report from
+GCC in CI is authoritative.
 
 ## Consequences
 
