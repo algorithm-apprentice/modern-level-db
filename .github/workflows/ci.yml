@@ -37,3 +37,50 @@ jobs:
 
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
+
+  coverage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install coverage tools
+        run: python -m pip install gcovr==8.6 diff-cover==10.6.0
+
+      - name: Configure
+        run: cmake --preset coverage
+
+      - name: Build
+        run: cmake --build --preset coverage
+
+      - name: Run tests
+        run: ctest --preset coverage
+
+      - name: Report coverage
+        run: |
+          mkdir -p build/coverage/html
+          gcovr --txt --txt-summary \
+            --cobertura build/coverage/coverage.xml \
+            --html-details build/coverage/html/index.html
+
+      - name: Check changed-code coverage
+        run: >
+          diff-cover build/coverage/coverage.xml
+          --compare-branch=origin/main
+          --branch-coverage
+          --fail-under=100
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            build/coverage/coverage.xml
+            build/coverage/html/

@@ -71,6 +71,12 @@ preserved.
 Run `ctest --preset dev-debug` to include the `cmake` consumer-configuration
 checks as well as the fast `unit` suite.
 
+CI also measures unit-test coverage of `src/` and `include/`. Every added or
+modified production line and branch must be executed by tests unless an
+explicitly justified `GCOVR_EXCL_*` marker excludes it. See
+[ADR-0019](docs/adr/0019-test-coverage-policy.md) for the policy and the local
+coverage commands.
+
 New or changed production behavior follows test-driven development: start with
 a focused failing unit test, implement the smallest correct change, and
 refactor while tests remain green. Configuration and documentation changes use
