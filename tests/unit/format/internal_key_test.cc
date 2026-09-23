@@ -39,6 +39,10 @@ class TestComparator final : public Comparator {
 static_assert(std::is_constructible_v<InternalKeyComparator, TestComparator&>);
 static_assert(!std::is_constructible_v<InternalKeyComparator, TestComparator&&>);
 static_assert(!std::is_constructible_v<InternalKeyComparator, const TestComparator&&>);
+static_assert(!std::is_copy_constructible_v<LookupKey>);
+static_assert(!std::is_copy_assignable_v<LookupKey>);
+static_assert(std::is_move_constructible_v<LookupKey>);
+static_assert(std::is_move_assignable_v<LookupKey>);
 
 std::vector<std::byte> Bytes(std::initializer_list<unsigned int> values) {
   std::vector<std::byte> result;
@@ -74,6 +78,89 @@ TEST(InternalKeyTest, PersistentConstantsMatchLevelDb) {
   EXPECT_EQ(SeekValueKind, ValueKind::Value);
   EXPECT_EQ(InternalKeyTrailerSize, 8U);
   EXPECT_EQ(MaxSequenceNumber, (std::uint64_t{1} << 56U) - 1U);
+}
+
+TEST(LookupKeyTest, MatchesLevelDbGoldenEncodingAndViews) {
+  auto key = LookupKey::Create(AsBytes("foo"), 0x00010203040506ULL);
+
+  ASSERT_TRUE(key.has_value());
+  EXPECT_EQ(std::vector<std::byte>(key->memtable_key().begin(), key->memtable_key().end()),
+            Bytes({
+                0x0b,
+                0x66, 0x6f, 0x6f,
+                0x01, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00,
+            }));
+  EXPECT_EQ(AsStringView(key->user_key()), "foo");
+  EXPECT_EQ(key->internal_key().data(), key->memtable_key().data() + 1);
+
+  const auto parsed = ParseInternalKey(key->internal_key());
+  ASSERT_TRUE(parsed.has_value());
+  EXPECT_EQ(parsed->sequence, 0x00010203040506ULL);
+  EXPECT_EQ(parsed->kind, ValueKind::Value);
+  EXPECT_EQ(AsStringView(parsed->user_key), "foo");
+}
+
+TEST(LookupKeyTest, SupportsInlineBoundaryAndLongBinaryKeys) {
+  const std::vector<std::byte> inline_key(190, std::byte{0x7f});
+  const std::vector<std::byte> heap_key(191, std::byte{0x80});
+  const std::array binary_key{std::byte{0x00}, std::byte{0xff}, std::byte{0x10}};
+
+  auto inline_lookup = LookupKey::Create(inline_key, MaxSequenceNumber);
+  ASSERT_TRUE(inline_lookup.has_value());
+  const std::byte* const inline_address = inline_lookup->memtable_key().data();
+  LookupKey moved_inline = std::move(*inline_lookup);
+  EXPECT_NE(moved_inline.memtable_key().data(), inline_address);
+  EXPECT_EQ(inline_lookup->memtable_key().data(), inline_address);
+  EXPECT_TRUE(std::ranges::equal(moved_inline.user_key(), inline_key));
+  EXPECT_TRUE(inline_lookup->user_key().empty());
+
+  auto heap_lookup = LookupKey::Create(heap_key, MaxSequenceNumber);
+  ASSERT_TRUE(heap_lookup.has_value());
+  const std::byte* const heap_address = heap_lookup->memtable_key().data();
+  LookupKey moved_heap = std::move(*heap_lookup);
+  EXPECT_EQ(moved_heap.memtable_key().data(), heap_address);
+  EXPECT_NE(heap_lookup->memtable_key().data(), heap_address);
+  EXPECT_TRUE(std::ranges::equal(moved_heap.user_key(), heap_key));
+  EXPECT_TRUE(heap_lookup->user_key().empty());
+
+  auto binary_lookup = LookupKey::Create(binary_key, MaxSequenceNumber);
+  ASSERT_TRUE(binary_lookup.has_value());
+  EXPECT_TRUE(std::ranges::equal(binary_lookup->user_key(), binary_key));
+
+  for (const LookupKey* key : {&moved_inline, &moved_heap, &*binary_lookup}) {
+    const auto parsed = ParseInternalKey(key->internal_key());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->sequence, MaxSequenceNumber);
+    EXPECT_EQ(parsed->kind, ValueKind::Value);
+  }
+}
+
+TEST(LookupKeyTest, MovesAndResetsSourceToCanonicalEmptyKey) {
+  const std::vector<std::byte> long_key(512, std::byte{'x'});
+  auto source_result = LookupKey::Create(long_key, 99);
+  ASSERT_TRUE(source_result.has_value());
+
+  LookupKey destination = std::move(*source_result);
+
+  EXPECT_TRUE(std::ranges::equal(destination.user_key(), long_key));
+  EXPECT_TRUE(source_result->user_key().empty());
+  const auto moved_from = ParseInternalKey(source_result->internal_key());
+  ASSERT_TRUE(moved_from.has_value());
+  EXPECT_EQ(moved_from->sequence, 0U);
+  EXPECT_EQ(moved_from->kind, ValueKind::Value);
+
+  auto replacement_result = LookupKey::Create(AsBytes("replacement"), 7);
+  ASSERT_TRUE(replacement_result.has_value());
+  destination = std::move(*replacement_result);
+  EXPECT_EQ(AsStringView(destination.user_key()), "replacement");
+  EXPECT_TRUE(replacement_result->user_key().empty());
+}
+
+TEST(LookupKeyTest, RejectsSequenceOutsideInternalKeyRange) {
+  const auto key = LookupKey::Create(AsBytes("key"), MaxSequenceNumber + 1U);
+
+  ASSERT_FALSE(key.has_value());
+  EXPECT_EQ(key.error().code(), ErrorCode::InvalidArgument);
 }
 
 TEST(InternalKeyTest, MatchesLevelDbGoldenEncodings) {

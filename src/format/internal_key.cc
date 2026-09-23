@@ -1,7 +1,12 @@
 #include "format/internal_key.h"
 
+#include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <memory>
+#include <span>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -77,6 +82,99 @@ Result<ParsedInternalKey> ParseInternalKey(ByteView encoded) {
       .sequence = decoded.sequence,
       .kind = decoded.kind,
   };
+}
+
+Result<LookupKey> LookupKey::Create(ByteView user_key, SequenceNumber sequence) {
+  if (sequence > MaxSequenceNumber) {
+    return std::unexpected(Error::InvalidArgument("lookup key sequence exceeds 56 bits"));
+  }
+
+  constexpr std::size_t MaximumLength =
+      static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max());
+  if (user_key.size() > MaximumLength - InternalKeyTrailerSize) {
+    return std::unexpected(Error::InvalidArgument("lookup key exceeds uint32 length"));
+  }
+
+  const std::size_t internal_key_size = user_key.size() + InternalKeyTrailerSize;
+  const std::size_t prefix_size = VarintLength(internal_key_size);
+  if (internal_key_size > std::numeric_limits<std::size_t>::max() - prefix_size) {
+    return std::unexpected(Error::InvalidArgument("lookup key representation is too large"));
+  }
+  const std::size_t encoded_size = prefix_size + internal_key_size;
+
+  LookupKey result;
+  if (encoded_size > InlineCapacity) {
+    result.heap_storage_ = std::make_unique<std::byte[]>(encoded_size);
+  }
+  result.encoded_size_ = encoded_size;
+  result.internal_key_offset_ = prefix_size;
+
+  MutableByteView output(result.data(), encoded_size);
+  const bool encoded_length =
+      EncodeVarint32(output, static_cast<std::uint32_t>(internal_key_size));
+  assert(encoded_length);
+  (void)encoded_length;
+  std::ranges::copy(user_key, output.begin());
+  output = output.subspan(user_key.size());
+  EncodeFixed64(std::span<std::byte, InternalKeyTrailerSize>(
+                    output.data(), InternalKeyTrailerSize),
+                PackTrailer(sequence, SeekValueKind));
+  return result;
+}
+
+LookupKey::LookupKey() noexcept { ResetToCanonicalEmpty(); }
+
+LookupKey::LookupKey(LookupKey&& source) noexcept
+    : inline_storage_(source.inline_storage_),
+      heap_storage_(std::move(source.heap_storage_)),
+      encoded_size_(source.encoded_size_),
+      internal_key_offset_(source.internal_key_offset_) {
+  source.ResetToCanonicalEmpty();
+}
+
+LookupKey& LookupKey::operator=(LookupKey&& source) noexcept {
+  if (this != &source) {
+    inline_storage_ = source.inline_storage_;
+    heap_storage_ = std::move(source.heap_storage_);
+    encoded_size_ = source.encoded_size_;
+    internal_key_offset_ = source.internal_key_offset_;
+    source.ResetToCanonicalEmpty();
+  }
+  return *this;
+}
+
+ByteView LookupKey::memtable_key() const noexcept {
+  return ByteView(data(), encoded_size_);
+}
+
+ByteView LookupKey::internal_key() const noexcept {
+  return memtable_key().subspan(internal_key_offset_);
+}
+
+ByteView LookupKey::user_key() const noexcept {
+  const ByteView encoded_internal_key = internal_key();
+  if (encoded_internal_key.size() < InternalKeyTrailerSize) {
+    return {};
+  }
+  return encoded_internal_key.first(encoded_internal_key.size() - InternalKeyTrailerSize);
+}
+
+std::byte* LookupKey::data() noexcept {
+  return heap_storage_ != nullptr ? heap_storage_.get() : inline_storage_.data();
+}
+
+const std::byte* LookupKey::data() const noexcept {
+  return heap_storage_ != nullptr ? heap_storage_.get() : inline_storage_.data();
+}
+
+void LookupKey::ResetToCanonicalEmpty() noexcept {
+  heap_storage_.reset();
+  encoded_size_ = 1U + InternalKeyTrailerSize;
+  internal_key_offset_ = 1;
+  inline_storage_[0] = static_cast<std::byte>(InternalKeyTrailerSize);
+  EncodeFixed64(std::span<std::byte, InternalKeyTrailerSize>(
+                    inline_storage_.data() + internal_key_offset_, InternalKeyTrailerSize),
+                PackTrailer(0, SeekValueKind));
 }
 
 Result<InternalKey> InternalKey::Create(ByteView user_key, SequenceNumber sequence,

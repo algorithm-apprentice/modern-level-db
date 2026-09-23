@@ -31,6 +31,7 @@ add_executable(
   unit/format/wal_format_test.cc
   unit/format/write_batch_test.cc
   unit/memory/arena_test.cc
+  unit/memory/memtable_test.cc
   unit/memory/skiplist_test.cc
   unit/platform/clock_test.cc
   unit/platform/file_system_test.cc
