@@ -23,7 +23,8 @@ reassembly, and typed corruption events. The metadata layer names and
 classifies LevelDB-compatible database files, validates `CURRENT` contents,
 and encodes and strictly decodes LevelDB-compatible MANIFEST version edits.
 The table layer builds and reads LevelDB-compatible sorted blocks, block
-handles, footers, and checksummed block trailers.
+handles, footers, checksummed block trailers, Bloom filters, and filter
+blocks.
 Database orchestration, SSTable I/O, and compaction are not yet
 implemented.
 
