@@ -33,8 +33,12 @@ verified level-0 tables, and opens databases: it locks the directory, creates
 or recovers the version set, replays the logs into level-0 tables, and starts
 a new log. Point reads look up a key at a snapshot in the memtables and the
 current version, and iterators merge the memtables and the version's tables
-and yield the user keys that a snapshot sees in both directions.
-Writes, compaction, and the database interface are not yet implemented.
+and yield the user keys that a snapshot sees in both directions. Writers
+queue under the database mutex, and the front writer commits the queued
+batches as one group: it checks the group before any I/O, appends it to the
+log, syncs the log if asked, and inserts it into the memtable.
+Memtable flushes, compaction, and the database interface are not yet
+implemented.
 
 ## Goals
 

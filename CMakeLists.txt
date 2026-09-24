@@ -34,6 +34,7 @@ add_library(
     src/engine/lookup.cc
     src/engine/recovery.cc
     src/engine/table_cache.cc
+    src/engine/write_path.cc
     src/format/internal_key.cc
     src/format/wal_format.cc
     src/format/write_batch.cc
