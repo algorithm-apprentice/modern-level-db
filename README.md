@@ -40,9 +40,11 @@ log, syncs the log if asked, and inserts it into the memtable. A flush writes
 an immutable memtable to a table and returns the version edit that installs
 it at the level LevelDB would choose. Compaction picking scores a version's
 levels and chooses a compaction's inputs, grandparents, and trivial moves as
-LevelDB does.
-Running compactions, seek statistics, making room for writes, and the
-database interface are not yet implemented.
+LevelDB does, and running a compaction writes the entries that some snapshot
+can still read to new tables of the next level, byte for byte as LevelDB
+would.
+Seek statistics, making room for writes, and the database interface are not
+yet implemented.
 
 ## Goals
 

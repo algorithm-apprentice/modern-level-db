@@ -29,6 +29,7 @@ add_library(
     src/base/crc32c.cc
     src/base/hash.cc
     src/engine/build_table.cc
+    src/engine/compaction.cc
     src/engine/compaction_picker.cc
     src/engine/db_iterator.cc
     src/engine/flush.cc
