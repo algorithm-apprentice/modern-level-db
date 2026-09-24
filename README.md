@@ -46,9 +46,9 @@ would. Point reads and sampled iterator reads charge files' seek budgets,
 which name a file to compact once they run out, as LevelDB's do. An internal
 database engine ties these together: it commits writes, switches full
 memtables to a new synced log, flushes immutable memtables in the background,
-serves reads and iterators at snapshots, and removes obsolete files. Background
-compactions, write throttling, and the public database interface are not yet
-implemented.
+serves reads and iterators at snapshots, runs size and seek compactions,
+slows or stops writes while level 0 backs up, and removes obsolete files. The
+public database interface is not yet implemented.
 
 ## Goals
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +17,8 @@
 #include <utility>
 #include <vector>
 
+#include "engine/compaction.h"
+#include "engine/compaction_picker.h"
 #include "engine/flush.h"
 #include "engine/iterators.h"
 #include "engine/lookup.h"
@@ -59,6 +62,13 @@ std::unique_ptr<BackgroundExecutor> OwnedExecutor(const DatabaseOptions& options
     return nullptr;
   }
   return std::make_unique<SerialExecutor>();
+}
+
+std::unique_ptr<Clock> OwnedClock(const DatabaseOptions& options) {
+  if (options.clock != nullptr) {
+    return nullptr;
+  }
+  return std::make_unique<SystemClock>();
 }
 
 TableOptions ReadTableOptions(const DatabaseOptions& options, BlockCache* owned_block_cache) {
@@ -109,11 +119,13 @@ Result<std::unique_ptr<Database>> Database::Open(DatabaseOptions options,
 Database::Database(PrivateTag, const DatabaseOptions& options, std::filesystem::path directory)
     : owned_file_system_(OwnedFileSystem(options)),
       owned_block_cache_(OwnedBlockCache(options)),
+      owned_clock_(OwnedClock(options)),
       write_buffer_size_(options.write_buffer_size),
       max_file_size_(options.max_file_size),
       table_options_(options.table_options),
       directory_(std::move(directory)),
       file_system_(options.file_system != nullptr ? options.file_system : owned_file_system_.get()),
+      clock_(options.clock != nullptr ? options.clock : owned_clock_.get()),
       comparator_(*options.comparator),
       table_cache_(*file_system_, directory_, comparator_,
                    ReadTableOptions(options, owned_block_cache_.get()),
@@ -129,6 +141,11 @@ Database::Database(PrivateTag, const DatabaseOptions& options, std::filesystem::
 Database::~Database() {
   std::unique_lock lock(mutex_);
   closing_ = true;
+  // No write can use the log any longer, and a close error has no one to go
+  // to, as in LevelDB's destructor. A failed open may have no log.
+  if (log_ != nullptr) {
+    static_cast<void>(log_->Close());
+  }
   background_finished_.wait(lock, [this] { return !background_scheduled_; });
 }
 
@@ -149,6 +166,11 @@ Status Database::Recover(const DatabaseOptions& options) {
   log_number_ = recovered->log_number;
   memtable_ = std::make_shared<MemTable>(comparator_.user_comparator());
   RemoveObsoleteFiles(lock);
+  // Only a task that cannot be scheduled records an error here.
+  MaybeScheduleBackgroundWork();
+  if (background_error_.has_value()) {
+    return BackgroundError();
+  }
   return {};
 }
 
@@ -158,14 +180,25 @@ Status Database::Write(const WriteBatch& batch, bool sync) {
 }
 
 Status Database::MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool force) {
+  bool allow_delay = !force;
   while (true) {
+    const std::size_t level0_files = versions_->current()->files(0).size();
     if (background_error_.has_value()) {
       return BackgroundError();
+    }
+    if (allow_delay && level0_files >= Level0SlowdownWritesTrigger) {
+      // Near the stop, each write waits a little once rather than a few
+      // writes waiting long, and the compaction gets the time.
+      lock.unlock();
+      static_cast<void>(clock_->SleepFor(std::chrono::milliseconds(1)));
+      lock.lock();
+      allow_delay = false;
+      continue;
     }
     if (!force && memtable_->memory_usage() <= write_buffer_size_) {
       return {};
     }
-    if (immutable_ != nullptr) {
+    if (immutable_ != nullptr || level0_files >= Level0StopWritesTrigger) {
       background_finished_.wait(lock);
       continue;
     }
@@ -200,6 +233,7 @@ Status Database::SwitchMemTable() {
   log_ = std::move(new_log);
   log_number_ = number;
   immutable_ = std::move(memtable_);
+  has_immutable_.store(true, std::memory_order_release);
   memtable_ = std::move(new_memtable);
   MaybeScheduleBackgroundWork();
   return {};
@@ -253,6 +287,13 @@ Result<std::optional<std::vector<std::byte>>> Database::Get(ByteView key,
   if (!read.has_value()) {
     return std::unexpected(std::move(read).error());
   }
+  if (read->seek.has_value()) {
+    lock.lock();
+    const std::shared_ptr<const Version> current = versions_->current();
+    if (seek_statistics_.Charge(version, current, *read->seek)) {
+      MaybeScheduleBackgroundWork();
+    }
+  }
   return std::move(read->value);
 }
 
@@ -263,8 +304,21 @@ std::unique_ptr<DbIterator> Database::NewIterator(const DatabaseReadOptions& opt
   std::unique_ptr<InternalIterator> internal =
       NewInternalIterator(memtable_, immutable_, versions_->current(), table_cache_, comparator_,
                           ReadOptionsFor(options));
+  ReadSampling sampling;
+  sampling.next_period = ReadSamplingPeriods(++seed_);
+  sampling.sample = [this](ByteView internal_key) { RecordReadSample(internal_key); };
   lock.unlock();
-  return std::make_unique<DbIterator>(std::move(internal), comparator_.user_comparator(), sequence);
+  return std::make_unique<DbIterator>(std::move(internal), comparator_.user_comparator(), sequence,
+                                      std::move(sampling));
+}
+
+void Database::RecordReadSample(ByteView internal_key) {
+  const std::lock_guard lock(mutex_);
+  const std::shared_ptr<const Version> current = versions_->current();
+  const std::optional<SeekCharge> charge = SampleCharge(*current, comparator_, internal_key);
+  if (charge.has_value() && seek_statistics_.Charge(current, current, *charge)) {
+    MaybeScheduleBackgroundWork();
+  }
 }
 
 SequenceNumber Database::GetSnapshot() {
@@ -306,8 +360,19 @@ Status Database::WaitForBackgroundWork() {
   return {};
 }
 
+bool Database::NeedsCompaction() const {
+  const std::shared_ptr<const Version> current = versions_->current();
+  if (ScoreCompaction(*current).score >= 1) {
+    return true;
+  }
+  return seek_statistics_.FileToCompact(current).has_value();
+}
+
 void Database::MaybeScheduleBackgroundWork() {
-  if (background_scheduled_ || closing_ || background_error_.has_value() || immutable_ == nullptr) {
+  if (background_scheduled_ || closing_ || background_error_.has_value()) {
+    return;
+  }
+  if (immutable_ == nullptr && !NeedsCompaction()) {
     return;
   }
   background_scheduled_ = true;
@@ -327,7 +392,11 @@ void Database::BackgroundCall() {
   std::unique_lock lock(mutex_);
   if (!closing_ && !background_error_.has_value()) {
     try {
-      FlushImmutable(lock);
+      if (immutable_ != nullptr) {
+        FlushImmutable(lock);
+      } else {
+        BackgroundCompaction(lock);
+      }
     } catch (...) {
       if (!lock.owns_lock()) {
         lock.lock();
@@ -369,8 +438,98 @@ void Database::FlushImmutable(std::unique_lock<std::mutex>& lock) {
   }
   pending_outputs_.erase(number);
   immutable_.reset();
+  has_immutable_.store(false, std::memory_order_relaxed);
+  seek_statistics_.Retain(*versions_->current());
   background_finished_.notify_all();
   RemoveObsoleteFiles(lock);
+}
+
+void Database::BackgroundCompaction(std::unique_lock<std::mutex>& lock) {
+  std::vector<std::uint64_t> outputs;
+  const bool compacted = Compact(lock, outputs);
+  for (const std::uint64_t number : outputs) {
+    pending_outputs_.erase(number);
+  }
+  if (compacted) {
+    RemoveObsoleteFiles(lock);
+  }
+}
+
+bool Database::Compact(std::unique_lock<std::mutex>& lock, std::vector<std::uint64_t>& outputs) {
+  const std::shared_ptr<const Version> current = versions_->current();
+  const std::optional<Compaction> compaction =
+      PickCompaction(current, comparator_, versions_->compact_pointers(),
+                     seek_statistics_.FileToCompact(current), max_file_size_);
+  // The need that scheduled this task remains, since only background work
+  // installs versions or drops the file to compact.
+  assert(compaction.has_value());
+  if (IsTrivialMove(*compaction, max_file_size_)) {
+    VersionEdit edit = CompactionEdit(*compaction);
+    // The file is valid at the next level, which nothing there overlaps.
+    const Status added = edit.AddFile(compaction->level + 1, *compaction->inputs[0].front());
+    assert(added.has_value());
+    static_cast<void>(added);
+    FinishCompaction(versions_->LogAndApply(std::move(edit)));
+    return false;
+  }
+
+  const SequenceNumber smallest_snapshot =
+      snapshots_.empty() ? versions_->last_sequence() : *snapshots_.begin();
+  const std::unique_ptr<InternalIterator> input =
+      NewCompactionIterator(*compaction, table_cache_, comparator_);
+  CompactionOptions options;
+  options.table_options = table_options_;
+  options.target_file_size = max_file_size_;
+  CompactionHooks hooks;
+  hooks.new_file_number = [this, &outputs] {
+    const std::lock_guard guard(mutex_);
+    const std::uint64_t number = versions_->NewFileNumber();
+    pending_outputs_.insert(number);
+    outputs.push_back(number);
+    return number;
+  };
+  hooks.before_entry = [this] { return BeforeCompactionEntry(); };
+  lock.unlock();
+  Result<VersionEdit> edit =
+      RunCompaction(*file_system_, directory_, comparator_, options, table_cache_, *compaction,
+                    *input, smallest_snapshot, hooks);
+  lock.lock();
+  Status applied;
+  if (!edit.has_value()) {
+    applied = std::unexpected(std::move(edit).error());
+  } else if (closing_) {
+    // As LevelDB does after its last entry.
+    applied = std::unexpected(Error::Aborted("the database closed during a compaction"));
+  } else {
+    applied = versions_->LogAndApply(std::move(*edit));
+  }
+  FinishCompaction(applied);
+  return true;
+}
+
+void Database::FinishCompaction(const Status& applied) {
+  if (!applied.has_value()) {
+    RecordBackgroundError(applied.error());
+    return;
+  }
+  seek_statistics_.Retain(*versions_->current());
+}
+
+Status Database::BeforeCompactionEntry() {
+  if (closing_) {
+    return std::unexpected(Error::Aborted("the database is closing"));
+  }
+  if (!has_immutable_.load(std::memory_order_relaxed)) {
+    return {};
+  }
+  std::unique_lock lock(mutex_);
+  // Only background work, which this is, drops the immutable memtable.
+  assert(immutable_ != nullptr);
+  FlushImmutable(lock);
+  if (background_error_.has_value()) {
+    return BackgroundError();
+  }
+  return {};
 }
 
 void Database::RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock) {

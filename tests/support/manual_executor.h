@@ -49,19 +49,25 @@ class ManualExecutor final : public BackgroundExecutor {
   // returns how many ran.
   int RunAll() {
     int ran = 0;
-    while (true) {
-      BackgroundTask task;
-      {
-        const std::lock_guard lock(mutex_);
-        if (tasks_.empty()) {
-          return ran;
-        }
-        task = std::move(tasks_.front());
-        tasks_.pop_front();
-      }
-      task(std::stop_token());
+    while (RunOne()) {
       ++ran;
     }
+    return ran;
+  }
+
+  // Runs the first queued task, if there is one, and returns whether one ran.
+  bool RunOne() {
+    BackgroundTask task;
+    {
+      const std::lock_guard lock(mutex_);
+      if (tasks_.empty()) {
+        return false;
+      }
+      task = std::move(tasks_.front());
+      tasks_.pop_front();
+    }
+    task(std::stop_token());
+    return true;
   }
 
   // Waits until a task is queued.
