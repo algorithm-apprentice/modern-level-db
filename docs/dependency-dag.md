@@ -77,8 +77,10 @@ flowchart TD
 | `implement-iterators` | Merged internal iteration and snapshot iteration of user keys | `implement-memtable`, `implement-sstable-reader`, `implement-table-cache`, `implement-version-set` |
 | `implement-write-path` | Group commit and memtable insertion | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set` |
 | `implement-flush` | Immutable memtable to a table and its version edit | `implement-memtable`, `implement-table-build`, `implement-table-cache`, `implement-version-set` |
-| `implement-compaction` | Leveled compaction | `implement-sstable-reader`, `implement-sstable-writer`, `implement-table-cache`, `implement-version-set`, `implement-read-path`, `implement-iterators` |
-| `implement-db-engine` | Integrated DB lifecycle | `implement-recovery`, `implement-read-path`, `implement-iterators`, `implement-write-path`, `implement-flush`, `implement-compaction`, `implement-table-cache`, `implement-platform-runtime` |
+| `implement-compaction-picking` | Compaction scores, inputs, grandparents, and trivial moves | `implement-version-set` |
+| `implement-compaction` | Merged compaction into split, verified tables and its version edit | `implement-compaction-picking`, `implement-iterators`, `implement-sstable-writer`, `implement-table-cache`, `implement-version-set` |
+| `implement-seek-statistics` | Seek budgets charged by point reads and iterator samples | `implement-compaction-picking`, `implement-read-path`, `implement-iterators` |
+| `implement-db-engine` | Integrated DB lifecycle | `implement-recovery`, `implement-read-path`, `implement-iterators`, `implement-write-path`, `implement-flush`, `implement-compaction-picking`, `implement-compaction`, `implement-seek-statistics`, `implement-table-cache`, `implement-platform-runtime` |
 | `implement-public-api` | Public RAII C++ API | `implement-db-engine` |
 | `implement-compression` | Snappy and Zstd SSTable block compression | `implement-sstable-writer`, `implement-sstable-reader` |
 | `build-compatibility-harness` | Model, golden, differential, crash, and fuzz tests | `implement-public-api`, `implement-compression` |
@@ -124,12 +126,14 @@ canonical order to keep development sequential and reviewable:
 29. `implement-iterators`
 30. `implement-write-path`
 31. `implement-flush`
-32. `implement-compaction`
-33. `implement-db-engine`
-34. `implement-public-api`
-35. `implement-compression`
-36. `build-compatibility-harness`
-37. `harden-engine`
+32. `implement-compaction-picking`
+33. `implement-compaction`
+34. `implement-seek-statistics`
+35. `implement-db-engine`
+36. `implement-public-api`
+37. `implement-compression`
+38. `build-compatibility-harness`
+39. `harden-engine`
 
 ## Completion rule
 
