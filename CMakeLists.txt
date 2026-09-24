@@ -29,6 +29,7 @@ add_library(
     src/base/crc32c.cc
     src/base/hash.cc
     src/engine/build_table.cc
+    src/engine/lookup.cc
     src/engine/recovery.cc
     src/engine/table_cache.cc
     src/format/internal_key.cc

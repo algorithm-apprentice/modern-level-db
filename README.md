@@ -31,8 +31,9 @@ bidirectional iteration, and a block cache. The engine layer keeps recently
 used tables open in an LRU cache by file number, writes memtables to durable,
 verified level-0 tables, and opens databases: it locks the directory, creates
 or recovers the version set, replays the logs into level-0 tables, and starts
-a new log.
-Reads, writes, compaction, and the database interface are not yet
+a new log. Point reads look up a key at a snapshot in the memtables and the
+current version.
+Iterators, writes, compaction, and the database interface are not yet
 implemented.
 
 ## Goals
