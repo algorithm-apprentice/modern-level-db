@@ -76,7 +76,7 @@ flowchart TD
 | `implement-read-path` | Point reads through memtables and versions | `implement-memtable`, `implement-table-cache`, `implement-version-set` |
 | `implement-iterators` | Merged internal iteration and snapshot iteration of user keys | `implement-memtable`, `implement-sstable-reader`, `implement-table-cache`, `implement-version-set` |
 | `implement-write-path` | Group commit and memtable insertion | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set` |
-| `implement-flush` | Immutable memtable to L0 | `implement-memtable`, `implement-table-build`, `implement-table-cache`, `implement-version-set` |
+| `implement-flush` | Immutable memtable to a table and its version edit | `implement-memtable`, `implement-table-build`, `implement-table-cache`, `implement-version-set` |
 | `implement-compaction` | Leveled compaction | `implement-sstable-reader`, `implement-sstable-writer`, `implement-table-cache`, `implement-version-set`, `implement-read-path`, `implement-iterators` |
 | `implement-db-engine` | Integrated DB lifecycle | `implement-recovery`, `implement-read-path`, `implement-iterators`, `implement-write-path`, `implement-flush`, `implement-compaction`, `implement-table-cache`, `implement-platform-runtime` |
 | `implement-public-api` | Public RAII C++ API | `implement-db-engine` |

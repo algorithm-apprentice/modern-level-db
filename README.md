@@ -36,8 +36,10 @@ current version, and iterators merge the memtables and the version's tables
 and yield the user keys that a snapshot sees in both directions. Writers
 queue under the database mutex, and the front writer commits the queued
 batches as one group: it checks the group before any I/O, appends it to the
-log, syncs the log if asked, and inserts it into the memtable.
-Memtable flushes, compaction, and the database interface are not yet
+log, syncs the log if asked, and inserts it into the memtable. A flush writes
+an immutable memtable to a table and returns the version edit that installs
+it at the level LevelDB would choose.
+Compaction, making room for writes, and the database interface are not yet
 implemented.
 
 ## Goals
