@@ -88,8 +88,9 @@ class VersionSet final {
   [[nodiscard]] Status LogAndApply(VersionEdit edit);
 
  private:
+  // Leaves the version set without a current version until one is installed.
   VersionSet(FileSystem& file_system, std::filesystem::path directory,
-             const InternalKeyComparator& comparator);
+             const InternalKeyComparator& comparator) noexcept;
 
   [[nodiscard]] Status Validate(const VersionEdit& edit) const;
   [[nodiscard]] Status Write(const VersionEdit& edit);

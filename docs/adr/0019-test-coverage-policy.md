@@ -112,14 +112,16 @@ and restructure logic when doing so does not reduce clarity or safety.
 
 For example, GCC guards the cleanup of a temporary with a flag when the
 temporary is constructed conditionally: a member of a partially constructed
-aggregate with several non-trivially destructible members, a default-constructed
-temporary of a class with several such members, or a temporary with a
-non-trivial destructor, such as a `Status`, in an operand of `&&`, `||`, or
+aggregate with several non-trivially destructible members, or a temporary with
+a non-trivial destructor, such as a `Status`, in an operand of `&&`, `||`, or
 `?:`. If such a temporary appears inside an expression that may throw, such as
-an argument to `push_back` or `LogAndApply(VersionEdit())`, the flag check
-becomes a branch that only an allocation failure can take. Construct the
-aggregate or object in its own declaration first, and give each such temporary
-its own statement.
+an argument to `push_back`, the flag check becomes a branch that only an
+allocation failure can take. Construct the aggregate in its own declaration
+first, and give each such temporary its own statement. Likewise, when a
+constructor may throw, GCC guards freeing the memory of a `new` expression
+with a flag whose check only a throwing constructor can take; keep
+constructors that `new` calls `noexcept`, and do fallible work after
+construction.
 
 An exclusion is allowed only when no deterministic unit test can execute the
 code:

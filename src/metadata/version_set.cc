@@ -77,17 +77,15 @@ VersionEdit Snapshot(const Comparator& user_comparator,
 }  // namespace
 
 VersionSet::VersionSet(FileSystem& file_system, std::filesystem::path directory,
-                       const InternalKeyComparator& comparator)
-    : file_system_(&file_system), directory_(std::move(directory)), comparator_(&comparator) {
-  Install(std::make_shared<const Version>());
-}
+                       const InternalKeyComparator& comparator) noexcept
+    : file_system_(&file_system), directory_(std::move(directory)), comparator_(&comparator) {}
 
 Result<std::unique_ptr<VersionSet>> VersionSet::Create(FileSystem& file_system,
                                                        std::filesystem::path directory,
                                                        const InternalKeyComparator& comparator) {
   std::unique_ptr<VersionSet> set(new VersionSet(file_system, std::move(directory), comparator));
-  VersionEdit initial;
-  const Status created = set->LogAndApply(std::move(initial));
+  set->Install(std::make_shared<const Version>());
+  const Status created = set->LogAndApply(VersionEdit());
   if (!created.has_value()) {
     return std::unexpected(created.error());
   }
@@ -120,8 +118,7 @@ Result<std::unique_ptr<VersionSet>> VersionSet::Recover(FileSystem& file_system,
   }
 
   std::unique_ptr<VersionSet> set(new VersionSet(file_system, std::move(directory), comparator));
-  const Version empty;
-  VersionBuilder builder(comparator, empty);
+  VersionBuilder builder(comparator, Version());
   std::optional<std::uint64_t> next_file;
   std::optional<std::uint64_t> log_number;
   std::optional<SequenceNumber> last_sequence;
