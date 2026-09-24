@@ -33,6 +33,7 @@ add_executable(
   unit/engine/lookup_test.cc
   unit/engine/recovery_test.cc
   unit/engine/table_cache_test.cc
+  unit/engine/write_path_test.cc
   unit/format/internal_key_test.cc
   unit/format/wal_format_test.cc
   unit/format/write_batch_test.cc

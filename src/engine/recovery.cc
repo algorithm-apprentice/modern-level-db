@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "engine/build_table.h"
+#include "engine/write_path.h"
 #include "format/write_batch.h"
 #include "memory/memtable.h"
 #include "metadata/filenames.h"
@@ -230,14 +231,12 @@ class LogReplay final {
       last_sequence_ = batch->sequence() - 1;
       return {};
     }
-    while (const std::optional<WriteBatchEntry> entry = batch->Next()) {
-      const Status added = memtable_->Add(entry->sequence, entry->kind, entry->key, entry->value);
-      // Sequences increase, so only a key over 4 GiB is rejected.
-      if (!added.has_value()) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs a key over 4 GiB
-        return InvalidEntry(added.error());  // GCOVR_EXCL_LINE: needs a key over 4 GiB
-      }
-      last_sequence_ = entry->sequence;
+    const Status inserted = InsertBatch(*batch, *memtable_);
+    // Sequences increase, so only a key over 4 GiB is rejected.
+    if (!inserted.has_value()) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs a key over 4 GiB
+      return InvalidEntry(inserted.error());  // GCOVR_EXCL_LINE: needs a key over 4 GiB
     }
+    last_sequence_ = batch->sequence() + batch->count() - 1;
     has_entries_ = true;
     if (memtable_->memory_usage() > options_->write_buffer_size) {
       return Flush();
