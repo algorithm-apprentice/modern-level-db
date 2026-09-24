@@ -30,6 +30,7 @@ add_executable(
   unit/engine/build_table_test.cc
   unit/engine/compaction_test.cc
   unit/engine/compaction_picker_test.cc
+  unit/engine/database_test.cc
   unit/engine/db_iterator_test.cc
   unit/engine/flush_test.cc
   unit/engine/iterators_test.cc
@@ -65,8 +66,15 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(
     modern_leveldb_unit_tests
     PRIVATE
+      unit/engine/database_posix_test.cc
       unit/platform/posix_file_system_test.cc
       unit/wal/wal_io_posix_test.cc
+  )
+else()
+  target_sources(
+    modern_leveldb_unit_tests
+    PRIVATE
+      unit/engine/database_without_posix_test.cc
   )
 endif()
 target_include_directories(

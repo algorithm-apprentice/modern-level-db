@@ -80,8 +80,9 @@ flowchart TD
 | `implement-compaction-picking` | Compaction scores, inputs, grandparents, and trivial moves | `implement-version-set` |
 | `implement-compaction` | Merged compaction into split, verified tables and its version edit | `implement-compaction-picking`, `implement-iterators`, `implement-sstable-writer`, `implement-table-cache`, `implement-version-set` |
 | `implement-seek-statistics` | Seek budgets charged by point reads and iterator samples | `implement-compaction-picking`, `implement-read-path`, `implement-iterators` |
-| `implement-db-engine` | Integrated DB lifecycle | `implement-recovery`, `implement-read-path`, `implement-iterators`, `implement-write-path`, `implement-flush`, `implement-compaction-picking`, `implement-compaction`, `implement-seek-statistics`, `implement-table-cache`, `implement-platform-runtime` |
-| `implement-public-api` | Public RAII C++ API | `implement-db-engine` |
+| `implement-db-engine` | Database lifecycle, writes, reads, snapshots, flushes, and cleanup | `implement-recovery`, `implement-read-path`, `implement-iterators`, `implement-write-path`, `implement-flush`, `implement-table-cache`, `implement-platform-runtime` |
+| `implement-db-compactions` | Background compactions, write throttling, and seek charges | `implement-db-engine`, `implement-compaction-picking`, `implement-compaction`, `implement-seek-statistics` |
+| `implement-public-api` | Public RAII C++ API | `implement-db-compactions` |
 | `implement-compression` | Snappy and Zstd SSTable block compression | `implement-sstable-writer`, `implement-sstable-reader` |
 | `build-compatibility-harness` | Model, golden, differential, crash, and fuzz tests | `implement-public-api`, `implement-compression` |
 | `harden-engine` | Sanitizer, crash, fuzz, and benchmark gates | `build-compatibility-harness` |
@@ -130,10 +131,11 @@ canonical order to keep development sequential and reviewable:
 33. `implement-compaction`
 34. `implement-seek-statistics`
 35. `implement-db-engine`
-36. `implement-public-api`
-37. `implement-compression`
-38. `build-compatibility-harness`
-39. `harden-engine`
+36. `implement-db-compactions`
+37. `implement-public-api`
+38. `implement-compression`
+39. `build-compatibility-harness`
+40. `harden-engine`
 
 ## Completion rule
 

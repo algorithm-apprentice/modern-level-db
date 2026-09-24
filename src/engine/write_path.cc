@@ -127,8 +127,14 @@ WriteQueue::WriteQueue(Prepare prepare, Commit commit)
           Error::Aborted("write aborted by an exception while its group committed")))) {}
 
 Status WriteQueue::Write(std::unique_lock<std::mutex>& lock, const WriteBatch& batch, bool sync) {
+  return Run(lock, &batch, sync);
+}
+
+Status WriteQueue::Force(std::unique_lock<std::mutex>& lock) { return Run(lock, nullptr, false); }
+
+Status WriteQueue::Run(std::unique_lock<std::mutex>& lock, const WriteBatch* batch, bool sync) {
   assert(lock.owns_lock());
-  Writer writer{.batch = &batch, .sync = sync};
+  Writer writer{.batch = batch, .sync = sync};
   writers_.push_back(&writer);
   writer.woken.wait(lock, [&] { return writer.done || writers_.front() == &writer; });
   if (writer.done) {
@@ -136,8 +142,9 @@ Status WriteQueue::Write(std::unique_lock<std::mutex>& lock, const WriteBatch& b
   }
 
   LeaderGuard guard(*this, lock, writer);
-  const Status prepared = prepare_(lock);
-  if (!prepared.has_value()) {
+  const Status prepared = prepare_(lock, batch == nullptr);
+  // A forced writer only prepares.
+  if (!prepared.has_value() || batch == nullptr) {
     guard.Dismiss();
     Complete(writer, &writer, nullptr);
     return prepared;
@@ -163,8 +170,9 @@ WriteQueue::Writer* WriteQueue::BuildGroup(const Writer& leader) {
   Writer* last = writers_.front();
   for (auto next = std::next(writers_.begin()); next != writers_.end(); ++next) {
     Writer* follower = *next;
-    // A group that does not sync must not take a write that asks for a sync.
-    if (follower->sync && !leader.sync) {
+    // A forced writer prepares on its own, and a group that does not sync must
+    // not take a write that asks for a sync.
+    if (follower->batch == nullptr || (follower->sync && !leader.sync)) {
       break;
     }
     size += follower->batch->encoded().size();
