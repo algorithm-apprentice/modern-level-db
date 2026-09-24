@@ -1,6 +1,7 @@
 #include "engine/db_iterator.h"
 
 #include <cassert>
+#include <cstdint>
 #include <expected>
 #include <memory>
 #include <utility>
@@ -20,9 +21,28 @@ void Assign(std::vector<std::byte>& destination, ByteView source) {
 }  // namespace
 
 DbIterator::DbIterator(std::unique_ptr<InternalIterator> internal,
-                       const Comparator& user_comparator, SequenceNumber sequence) noexcept
-    : internal_(std::move(internal)), user_comparator_(&user_comparator), sequence_(sequence) {
+                       const Comparator& user_comparator, SequenceNumber sequence,
+                       ReadSampling sampling) noexcept
+    : internal_(std::move(internal)),
+      user_comparator_(&user_comparator),
+      sequence_(sequence),
+      sampling_(std::move(sampling)) {
   assert(internal_ != nullptr && sequence <= MaxSequenceNumber);
+}
+
+void DbIterator::CountRead(ByteView key, ByteView value) {
+  if (!sampling_.sample) {
+    return;
+  }
+  const std::uint64_t bytes = key.size() + value.size();
+  if (!bytes_until_sample_.has_value()) {
+    bytes_until_sample_ = sampling_.next_period();
+  }
+  while (*bytes_until_sample_ < bytes) {
+    *bytes_until_sample_ += sampling_.next_period();
+    sampling_.sample(key);
+  }
+  *bytes_until_sample_ -= bytes;
 }
 
 ByteView DbIterator::key() const noexcept {
@@ -133,6 +153,7 @@ Status DbIterator::FindNextUserEntry(bool skipping) {
     if (!parsed.has_value()) {
       return Fail(parsed.error());
     }
+    CountRead(internal_->key(), internal_->value());
     if (parsed->sequence <= sequence_) {
       if (parsed->kind == ValueKind::Deletion) {
         Assign(saved_key_, parsed->user_key);
@@ -162,6 +183,7 @@ Status DbIterator::FindPrevUserEntry() {
     if (!parsed.has_value()) {
       return Fail(parsed.error());
     }
+    CountRead(internal_->key(), internal_->value());
     if (parsed->sequence <= sequence_) {
       if (kind != ValueKind::Deletion &&
           user_comparator_->Compare(parsed->user_key, saved_key_) < 0) {
