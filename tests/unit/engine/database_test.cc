@@ -160,8 +160,9 @@ class DatabaseTest : public testing::Test {
 
   // The numbers of the directory's files of the type.
   std::vector<std::uint64_t> Numbers(FileType type) const {
+    const Result<std::vector<std::filesystem::path>> names = file_system_.ListDirectory(directory_);
     std::vector<std::uint64_t> numbers;
-    for (const std::filesystem::path& name : file_system_.ListDirectory(directory_).value()) {
+    for (const std::filesystem::path& name : names.value()) {
       const std::optional<ParsedFileName> parsed = ParseFileName(name.string());
       if (parsed.has_value() && parsed->type == type) {
         numbers.push_back(parsed->number);
