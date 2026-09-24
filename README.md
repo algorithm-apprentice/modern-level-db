@@ -25,9 +25,9 @@ and encodes and strictly decodes LevelDB-compatible MANIFEST version edits.
 The table layer builds and reads LevelDB-compatible sorted blocks, block
 handles, footers, checksummed block trailers, Bloom filters, and filter
 blocks, writes complete SSTables durably, and reads them through lookups,
-bidirectional iteration, and a block cache.
-Database orchestration, the table cache, and compaction are not yet
-implemented.
+bidirectional iteration, and a block cache. The engine layer keeps recently
+used tables open in an LRU cache by file number.
+Database orchestration and compaction are not yet implemented.
 
 ## Goals
 
