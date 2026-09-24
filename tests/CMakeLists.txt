@@ -36,6 +36,8 @@ add_executable(
   unit/memory/skiplist_test.cc
   unit/metadata/filenames_test.cc
   unit/metadata/version_edit_test.cc
+  unit/metadata/version_set_test.cc
+  unit/metadata/version_test.cc
   unit/platform/clock_test.cc
   unit/platform/file_system_test.cc
   unit/platform/serial_executor_test.cc
@@ -47,6 +49,7 @@ add_executable(
   unit/table/table_test.cc
   unit/toolchain_test.cc
   unit/wal/wal_io_test.cc
+  support/memory_file_system.cc
 )
 if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(
@@ -56,7 +59,10 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
       unit/wal/wal_io_posix_test.cc
   )
 endif()
-target_include_directories(modern_leveldb_unit_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_include_directories(
+  modern_leveldb_unit_tests
+  PRIVATE "${PROJECT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}"
+)
 target_link_libraries(
   modern_leveldb_unit_tests
   PRIVATE

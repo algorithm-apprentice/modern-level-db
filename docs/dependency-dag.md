@@ -70,7 +70,7 @@ flowchart TD
 | `implement-sstable-writer` | Durable LevelDB-compatible SSTable construction from ordered internal-key entries | `implement-platform-fs`, `implement-internal-key`, `implement-block-format`, `implement-filter` |
 | `implement-sstable-reader` | Validated SSTable lookups, bidirectional iteration, and block caching | `implement-platform-fs`, `implement-internal-key`, `implement-block-format`, `implement-filter`, `implement-cache` |
 | `implement-table-cache` | LRU cache of open SSTables by file number | `implement-sstable-reader`, `implement-cache`, `implement-filenames` |
-| `implement-version-set` | Versions and MANIFEST state | `implement-version-edit`, `implement-filenames`, `implement-sstable-reader`, `implement-wal-io` |
+| `implement-version-set` | Immutable versions, validated edits, and MANIFEST and `CURRENT` persistence | `implement-version-edit`, `implement-filenames`, `implement-wal-io` |
 | `implement-recovery` | MANIFEST and WAL recovery | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set` |
 | `implement-read-path` | Point reads and merged iteration | `implement-memtable`, `implement-table-cache`, `implement-version-set` |
 | `implement-write-path` | Group commit and memtable insertion | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set` |

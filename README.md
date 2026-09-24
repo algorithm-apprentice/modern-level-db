@@ -21,7 +21,9 @@ list and a packed MemTable with snapshot lookup and ordered iteration. An owned
 WAL stream layer provides flushed appends, explicit sync, logical-record
 reassembly, and typed corruption events. The metadata layer names and
 classifies LevelDB-compatible database files, validates `CURRENT` contents,
-and encodes and strictly decodes LevelDB-compatible MANIFEST version edits.
+encodes and strictly decodes LevelDB-compatible MANIFEST version edits, builds
+validated immutable versions from them, and creates, recovers, and appends to
+the MANIFEST with durable `CURRENT` installation.
 The table layer builds and reads LevelDB-compatible sorted blocks, block
 handles, footers, checksummed block trailers, Bloom filters, and filter
 blocks, writes complete SSTables durably, and reads them through lookups,

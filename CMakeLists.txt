@@ -35,7 +35,9 @@ add_library(
     src/memory/arena.cc
     src/memory/memtable.cc
     src/metadata/filenames.cc
+    src/metadata/version.cc
     src/metadata/version_edit.cc
+    src/metadata/version_set.cc
     src/platform/clock.cc
     src/platform/serial_executor.cc
     src/table/block.cc
