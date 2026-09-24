@@ -28,9 +28,12 @@ The table layer builds and reads LevelDB-compatible sorted blocks, block
 handles, footers, checksummed block trailers, Bloom filters, and filter
 blocks, writes complete SSTables durably, and reads them through lookups,
 bidirectional iteration, and a block cache. The engine layer keeps recently
-used tables open in an LRU cache by file number and writes memtables to
-durable, verified level-0 tables.
-Database orchestration and compaction are not yet implemented.
+used tables open in an LRU cache by file number, writes memtables to durable,
+verified level-0 tables, and opens databases: it locks the directory, creates
+or recovers the version set, replays the logs into level-0 tables, and starts
+a new log.
+Reads, writes, compaction, and the database interface are not yet
+implemented.
 
 ## Goals
 

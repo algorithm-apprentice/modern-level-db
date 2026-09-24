@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -44,6 +45,21 @@ class MemoryFileSystem::SequentialMemoryFile final : public SequentialFile {
   MemoryFileSystem& file_system_;
   std::filesystem::path path_;
   std::size_t offset_ = 0;
+};
+
+class MemoryFileSystem::MemoryFileLock final : public FileLock {
+ public:
+  MemoryFileLock(std::set<std::filesystem::path>& locks, std::filesystem::path path)
+      : locks_(locks), path_(std::move(path)) {}
+  MemoryFileLock(const MemoryFileLock&) = delete;
+  MemoryFileLock& operator=(const MemoryFileLock&) = delete;
+  MemoryFileLock(MemoryFileLock&&) = delete;
+  MemoryFileLock& operator=(MemoryFileLock&&) = delete;
+  ~MemoryFileLock() override { locks_.erase(path_); }
+
+ private:
+  std::set<std::filesystem::path>& locks_;
+  std::filesystem::path path_;
 };
 
 class MemoryFileSystem::RandomAccessMemoryFile final : public RandomAccessFile {
@@ -109,7 +125,7 @@ void MemoryFileSystem::Write(const std::filesystem::path& path, std::vector<std:
   files_.insert_or_assign(path, std::move(contents));
 }
 
-Status MemoryFileSystem::Record(std::string operation) {
+Status MemoryFileSystem::Record(std::string operation) const {
   const std::size_t index = operations_.size();
   operations_.push_back(std::move(operation));
   const auto failure = failures_.find(index);
@@ -159,13 +175,30 @@ Result<std::unique_ptr<WritableFile>> MemoryFileSystem::OpenAppendable(
   return Unsupported("OpenAppendable");
 }
 
-Result<bool> MemoryFileSystem::FileExists(const std::filesystem::path&) const {
-  return Unsupported("FileExists");
+Result<bool> MemoryFileSystem::FileExists(const std::filesystem::path& path) const {
+  const Status recorded = Record("exists " + Name(path));
+  if (!recorded.has_value()) {
+    return std::unexpected(recorded.error());
+  }
+  return files_.contains(path) || directories_.contains(path);
 }
 
 Result<std::vector<std::filesystem::path>> MemoryFileSystem::ListDirectory(
-    const std::filesystem::path&) const {
-  return Unsupported("ListDirectory");
+    const std::filesystem::path& path) const {
+  const Status recorded = Record("list " + path.string());
+  if (!recorded.has_value()) {
+    return std::unexpected(recorded.error());
+  }
+  if (!directories_.contains(path)) {
+    return std::unexpected(Error::NotFound(path.string()));
+  }
+  std::vector<std::filesystem::path> names;
+  for (const auto& entry : files_) {
+    if (entry.first.parent_path() == path) {
+      names.push_back(entry.first.filename());
+    }
+  }
+  return names;
 }
 
 Result<std::uint64_t> MemoryFileSystem::FileSize(const std::filesystem::path&) const {
@@ -173,8 +206,11 @@ Result<std::uint64_t> MemoryFileSystem::FileSize(const std::filesystem::path&) c
 }
 
 Status MemoryFileSystem::CreateDirectory(const std::filesystem::path& path) {
-  static_cast<void>(Record("create_directory " + path.string()));
-  return Unsupported("CreateDirectory");
+  const Status recorded = Record("create_directory " + path.string());
+  if (recorded.has_value()) {
+    directories_.insert(path);
+  }
+  return recorded;
 }
 
 Status MemoryFileSystem::RemoveFile(const std::filesystem::path& path) {
@@ -214,8 +250,15 @@ Status MemoryFileSystem::SyncDirectory(const std::filesystem::path& path) {
 }
 
 Result<std::unique_ptr<FileLock>> MemoryFileSystem::LockFile(const std::filesystem::path& path) {
-  static_cast<void>(Record("lock " + Name(path)));
-  return Unsupported("LockFile");
+  const Status recorded = Record("lock " + Name(path));
+  if (!recorded.has_value()) {
+    return std::unexpected(recorded.error());
+  }
+  if (!locks_.insert(path).second) {
+    return std::unexpected(Error::Busy("lock already held: " + path.string()));
+  }
+  files_.try_emplace(path);
+  return std::make_unique<MemoryFileLock>(locks_, path);
 }
 
 }  // namespace modern_leveldb::test_support

@@ -279,9 +279,10 @@ write new WAL/SST
 ```
 
 This preserves the invariant that a durable MANIFEST never first references a
-directory entry that may disappear after a crash. Installing `CURRENT` uses
-the separate temp-file/rename sequence and syncs the database directory after
-the rename.
+directory entry that may disappear after a crash. A new WAL that stays open
+for appends is synced but not closed before the edit. Installing `CURRENT`
+uses the separate temp-file/rename sequence and syncs the database directory
+after the rename.
 
 The filesystem layer exposes those primitives but does not invent
 MANIFEST/CURRENT policy.

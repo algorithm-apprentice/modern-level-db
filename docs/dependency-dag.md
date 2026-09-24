@@ -72,7 +72,7 @@ flowchart TD
 | `implement-table-cache` | LRU cache of open SSTables by file number | `implement-sstable-reader`, `implement-cache`, `implement-filenames` |
 | `implement-version-set` | Immutable versions, validated edits, and MANIFEST and `CURRENT` persistence | `implement-version-edit`, `implement-filenames`, `implement-wal-io` |
 | `implement-table-build` | Durable, verified level-0 SSTable from a memtable | `implement-memtable`, `implement-version-edit`, `implement-sstable-writer`, `implement-table-cache` |
-| `implement-recovery` | MANIFEST and WAL recovery | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set`, `implement-table-build` |
+| `implement-recovery` | Locked database opening, creation, and WAL replay into level-0 tables with a new log | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set`, `implement-table-build` |
 | `implement-read-path` | Point reads and merged iteration | `implement-memtable`, `implement-table-cache`, `implement-version-set` |
 | `implement-write-path` | Group commit and memtable insertion | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set` |
 | `implement-flush` | Immutable memtable to L0 | `implement-memtable`, `implement-table-build`, `implement-table-cache`, `implement-version-set` |

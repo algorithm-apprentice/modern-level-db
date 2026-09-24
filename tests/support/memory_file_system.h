@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -18,9 +19,11 @@ namespace modern_leveldb::test_support {
 
 // A single-threaded in-memory file system for unit tests. Written bytes are
 // visible at once, and syncs only record that they happened. A random-access
-// file reads the contents its path had when it was opened. Every file
-// operation is logged, and any logged operation can be made to fail without
-// effect. Operations that no test needs return NotSupported.
+// file reads the contents its path had when it was opened. Directories exist
+// once they are created or added; files may be written into any directory.
+// Locks conflict until they are released. Every file operation is logged, and
+// any logged operation can be made to fail without effect. Operations that no
+// test needs return NotSupported.
 class MemoryFileSystem : public FileSystem {
  public:
   // The operations so far, such as "append MANIFEST-000001" or
@@ -34,6 +37,8 @@ class MemoryFileSystem : public FileSystem {
   [[nodiscard]] std::optional<std::vector<std::byte>> Contents(
       const std::filesystem::path& path) const;
   void Write(const std::filesystem::path& path, std::vector<std::byte> contents);
+  void Erase(const std::filesystem::path& path) { files_.erase(path); }
+  void AddDirectory(const std::filesystem::path& path) { directories_.insert(path); }
 
   [[nodiscard]] Result<std::unique_ptr<SequentialFile>> OpenSequential(
       const std::filesystem::path& path) override;
@@ -59,15 +64,18 @@ class MemoryFileSystem : public FileSystem {
       const std::filesystem::path& path) override;
 
  private:
+  class MemoryFileLock;
   class RandomAccessMemoryFile;
   class SequentialMemoryFile;
   class WritableMemoryFile;
 
   // Logs the operation and returns the failure injected for it, if any.
-  [[nodiscard]] Status Record(std::string operation);
+  [[nodiscard]] Status Record(std::string operation) const;
 
   std::map<std::filesystem::path, std::vector<std::byte>> files_;
-  std::vector<std::string> operations_;
+  std::set<std::filesystem::path> directories_;
+  std::set<std::filesystem::path> locks_;
+  mutable std::vector<std::string> operations_;
   std::map<std::size_t, Error> failures_;
 };
 
