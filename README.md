@@ -42,9 +42,9 @@ it at the level LevelDB would choose. Compaction picking scores a version's
 levels and chooses a compaction's inputs, grandparents, and trivial moves as
 LevelDB does, and running a compaction writes the entries that some snapshot
 can still read to new tables of the next level, byte for byte as LevelDB
-would.
-Seek statistics, making room for writes, and the database interface are not
-yet implemented.
+would. Point reads and sampled iterator reads charge files' seek budgets,
+which name a file to compact once they run out, as LevelDB's do.
+Making room for writes and the database interface are not yet implemented.
 
 ## Goals
 

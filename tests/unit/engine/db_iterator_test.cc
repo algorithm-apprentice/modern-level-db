@@ -35,6 +35,10 @@ static_assert(std::is_constructible_v<DbIterator, std::unique_ptr<InternalIterat
                                       const Comparator&, SequenceNumber>);
 static_assert(!std::is_constructible_v<DbIterator, std::unique_ptr<InternalIterator>,
                                        const Comparator&&, SequenceNumber>);
+static_assert(!std::is_constructible_v<DbIterator, std::unique_ptr<InternalIterator>,
+                                       const Comparator&&, SequenceNumber, ReadSampling>);
+static_assert(std::is_nothrow_constructible_v<DbIterator, std::unique_ptr<InternalIterator>,
+                                              const Comparator&, SequenceNumber, ReadSampling>);
 
 // Orders keys by their bytes in reverse.
 class ReverseComparator final : public Comparator {
@@ -315,6 +319,99 @@ TEST_F(DbIteratorTest, FailsWithAnyInternalMove) {
       EXPECT_LT(run(script).size(), moves.size());
     }
   }
+}
+
+// Samples an iterator's reads with a fixed period and records the samples as
+// "key@sequence".
+class Sampler {
+ public:
+  explicit Sampler(std::uint64_t period) : period_(period) {}
+
+  ReadSampling Sampling() {
+    return ReadSampling{.next_period =
+                            [this] {
+                              ++periods_;
+                              return period_;
+                            },
+                        .sample =
+                            [this](ByteView internal_key) {
+                              const ParsedInternalKey parsed =
+                                  ParseInternalKey(internal_key).value();
+                              samples_.push_back(std::string(AsStringView(parsed.user_key)) + "@" +
+                                                 std::to_string(parsed.sequence));
+                            }};
+  }
+
+  [[nodiscard]] int periods() const { return periods_; }
+  [[nodiscard]] const std::vector<std::string>& samples() const { return samples_; }
+
+ private:
+  std::uint64_t period_;
+  int periods_ = 0;
+  std::vector<std::string> samples_;
+};
+
+std::unique_ptr<DbIterator> OpenSampled(std::vector<ScriptedEntry> entries, SequenceNumber sequence,
+                                        Sampler& sampler) {
+  static const InternalKeyComparator comparator(BytewiseComparator());
+  return std::make_unique<DbIterator>(
+      std::make_unique<ScriptedIterator>(comparator, std::move(entries)), BytewiseComparator(),
+      sequence, sampler.Sampling());
+}
+
+using Samples = std::vector<std::string>;
+
+// Every entry below has a 9-byte key and no value, so with a period of 9 bytes
+// every entry that the iterator counts after the first is sampled once.
+TEST(DbIteratorSamplingTest, SamplesTheEntriesThatItReadsForward) {
+  Sampler sampler(9);
+  const auto iterator = OpenSampled(
+      {Delete("a", 3), Put("a", 2, ""), Put("b", 1, ""), Put("c", 50, ""), Put("c", 5, "")}, 10,
+      sampler);
+  EXPECT_EQ(sampler.periods(), 0);
+
+  EXPECT_EQ(After(iterator->SeekToFirst(), *iterator), "b=");
+  // The first entry draws the first period; hidden entries count too.
+  EXPECT_EQ(sampler.samples(), (Samples{"a@2", "b@1"}));
+  EXPECT_EQ(After(iterator->Next(), *iterator), "c=");
+  EXPECT_EQ(sampler.samples(), (Samples{"a@2", "b@1", "c@50", "c@5"}));
+  EXPECT_EQ(sampler.periods(), 5);
+}
+
+TEST(DbIteratorSamplingTest, SamplesTheEntriesThatItReadsBackward) {
+  Sampler sampler(9);
+  const auto iterator =
+      OpenSampled({Put("a", 1, ""), Put("b", 1, ""), Put("c", 1, "")}, 10, sampler);
+
+  EXPECT_EQ(After(iterator->SeekToLast(), *iterator), "c=");
+  EXPECT_EQ(sampler.samples(), (Samples{"b@1"}));
+  EXPECT_EQ(After(iterator->Prev(), *iterator), "b=");
+  EXPECT_EQ(After(iterator->Prev(), *iterator), "a=");
+  EXPECT_EQ(sampler.samples(), (Samples{"b@1", "b@1", "a@1", "a@1"}));
+}
+
+TEST(DbIteratorSamplingTest, DoesNotCountTheWalkThatChangesDirection) {
+  Sampler sampler(9);
+  const auto iterator = OpenSampled(
+      {Put("a", 1, ""), Put("b", 3, ""), Put("b", 2, ""), Put("b", 1, ""), Put("c", 1, "")}, 1,
+      sampler);
+  EXPECT_EQ(After(iterator->SeekToFirst(), *iterator), "a=");
+  EXPECT_EQ(After(iterator->Next(), *iterator), "b=");
+  EXPECT_EQ(sampler.samples(), (Samples{"b@3", "b@2", "b@1"}));
+
+  // Prev walks back over "b" to "a" before it counts "a".
+  EXPECT_EQ(After(iterator->Prev(), *iterator), "a=");
+  EXPECT_EQ(sampler.samples(), (Samples{"b@3", "b@2", "b@1", "a@1"}));
+}
+
+TEST(DbIteratorSamplingTest, SamplesALargeEntryOncePerPeriod) {
+  Sampler sampler(3);
+  // 9 key bytes and 11 value bytes pass six periods of 3 bytes after the first.
+  const auto iterator = OpenSampled({Put("a", 1, "01234567890")}, 10, sampler);
+
+  EXPECT_EQ(After(iterator->SeekToFirst(), *iterator), "a=01234567890");
+  EXPECT_EQ(sampler.samples(), Samples(6, "a@1"));
+  EXPECT_EQ(sampler.periods(), 7);
 }
 
 }  // namespace

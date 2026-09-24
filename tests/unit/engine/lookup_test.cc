@@ -102,18 +102,28 @@ class Database {
     return version.has_value() ? std::move(*version) : Version();
   }
 
-  Result<std::optional<std::vector<std::byte>>> TryLookup(std::string_view user_key,
-                                                          SequenceNumber sequence,
-                                                          const Version& version,
-                                                          const MemTable* memtable = nullptr,
-                                                          const MemTable* immutable = nullptr,
-                                                          const TableReadOptions& options = {}) {
+  Result<PointRead> Read(std::string_view user_key, SequenceNumber sequence, const Version& version,
+                         const MemTable* memtable = nullptr, const MemTable* immutable = nullptr,
+                         const TableReadOptions& options = {}) {
     const MemTable empty(user_comparator_);
     auto key = LookupKey::Create(AsBytes(user_key), sequence);
     EXPECT_TRUE(key.has_value());
     read_start_ = file_system_.operations().size();
     return LookupValue(memtable != nullptr ? *memtable : empty, immutable, version, lookup_cache_,
                        comparator_, *key, options);
+  }
+
+  Result<std::optional<std::vector<std::byte>>> TryLookup(std::string_view user_key,
+                                                          SequenceNumber sequence,
+                                                          const Version& version,
+                                                          const MemTable* memtable = nullptr,
+                                                          const MemTable* immutable = nullptr,
+                                                          const TableReadOptions& options = {}) {
+    Result<PointRead> read = Read(user_key, sequence, version, memtable, immutable, options);
+    if (!read.has_value()) {
+      return std::unexpected(std::move(read).error());
+    }
+    return std::move(read->value);
   }
 
   // Returns the value, or "<none>" for an absent key.
@@ -350,6 +360,97 @@ TEST(LookupTest, PassesReadOptionsToTables) {
   EXPECT_EQ(blocks.total_charge(), 0U);
   EXPECT_EQ(database.Lookup("k", 10, version), "v");
   EXPECT_GT(blocks.total_charge(), 0U);
+}
+
+// "number@level" for a charged file, or "none".
+std::string Charged(const std::optional<SeekCharge>& charge) {
+  return charge.has_value()
+             ? std::to_string(charge->file->number) + "@" + std::to_string(charge->level)
+             : "none";
+}
+
+InternalKey Internal(std::string_view user_key, SequenceNumber sequence) {
+  return InternalKey::Create(AsBytes(user_key), sequence, ValueKind::Value).value();
+}
+
+// A file's metadata; sampling only compares keys.
+FileMetadata Range(std::uint64_t number, InternalKey smallest, InternalKey largest) {
+  return FileMetadata{.number = number,
+                      .file_size = 100,
+                      .smallest = std::move(smallest),
+                      .largest = std::move(largest)};
+}
+
+FileMetadata Range(std::uint64_t number, std::string_view smallest, std::string_view largest) {
+  return Range(number, Internal(smallest, 100), Internal(largest, 1));
+}
+
+TEST(LookupTest, ChargesTheFirstFileOfAReadThatSearchesAnother) {
+  Database database(BytewiseComparator());
+  const Version version = database.MakeVersion(
+      {{0, database.WriteTable(6, {{"a", 20, "a6"}, {"m", 20, "m6"}})},
+       {0, database.WriteTable(5, {{"a", 10, "a5"}, {"c", 10, "c5"}, {"e", 10, "e5"}})},
+       {1, database.WriteTable(10, {{"b", 1, "b10"}, {"k", 1, "k10"}, {"y", 1, "y10"}})},
+       {2, database.WriteTable(20, {{"a", 1, "a20"}, {"x", 1, "x20"}})}});
+  const auto charged = [&](std::string_view key, const MemTable* memtable = nullptr) {
+    Result<PointRead> read = database.Read(key, 100, version, memtable);
+    EXPECT_TRUE(read.has_value());
+    return read.has_value() ? Charged(read->seek) : "error";
+  };
+
+  // The first file searched decides.
+  EXPECT_EQ(charged("a"), "none");
+  EXPECT_EQ(charged("y"), "none");
+  // The newest level-0 file is searched first.
+  EXPECT_EQ(charged("c"), "6@0");
+  EXPECT_EQ(charged("k"), "6@0");
+  EXPECT_EQ(charged("x"), "10@1");
+  // A read that finds nothing charges the first file it searched, unless it
+  // searched only one.
+  EXPECT_EQ(charged("n"), "10@1");
+  EXPECT_EQ(charged("xa"), "none");
+  // A read that searches no file, or that a memtable decides, charges nothing.
+  EXPECT_EQ(charged("zz"), "none");
+  MemTable memtable(database.user_comparator());
+  Fill(memtable, {{"c", 50, "memtable"}});
+  EXPECT_EQ(charged("c", &memtable), "none");
+}
+
+TEST(SampleChargeTest, ChargesTheFirstOfSeveralFilesThatHoldTheKey) {
+  const InternalKeyComparator comparator(BytewiseComparator());
+  Database database(BytewiseComparator());
+  const Version version = database.MakeVersion({{0, Range(5, "a", "m")},
+                                                {0, Range(6, "c", "z")},
+                                                {1, Range(10, "a", "d")},
+                                                {1, Range(11, "e", "k")},
+                                                {2, Range(20, "a", "z")}});
+  const auto sampled = [&](const Version& in, std::string_view key, SequenceNumber sequence) {
+    return Charged(SampleCharge(in, comparator, Internal(key, sequence).encoded()));
+  };
+
+  EXPECT_EQ(sampled(version, "b", 1), "5@0");
+  // Level-0 files are searched newest first.
+  EXPECT_EQ(sampled(version, "d", 1), "6@0");
+  EXPECT_EQ(sampled(version, "y", 1), "6@0");
+  EXPECT_EQ(sampled(version, "zz", 1), "none");
+  // One file that holds the key is not enough.
+  EXPECT_EQ(sampled(database.MakeVersion({{2, Range(20, "a", "z")}}), "b", 1), "none");
+}
+
+TEST(SampleChargeTest, ComparesInternalKeysAtALevelsFileBoundary) {
+  const InternalKeyComparator comparator(BytewiseComparator());
+  Database database(BytewiseComparator());
+  // Files 20 and 21 split the entries of user key "k".
+  const Version version = database.MakeVersion({{1, Range(20, Internal("a", 9), Internal("k", 5))},
+                                                {1, Range(21, Internal("k", 3), Internal("p", 1))},
+                                                {2, Range(30, "a", "z")}});
+  const auto sampled = [&](SequenceNumber sequence) {
+    return Charged(SampleCharge(version, comparator, Internal("k", sequence).encoded()));
+  };
+
+  EXPECT_EQ(sampled(7), "20@1");
+  EXPECT_EQ(sampled(5), "20@1");
+  EXPECT_EQ(sampled(4), "21@1");
 }
 
 }  // namespace
