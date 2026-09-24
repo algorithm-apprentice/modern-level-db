@@ -107,6 +107,8 @@ class InternalKeyComparator final : public Comparator {
   void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const override;
   void FindShortSuccessor(std::vector<std::byte>& key) const override;
 
+  [[nodiscard]] const Comparator& user_comparator() const noexcept { return user_comparator_; }
+
  private:
   const Comparator& user_comparator_;
 };

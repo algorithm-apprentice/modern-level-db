@@ -184,6 +184,13 @@ TEST(BlockTest, AcceptsBuilderBlocks) {
   EXPECT_TRUE(Block::Create(BuildGoldenBlock(), BytewiseComparator()).has_value());
 }
 
+TEST(BlockTest, ReportsWhetherItHasEntries) {
+  BlockBuilder builder(16);
+
+  EXPECT_TRUE(MakeBlock(Materialize(builder.Finish())).empty());
+  EXPECT_FALSE(MakeBlock(BuildGoldenBlock()).empty());
+}
+
 TEST(BlockTest, RejectsBlocksWithoutAValidRestartCount) {
   ExpectCorruptBlock({});
   ExpectCorruptBlock(Bytes({0x00, 0x00, 0x00}));

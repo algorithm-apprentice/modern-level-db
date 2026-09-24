@@ -295,6 +295,12 @@ TEST(InternalKeyComparatorTest, UsesLevelDbName) {
   EXPECT_EQ(InternalKeyComparator(BytewiseComparator()).Name(), "leveldb.InternalKeyComparator");
 }
 
+TEST(InternalKeyComparatorTest, ExposesItsUserComparator) {
+  const InternalKeyComparator comparator(BytewiseComparator());
+
+  EXPECT_EQ(&comparator.user_comparator(), &BytewiseComparator());
+}
+
 TEST(InternalKeyComparatorTest, OrdersUserKeyAscendingAndTrailerDescending) {
   InternalKeyComparator comparator(BytewiseComparator());
   const InternalKey a_new = MakeKey("a", 100, ValueKind::Value);
