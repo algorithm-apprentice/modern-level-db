@@ -28,6 +28,7 @@ add_executable(
   unit/base/result_test.cc
   unit/cache/sharded_lru_cache_test.cc
   unit/engine/build_table_test.cc
+  unit/engine/compaction_picker_test.cc
   unit/engine/db_iterator_test.cc
   unit/engine/flush_test.cc
   unit/engine/iterators_test.cc
