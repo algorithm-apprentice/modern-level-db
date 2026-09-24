@@ -130,11 +130,9 @@ class Harness {
     };
     std::vector<Version::File> level_inputs = select(level, inputs);
     std::vector<Version::File> next_level_inputs = select(level + 1, next_inputs);
-    std::vector<Version::File> grandparents;
-    if (level + 2 < NumLevels) {
-      const std::span<const Version::File> below = version->files(level + 2);
-      grandparents.assign(below.begin(), below.end());
-    }
+    const std::span<const Version::File> below =
+        level + 2 < NumLevels ? version->files(level + 2) : std::span<const Version::File>();
+    std::vector<Version::File> grandparents(below.begin(), below.end());
     InternalKey pointer = level_inputs.back()->largest;
     return Compaction{.level = level,
                       .version = std::move(version),
