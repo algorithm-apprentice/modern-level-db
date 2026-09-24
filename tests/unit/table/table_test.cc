@@ -283,10 +283,11 @@ class TableTest : public testing::Test {
     Table::Iterator iterator(table);
     Status status = iterator.SeekToLast();
     while (status.has_value() && iterator.valid()) {
-      entries.insert(entries.begin(), {Materialize(iterator.key()), Materialize(iterator.value())});
+      entries.push_back({Materialize(iterator.key()), Materialize(iterator.value())});
       status = iterator.Prev();
     }
     EXPECT_TRUE(status.has_value());
+    std::reverse(entries.begin(), entries.end());
     return entries;
   }
 
