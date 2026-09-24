@@ -196,14 +196,17 @@ TEST_F(MergingIteratorTest, ChangesDirectionAtEveryPosition) {
     SCOPED_TRACE(round);
     // Unique keys spread over the children.
     std::vector<std::vector<ScriptedEntry>> children(1 + below(5));
-    std::set<std::vector<std::byte>> unique;
+    // Compares numbers rather than encoded keys, whose comparison GCC's
+    // -Wstringop-overread misreads at -O3.
+    std::set<std::pair<std::uint64_t, SequenceNumber>> unique;
     std::vector<std::vector<std::byte>> keys;
     for (std::uint64_t count = below(40); count > 0; --count) {
-      const std::string user_key = "k" + std::to_string(below(30));
+      const std::uint64_t key_number = below(30);
       const SequenceNumber sequence = 1 + below(20);
-      if (!unique.insert(Key(user_key, sequence)).second) {
+      if (!unique.emplace(key_number, sequence).second) {
         continue;
       }
+      const std::string user_key = "k" + std::to_string(key_number);
       keys.push_back(Key(user_key, sequence));
       children[below(children.size())].push_back(Entry(user_key, sequence, user_key));
     }
