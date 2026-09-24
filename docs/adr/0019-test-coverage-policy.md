@@ -110,12 +110,14 @@ not block unrelated pull requests. Coverage rises as code is touched.
 Prefer removing uncoverable code over excluding it: delete impossible checks
 and restructure logic when doing so does not reduce clarity or safety.
 
-For example, GCC guards the cleanup of a partially constructed aggregate with
-a flag when the aggregate has several members with non-trivial destructors. If
-such an aggregate is a temporary inside an expression that may throw, such as
+For example, GCC guards the cleanup of a temporary with a flag when the
+temporary is constructed conditionally: a member of a partially constructed
+aggregate with several non-trivially destructible members, or a temporary with
+a non-trivial destructor, such as a `Status`, in an operand of `&&`, `||`, or
+`?:`. If such a temporary appears inside an expression that may throw, such as
 an argument to `push_back`, the flag check becomes a branch that only an
 allocation failure can take. Construct the aggregate in its own declaration
-first.
+first, and give each such temporary its own statement.
 
 An exclusion is allowed only when no deterministic unit test can execute the
 code:

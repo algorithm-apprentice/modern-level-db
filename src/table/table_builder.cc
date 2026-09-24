@@ -54,9 +54,10 @@ Status TableBuilder::Add(ByteView key, ByteView value) {
     Record(std::unexpected(Error::InvalidArgument("table keys must strictly increase")));
     return FirstError();
   }
-  if (filter_block_.has_value() &&
-      !Record(filter_block_->AddKey(key.first(key.size() - InternalKeyTrailerSize)))) {
-    return FirstError();
+  if (filter_block_.has_value()) {
+    if (!Record(filter_block_->AddKey(key.first(key.size() - InternalKeyTrailerSize)))) {
+      return FirstError();
+    }
   }
 
   if (pending_index_entry_) {
@@ -130,7 +131,11 @@ void TableBuilder::WriteBlock(ByteView contents, BlockHandle& handle) {
   }
   handle = BlockHandle{.offset = file_size_, .size = contents.size()};
   const auto trailer = EncodeBlockTrailer(contents);
-  if (Record(file_->Append(contents)) && Record(file_->Append(trailer))) {
+  // Separate statements keep each Status temporary unconditional; see ADR-0019.
+  if (!Record(file_->Append(contents))) {
+    return;
+  }
+  if (Record(file_->Append(trailer))) {
     file_size_ += contents.size() + BlockTrailerSize;
   }
 }
