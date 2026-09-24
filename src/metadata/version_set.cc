@@ -86,7 +86,8 @@ Result<std::unique_ptr<VersionSet>> VersionSet::Create(FileSystem& file_system,
                                                        std::filesystem::path directory,
                                                        const InternalKeyComparator& comparator) {
   std::unique_ptr<VersionSet> set(new VersionSet(file_system, std::move(directory), comparator));
-  const Status created = set->LogAndApply(VersionEdit());
+  VersionEdit initial;
+  const Status created = set->LogAndApply(std::move(initial));
   if (!created.has_value()) {
     return std::unexpected(created.error());
   }
@@ -119,7 +120,8 @@ Result<std::unique_ptr<VersionSet>> VersionSet::Recover(FileSystem& file_system,
   }
 
   std::unique_ptr<VersionSet> set(new VersionSet(file_system, std::move(directory), comparator));
-  VersionBuilder builder(comparator, Version());
+  const Version empty;
+  VersionBuilder builder(comparator, empty);
   std::optional<std::uint64_t> next_file;
   std::optional<std::uint64_t> log_number;
   std::optional<SequenceNumber> last_sequence;

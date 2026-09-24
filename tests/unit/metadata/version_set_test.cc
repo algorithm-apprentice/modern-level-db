@@ -810,8 +810,8 @@ TEST_F(VersionSetTest, MatchesAnOrderedModel) {
         model.files[entry.first].push_back(Summarize(entry.second));
       }
       for (auto& files : model.files) {
-        std::ranges::sort(files, [](const FileSummary& left, const FileSummary& right) {
-          return left.smallest < right.smallest;
+        std::ranges::sort(files, [this](const FileSummary& left, const FileSummary& right) {
+          return comparator_.Compare(ByteView(left.smallest), ByteView(right.smallest)) < 0;
         });
       }
       ASSERT_EQ(StateOf(*set), model);
