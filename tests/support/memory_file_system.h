@@ -17,7 +17,8 @@
 namespace modern_leveldb::test_support {
 
 // A single-threaded in-memory file system for unit tests. Written bytes are
-// visible at once, and syncs only record that they happened. Every file
+// visible at once, and syncs only record that they happened. A random-access
+// file reads the contents its path had when it was opened. Every file
 // operation is logged, and any logged operation can be made to fail without
 // effect. Operations that no test needs return NotSupported.
 class MemoryFileSystem : public FileSystem {
@@ -58,6 +59,7 @@ class MemoryFileSystem : public FileSystem {
       const std::filesystem::path& path) override;
 
  private:
+  class RandomAccessMemoryFile;
   class SequentialMemoryFile;
   class WritableMemoryFile;
 
