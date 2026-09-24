@@ -189,11 +189,15 @@ TEST_F(CommitGroupTest, InsertsNothingAfterALogFailure) {
 class QueueHarness {
  public:
   QueueHarness()
-      : queue_([this](std::unique_lock<std::mutex>& lock) { return Step(lock, prepare_); },
-               [this](std::unique_lock<std::mutex>& lock, WriteBatch& group, bool sync) {
-                 groups_.push_back(Keys(group) + (sync ? " (sync)" : ""));
-                 return Step(lock, commit_);
-               }) {}
+      : queue_(
+            [this](std::unique_lock<std::mutex>& lock, bool force) {
+              forced_.push_back(force);
+              return Step(lock, prepare_);
+            },
+            [this](std::unique_lock<std::mutex>& lock, WriteBatch& group, bool sync) {
+              groups_.push_back(Keys(group) + (sync ? " (sync)" : ""));
+              return Step(lock, commit_);
+            }) {}
 
   struct Script {
     // Steps to run before this one fails, waits, or throws; zero means the next.
@@ -216,6 +220,21 @@ class QueueHarness {
   std::vector<std::string> groups() {
     std::lock_guard lock(mutex_);
     return groups_;
+  }
+
+  // Whether each prepare call was forced, in order.
+  std::vector<bool> forced() {
+    std::lock_guard lock(mutex_);
+    return forced_;
+  }
+
+  // Starts a thread that queues a forced writer and records its status.
+  void StartForce(std::string name) {
+    threads_.emplace_back([this, name = std::move(name)] {
+      std::unique_lock lock(mutex_);
+      const Status status = queue_.Force(lock);
+      results_[name] = status.has_value() ? "ok" : std::string(status.error().message());
+    });
   }
 
   // Starts a thread that writes the batch and records its status.
@@ -296,6 +315,7 @@ class QueueHarness {
   Script prepare_;
   Script commit_;
   std::vector<std::string> groups_;
+  std::vector<bool> forced_;
   std::map<std::string, std::string> results_;
   std::vector<std::thread> threads_;
   WriteQueue queue_;
@@ -480,10 +500,39 @@ TEST(WriteQueueTest, ReleasesTheQueueWhenAStepThrows) {
   }
 }
 
+TEST(WriteQueueTest, RunsAForcedWriterAloneBetweenGroups) {
+  QueueHarness harness;
+  harness.prepare().wait_at = 0;
+  harness.StartWriter("w1", false);
+  harness.WaitForGate(harness.prepare());
+  harness.StartForce("f");
+  harness.WaitForQueue(2);
+  harness.StartWriter("w2", false);
+  harness.WaitForQueue(3);
+
+  harness.OpenGate(harness.prepare());
+
+  EXPECT_EQ(harness.Join(),
+            (std::map<std::string, std::string>{{"f", "ok"}, {"w1", "ok"}, {"w2", "ok"}}));
+  // The forced writer ends the first group and commits nothing.
+  EXPECT_EQ(harness.groups(), (std::vector<std::string>{"w1", "w2"}));
+  EXPECT_EQ(harness.forced(), (std::vector<bool>{false, true, false}));
+}
+
+TEST(WriteQueueTest, ReturnsTheErrorOfAForcedPreparation) {
+  QueueHarness harness;
+  harness.prepare().fail_at = 0;
+  harness.StartForce("f");
+
+  EXPECT_EQ(harness.Join(), (std::map<std::string, std::string>{{"f", "step failed"}}));
+  EXPECT_TRUE(harness.groups().empty());
+  EXPECT_EQ(harness.forced(), (std::vector<bool>{true}));
+}
+
 TEST(WriteQueueTest, CommitsEveryWriteOnceInOrder) {
   std::mutex mutex;
   std::vector<std::string> committed;
-  WriteQueue queue([](std::unique_lock<std::mutex>&) -> Status { return {}; },
+  WriteQueue queue([](std::unique_lock<std::mutex>&, bool) -> Status { return {}; },
                    [&](std::unique_lock<std::mutex>& lock, WriteBatch& group, bool) -> Status {
                      const std::string keys = Keys(group);
                      // Let writers queue while the lock is released.

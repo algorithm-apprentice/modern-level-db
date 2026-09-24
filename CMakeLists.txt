@@ -31,6 +31,7 @@ add_library(
     src/engine/build_table.cc
     src/engine/compaction.cc
     src/engine/compaction_picker.cc
+    src/engine/database.cc
     src/engine/db_iterator.cc
     src/engine/flush.cc
     src/engine/iterators.cc
@@ -65,6 +66,7 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     PRIVATE
       src/platform/posix_file_system.cc
   )
+  target_compile_definitions(modern_leveldb PRIVATE MODERN_LEVELDB_HAVE_POSIX_FILE_SYSTEM)
 endif()
 add_library(modern_leveldb::modern_leveldb ALIAS modern_leveldb)
 

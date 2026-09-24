@@ -5,10 +5,13 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -33,6 +36,7 @@ class MemoryFileSystem::SequentialMemoryFile final : public SequentialFile {
     if (!recorded.has_value()) {
       return std::unexpected(recorded.error());
     }
+    const std::lock_guard lock(file_system_.mutex_);
     const std::vector<std::byte>& contents = file_system_.files_[path_];
     const std::size_t start = std::min(offset_, contents.size());
     const std::size_t count = std::min(output.size(), contents.size() - start);
@@ -49,16 +53,19 @@ class MemoryFileSystem::SequentialMemoryFile final : public SequentialFile {
 
 class MemoryFileSystem::MemoryFileLock final : public FileLock {
  public:
-  MemoryFileLock(std::set<std::filesystem::path>& locks, std::filesystem::path path)
-      : locks_(locks), path_(std::move(path)) {}
+  MemoryFileLock(MemoryFileSystem& file_system, std::filesystem::path path)
+      : file_system_(file_system), path_(std::move(path)) {}
   MemoryFileLock(const MemoryFileLock&) = delete;
   MemoryFileLock& operator=(const MemoryFileLock&) = delete;
   MemoryFileLock(MemoryFileLock&&) = delete;
   MemoryFileLock& operator=(MemoryFileLock&&) = delete;
-  ~MemoryFileLock() override { locks_.erase(path_); }
+  ~MemoryFileLock() override {
+    const std::lock_guard lock(file_system_.mutex_);
+    file_system_.locks_.erase(path_);
+  }
 
  private:
-  std::set<std::filesystem::path>& locks_;
+  MemoryFileSystem& file_system_;
   std::filesystem::path path_;
 };
 
@@ -94,6 +101,7 @@ class MemoryFileSystem::WritableMemoryFile final : public WritableFile {
   Status Append(ByteView data) override {
     const Status recorded = file_system_.Record("append " + Name(path_));
     if (recorded.has_value()) {
+      const std::lock_guard lock(file_system_.mutex_);
       std::vector<std::byte>& contents = file_system_.files_[path_];
       contents.insert(contents.end(), data.begin(), data.end());
     }
@@ -109,11 +117,18 @@ class MemoryFileSystem::WritableMemoryFile final : public WritableFile {
 };
 
 void MemoryFileSystem::FailOperation(std::size_t index, Error error) {
+  const std::lock_guard lock(mutex_);
   failures_.insert_or_assign(index, std::move(error));
+}
+
+void MemoryFileSystem::SetOperationHook(std::function<Status(std::string_view operation)> hook) {
+  const std::lock_guard lock(mutex_);
+  hook_ = std::move(hook);
 }
 
 std::optional<std::vector<std::byte>> MemoryFileSystem::Contents(
     const std::filesystem::path& path) const {
+  const std::lock_guard lock(mutex_);
   const auto found = files_.find(path);
   if (found == files_.end()) {
     return std::nullopt;
@@ -122,12 +137,36 @@ std::optional<std::vector<std::byte>> MemoryFileSystem::Contents(
 }
 
 void MemoryFileSystem::Write(const std::filesystem::path& path, std::vector<std::byte> contents) {
+  const std::lock_guard lock(mutex_);
   files_.insert_or_assign(path, std::move(contents));
 }
 
+void MemoryFileSystem::Erase(const std::filesystem::path& path) {
+  const std::lock_guard lock(mutex_);
+  files_.erase(path);
+}
+
+void MemoryFileSystem::AddDirectory(const std::filesystem::path& path) {
+  const std::lock_guard lock(mutex_);
+  directories_.insert(path);
+}
+
 Status MemoryFileSystem::Record(std::string operation) const {
+  std::function<Status(std::string_view)> hook;
+  {
+    const std::lock_guard lock(mutex_);
+    hook = hook_;
+  }
+  Status hooked;
+  if (hook) {
+    hooked = hook(operation);
+  }
+  const std::lock_guard lock(mutex_);
   const std::size_t index = operations_.size();
   operations_.push_back(std::move(operation));
+  if (!hooked.has_value()) {
+    return hooked;
+  }
   const auto failure = failures_.find(index);
   if (failure != failures_.end()) {
     return std::unexpected(failure->second);
@@ -141,6 +180,7 @@ Result<std::unique_ptr<SequentialFile>> MemoryFileSystem::OpenSequential(
   if (!recorded.has_value()) {
     return std::unexpected(recorded.error());
   }
+  const std::lock_guard lock(mutex_);
   if (!files_.contains(path)) {
     return std::unexpected(Error::NotFound(path.string()));
   }
@@ -153,6 +193,7 @@ Result<std::unique_ptr<RandomAccessFile>> MemoryFileSystem::OpenRandomAccess(
   if (!recorded.has_value()) {
     return std::unexpected(recorded.error());
   }
+  const std::lock_guard lock(mutex_);
   const auto found = files_.find(path);
   if (found == files_.end()) {
     return std::unexpected(Error::NotFound(path.string()));
@@ -166,6 +207,7 @@ Result<std::unique_ptr<WritableFile>> MemoryFileSystem::OpenWritable(
   if (!recorded.has_value()) {
     return std::unexpected(recorded.error());
   }
+  const std::lock_guard lock(mutex_);
   files_.insert_or_assign(path, std::vector<std::byte>());
   return std::make_unique<WritableMemoryFile>(*this, path);
 }
@@ -180,6 +222,7 @@ Result<bool> MemoryFileSystem::FileExists(const std::filesystem::path& path) con
   if (!recorded.has_value()) {
     return std::unexpected(recorded.error());
   }
+  const std::lock_guard lock(mutex_);
   return files_.contains(path) || directories_.contains(path);
 }
 
@@ -189,6 +232,7 @@ Result<std::vector<std::filesystem::path>> MemoryFileSystem::ListDirectory(
   if (!recorded.has_value()) {
     return std::unexpected(recorded.error());
   }
+  const std::lock_guard lock(mutex_);
   if (!directories_.contains(path)) {
     return std::unexpected(Error::NotFound(path.string()));
   }
@@ -208,6 +252,7 @@ Result<std::uint64_t> MemoryFileSystem::FileSize(const std::filesystem::path&) c
 Status MemoryFileSystem::CreateDirectory(const std::filesystem::path& path) {
   const Status recorded = Record("create_directory " + path.string());
   if (recorded.has_value()) {
+    const std::lock_guard lock(mutex_);
     directories_.insert(path);
   }
   return recorded;
@@ -218,6 +263,7 @@ Status MemoryFileSystem::RemoveFile(const std::filesystem::path& path) {
   if (!recorded.has_value()) {
     return recorded;
   }
+  const std::lock_guard lock(mutex_);
   if (files_.erase(path) == 0) {
     return std::unexpected(Error::NotFound(path.string()));
   }
@@ -235,6 +281,7 @@ Status MemoryFileSystem::RenameFile(const std::filesystem::path& source,
   if (!recorded.has_value()) {
     return recorded;
   }
+  const std::lock_guard lock(mutex_);
   const auto found = files_.find(source);
   if (found == files_.end()) {
     return std::unexpected(Error::NotFound(source.string()));
@@ -254,11 +301,12 @@ Result<std::unique_ptr<FileLock>> MemoryFileSystem::LockFile(const std::filesyst
   if (!recorded.has_value()) {
     return std::unexpected(recorded.error());
   }
+  const std::lock_guard lock(mutex_);
   if (!locks_.insert(path).second) {
     return std::unexpected(Error::Busy("lock already held: " + path.string()));
   }
   files_.try_emplace(path);
-  return std::make_unique<MemoryFileLock>(locks_, path);
+  return std::make_unique<MemoryFileLock>(*this, path);
 }
 
 }  // namespace modern_leveldb::test_support

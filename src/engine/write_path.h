@@ -37,8 +37,9 @@ class WriteQueue final {
  public:
   // Called by the front writer with the lock held; each may release the lock
   // while it waits or performs I/O and must hold it when it returns. Prepare
-  // makes room for the write; Commit commits the group, which it may change.
-  using Prepare = std::function<Status(std::unique_lock<std::mutex>& lock)>;
+  // makes room for the write, with force set for a writer that Force queued;
+  // Commit commits the group, which it may change.
+  using Prepare = std::function<Status(std::unique_lock<std::mutex>& lock, bool force)>;
   using Commit =
       std::function<Status(std::unique_lock<std::mutex>& lock, WriteBatch& group, bool sync)>;
 
@@ -59,6 +60,11 @@ class WriteQueue final {
   [[nodiscard]] Status Write(std::unique_lock<std::mutex>& lock, const WriteBatch& batch,
                              bool sync);
 
+  // Requires the lock. Queues a writer without a batch that, at the front,
+  // calls prepare with force set and completes alone, as LevelDB's batch-less
+  // writer does. A group ends before it.
+  [[nodiscard]] Status Force(std::unique_lock<std::mutex>& lock);
+
   // Returns the number of queued writers, including the front one. Requires the
   // lock.
   [[nodiscard]] std::size_t size() const noexcept { return writers_.size(); }
@@ -67,6 +73,8 @@ class WriteQueue final {
   struct Writer;
   class LeaderGuard;
 
+  // Queues a writer of the batch, or a forced writer without one.
+  [[nodiscard]] Status Run(std::unique_lock<std::mutex>& lock, const WriteBatch* batch, bool sync);
   // Copies the batches of the group that the front writer leads into group_
   // and returns the group's last writer.
   Writer* BuildGroup(const Writer& leader);
