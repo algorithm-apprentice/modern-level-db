@@ -46,6 +46,30 @@ class MemoryFileSystem::SequentialMemoryFile final : public SequentialFile {
   std::size_t offset_ = 0;
 };
 
+class MemoryFileSystem::RandomAccessMemoryFile final : public RandomAccessFile {
+ public:
+  RandomAccessMemoryFile(MemoryFileSystem& file_system, std::filesystem::path path,
+                         std::vector<std::byte> contents)
+      : file_system_(file_system), path_(std::move(path)), contents_(std::move(contents)) {}
+
+  Result<std::size_t> Read(std::uint64_t offset, MutableByteView output) const override {
+    const Status recorded = file_system_.Record("read " + Name(path_));
+    if (!recorded.has_value()) {
+      return std::unexpected(recorded.error());
+    }
+    const std::size_t start =
+        static_cast<std::size_t>(std::min<std::uint64_t>(offset, contents_.size()));
+    const std::size_t count = std::min(output.size(), contents_.size() - start);
+    std::copy_n(contents_.begin() + static_cast<std::ptrdiff_t>(start), count, output.begin());
+    return count;
+  }
+
+ private:
+  MemoryFileSystem& file_system_;
+  std::filesystem::path path_;
+  std::vector<std::byte> contents_;
+};
+
 class MemoryFileSystem::WritableMemoryFile final : public WritableFile {
  public:
   WritableMemoryFile(MemoryFileSystem& file_system, std::filesystem::path path)
@@ -108,8 +132,16 @@ Result<std::unique_ptr<SequentialFile>> MemoryFileSystem::OpenSequential(
 }
 
 Result<std::unique_ptr<RandomAccessFile>> MemoryFileSystem::OpenRandomAccess(
-    const std::filesystem::path&) {
-  return Unsupported("OpenRandomAccess");
+    const std::filesystem::path& path) {
+  const Status recorded = Record("open_random_access " + Name(path));
+  if (!recorded.has_value()) {
+    return std::unexpected(recorded.error());
+  }
+  const auto found = files_.find(path);
+  if (found == files_.end()) {
+    return std::unexpected(Error::NotFound(path.string()));
+  }
+  return std::make_unique<RandomAccessMemoryFile>(*this, path, found->second);
 }
 
 Result<std::unique_ptr<WritableFile>> MemoryFileSystem::OpenWritable(
@@ -146,8 +178,14 @@ Status MemoryFileSystem::CreateDirectory(const std::filesystem::path& path) {
 }
 
 Status MemoryFileSystem::RemoveFile(const std::filesystem::path& path) {
-  static_cast<void>(Record("remove " + Name(path)));
-  return Unsupported("RemoveFile");
+  const Status recorded = Record("remove " + Name(path));
+  if (!recorded.has_value()) {
+    return recorded;
+  }
+  if (files_.erase(path) == 0) {
+    return std::unexpected(Error::NotFound(path.string()));
+  }
+  return {};
 }
 
 Status MemoryFileSystem::RemoveDirectory(const std::filesystem::path& path) {

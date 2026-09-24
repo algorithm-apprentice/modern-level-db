@@ -71,10 +71,11 @@ flowchart TD
 | `implement-sstable-reader` | Validated SSTable lookups, bidirectional iteration, and block caching | `implement-platform-fs`, `implement-internal-key`, `implement-block-format`, `implement-filter`, `implement-cache` |
 | `implement-table-cache` | LRU cache of open SSTables by file number | `implement-sstable-reader`, `implement-cache`, `implement-filenames` |
 | `implement-version-set` | Immutable versions, validated edits, and MANIFEST and `CURRENT` persistence | `implement-version-edit`, `implement-filenames`, `implement-wal-io` |
-| `implement-recovery` | MANIFEST and WAL recovery | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set` |
+| `implement-table-build` | Durable, verified level-0 SSTable from a memtable | `implement-memtable`, `implement-version-edit`, `implement-sstable-writer`, `implement-table-cache` |
+| `implement-recovery` | MANIFEST and WAL recovery | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set`, `implement-table-build` |
 | `implement-read-path` | Point reads and merged iteration | `implement-memtable`, `implement-table-cache`, `implement-version-set` |
 | `implement-write-path` | Group commit and memtable insertion | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set` |
-| `implement-flush` | Immutable memtable to L0 | `implement-memtable`, `implement-sstable-writer`, `implement-table-cache`, `implement-version-set` |
+| `implement-flush` | Immutable memtable to L0 | `implement-memtable`, `implement-table-build`, `implement-table-cache`, `implement-version-set` |
 | `implement-compaction` | Leveled compaction | `implement-sstable-reader`, `implement-sstable-writer`, `implement-table-cache`, `implement-version-set` |
 | `implement-db-engine` | Integrated DB lifecycle | `implement-recovery`, `implement-read-path`, `implement-write-path`, `implement-flush`, `implement-compaction`, `implement-table-cache`, `implement-platform-runtime` |
 | `implement-public-api` | Public RAII C++ API | `implement-db-engine` |
@@ -116,16 +117,17 @@ canonical order to keep development sequential and reviewable:
 23. `implement-sstable-reader`
 24. `implement-table-cache`
 25. `implement-version-set`
-26. `implement-recovery`
-27. `implement-read-path`
-28. `implement-write-path`
-29. `implement-flush`
-30. `implement-compaction`
-31. `implement-db-engine`
-32. `implement-public-api`
-33. `implement-compression`
-34. `build-compatibility-harness`
-35. `harden-engine`
+26. `implement-table-build`
+27. `implement-recovery`
+28. `implement-read-path`
+29. `implement-write-path`
+30. `implement-flush`
+31. `implement-compaction`
+32. `implement-db-engine`
+33. `implement-public-api`
+34. `implement-compression`
+35. `build-compatibility-harness`
+36. `harden-engine`
 
 ## Completion rule
 
