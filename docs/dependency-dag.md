@@ -69,14 +69,14 @@ flowchart TD
 | `implement-filter` | LevelDB-compatible Bloom filter policy and validated SSTable filter blocks | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-checksum-hash` |
 | `implement-sstable-writer` | Durable LevelDB-compatible SSTable construction from ordered internal-key entries | `implement-platform-fs`, `implement-internal-key`, `implement-block-format`, `implement-filter` |
 | `implement-sstable-reader` | Validated SSTable lookups, bidirectional iteration, and block caching | `implement-platform-fs`, `implement-internal-key`, `implement-block-format`, `implement-filter`, `implement-cache` |
-| `implement-table-cache` | Cached SSTable handles | `implement-sstable-reader`, `implement-cache`, `implement-filenames` |
+| `implement-table-cache` | LRU cache of open SSTables by file number | `implement-sstable-reader`, `implement-cache`, `implement-filenames` |
 | `implement-version-set` | Versions and MANIFEST state | `implement-version-edit`, `implement-filenames`, `implement-sstable-reader`, `implement-wal-io` |
 | `implement-recovery` | MANIFEST and WAL recovery | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set` |
 | `implement-read-path` | Point reads and merged iteration | `implement-memtable`, `implement-table-cache`, `implement-version-set` |
 | `implement-write-path` | Group commit and memtable insertion | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set` |
-| `implement-flush` | Immutable memtable to L0 | `implement-memtable`, `implement-sstable-writer`, `implement-version-set` |
-| `implement-compaction` | Leveled compaction | `implement-sstable-reader`, `implement-sstable-writer`, `implement-version-set` |
-| `implement-db-engine` | Integrated DB lifecycle | `implement-recovery`, `implement-read-path`, `implement-write-path`, `implement-flush`, `implement-compaction`, `implement-platform-runtime` |
+| `implement-flush` | Immutable memtable to L0 | `implement-memtable`, `implement-sstable-writer`, `implement-table-cache`, `implement-version-set` |
+| `implement-compaction` | Leveled compaction | `implement-sstable-reader`, `implement-sstable-writer`, `implement-table-cache`, `implement-version-set` |
+| `implement-db-engine` | Integrated DB lifecycle | `implement-recovery`, `implement-read-path`, `implement-write-path`, `implement-flush`, `implement-compaction`, `implement-table-cache`, `implement-platform-runtime` |
 | `implement-public-api` | Public RAII C++ API | `implement-db-engine` |
 | `implement-compression` | Snappy and Zstd SSTable block compression | `implement-sstable-writer`, `implement-sstable-reader` |
 | `build-compatibility-harness` | Model, golden, differential, crash, and fuzz tests | `implement-public-api`, `implement-compression` |

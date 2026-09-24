@@ -197,8 +197,9 @@ from expressing a stable dependency direction.
 
 ## Target architecture
 
-Modern LevelDB uses the following dependency layers. A layer may depend only on
-layers below it.
+Modern LevelDB uses the following dependency layers. A module may depend on
+modules in lower layers and, in dependency-DAG order, on modules in its own
+layer, but never on a module in a higher layer.
 
 | Layer | Modules | Responsibility |
 |---|---|---|
@@ -206,9 +207,9 @@ layers below it.
 | 1 | `platform` | Filesystem, files, locking, clock, executor, logging |
 | 2 | `format` | Internal keys, WAL records, block/SST formats, MANIFEST records |
 | 3 | `wal`, `memory` | WAL stream I/O; arena, skip list, write batch, memtable |
-| 4 | `table` | Blocks, filters, SST reader/writer, table cache |
+| 4 | `table` | Blocks, filters, SST reader/writer |
 | 5 | `metadata` | Filenames, versions, version edits, version set |
-| 6 | `engine` | Recovery, read/write paths, flush, compaction, snapshots, DB state |
+| 6 | `engine` | Table cache, recovery, read/write paths, flush, compaction, snapshots, DB state |
 | 7 | `api` | Public RAII facade and user-facing options |
 
 ### Required dependency rules
