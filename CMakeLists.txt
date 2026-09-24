@@ -30,6 +30,7 @@ add_library(
     src/base/hash.cc
     src/engine/build_table.cc
     src/engine/db_iterator.cc
+    src/engine/flush.cc
     src/engine/iterators.cc
     src/engine/lookup.cc
     src/engine/recovery.cc
