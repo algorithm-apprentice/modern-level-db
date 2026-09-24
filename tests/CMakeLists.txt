@@ -42,6 +42,7 @@ add_executable(
   unit/table/block_test.cc
   unit/table/bloom_filter_test.cc
   unit/table/filter_block_test.cc
+  unit/table/table_builder_test.cc
   unit/toolchain_test.cc
   unit/wal/wal_io_test.cc
 )

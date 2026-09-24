@@ -42,6 +42,7 @@ add_library(
     src/table/block_format.cc
     src/table/bloom_filter.cc
     src/table/filter_block.cc
+    src/table/table_builder.cc
     src/wal/wal_io.cc
 )
 if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
