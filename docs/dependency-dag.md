@@ -68,7 +68,7 @@ flowchart TD
 | `implement-block-format` | LevelDB-compatible sorted blocks, block handles, footer, and checksummed trailers | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-checksum-hash`, `implement-comparator` |
 | `implement-filter` | LevelDB-compatible Bloom filter policy and validated SSTable filter blocks | `implement-bytes`, `implement-error-result`, `implement-coding`, `implement-checksum-hash` |
 | `implement-sstable-writer` | Durable LevelDB-compatible SSTable construction from ordered internal-key entries | `implement-platform-fs`, `implement-internal-key`, `implement-block-format`, `implement-filter` |
-| `implement-sstable-reader` | SSTable reads and iteration | `implement-platform-fs`, `implement-internal-key`, `implement-block-format`, `implement-filter`, `implement-cache` |
+| `implement-sstable-reader` | Validated SSTable lookups, bidirectional iteration, and block caching | `implement-platform-fs`, `implement-internal-key`, `implement-block-format`, `implement-filter`, `implement-cache` |
 | `implement-table-cache` | Cached SSTable handles | `implement-sstable-reader`, `implement-cache`, `implement-filenames` |
 | `implement-version-set` | Versions and MANIFEST state | `implement-version-edit`, `implement-filenames`, `implement-sstable-reader`, `implement-wal-io` |
 | `implement-recovery` | MANIFEST and WAL recovery | `implement-wal-io`, `implement-write-batch`, `implement-memtable`, `implement-version-set` |

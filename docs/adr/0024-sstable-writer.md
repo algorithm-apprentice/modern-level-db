@@ -103,7 +103,9 @@ class TableBuilder {
 ```
 
 - The comparator must outlive the builder; the deleted overload rejects a
-  temporary comparator at compile time. The restart interval must be at least one. The public API
+  temporary comparator at compile time. A filter policy requires a user
+  comparator that considers keys equal only when their bytes are equal, as
+  [ADR-0025](0025-sstable-reader.md) explains. The restart interval must be at least one. The public API
   validates user options, such as LevelDB's 1 KiB to 4 MiB block size range.
 - `Add` returns `InvalidArgument` for a key that is not a valid internal key
   or does not follow the previous key, and propagates filter and block size

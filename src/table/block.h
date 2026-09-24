@@ -43,6 +43,8 @@ class Block final {
   Block& operator=(Block&&) = delete;
   ~Block() = default;
 
+  [[nodiscard]] bool empty() const noexcept { return layout_.entries_end == 0; }
+
  private:
   Block(std::vector<std::byte> contents, const Comparator& comparator, std::size_t entries_end,
         std::size_t restart_count) noexcept;

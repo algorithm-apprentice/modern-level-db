@@ -24,7 +24,8 @@ struct TableBuilderOptions {
   std::size_t block_size = 4 * 1024;
   // Must be at least one.
   std::uint32_t restart_interval = 16;
-  // Without a policy, the table has no filter block.
+  // Without a policy, the table has no filter block. A policy requires a user
+  // comparator that considers keys equal only when their bytes are equal.
   std::optional<BloomFilterPolicy> filter_policy;
 };
 
