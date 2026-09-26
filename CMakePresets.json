@@ -71,6 +71,19 @@
       }
     },
     {
+      "name": "profiling",
+      "displayName": "Optimized Benchmark and Profiling",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build/profiling",
+      "cacheVariables": {
+        "MODERN_LEVELDB_BUILD_TESTS": "OFF",
+        "MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS": "ON",
+        "CMAKE_C_FLAGS": "-g -fno-omit-frame-pointer",
+        "CMAKE_CXX_FLAGS": "-g -fno-omit-frame-pointer",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
       "name": "fuzz",
       "displayName": "LLVM Fuzzing",
       "inherits": "dev-debug",
@@ -98,6 +111,10 @@
     }
   ],
   "buildPresets": [
+    {
+      "name": "profiling",
+      "configurePreset": "profiling"
+    },
     {
       "name": "asan",
       "configurePreset": "asan"
@@ -132,6 +149,18 @@
     }
   ],
   "testPresets": [
+    {
+      "name": "profiling",
+      "configurePreset": "profiling",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "performance"
+        }
+      }
+    },
     {
       "name": "asan",
       "configurePreset": "asan",

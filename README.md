@@ -83,8 +83,7 @@ upstream compatibility, power-loss, sanitizer, fuzz, and benchmark gates.
 - [LevelDB architecture analysis](docs/architecture.md)
 - [Implementation dependency DAG](docs/dependency-dag.md)
 - [Architecture decision records](docs/adr/)
-- [Next-step benchmark and profiling design](docs/profiling-design.md)
-  (design complete; implementation pending)
+- [Benchmark and profiling design and usage](docs/profiling-design.md)
 
 ## Using the library
 
@@ -199,6 +198,28 @@ The `extended-hardening` workflow adds weekly and manually dispatchable
 inputs and corpora are retained as CI artifacts. See
 [ADR-0041](docs/adr/0041-engine-hardening-gates.md) for the fixed budgets,
 benchmark methodology, and limitations.
+
+For separate, reproducible read-workload measurements, use the optional Google
+Benchmark harness:
+
+```bash
+cmake --preset profiling
+cmake --build --preset profiling
+ctest --preset profiling
+python3 tools/run_performance.py \
+  --binary build/profiling/benchmarks/modern_leveldb_performance \
+  --case modern/readrandom/65536 \
+  --output build/performance/readrandom-64k
+```
+
+Sixteen cases cover both implementations, two data sizes, and random reads,
+interior missing-key reads, scans, and reused-iterator seeks. On macOS with
+Apple Clang and Xcode, add `--capture-cpu` and a new output path for a symbolized
+Time Profiler capture limited to the measured interval. Native traces stay
+local, and profiled timings are not speedup evidence. See
+[the profiling guide](docs/profiling-design.md) for exact workloads, lifecycle,
+provenance, cleanup, and result semantics. The existing 20x regression gate is
+not replaced or relaxed by this harness.
 
 CI also measures unit-test coverage of `src/` and `include/`. Every added or
 modified production line and branch must be executed by tests unless an

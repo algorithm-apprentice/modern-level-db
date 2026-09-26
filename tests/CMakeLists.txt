@@ -208,4 +208,17 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
       -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/reject_reference.cmake"
   )
   set_tests_properties(cmake.benchmark_reference_collision PROPERTIES LABELS cmake TIMEOUT 120)
+  add_test(
+    NAME cmake.profiling_framework_collision
+    COMMAND "${CMAKE_COMMAND}"
+      "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/cmake/profiling_framework_collision"
+      "-DGENERATOR=${CMAKE_GENERATOR}" "-DCOMPILER=${CMAKE_CXX_COMPILER}"
+      "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+      "-DSNAPPY_SOURCE=${MODERN_LEVELDB_SNAPPY_SOURCE_DIR}"
+      "-DZSTD_SOURCE=${MODERN_LEVELDB_ZSTD_SOURCE_DIR}"
+      -DTEST_SCENARIO=profiling_framework_collision
+      "-DEXPECTED_ERROR=require their pinned Google Benchmark target"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/reject_reference.cmake"
+  )
+  set_tests_properties(cmake.profiling_framework_collision PROPERTIES LABELS cmake TIMEOUT 120)
 endif()

@@ -1,0 +1,33 @@
+#ifndef MODERN_LEVELDB_BENCHMARKS_PROFILING_BUILD_H_
+#define MODERN_LEVELDB_BENCHMARKS_PROFILING_BUILD_H_
+
+#include <string_view>
+
+#cmakedefine01 MODERN_LEVELDB_PROFILE_MARKERS
+
+namespace modern_leveldb::profiling {
+
+inline constexpr std::string_view SourceDirectory = R"ml(@PROJECT_SOURCE_DIR@)ml";
+inline constexpr std::string_view BuildDirectory = R"ml(@PROJECT_BINARY_DIR@)ml";
+inline constexpr std::string_view ConfigureRevision = "@PROFILE_CONFIGURE_REVISION@";
+inline constexpr std::string_view ConfigureDirty = "@PROFILE_CONFIGURE_DIRTY@";
+inline constexpr std::string_view BuildType = "@CMAKE_BUILD_TYPE@";
+inline constexpr std::string_view Compiler = "@CMAKE_CXX_COMPILER_ID@ @CMAKE_CXX_COMPILER_VERSION@";
+inline constexpr std::string_view CxxFlags = R"ml(@PROFILE_CXX_FLAGS@)ml";
+inline constexpr std::string_view CFlags = R"ml(@PROFILE_C_FLAGS@)ml";
+inline constexpr std::string_view BenchmarkOverride =
+    R"ml(@FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_BENCHMARK@)ml";
+inline constexpr std::string_view ReferenceOverride =
+    R"ml(@FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_REFERENCE@)ml";
+inline constexpr std::string_view SnappyOverride =
+    R"ml(@FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_SNAPPY@)ml";
+inline constexpr std::string_view ZstdOverride =
+    R"ml(@FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_ZSTD@)ml";
+inline constexpr std::string_view SnappyTarget = "@MODERN_LEVELDB_SNAPPY_TARGET@";
+inline constexpr std::string_view ZstdTarget = "@MODERN_LEVELDB_ZSTD_TARGET@";
+inline constexpr std::string_view SnappySource = R"ml(@MODERN_LEVELDB_SNAPPY_SOURCE_DIR@)ml";
+inline constexpr std::string_view ZstdSource = R"ml(@MODERN_LEVELDB_ZSTD_SOURCE_DIR@)ml";
+
+}  // namespace modern_leveldb::profiling
+
+#endif  // MODERN_LEVELDB_BENCHMARKS_PROFILING_BUILD_H_
