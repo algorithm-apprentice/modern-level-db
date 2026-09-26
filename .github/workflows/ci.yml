@@ -196,3 +196,32 @@ jobs:
           path: |
             build/benchmarks/benchmarks/results.json
             build/benchmarks/Testing/Temporary/
+
+  performance:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure optimized profiling harness
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            cmake --preset profiling -DCMAKE_C_COMPILER=gcc-13 -DCMAKE_CXX_COMPILER=g++-13
+          else
+            cmake --preset profiling
+          fi
+      - name: Build profiling harness
+        run: cmake --build --preset profiling --parallel 2
+      - name: Run workload and report contracts
+        run: ctest --preset profiling
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-${{ matrix.os }}
+          path: |
+            build/profiling/benchmarks/performance-smoke/
+            build/profiling/Testing/Temporary/

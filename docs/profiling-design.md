@@ -181,13 +181,13 @@ part of the process-wide profile rather than an unproven quiescence assumption.
 
 ## Implementation map
 
-The following are proposed files and interfaces, not commands already
-implemented by this design change.
+The implementation follows the file and interface boundaries established
+before development:
 
 | Order | Surface | Work |
 |---|---|---|
 | 1 | `cmake/GoogleBenchmark.cmake`, root CMake and presets | Pinned optional dependency, explicit collision checks, shared LevelDB reference, Release-symbol `profiling` preset |
-| 2 | `benchmarks/profiling_bench.cc` | One-case selection, two typed adapters, deterministic fixture/query generation, four workloads, natural ownership, process CPU/wall counters, strict main |
+| 2 | `benchmarks/profiling_bench.cc`, `profiling_build.h.in` | One-case selection, two typed adapters, deterministic fixture/query generation, four workloads, natural ownership, process CPU/wall counters, strict main and build provenance |
 | 3 | Same benchmark translation unit | Profile-only macOS signpost scope around the loop; named optimized workload frames; no production markers |
 | 4 | `tools/run_performance.py` | Case validation, benchmark invocation, fresh artifact directory, provenance, raw report validation, finite deadlines |
 | 5 | `tools/profile_report.py` | Time Profiler launch/export, target status checks, typed XML references, deduplication, measured-window selection, CPU sample summary |
@@ -219,13 +219,13 @@ or automatically upload raw local traces.
 
 ### Measurement defaults
 
-The planned benchmark runner uses three repetitions, calibrating the first
+The benchmark runner uses three repetitions, calibrating the first
 against a requested minimum of 0.2 seconds of measured wall time. Google
 Benchmark reuses the calibrated iteration count for later repetitions; those
 repetitions are **not guaranteed** to run for 0.2 seconds. The smoke runner
 uses one explicit iteration per case and validates behavior/output, not speed.
 
-The planned CPU collector uses one repetition, five seconds of measured wall
+The CPU collector uses one repetition, five seconds of measured wall
 time, no Google Benchmark warmup phase, and a 120-second recording limit.
 The fixture still performs its explicit warmup. The outer collector deadline
 is 180 seconds, allowing finalization after the recording limit. An ordinary
@@ -250,6 +250,58 @@ exact executable/parent validation, not the potentially buffered
 These are collection budgets, not pass/fail performance thresholds. Small CPU
 sample counts are reported as low-confidence; zero valid in-window samples or
 missing boundaries are errors.
+
+## Running the infrastructure
+
+The opt-in preset uses Release optimization with symbols and frame pointers.
+The normal build and the older comparative benchmark remain unchanged:
+
+```bash
+cmake --preset profiling
+cmake --build --preset profiling
+ctest --preset profiling
+build/profiling/benchmarks/modern_leveldb_performance --list-cases
+```
+
+Run one case without a profiler for timing evidence:
+
+```bash
+python3 tools/run_performance.py \
+  --binary build/profiling/benchmarks/modern_leveldb_performance \
+  --case modern/readrandom/65536 \
+  --output build/performance/modern-readrandom-64k
+```
+
+Select the same case with `--capture-cpu` for CPU attribution. This needs a
+macOS Apple Clang build and Xcode's `xctrace`/`dsymutil`:
+
+```bash
+python3 tools/run_performance.py \
+  --binary build/profiling/benchmarks/modern_leveldb_performance \
+  --case modern/readrandom/65536 \
+  --capture-cpu \
+  --output build/performance/modern-readrandom-64k-cpu
+```
+
+Output paths must be new. The runner preserves raw results and diagnostics,
+removes only its stopped process's `work/` scratch directory, and leaves
+unverifiable cleanup as an explicit failure. `--smoke` runs one iteration
+without making a performance claim. `--min-time`, `--repetitions`, and
+`--timeout` accept explicit collection budgets; CPU capture requires one
+repetition and does not permit smoke mode.
+
+Use `manifest.json` for provenance and normalized per-item times,
+`benchmark.json` for untouched Google Benchmark output, and `completion.json`
+for corpus/lifecycle assertions. A CPU capture additionally has
+`profile-summary.json` (weighted self/inclusive stacks and thread attribution),
+the executable/dSYM snapshot, and raw trace/export files.
+Every command journal entry includes its artifact-relative log path, and the
+manifest indexes the diagnostic logs. CPU manifests also record the parsed
+xctrace version and build rather than leaving that provenance only in console
+output.
+
+Raw traces and compiler command paths stay local by default. Do not upload
+them from a developer machine without reviewing their contents.
 
 ## Fixed acceptance checklist
 
@@ -329,9 +381,10 @@ outer-timeout ownership/cleanup, and the actual per-repetition timing rule.
 The suggested common-process-group cleanup was independently checked rather
 than adopted blindly; the verified design tracks the target separately.
 
-No unresolved architectural or tool-behavior question remains inside the
-initial scope. GCC 13 integration, full fixture execution, and real engine
-profiles remain **implementation acceptance work**, not completed features.
+At design freeze, no unresolved architectural or tool-behavior question
+remained inside the initial scope. GCC 13 integration, full fixture execution,
+and real engine profiles were retained as explicit implementation acceptance
+work, not claimed as completed by the design document.
 Automatic Linux perf collection and other deferred mechanisms are not
 silently scheduled for discovery during implementation.
 

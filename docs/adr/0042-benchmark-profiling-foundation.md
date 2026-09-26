@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for the next infrastructure slice; implementation has not started.
+Accepted
 
 ## Context
 
@@ -41,6 +41,8 @@ The development harness requires the pinned framework rather than silently
 substituting an arbitrary existing `benchmark` or `benchmark::benchmark`
 target. A collision fails explicitly, as the pinned LevelDB oracle already
 does. The normal library build remains unaffected when the option is off.
+An earlier declaration of the private FetchContent dependency name is also
+rejected so its first-declaration-wins rule cannot silently replace the pin.
 An explicit FetchContent source override is recorded as an override, not
 misrepresented as verified source at the pinned revision.
 
@@ -202,6 +204,8 @@ Automated CPU capture initially targets **macOS Apple Clang with Xcode Time
 Profiler**. Linux builds and runs the same benchmark cases, but an automatic
 `perf` collector is deferred until it can be validated on a suitable host.
 This is an explicit scope boundary, not a hidden fallback.
+The marker capability is configured using the `AppleClang` CMake compiler
+identity, not the broader `__clang__` macro used by non-Apple LLVM Clang too.
 
 Use `xctrace record --template 'Time Profiler' --launch` for one owned
 benchmark process. Use `dsymutil` for the profiled executable. Never attach
