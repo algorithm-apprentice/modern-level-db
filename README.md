@@ -48,7 +48,9 @@ database engine ties these together: it commits writes, switches full
 memtables to a new synced log, flushes immutable memtables in the background,
 serves reads and iterators at snapshots, runs size and seek compactions,
 slows or stops writes while level 0 backs up, and removes obsolete files. The
-public database interface is not yet implemented.
+public RAII facade exposes database handles, atomic write batches, snapshots,
+and bidirectional iterators while keeping engine and child-handle lifetimes
+safe.
 
 ## Goals
 
@@ -79,6 +81,35 @@ public database interface is not yet implemented.
 - [LevelDB architecture analysis](docs/architecture.md)
 - [Implementation dependency DAG](docs/dependency-dag.md)
 - [Architecture decision records](docs/adr/)
+
+## Using the library
+
+Link `modern_leveldb::modern_leveldb` and include the public facade:
+
+```cpp
+#include "modern_leveldb/db.h"
+
+modern_leveldb::Options options;
+options.create_if_missing = true;
+auto opened = modern_leveldb::Database::Open(options, "example-db");
+if (!opened.has_value()) {
+  return opened.error();
+}
+
+modern_leveldb::Database database = std::move(*opened);
+auto written =
+    database.Put(modern_leveldb::AsBytes("key"), modern_leveldb::AsBytes("value"));
+if (!written.has_value()) {
+  return written.error();
+}
+
+auto value = database.Get(modern_leveldb::AsBytes("key"));
+```
+
+`Database`, `Snapshot`, and `Iterator` are move-only handles. Snapshots and
+iterators retain the underlying engine, so their storage remains valid even
+if the original `Database` handle is destroyed first. See
+[ADR-0038](docs/adr/0038-public-raii-api.md) for the complete contracts.
 
 ## Development
 

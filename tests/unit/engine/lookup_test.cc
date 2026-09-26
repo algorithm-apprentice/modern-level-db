@@ -73,9 +73,9 @@ void Fill(MemTable& memtable, std::initializer_list<Entry> entries) {
 // Looks up keys in tables that it writes through one file system, reporting
 // which tables each lookup searches. Lookups use a table cache that caches
 // nothing, so every table a lookup searches is opened.
-class Database {
+class DatabaseEngine {
  public:
-  explicit Database(const Comparator& user_comparator, TableOptions table_options = {})
+  explicit DatabaseEngine(const Comparator& user_comparator, TableOptions table_options = {})
       : user_comparator_(user_comparator),
         comparator_(user_comparator),
         table_options_(table_options),
@@ -171,7 +171,7 @@ class Database {
 using Tables = std::set<std::uint64_t>;
 
 TEST(LookupTest, ReadsTheMemtablesBeforeTheVersion) {
-  Database database(BytewiseComparator());
+  DatabaseEngine database(BytewiseComparator());
   const Version version = database.MakeVersion({{0, database.WriteTable(5, {{"a", 1, "table"},
                                                                             {"b", 2, "table"},
                                                                             {"c", 3, "table"},
@@ -198,7 +198,7 @@ TEST(LookupTest, ReadsTheMemtablesBeforeTheVersion) {
 }
 
 TEST(LookupTest, SeesOnlyEntriesAtOrBeforeTheSequence) {
-  Database database(BytewiseComparator());
+  DatabaseEngine database(BytewiseComparator());
   const Version version = database.MakeVersion(
       {{0, database.WriteTable(5, {{"deleted", 10, "table"}, {"key", 10, "table"}})}});
   MemTable memtable(database.user_comparator());
@@ -216,7 +216,7 @@ TEST(LookupTest, SeesOnlyEntriesAtOrBeforeTheSequence) {
 }
 
 TEST(LookupTest, SearchesLevel0FilesFromNewestToOldest) {
-  Database database(BytewiseComparator());
+  DatabaseEngine database(BytewiseComparator());
   const Version version = database.MakeVersion(
       {{0,
         database.WriteTable(5, {{"a", 1, "a5"}, {"k", 2, "k5"}, {"m", 4, "m5"}, {"z", 3, "z5"}})},
@@ -240,7 +240,7 @@ TEST(LookupTest, SearchesLevel0FilesFromNewestToOldest) {
 }
 
 TEST(LookupTest, SearchesOneFilePerDeeperLevel) {
-  Database database(BytewiseComparator());
+  DatabaseEngine database(BytewiseComparator());
   const Version version = database.MakeVersion(
       {{0, database.WriteTable(13, {{"c", 50, "c13"}})},
        {1, database.WriteTable(10, {{"b", 1, "b10"}, {"c", 1, "c10"}, {"d", 1, "d10"}})},
@@ -266,7 +266,7 @@ TEST(LookupTest, SearchesOneFilePerDeeperLevel) {
 }
 
 TEST(LookupTest, FindsAUserKeyWhoseVersionsSpanTwoFiles) {
-  Database database(BytewiseComparator());
+  DatabaseEngine database(BytewiseComparator());
   const Version version =
       database.MakeVersion({{1, database.WriteTable(20, {{"a", 1, "a20"}, {"u", 100, "u100"}})},
                             {1, database.WriteTable(21, {{"u", 50, "u50"}, {"z", 1, "z21"}})}});
@@ -282,7 +282,7 @@ TEST(LookupTest, FindsAUserKeyWhoseVersionsSpanTwoFiles) {
 TEST(LookupTest, UsesTheComparatorsOrder) {
   // In this order, z < y < u < t < s < q < c.
   const ReverseComparator reverse;
-  Database database(reverse);
+  DatabaseEngine database(reverse);
   const Version version = database.MakeVersion(
       {{0, database.WriteTable(30, {{"z", 1, "z30"}, {"t", 2, "t30"}, {"s", 3, "s30"}})},
        {0, database.WriteTable(31, {{"t", 10, "t31"}})},
@@ -306,7 +306,7 @@ TEST(LookupTest, UsesTheComparatorsOrder) {
 }
 
 TEST(LookupTest, ReturnsTableErrors) {
-  Database database(BytewiseComparator());
+  DatabaseEngine database(BytewiseComparator());
   const FileMetadata level0 = database.WriteTable(40, {{"k", 5, "k40"}});
   const FileMetadata level1 = database.WriteTable(41, {{"a", 1, "a41"}, {"z", 1, "z41"}});
   FileMetadata missing = database.WriteTable(42, {{"a", 1, "a42"}, {"z", 1, "z42"}});
@@ -353,7 +353,7 @@ TEST(LookupTest, PassesReadOptionsToTables) {
   BlockCache blocks(1 << 20);
   TableOptions table_options;
   table_options.block_cache = &blocks;
-  Database database(BytewiseComparator(), table_options);
+  DatabaseEngine database(BytewiseComparator(), table_options);
   const Version version = database.MakeVersion({{0, database.WriteTable(5, {{"k", 1, "v"}})}});
 
   EXPECT_EQ(database.Lookup("k", 10, version, nullptr, nullptr, {.fill_cache = false}), "v");
@@ -386,7 +386,7 @@ FileMetadata Range(std::uint64_t number, std::string_view smallest, std::string_
 }
 
 TEST(LookupTest, ChargesTheFirstFileOfAReadThatSearchesAnother) {
-  Database database(BytewiseComparator());
+  DatabaseEngine database(BytewiseComparator());
   const Version version = database.MakeVersion(
       {{0, database.WriteTable(6, {{"a", 20, "a6"}, {"m", 20, "m6"}})},
        {0, database.WriteTable(5, {{"a", 10, "a5"}, {"c", 10, "c5"}, {"e", 10, "e5"}})},
@@ -418,7 +418,7 @@ TEST(LookupTest, ChargesTheFirstFileOfAReadThatSearchesAnother) {
 
 TEST(SampleChargeTest, ChargesTheFirstOfSeveralFilesThatHoldTheKey) {
   const InternalKeyComparator comparator(BytewiseComparator());
-  Database database(BytewiseComparator());
+  DatabaseEngine database(BytewiseComparator());
   const Version version = database.MakeVersion({{0, Range(5, "a", "m")},
                                                 {0, Range(6, "c", "z")},
                                                 {1, Range(10, "a", "d")},
@@ -439,7 +439,7 @@ TEST(SampleChargeTest, ChargesTheFirstOfSeveralFilesThatHoldTheKey) {
 
 TEST(SampleChargeTest, ComparesInternalKeysAtALevelsFileBoundary) {
   const InternalKeyComparator comparator(BytewiseComparator());
-  Database database(BytewiseComparator());
+  DatabaseEngine database(BytewiseComparator());
   // Files 20 and 21 split the entries of user key "k".
   const Version version = database.MakeVersion({{1, Range(20, Internal("a", 9), Internal("k", 5))},
                                                 {1, Range(21, Internal("k", 3), Internal("p", 1))},

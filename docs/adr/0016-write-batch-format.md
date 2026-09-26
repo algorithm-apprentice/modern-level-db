@@ -75,13 +75,13 @@ operation count.
 ### Owning batch
 
 ```cpp
-class WriteBatch final {
+class EncodedWriteBatch final {
  public:
-  WriteBatch();
+  EncodedWriteBatch();
 
   Status Put(ByteView key, ByteView value);
   Status Delete(ByteView key);
-  Status Append(const WriteBatch& source);
+  Status Append(const EncodedWriteBatch& source);
   Status SetSequence(SequenceNumber sequence);
   void Clear() noexcept;
 
@@ -91,7 +91,7 @@ class WriteBatch final {
 };
 ```
 
-`WriteBatch` owns one `std::vector<std::byte>` that always contains a valid
+`EncodedWriteBatch` owns one `std::vector<std::byte>` that always contains a valid
 12-byte header followed by validated records. It is copyable and movable.
 There is no invalid/default-empty representation: a default batch has sequence
 zero, count zero, and exactly 12 header bytes.

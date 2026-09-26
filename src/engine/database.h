@@ -39,7 +39,7 @@ inline constexpr std::size_t Level0SlowdownWritesTrigger = 8;
 // a write that needs a new memtable waits for background work.
 inline constexpr std::size_t Level0StopWritesTrigger = 12;
 
-struct DatabaseOptions {
+struct DatabaseEngineOptions {
   // Must outlive the database.
   const Comparator* comparator = &BytewiseComparator();
   bool create_if_missing = false;
@@ -65,9 +65,9 @@ struct DatabaseOptions {
 // Returns the options clipped to LevelDB's ranges: max_open_files to 74
 // through 50,000, write_buffer_size to 64 KiB through 1 GiB, max_file_size to
 // 1 MiB through 1 GiB, and the block size to 1 KiB through 4 MiB.
-[[nodiscard]] DatabaseOptions SanitizeOptions(DatabaseOptions options);
+[[nodiscard]] DatabaseEngineOptions SanitizeOptions(DatabaseEngineOptions options);
 
-struct DatabaseReadOptions {
+struct DatabaseEngineReadOptions {
   // A sequence that GetSnapshot returned and that is not yet released; without
   // one, reads see the last sequence.
   std::optional<SequenceNumber> snapshot;
@@ -76,37 +76,38 @@ struct DatabaseReadOptions {
 
 // An open database, as LevelDB's DBImpl. Its methods are safe to call from
 // several threads.
-class Database final {
+class DatabaseEngine final {
   struct PrivateTag {
     explicit PrivateTag() = default;
   };
 
  public:
   // Opens or creates the database in the directory, which it keeps locked.
-  [[nodiscard]] static Result<std::unique_ptr<Database>> Open(DatabaseOptions options,
-                                                              std::filesystem::path directory);
+  [[nodiscard]] static Result<std::unique_ptr<DatabaseEngine>> Open(
+      DatabaseEngineOptions options, std::filesystem::path directory);
 
-  Database(PrivateTag, const DatabaseOptions& options, std::filesystem::path directory);
-  Database(const Database&) = delete;
-  Database& operator=(const Database&) = delete;
-  Database(Database&&) = delete;
-  Database& operator=(Database&&) = delete;
+  DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options, std::filesystem::path directory);
+  DatabaseEngine(const DatabaseEngine&) = delete;
+  DatabaseEngine& operator=(const DatabaseEngine&) = delete;
+  DatabaseEngine(DatabaseEngine&&) = delete;
+  DatabaseEngine& operator=(DatabaseEngine&&) = delete;
   // Marks the database as closing, closes the log, waits until no background
   // task is scheduled, and then releases the directory lock last. No other
   // call may be running.
-  ~Database();
+  ~DatabaseEngine();
 
   // Commits the batch, syncing the log first if asked. After a background
   // error, every write returns it.
-  [[nodiscard]] Status Write(const WriteBatch& batch, bool sync);
+  [[nodiscard]] Status Write(const EncodedWriteBatch& batch, bool sync);
 
   // Returns the key's value, or nothing if it has none or it is deleted.
   [[nodiscard]] Result<std::optional<std::vector<std::byte>>> Get(
-      ByteView key, const DatabaseReadOptions& options = {});
+      ByteView key, const DatabaseEngineReadOptions& options = {});
 
   // Returns an iterator that must be destroyed before the database, since its
   // samples of what it reads charge the database's seek budgets.
-  [[nodiscard]] std::unique_ptr<DbIterator> NewIterator(const DatabaseReadOptions& options = {});
+  [[nodiscard]] std::unique_ptr<DbIterator> NewIterator(
+      const DatabaseEngineReadOptions& options = {});
 
   // Returns the last sequence and keeps what it reads until it is released.
   // Each call needs its own release.
@@ -122,10 +123,10 @@ class Database final {
   [[nodiscard]] Status WaitForBackgroundWork();
 
  private:
-  [[nodiscard]] Status Recover(const DatabaseOptions& options);
+  [[nodiscard]] Status Recover(const DatabaseEngineOptions& options);
   [[nodiscard]] Status MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool force);
   [[nodiscard]] Status SwitchMemTable();
-  [[nodiscard]] Status CommitWrite(std::unique_lock<std::mutex>& lock, WriteBatch& group,
+  [[nodiscard]] Status CommitWrite(std::unique_lock<std::mutex>& lock, EncodedWriteBatch& group,
                                    bool sync);
   [[nodiscard]] bool NeedsCompaction() const;
   void MaybeScheduleBackgroundWork();

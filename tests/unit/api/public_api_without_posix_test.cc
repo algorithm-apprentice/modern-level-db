@@ -1,18 +1,16 @@
 #include <gtest/gtest.h>
 
-#include <memory>
-
-#include "engine/database.h"
 #include "modern_leveldb/base/result.h"
+#include "modern_leveldb/db.h"
 
 namespace modern_leveldb {
 namespace {
 
-TEST(DatabaseWithoutPosixTest, NeedsAFileSystemFromTheCaller) {
-  DatabaseEngineOptions options;
+TEST(PublicDatabaseWithoutPosixTest, ReportsTheMissingDefaultFileSystem) {
+  Options options;
   options.create_if_missing = true;
 
-  const Result<std::unique_ptr<DatabaseEngine>> database = DatabaseEngine::Open(options, "db");
+  const Result<Database> database = Database::Open(options, "database");
 
   ASSERT_FALSE(database.has_value());
   EXPECT_EQ(database.error().code(), ErrorCode::NotSupported);

@@ -39,7 +39,7 @@ constexpr std::size_t NonTableFiles = 10;
 // The block cache that a database owns when it is given none.
 constexpr std::size_t DefaultBlockCacheSize = std::size_t{8} << 20U;
 
-std::unique_ptr<FileSystem> OwnedFileSystem(const DatabaseOptions& options) {
+std::unique_ptr<FileSystem> OwnedFileSystem(const DatabaseEngineOptions& options) {
   if (options.file_system != nullptr) {
     return nullptr;
   }
@@ -50,35 +50,35 @@ std::unique_ptr<FileSystem> OwnedFileSystem(const DatabaseOptions& options) {
 #endif
 }
 
-std::unique_ptr<BlockCache> OwnedBlockCache(const DatabaseOptions& options) {
+std::unique_ptr<BlockCache> OwnedBlockCache(const DatabaseEngineOptions& options) {
   if (options.block_cache != nullptr) {
     return nullptr;
   }
   return std::make_unique<BlockCache>(DefaultBlockCacheSize);
 }
 
-std::unique_ptr<BackgroundExecutor> OwnedExecutor(const DatabaseOptions& options) {
+std::unique_ptr<BackgroundExecutor> OwnedExecutor(const DatabaseEngineOptions& options) {
   if (options.executor != nullptr) {
     return nullptr;
   }
   return std::make_unique<SerialExecutor>();
 }
 
-std::unique_ptr<Clock> OwnedClock(const DatabaseOptions& options) {
+std::unique_ptr<Clock> OwnedClock(const DatabaseEngineOptions& options) {
   if (options.clock != nullptr) {
     return nullptr;
   }
   return std::make_unique<SystemClock>();
 }
 
-TableOptions ReadTableOptions(const DatabaseOptions& options, BlockCache* owned_block_cache) {
+TableOptions ReadTableOptions(const DatabaseEngineOptions& options, BlockCache* owned_block_cache) {
   TableOptions table_options{
       .filter_policy = options.table_options.filter_policy,
       .block_cache = options.block_cache != nullptr ? options.block_cache : owned_block_cache};
   return table_options;
 }
 
-TableReadOptions ReadOptionsFor(const DatabaseReadOptions& options) {
+TableReadOptions ReadOptionsFor(const DatabaseEngineReadOptions& options) {
   TableReadOptions read_options;
   read_options.fill_cache = options.fill_cache;
   return read_options;
@@ -86,7 +86,7 @@ TableReadOptions ReadOptionsFor(const DatabaseReadOptions& options) {
 
 }  // namespace
 
-DatabaseOptions SanitizeOptions(DatabaseOptions options) {
+DatabaseEngineOptions SanitizeOptions(DatabaseEngineOptions options) {
   options.max_open_files =
       std::clamp<std::size_t>(options.max_open_files, 64 + NonTableFiles, 50000);
   options.write_buffer_size = std::clamp<std::size_t>(
@@ -98,8 +98,8 @@ DatabaseOptions SanitizeOptions(DatabaseOptions options) {
   return options;
 }
 
-Result<std::unique_ptr<Database>> Database::Open(DatabaseOptions options,
-                                                 std::filesystem::path directory) {
+Result<std::unique_ptr<DatabaseEngine>> DatabaseEngine::Open(DatabaseEngineOptions options,
+                                                             std::filesystem::path directory) {
 #if !defined(MODERN_LEVELDB_HAVE_POSIX_FILE_SYSTEM)
   // Only the POSIX backend exists (ADR-0011), so elsewhere the caller gives
   // the file system.
@@ -108,7 +108,7 @@ Result<std::unique_ptr<Database>> Database::Open(DatabaseOptions options,
   }
 #endif
   options = SanitizeOptions(std::move(options));
-  auto database = std::make_unique<Database>(PrivateTag(), options, std::move(directory));
+  auto database = std::make_unique<DatabaseEngine>(PrivateTag(), options, std::move(directory));
   const Status recovered = database->Recover(options);
   if (!recovered.has_value()) {
     return std::unexpected(recovered.error());
@@ -116,7 +116,8 @@ Result<std::unique_ptr<Database>> Database::Open(DatabaseOptions options,
   return database;
 }
 
-Database::Database(PrivateTag, const DatabaseOptions& options, std::filesystem::path directory)
+DatabaseEngine::DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options,
+                               std::filesystem::path directory)
     : owned_file_system_(OwnedFileSystem(options)),
       owned_block_cache_(OwnedBlockCache(options)),
       owned_clock_(OwnedClock(options)),
@@ -132,13 +133,13 @@ Database::Database(PrivateTag, const DatabaseOptions& options, std::filesystem::
                    options.max_open_files - NonTableFiles),
       write_queue_([this](std::unique_lock<std::mutex>& lock,
                           bool force) { return MakeRoomForWrite(lock, force); },
-                   [this](std::unique_lock<std::mutex>& lock, WriteBatch& group, bool sync) {
+                   [this](std::unique_lock<std::mutex>& lock, EncodedWriteBatch& group, bool sync) {
                      return CommitWrite(lock, group, sync);
                    }),
       owned_executor_(OwnedExecutor(options)),
       executor_(options.executor != nullptr ? options.executor : owned_executor_.get()) {}
 
-Database::~Database() {
+DatabaseEngine::~DatabaseEngine() {
   std::unique_lock lock(mutex_);
   closing_ = true;
   // No write can use the log any longer, and a close error has no one to go
@@ -153,7 +154,7 @@ Database::~Database() {
   background_finished_.wait(lock, [this] { return !background_scheduled_; });
 }
 
-Status Database::Recover(const DatabaseOptions& options) {
+Status DatabaseEngine::Recover(const DatabaseEngineOptions& options) {
   RecoveryOptions recovery{.create_if_missing = options.create_if_missing,
                            .error_if_exists = options.error_if_exists,
                            .write_buffer_size = options.write_buffer_size,
@@ -178,12 +179,12 @@ Status Database::Recover(const DatabaseOptions& options) {
   return {};
 }
 
-Status Database::Write(const WriteBatch& batch, bool sync) {
+Status DatabaseEngine::Write(const EncodedWriteBatch& batch, bool sync) {
   std::unique_lock lock(mutex_);
   return write_queue_.Write(lock, batch, sync);
 }
 
-Status Database::MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool force) {
+Status DatabaseEngine::MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool force) {
   bool allow_delay = !force;
   while (true) {
     const std::size_t level0_files = versions_->current()->files(0).size();
@@ -214,7 +215,7 @@ Status Database::MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool force
   }
 }
 
-Status Database::SwitchMemTable() {
+Status DatabaseEngine::SwitchMemTable() {
   const std::uint64_t number = versions_->NewFileNumber();
   const std::filesystem::path path = LogFileName(directory_, number);
   Result<std::unique_ptr<WritableFile>> file = file_system_->OpenWritable(path);
@@ -243,7 +244,8 @@ Status Database::SwitchMemTable() {
   return {};
 }
 
-Status Database::CommitWrite(std::unique_lock<std::mutex>& lock, WriteBatch& group, bool sync) {
+Status DatabaseEngine::CommitWrite(std::unique_lock<std::mutex>& lock, EncodedWriteBatch& group,
+                                   bool sync) {
   const SequenceNumber first = versions_->last_sequence() + 1;
   const Status prepared = PrepareGroup(group, first);
   if (!prepared.has_value()) {
@@ -272,8 +274,8 @@ Status Database::CommitWrite(std::unique_lock<std::mutex>& lock, WriteBatch& gro
   return {};
 }
 
-Result<std::optional<std::vector<std::byte>>> Database::Get(ByteView key,
-                                                            const DatabaseReadOptions& options) {
+Result<std::optional<std::vector<std::byte>>> DatabaseEngine::Get(
+    ByteView key, const DatabaseEngineReadOptions& options) {
   std::unique_lock lock(mutex_);
   const SequenceNumber sequence =
       options.snapshot.has_value() ? *options.snapshot : versions_->last_sequence();
@@ -301,7 +303,7 @@ Result<std::optional<std::vector<std::byte>>> Database::Get(ByteView key,
   return std::move(read->value);
 }
 
-std::unique_ptr<DbIterator> Database::NewIterator(const DatabaseReadOptions& options) {
+std::unique_ptr<DbIterator> DatabaseEngine::NewIterator(const DatabaseEngineReadOptions& options) {
   std::unique_lock lock(mutex_);
   const SequenceNumber sequence =
       options.snapshot.has_value() ? *options.snapshot : versions_->last_sequence();
@@ -316,7 +318,7 @@ std::unique_ptr<DbIterator> Database::NewIterator(const DatabaseReadOptions& opt
                                       std::move(sampling));
 }
 
-void Database::RecordReadSample(ByteView internal_key) {
+void DatabaseEngine::RecordReadSample(ByteView internal_key) {
   const std::lock_guard lock(mutex_);
   const std::shared_ptr<const Version> current = versions_->current();
   const std::optional<SeekCharge> charge = SampleCharge(*current, comparator_, internal_key);
@@ -325,21 +327,21 @@ void Database::RecordReadSample(ByteView internal_key) {
   }
 }
 
-SequenceNumber Database::GetSnapshot() {
+SequenceNumber DatabaseEngine::GetSnapshot() {
   const std::lock_guard lock(mutex_);
   const SequenceNumber sequence = versions_->last_sequence();
   snapshots_.insert(sequence);
   return sequence;
 }
 
-void Database::ReleaseSnapshot(SequenceNumber snapshot) {
+void DatabaseEngine::ReleaseSnapshot(SequenceNumber snapshot) {
   const std::lock_guard lock(mutex_);
   const auto found = snapshots_.find(snapshot);
   assert(found != snapshots_.end());
   snapshots_.erase(found);
 }
 
-Status Database::FlushMemTable() {
+Status DatabaseEngine::FlushMemTable() {
   std::unique_lock lock(mutex_);
   const Status forced = write_queue_.Force(lock);
   if (!forced.has_value()) {
@@ -355,7 +357,7 @@ Status Database::FlushMemTable() {
   return {};
 }
 
-Status Database::WaitForBackgroundWork() {
+Status DatabaseEngine::WaitForBackgroundWork() {
   std::unique_lock lock(mutex_);
   background_finished_.wait(lock, [this] { return !background_scheduled_; });
   if (background_error_.has_value()) {
@@ -364,7 +366,7 @@ Status Database::WaitForBackgroundWork() {
   return {};
 }
 
-bool Database::NeedsCompaction() const {
+bool DatabaseEngine::NeedsCompaction() const {
   const std::shared_ptr<const Version> current = versions_->current();
   if (ScoreCompaction(*current).score >= 1) {
     return true;
@@ -372,7 +374,7 @@ bool Database::NeedsCompaction() const {
   return seek_statistics_.FileToCompact(current).has_value();
 }
 
-void Database::MaybeScheduleBackgroundWork() {
+void DatabaseEngine::MaybeScheduleBackgroundWork() {
   if (background_scheduled_ || closing_ || background_error_.has_value()) {
     return;
   }
@@ -392,7 +394,7 @@ void Database::MaybeScheduleBackgroundWork() {
   }
 }
 
-void Database::BackgroundCall() {
+void DatabaseEngine::BackgroundCall() {
   std::unique_lock lock(mutex_);
   if (!closing_ && !background_error_.has_value()) {
     try {
@@ -413,7 +415,7 @@ void Database::BackgroundCall() {
   background_finished_.notify_all();
 }
 
-void Database::FlushImmutable(std::unique_lock<std::mutex>& lock) {
+void DatabaseEngine::FlushImmutable(std::unique_lock<std::mutex>& lock) {
   const std::shared_ptr<const Version> base = versions_->current();
   const std::uint64_t number = versions_->NewFileNumber();
   pending_outputs_.insert(number);
@@ -448,7 +450,7 @@ void Database::FlushImmutable(std::unique_lock<std::mutex>& lock) {
   RemoveObsoleteFiles(lock);
 }
 
-void Database::BackgroundCompaction(std::unique_lock<std::mutex>& lock) {
+void DatabaseEngine::BackgroundCompaction(std::unique_lock<std::mutex>& lock) {
   std::vector<std::uint64_t> outputs;
   const bool compacted = Compact(lock, outputs);
   for (const std::uint64_t number : outputs) {
@@ -459,7 +461,8 @@ void Database::BackgroundCompaction(std::unique_lock<std::mutex>& lock) {
   }
 }
 
-bool Database::Compact(std::unique_lock<std::mutex>& lock, std::vector<std::uint64_t>& outputs) {
+bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
+                             std::vector<std::uint64_t>& outputs) {
   const std::shared_ptr<const Version> current = versions_->current();
   const std::optional<Compaction> compaction =
       PickCompaction(current, comparator_, versions_->compact_pointers(),
@@ -511,7 +514,7 @@ bool Database::Compact(std::unique_lock<std::mutex>& lock, std::vector<std::uint
   return true;
 }
 
-void Database::FinishCompaction(const Status& applied) {
+void DatabaseEngine::FinishCompaction(const Status& applied) {
   if (!applied.has_value()) {
     RecordBackgroundError(applied.error());
     return;
@@ -519,7 +522,7 @@ void Database::FinishCompaction(const Status& applied) {
   seek_statistics_.Retain(*versions_->current());
 }
 
-Status Database::BeforeCompactionEntry() {
+Status DatabaseEngine::BeforeCompactionEntry() {
   if (closing_) {
     return std::unexpected(Error::Aborted("the database is closing"));
   }
@@ -536,7 +539,7 @@ Status Database::BeforeCompactionEntry() {
   return {};
 }
 
-void Database::RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock) {
+void DatabaseEngine::RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock) {
   if (background_error_.has_value()) {
     return;
   }
@@ -586,13 +589,13 @@ void Database::RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock) {
   lock.lock();
 }
 
-void Database::RecordBackgroundError(Error error) {
+void DatabaseEngine::RecordBackgroundError(Error error) {
   // Keeps the first error.
   background_error_ = background_error_.value_or(std::move(error));
   background_finished_.notify_all();
 }
 
-std::unexpected<Error> Database::BackgroundError() const {
+std::unexpected<Error> DatabaseEngine::BackgroundError() const {
   return std::unexpected(*background_error_);
 }
 

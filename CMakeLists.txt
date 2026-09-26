@@ -24,6 +24,10 @@ find_package(Threads REQUIRED)
 add_library(
   modern_leveldb
   STATIC
+    src/api/database.cc
+    src/api/iterator.cc
+    src/api/snapshot.cc
+    src/api/write_batch.cc
     src/base/coding.cc
     src/base/comparator.cc
     src/base/crc32c.cc

@@ -86,18 +86,20 @@ Add `src/engine/write_path.{h,cc}`:
 ```cpp
 Status InsertBatch(WriteBatchReader& batch, MemTable& memtable);
 
-Status PrepareGroup(WriteBatch& group, SequenceNumber first_sequence);
-Status CommitGroup(const WriteBatch& group, bool sync, WalWriter& log, MemTable& memtable);
+Status PrepareGroup(EncodedWriteBatch& group, SequenceNumber first_sequence);
+Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log,
+                   MemTable& memtable);
 
 class WriteQueue final {
  public:
   using Prepare = std::function<Status(std::unique_lock<std::mutex>& lock)>;
   using Commit =
-      std::function<Status(std::unique_lock<std::mutex>& lock, WriteBatch& group, bool sync)>;
+      std::function<Status(std::unique_lock<std::mutex>& lock, EncodedWriteBatch& group,
+                           bool sync)>;
 
   WriteQueue(Prepare prepare, Commit commit);
 
-  Status Write(std::unique_lock<std::mutex>& lock, const WriteBatch& batch, bool sync);
+  Status Write(std::unique_lock<std::mutex>& lock, const EncodedWriteBatch& batch, bool sync);
   std::size_t size() const noexcept;
 };
 ```
@@ -175,7 +177,7 @@ Unit tests cover:
   [ADR-0019](0019-test-coverage-policy.md).
 
 No differential helper is needed: the queue's grouping follows LevelDB's rules
-directly, and a group's log record is a `WriteBatch` encoding, which ADR-0016
+directly, and a group's log record is an `EncodedWriteBatch` encoding, which ADR-0016
 already compared with LevelDB.
 
 ## Consequences
