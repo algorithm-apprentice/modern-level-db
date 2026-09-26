@@ -2,7 +2,7 @@ include(FetchContent)
 
 function(modern_leveldb_add_reference)
   if(TARGET leveldb)
-    message(FATAL_ERROR "Extended tests require their pinned LevelDB reference target")
+    message(FATAL_ERROR "Harness and benchmarks require their pinned LevelDB reference target")
   endif()
   set(BUILD_SHARED_LIBS OFF)
   set(LEVELDB_BUILD_TESTS OFF)
@@ -31,5 +31,9 @@ function(modern_leveldb_add_reference)
   set_property(
     TARGET leveldb PROPERTY INTERFACE_LINK_LIBRARIES
     "${MODERN_LEVELDB_SNAPPY_TARGET};${MODERN_LEVELDB_ZSTD_TARGET};Threads::Threads"
+  )
+  # Keep reference interfaces compatible with RTTI-enabled tests and UBSan vptr checks.
+  target_compile_options(
+    leveldb PRIVATE "$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-frtti>"
   )
 endfunction()

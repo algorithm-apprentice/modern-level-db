@@ -137,6 +137,19 @@ canonical order to keep development sequential and reviewable:
 39. `build-compatibility-harness`
 40. `harden-engine`
 
+## Initial MVP milestone
+
+The forty canonical nodes are implemented. Runtime verification spans the
+fast unit tier, public consumer builds, seeded models, upstream golden and
+differential compatibility, deterministic power loss and torn WAL recovery,
+abrupt process exit, sanitizers, bounded fuzz campaigns, and a comparative
+performance baseline. See ADR-0040 and ADR-0041 for the reproducible commands
+and the limits of this evidence.
+
+This milestone does not add the explicitly deferred product features or
+make the pre-alpha engine suitable for production data. New scope requires
+its own decision and sequential implementation node.
+
 ## Completion rule
 
 Validation depends on the kind of node. Production-code behavior uses TDD;

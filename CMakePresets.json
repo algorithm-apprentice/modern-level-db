@@ -39,6 +39,38 @@
       }
     },
     {
+      "name": "asan",
+      "displayName": "Address and Undefined Behavior Sanitizers",
+      "inherits": "compatibility",
+      "binaryDir": "${sourceDir}/build/asan",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
+      }
+    },
+    {
+      "name": "tsan",
+      "displayName": "Thread Sanitizer",
+      "inherits": "compatibility",
+      "binaryDir": "${sourceDir}/build/tsan",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
+      }
+    },
+    {
+      "name": "benchmarks",
+      "displayName": "Release Performance Baseline",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build/benchmarks",
+      "cacheVariables": {
+        "MODERN_LEVELDB_BUILD_TESTS": "OFF",
+        "MODERN_LEVELDB_BUILD_BENCHMARKS": "ON"
+      }
+    },
+    {
       "name": "fuzz",
       "displayName": "LLVM Fuzzing",
       "inherits": "dev-debug",
@@ -67,6 +99,18 @@
   ],
   "buildPresets": [
     {
+      "name": "asan",
+      "configurePreset": "asan"
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan"
+    },
+    {
+      "name": "benchmarks",
+      "configurePreset": "benchmarks"
+    },
+    {
       "name": "fuzz",
       "configurePreset": "fuzz"
     },
@@ -88,6 +132,42 @@
     }
   ],
   "testPresets": [
+    {
+      "name": "asan",
+      "configurePreset": "asan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "unit|model|compatibility|crash"
+        }
+      }
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "unit|model"
+        }
+      }
+    },
+    {
+      "name": "benchmarks",
+      "configurePreset": "benchmarks",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "benchmark"
+        }
+      }
+    },
     {
       "name": "fuzz",
       "configurePreset": "fuzz",

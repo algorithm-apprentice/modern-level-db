@@ -133,5 +133,66 @@ jobs:
         with:
           name: fuzz-results
           path: |
-            build/fuzz/fuzz/
+            build/fuzz/fuzz/*-smoke/corpus/
+            build/fuzz/fuzz/*-smoke/artifacts/
             build/fuzz/Testing/Temporary/
+
+  asan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install sanitizer toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang-19 libclang-rt-19-dev
+      - name: Configure ASan and UBSan
+        run: cmake --preset asan -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19
+      - name: Build sanitizer suite
+        run: cmake --build --preset asan --parallel 2
+      - name: Run sanitizer suite
+        run: ctest --preset asan
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: asan-failure
+          path: build/asan/Testing/Temporary/
+
+  tsan:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure ThreadSanitizer
+        run: cmake --preset tsan
+      - name: Build ThreadSanitizer suite
+        run: cmake --build --preset tsan --parallel 2
+      - name: Run concurrent component and model tests
+        run: ctest --preset tsan
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: tsan-failure
+          path: build/tsan/Testing/Temporary/
+
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CC: gcc-13
+      CXX: g++-13
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Release benchmark
+        run: cmake --preset benchmarks
+      - name: Build benchmark
+        run: cmake --build --preset benchmarks --parallel 2
+      - name: Check comparative performance baseline
+        run: ctest --preset benchmarks
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-results
+          path: |
+            build/benchmarks/benchmarks/results.json
+            build/benchmarks/Testing/Temporary/
