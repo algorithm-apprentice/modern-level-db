@@ -112,31 +112,33 @@ class DatabaseTest : public testing::Test {
     options_.write_buffer_size = 1;
   }
 
-  Result<std::unique_ptr<Database>> TryOpen() { return Database::Open(options_, directory_); }
+  Result<std::unique_ptr<DatabaseEngine>> TryOpen() {
+    return DatabaseEngine::Open(options_, directory_);
+  }
 
-  std::unique_ptr<Database> Open() {
-    Result<std::unique_ptr<Database>> database = TryOpen();
+  std::unique_ptr<DatabaseEngine> Open() {
+    Result<std::unique_ptr<DatabaseEngine>> database = TryOpen();
     EXPECT_TRUE(database.has_value()) << database.error().ToString();
     return database.has_value() ? std::move(*database) : nullptr;
   }
 
-  static Status Put(Database& database, std::string_view key, std::string_view value,
+  static Status Put(DatabaseEngine& database, std::string_view key, std::string_view value,
                     bool sync = false) {
-    WriteBatch batch;
+    EncodedWriteBatch batch;
     EXPECT_TRUE(batch.Put(AsBytes(key), AsBytes(value)).has_value());
     return database.Write(batch, sync);
   }
 
-  static Status Delete(Database& database, std::string_view key) {
-    WriteBatch batch;
+  static Status Delete(DatabaseEngine& database, std::string_view key) {
+    EncodedWriteBatch batch;
     EXPECT_TRUE(batch.Delete(AsBytes(key)).has_value());
     return database.Write(batch, false);
   }
 
   // The value, "<none>" for a missing key, or "<error>".
-  static std::string Get(Database& database, std::string_view key,
+  static std::string Get(DatabaseEngine& database, std::string_view key,
                          std::optional<SequenceNumber> snapshot = std::nullopt) {
-    DatabaseReadOptions options;
+    DatabaseEngineReadOptions options;
     options.snapshot = snapshot;
     const auto value = database.Get(AsBytes(key), options);
     if (!value.has_value()) {
@@ -145,9 +147,9 @@ class DatabaseTest : public testing::Test {
     return value->has_value() ? Text(**value) : "<none>";
   }
 
-  static std::vector<std::string> Scan(Database& database,
+  static std::vector<std::string> Scan(DatabaseEngine& database,
                                        std::optional<SequenceNumber> snapshot = std::nullopt) {
-    DatabaseReadOptions options;
+    DatabaseEngineReadOptions options;
     options.snapshot = snapshot;
     const std::unique_ptr<DbIterator> iterator = database.NewIterator(options);
     std::vector<std::string> entries;
@@ -165,7 +167,7 @@ class DatabaseTest : public testing::Test {
 
   // Writes a large value into a memtable with room, so that the memtable no
   // longer has room and the next write switches it.
-  static void Fill(Database& database, std::string_view key) {
+  static void Fill(DatabaseEngine& database, std::string_view key) {
     ASSERT_TRUE(Put(database, key, Large()).has_value());
   }
 
@@ -194,7 +196,7 @@ class DatabaseTest : public testing::Test {
   }
 
   // Flushes the memtable, running its background task on this thread.
-  Status Flush(Database& database) {
+  Status Flush(DatabaseEngine& database) {
     std::optional<Status> status;
     std::thread flusher([&] { status = database.FlushMemTable(); });
     executor_.WaitForTask();
@@ -262,17 +264,17 @@ class DatabaseTest : public testing::Test {
   // Switches a memtable that holds "z" and "a" with an empty write, which
   // leaves the new memtable and its log empty, and runs one queued task,
   // which flushes the old memtable.
-  void Cycle(Database& database) {
+  void Cycle(DatabaseEngine& database) {
     ASSERT_TRUE(Put(database, "z", "1").has_value());
     Fill(database, "a");
-    ASSERT_TRUE(database.Write(WriteBatch(), false).has_value());
+    ASSERT_TRUE(database.Write(EncodedWriteBatch(), false).has_value());
     ASSERT_TRUE(executor_.RunOne());
   }
 
   // A flush lands in level 0 only if it overlaps level 0 or level 1, so two
   // flushes fill levels 2 and 1 first, and each later cycle adds a level-0
   // file.
-  void WarmUp(Database& database) {
+  void WarmUp(DatabaseEngine& database) {
     Cycle(database);
     Cycle(database);
     ASSERT_EQ(Levels(), "0 1 1 0 0 0 0");
@@ -280,7 +282,7 @@ class DatabaseTest : public testing::Test {
 
   // Adds level-0 files to a warmed-up database until a compaction of them is
   // queued, and runs it.
-  void CompactLevel0(Database& database) {
+  void CompactLevel0(DatabaseEngine& database) {
     for (std::uint32_t i = 0; i < Level0CompactionTrigger; ++i) {
       Cycle(database);
     }
@@ -299,7 +301,7 @@ class DatabaseTest : public testing::Test {
 
   // Destroys the database with tasks queued: once the destructor marks the
   // database as closing, the tasks run and do nothing. Returns how many ran.
-  int CloseWithQueuedTasks(std::unique_ptr<Database>& database) {
+  int CloseWithQueuedTasks(std::unique_ptr<DatabaseEngine>& database) {
     Gate closing;
     closing.Close(ClosesTheLog());
     file_system_.SetOperationHook(std::ref(closing));
@@ -313,9 +315,9 @@ class DatabaseTest : public testing::Test {
   }
 
   // The value that an iterator at the snapshot finds for the key, or "<none>".
-  static std::string Seek(Database& database, std::string_view key,
+  static std::string Seek(DatabaseEngine& database, std::string_view key,
                           std::optional<SequenceNumber> snapshot = std::nullopt) {
-    DatabaseReadOptions options;
+    DatabaseEngineReadOptions options;
     options.snapshot = snapshot;
     const std::unique_ptr<DbIterator> iterator = database.NewIterator(options);
     EXPECT_TRUE(iterator->Seek(AsBytes(key)).has_value());
@@ -326,7 +328,7 @@ class DatabaseTest : public testing::Test {
   }
 
   // Reads every entry, forward, in each of the passes.
-  static void ScanRepeatedly(Database& database, int passes) {
+  static void ScanRepeatedly(DatabaseEngine& database, int passes) {
     const std::unique_ptr<DbIterator> iterator = database.NewIterator();
     for (int pass = 0; pass < passes; ++pass) {
       Status moved = iterator->SeekToFirst();
@@ -349,34 +351,34 @@ class DatabaseTest : public testing::Test {
   MemoryFileSystem file_system_;
   ManualExecutor executor_;
   ManualClock clock_;
-  DatabaseOptions options_;
+  DatabaseEngineOptions options_;
   const std::filesystem::path directory_ = std::filesystem::path("db");
 };
 
 TEST(DatabaseOptionsTest, ClipsOptionsToLevelDbsRanges) {
-  DatabaseOptions small;
+  DatabaseEngineOptions small;
   small.max_open_files = 1;
   small.write_buffer_size = 1;
   small.max_file_size = 1;
   small.table_options.block_size = 1;
-  const DatabaseOptions low = SanitizeOptions(small);
+  const DatabaseEngineOptions low = SanitizeOptions(small);
   EXPECT_EQ(low.max_open_files, 74U);
   EXPECT_EQ(low.write_buffer_size, std::size_t{64} << 10U);
   EXPECT_EQ(low.max_file_size, std::uint64_t{1} << 20U);
   EXPECT_EQ(low.table_options.block_size, std::size_t{1} << 10U);
 
-  DatabaseOptions large;
+  DatabaseEngineOptions large;
   large.max_open_files = 1000000;
   large.write_buffer_size = std::size_t{1} << 40U;
   large.max_file_size = std::uint64_t{1} << 40U;
   large.table_options.block_size = std::size_t{1} << 30U;
-  const DatabaseOptions high = SanitizeOptions(large);
+  const DatabaseEngineOptions high = SanitizeOptions(large);
   EXPECT_EQ(high.max_open_files, 50000U);
   EXPECT_EQ(high.write_buffer_size, std::size_t{1} << 30U);
   EXPECT_EQ(high.max_file_size, std::uint64_t{1} << 30U);
   EXPECT_EQ(high.table_options.block_size, std::size_t{4} << 20U);
 
-  const DatabaseOptions defaults = SanitizeOptions(DatabaseOptions());
+  const DatabaseEngineOptions defaults = SanitizeOptions(DatabaseEngineOptions());
   EXPECT_EQ(defaults.max_open_files, 1000U);
   EXPECT_EQ(defaults.write_buffer_size, std::size_t{4} << 20U);
   EXPECT_EQ(defaults.max_file_size, std::uint64_t{2} << 20U);
@@ -425,7 +427,7 @@ TEST_F(DatabaseTest, WritesAndReadsValuesAndDeletions) {
 
   // An empty batch takes no sequence.
   const SequenceNumber before = database->GetSnapshot();
-  ASSERT_TRUE(database->Write(WriteBatch(), false).has_value());
+  ASSERT_TRUE(database->Write(EncodedWriteBatch(), false).has_value());
   const SequenceNumber after = database->GetSnapshot();
   EXPECT_EQ(after, before);
   EXPECT_EQ(before, 4U);
@@ -682,7 +684,7 @@ TEST_F(DatabaseTest, PassesReadOptionsToTables) {
   ASSERT_TRUE(Put(*database, "a", "1").has_value());
   ASSERT_TRUE(Flush(*database).has_value());
 
-  DatabaseReadOptions uncached;
+  DatabaseEngineReadOptions uncached;
   uncached.fill_cache = false;
   ASSERT_TRUE(database->Get(AsBytes("a"), uncached).has_value());
   const std::unique_ptr<DbIterator> iterator = database->NewIterator(uncached);
@@ -917,17 +919,17 @@ TEST_F(DatabaseTest, IgnoresAnExceptionWhileClosingTheCurrentLog) {
         MemoryFileSystem file_system;
         ManualExecutor executor;
         ManualClock clock;
-        DatabaseOptions options;
+        DatabaseEngineOptions options;
         options.file_system = &file_system;
         options.executor = &executor;
         options.clock = &clock;
         options.create_if_missing = true;
         options.write_buffer_size = 1;
-        Result<std::unique_ptr<Database>> opened = Database::Open(options, "database");
+        Result<std::unique_ptr<DatabaseEngine>> opened = DatabaseEngine::Open(options, "database");
         if (!opened.has_value()) {
           std::exit(1);
         }
-        std::unique_ptr<Database> database = std::move(*opened);
+        std::unique_ptr<DatabaseEngine> database = std::move(*opened);
         file_system.SetOperationHook([](std::string_view operation) -> Status {
           if (operation.starts_with("close ") && operation.ends_with(".log")) {
             throw std::runtime_error("thrown");
@@ -1092,7 +1094,7 @@ TEST_F(DatabaseTest, ReturnsTheErrorsOfTableReads) {
 // Flushes two tables from "a" to "z", which land in levels 2 and 1.
 class DatabaseSeekTest : public DatabaseTest {
  protected:
-  void FillLevels1And2(Database& database) {
+  void FillLevels1And2(DatabaseEngine& database) {
     ASSERT_TRUE(Put(database, "z", "1").has_value());
     for (int i = 0; i < 2; ++i) {
       Fill(database, "a");
@@ -1104,7 +1106,7 @@ class DatabaseSeekTest : public DatabaseTest {
 
   // A read of a missing key between them searches the level-1 table and then
   // the level-2 table, which charges the level-1 table a seek.
-  static void ReadPastTheLevel1Table(Database& database, int times) {
+  static void ReadPastTheLevel1Table(DatabaseEngine& database, int times) {
     for (int i = 0; i < times; ++i) {
       ASSERT_EQ(Get(database, "m"), "<none>");
     }
@@ -1272,7 +1274,7 @@ TEST_F(DatabaseTest, SchedulesACompactionWhenItOpens) {
 
   // A rejected task fails the open.
   executor_.Reject(Error::Busy("rejected"));
-  const Result<std::unique_ptr<Database>> rejected = TryOpen();
+  const Result<std::unique_ptr<DatabaseEngine>> rejected = TryOpen();
   executor_.Reject(std::nullopt);
   ASSERT_FALSE(rejected.has_value());
   EXPECT_EQ(rejected.error().message(), "rejected");

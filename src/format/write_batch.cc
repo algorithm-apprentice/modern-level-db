@@ -23,8 +23,7 @@ bool IsSequenceRangeValid(SequenceNumber sequence, std::uint32_t count) noexcept
   if (sequence > MaxSequenceNumber) {
     return false;
   }
-  return count == 0 ||
-         static_cast<SequenceNumber>(count - 1U) <= MaxSequenceNumber - sequence;
+  return count == 0 || static_cast<SequenceNumber>(count - 1U) <= MaxSequenceNumber - sequence;
 }
 
 Result<ByteView> ConsumeBatchValue(ByteView& input) {
@@ -85,8 +84,7 @@ Result<WriteBatchReader> WriteBatchReader::Open(ByteView encoded) {
 
   const SequenceNumber sequence =
       DecodeFixed64(encoded.subspan<SequenceOffset, sizeof(SequenceNumber)>());
-  const std::uint32_t count =
-      DecodeFixed32(encoded.subspan<CountOffset, sizeof(std::uint32_t)>());
+  const std::uint32_t count = DecodeFixed32(encoded.subspan<CountOffset, sizeof(std::uint32_t)>());
   if (!IsSequenceRangeValid(sequence, count)) {
     return std::unexpected(Error::Corruption("write batch sequence range exceeds 56 bits"));
   }
@@ -147,21 +145,21 @@ std::optional<WriteBatchEntry> WriteBatchReader::Next() noexcept {
   return entry;
 }
 
-WriteBatch::WriteBatch() : encoded_(WriteBatchHeaderSize) {}
+EncodedWriteBatch::EncodedWriteBatch() : encoded_(WriteBatchHeaderSize) {}
 
-WriteBatch::WriteBatch(WriteBatch&& source) : encoded_(WriteBatchHeaderSize) {
+EncodedWriteBatch::EncodedWriteBatch(EncodedWriteBatch&& source) : encoded_(WriteBatchHeaderSize) {
   encoded_.swap(source.encoded_);
 }
 
-WriteBatch& WriteBatch::operator=(WriteBatch&& source) {
+EncodedWriteBatch& EncodedWriteBatch::operator=(EncodedWriteBatch&& source) {
   if (this != &source) {
-    WriteBatch replacement(std::move(source));
+    EncodedWriteBatch replacement(std::move(source));
     encoded_.swap(replacement.encoded_);
   }
   return *this;
 }
 
-Status WriteBatch::Put(ByteView key, ByteView value) {
+Status EncodedWriteBatch::Put(ByteView key, ByteView value) {
   Status validation = ValidateAdditionalRecords(1);
   if (!validation.has_value()) {
     return validation;
@@ -175,7 +173,7 @@ Status WriteBatch::Put(ByteView key, ByteView value) {
   return {};
 }
 
-Status WriteBatch::Delete(ByteView key) {
+Status EncodedWriteBatch::Delete(ByteView key) {
   Status validation = ValidateAdditionalRecords(1);
   if (!validation.has_value()) {
     return validation;
@@ -189,7 +187,7 @@ Status WriteBatch::Delete(ByteView key) {
   return {};
 }
 
-Status WriteBatch::Append(const WriteBatch& source) {
+Status EncodedWriteBatch::Append(const EncodedWriteBatch& source) {
   const std::uint32_t source_count = source.count();
   if (source_count == 0) {
     return {};
@@ -211,29 +209,29 @@ Status WriteBatch::Append(const WriteBatch& source) {
   return {};
 }
 
-Status WriteBatch::SetSequence(SequenceNumber sequence) {
+Status EncodedWriteBatch::SetSequence(SequenceNumber sequence) {
   if (!IsSequenceRangeValid(sequence, count())) {
     return std::unexpected(Error::InvalidArgument("write batch sequence range exceeds 56 bits"));
   }
-  EncodeFixed64(
-      MutableByteView(encoded_).subspan<SequenceOffset, sizeof(SequenceNumber)>(), sequence);
+  EncodeFixed64(MutableByteView(encoded_).subspan<SequenceOffset, sizeof(SequenceNumber)>(),
+                sequence);
   return {};
 }
 
-void WriteBatch::Clear() noexcept {
+void EncodedWriteBatch::Clear() noexcept {
   encoded_.resize(WriteBatchHeaderSize);
   std::ranges::fill(encoded_, std::byte{0});
 }
 
-SequenceNumber WriteBatch::sequence() const noexcept {
+SequenceNumber EncodedWriteBatch::sequence() const noexcept {
   return DecodeFixed64(ByteView(encoded_).subspan<SequenceOffset, sizeof(SequenceNumber)>());
 }
 
-std::uint32_t WriteBatch::count() const noexcept {
+std::uint32_t EncodedWriteBatch::count() const noexcept {
   return DecodeFixed32(ByteView(encoded_).subspan<CountOffset, sizeof(std::uint32_t)>());
 }
 
-Status WriteBatch::ValidateAdditionalRecords(std::uint32_t additional) const {
+Status EncodedWriteBatch::ValidateAdditionalRecords(std::uint32_t additional) const {
   const std::uint32_t current_count = count();
   if (additional > std::numeric_limits<std::uint32_t>::max() - current_count) {
     return std::unexpected(Error::InvalidArgument("write batch record count exceeds uint32"));
@@ -246,9 +244,8 @@ Status WriteBatch::ValidateAdditionalRecords(std::uint32_t additional) const {
   return {};
 }
 
-void WriteBatch::SetCount(std::uint32_t count) noexcept {
-  EncodeFixed32(
-      MutableByteView(encoded_).subspan<CountOffset, sizeof(std::uint32_t)>(), count);
+void EncodedWriteBatch::SetCount(std::uint32_t count) noexcept {
+  EncodeFixed32(MutableByteView(encoded_).subspan<CountOffset, sizeof(std::uint32_t)>(), count);
 }
 
 }  // namespace modern_leveldb

@@ -35,7 +35,7 @@ std::unexpected<Error> KeyTooLong() {
 // Appends a batch to a group that is numbered from zero, which fails only if
 // the count overflows: the group's first batch starts an empty group, and the
 // size limit keeps the count of a larger group small.
-void AppendToGroup(WriteBatch& group, const WriteBatch& batch) {
+void AppendToGroup(EncodedWriteBatch& group, const EncodedWriteBatch& batch) {
   const Status appended = group.Append(batch);
   assert(appended.has_value());
   static_cast<void>(appended);
@@ -53,7 +53,7 @@ Status InsertBatch(WriteBatchReader& batch, MemTable& memtable) {
   return {};
 }
 
-Status PrepareGroup(WriteBatch& group, SequenceNumber first_sequence) {
+Status PrepareGroup(EncodedWriteBatch& group, SequenceNumber first_sequence) {
   WriteBatchReader entries = WriteBatchReader::Open(group.encoded()).value();
   while (const std::optional<WriteBatchEntry> entry = entries.Next()) {
     if (entry->key.size() > MaximumKeySize) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs over 4 GiB
@@ -63,7 +63,7 @@ Status PrepareGroup(WriteBatch& group, SequenceNumber first_sequence) {
   return group.SetSequence(first_sequence);
 }
 
-Status CommitGroup(const WriteBatch& group, bool sync, WalWriter& log, MemTable& memtable) {
+Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log, MemTable& memtable) {
   const Status appended = log.AddRecord(group.encoded());
   if (!appended.has_value()) {
     return appended;
@@ -83,7 +83,7 @@ Status CommitGroup(const WriteBatch& group, bool sync, WalWriter& log, MemTable&
 }
 
 struct WriteQueue::Writer {
-  const WriteBatch* batch;
+  const EncodedWriteBatch* batch;
   bool sync;
   bool done = false;
   std::shared_ptr<const Status> result{};
@@ -126,13 +126,15 @@ WriteQueue::WriteQueue(Prepare prepare, Commit commit)
       aborted_(std::make_shared<const Status>(std::unexpected(
           Error::Aborted("write aborted by an exception while its group committed")))) {}
 
-Status WriteQueue::Write(std::unique_lock<std::mutex>& lock, const WriteBatch& batch, bool sync) {
+Status WriteQueue::Write(std::unique_lock<std::mutex>& lock, const EncodedWriteBatch& batch,
+                         bool sync) {
   return Run(lock, &batch, sync);
 }
 
 Status WriteQueue::Force(std::unique_lock<std::mutex>& lock) { return Run(lock, nullptr, false); }
 
-Status WriteQueue::Run(std::unique_lock<std::mutex>& lock, const WriteBatch* batch, bool sync) {
+Status WriteQueue::Run(std::unique_lock<std::mutex>& lock, const EncodedWriteBatch* batch,
+                       bool sync) {
   assert(lock.owns_lock());
   Writer writer{.batch = batch, .sync = sync};
   writers_.push_back(&writer);

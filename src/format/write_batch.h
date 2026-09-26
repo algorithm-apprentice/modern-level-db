@@ -45,19 +45,19 @@ class WriteBatchReader final {
   std::uint32_t index_ = 0;
 };
 
-class WriteBatch final {
+class EncodedWriteBatch final {
  public:
-  WriteBatch();
+  EncodedWriteBatch();
 
-  WriteBatch(const WriteBatch&) = default;
-  WriteBatch& operator=(const WriteBatch&) = default;
-  WriteBatch(WriteBatch&& source);
-  WriteBatch& operator=(WriteBatch&& source);
-  ~WriteBatch() = default;
+  EncodedWriteBatch(const EncodedWriteBatch&) = default;
+  EncodedWriteBatch& operator=(const EncodedWriteBatch&) = default;
+  EncodedWriteBatch(EncodedWriteBatch&& source);
+  EncodedWriteBatch& operator=(EncodedWriteBatch&& source);
+  ~EncodedWriteBatch() = default;
 
   [[nodiscard]] Status Put(ByteView key, ByteView value);
   [[nodiscard]] Status Delete(ByteView key);
-  [[nodiscard]] Status Append(const WriteBatch& source);
+  [[nodiscard]] Status Append(const EncodedWriteBatch& source);
   [[nodiscard]] Status SetSequence(SequenceNumber sequence);
   void Clear() noexcept;
 

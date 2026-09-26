@@ -38,8 +38,8 @@ using test_support::MemoryFileSystem;
 static_assert(!std::is_copy_constructible_v<WriteQueue>);
 static_assert(!std::is_move_constructible_v<WriteQueue>);
 
-WriteBatch Batch(std::initializer_list<std::pair<std::string_view, std::string_view>> puts) {
-  WriteBatch batch;
+EncodedWriteBatch Batch(std::initializer_list<std::pair<std::string_view, std::string_view>> puts) {
+  EncodedWriteBatch batch;
   for (const auto& [key, value] : puts) {
     EXPECT_TRUE(batch.Put(AsBytes(key), AsBytes(value)).has_value());
   }
@@ -47,7 +47,7 @@ WriteBatch Batch(std::initializer_list<std::pair<std::string_view, std::string_v
 }
 
 // The keys of a batch's entries, joined by commas.
-std::string Keys(const WriteBatch& batch) {
+std::string Keys(const EncodedWriteBatch& batch) {
   std::string keys;
   WriteBatchReader reader = WriteBatchReader::Open(batch.encoded()).value();
   while (const std::optional<WriteBatchEntry> entry = reader.Next()) {
@@ -71,7 +71,7 @@ std::string Lookup(const MemTable& memtable, std::string_view key, SequenceNumbe
 }
 
 TEST(InsertBatchTest, AddsEntriesWithTheirSequences) {
-  WriteBatch batch;
+  EncodedWriteBatch batch;
   ASSERT_TRUE(batch.Put(AsBytes("a"), AsBytes("alpha")).has_value());
   ASSERT_TRUE(batch.Delete(AsBytes("b")).has_value());
   ASSERT_TRUE(batch.Put(AsBytes("a"), AsBytes("again")).has_value());
@@ -94,7 +94,7 @@ TEST(InsertBatchTest, AddsEntriesWithTheirSequences) {
 }
 
 TEST(PrepareGroupTest, SetsTheSequenceWithinItsRange) {
-  WriteBatch group = Batch({{"a", "1"}, {"b", "2"}, {"c", "3"}});
+  EncodedWriteBatch group = Batch({{"a", "1"}, {"b", "2"}, {"c", "3"}});
 
   ASSERT_TRUE(PrepareGroup(group, 5).has_value());
   EXPECT_EQ(group.sequence(), 5U);
@@ -106,7 +106,7 @@ TEST(PrepareGroupTest, SetsTheSequenceWithinItsRange) {
   EXPECT_EQ(exhausted.error().code(), ErrorCode::InvalidArgument);
   EXPECT_EQ(group.sequence(), MaxSequenceNumber - 2);
 
-  WriteBatch empty;
+  EncodedWriteBatch empty;
   ASSERT_TRUE(PrepareGroup(empty, MaxSequenceNumber).has_value());
   EXPECT_FALSE(PrepareGroup(empty, MaxSequenceNumber + 1).has_value());
 }
@@ -131,7 +131,7 @@ class CommitGroupTest : public testing::Test {
 
 TEST_F(CommitGroupTest, LogsSyncsAndInserts) {
   const auto log = OpenLog();
-  WriteBatch group = Batch({{"a", "1"}, {"b", "2"}});
+  EncodedWriteBatch group = Batch({{"a", "1"}, {"b", "2"}});
   ASSERT_TRUE(PrepareGroup(group, 7).has_value());
 
   std::size_t start = file_system_.operations().size();
@@ -141,7 +141,7 @@ TEST_F(CommitGroupTest, LogsSyncsAndInserts) {
   EXPECT_EQ(Lookup(memtable_, "a", 7), "1");
   EXPECT_EQ(Lookup(memtable_, "b", 8), "2");
 
-  WriteBatch synced = Batch({{"c", "3"}});
+  EncodedWriteBatch synced = Batch({{"c", "3"}});
   ASSERT_TRUE(PrepareGroup(synced, 9).has_value());
   start = file_system_.operations().size();
   ASSERT_TRUE(CommitGroup(synced, true, *log, memtable_).has_value());
@@ -170,7 +170,7 @@ TEST_F(CommitGroupTest, InsertsNothingAfterALogFailure) {
     SCOPED_TRACE(failing);
     MemTable memtable(BytewiseComparator());
     const auto log = OpenLog();
-    WriteBatch group = Batch({{"a", "1"}});
+    EncodedWriteBatch group = Batch({{"a", "1"}});
     ASSERT_TRUE(PrepareGroup(group, 3).has_value());
     file_system_.FailOperation(file_system_.operations().size() + failing,
                                Error::Io("injected failure"));
@@ -194,7 +194,7 @@ class QueueHarness {
               forced_.push_back(force);
               return Step(lock, prepare_);
             },
-            [this](std::unique_lock<std::mutex>& lock, WriteBatch& group, bool sync) {
+            [this](std::unique_lock<std::mutex>& lock, EncodedWriteBatch& group, bool sync) {
               groups_.push_back(Keys(group) + (sync ? " (sync)" : ""));
               return Step(lock, commit_);
             }) {}
@@ -241,7 +241,7 @@ class QueueHarness {
   void StartWriter(std::string key, bool sync, std::size_t value_size = 1,
                    SequenceNumber sequence = 0) {
     threads_.emplace_back([this, key = std::move(key), sync, value_size, sequence] {
-      WriteBatch batch = Batch({{key, std::string(value_size, 'v')}});
+      EncodedWriteBatch batch = Batch({{key, std::string(value_size, 'v')}});
       EXPECT_TRUE(batch.SetSequence(sequence).has_value());
       std::string result;
       try {
@@ -532,21 +532,22 @@ TEST(WriteQueueTest, ReturnsTheErrorOfAForcedPreparation) {
 TEST(WriteQueueTest, CommitsEveryWriteOnceInOrder) {
   std::mutex mutex;
   std::vector<std::string> committed;
-  WriteQueue queue([](std::unique_lock<std::mutex>&, bool) -> Status { return {}; },
-                   [&](std::unique_lock<std::mutex>& lock, WriteBatch& group, bool) -> Status {
-                     const std::string keys = Keys(group);
-                     // Let writers queue while the lock is released.
-                     lock.unlock();
-                     std::this_thread::yield();
-                     lock.lock();
-                     std::size_t start = 0;
-                     while (start <= keys.size()) {
-                       const std::size_t end = std::min(keys.find(',', start), keys.size());
-                       committed.push_back(keys.substr(start, end - start));
-                       start = end + 1;
-                     }
-                     return {};
-                   });
+  WriteQueue queue(
+      [](std::unique_lock<std::mutex>&, bool) -> Status { return {}; },
+      [&](std::unique_lock<std::mutex>& lock, EncodedWriteBatch& group, bool) -> Status {
+        const std::string keys = Keys(group);
+        // Let writers queue while the lock is released.
+        lock.unlock();
+        std::this_thread::yield();
+        lock.lock();
+        std::size_t start = 0;
+        while (start <= keys.size()) {
+          const std::size_t end = std::min(keys.find(',', start), keys.size());
+          committed.push_back(keys.substr(start, end - start));
+          start = end + 1;
+        }
+        return {};
+      });
   constexpr int Threads = 8;
   constexpr int Writes = 200;
   std::vector<std::thread> threads;
@@ -554,7 +555,7 @@ TEST(WriteQueueTest, CommitsEveryWriteOnceInOrder) {
     threads.emplace_back([&, thread] {
       for (int write = 0; write < Writes; ++write) {
         const std::string key = std::to_string(thread) + ":" + std::to_string(write);
-        const WriteBatch batch = Batch({{key, "v"}});
+        const EncodedWriteBatch batch = Batch({{key, "v"}});
         std::unique_lock lock(mutex);
         EXPECT_TRUE(queue.Write(lock, batch, write % 10 == 0).has_value());
       }

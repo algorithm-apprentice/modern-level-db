@@ -54,7 +54,7 @@ struct Delete {
 
 std::vector<std::byte> Batch(SequenceNumber sequence,
                              const std::vector<std::variant<Put, Delete>>& ops) {
-  WriteBatch batch;
+  EncodedWriteBatch batch;
   for (const auto& op : ops) {
     if (const auto* put = std::get_if<Put>(&op)) {
       EXPECT_TRUE(batch.Put(AsBytes(put->key), AsBytes(put->value)).has_value());

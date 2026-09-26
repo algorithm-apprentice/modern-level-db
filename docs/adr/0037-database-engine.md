@@ -137,7 +137,7 @@ queue. These are rejected because no current caller needs them.
 Add `src/engine/database.{h,cc}`:
 
 ```cpp
-struct DatabaseOptions {
+struct DatabaseEngineOptions {
   const Comparator* comparator = &BytewiseComparator();
   bool create_if_missing = false;
   bool error_if_exists = false;
@@ -151,21 +151,22 @@ struct DatabaseOptions {
   Clock* clock = nullptr;
 };
 
-struct DatabaseReadOptions {
+struct DatabaseEngineReadOptions {
   std::optional<SequenceNumber> snapshot;
   bool fill_cache = true;
 };
 
-class Database final {
+class DatabaseEngine final {
  public:
-  static Result<std::unique_ptr<Database>> Open(const DatabaseOptions& options,
-                                                std::filesystem::path directory);
-  ~Database();
+  static Result<std::unique_ptr<DatabaseEngine>> Open(
+      const DatabaseEngineOptions& options, std::filesystem::path directory);
+  ~DatabaseEngine();
 
-  Status Write(const WriteBatch& batch, bool sync);
+  Status Write(const EncodedWriteBatch& batch, bool sync);
   Result<std::optional<std::vector<std::byte>>> Get(ByteView key,
-                                                    const DatabaseReadOptions& options = {});
-  std::unique_ptr<DbIterator> NewIterator(const DatabaseReadOptions& options = {});
+                                                    const DatabaseEngineReadOptions& options = {});
+  std::unique_ptr<DbIterator> NewIterator(
+      const DatabaseEngineReadOptions& options = {});
   SequenceNumber GetSnapshot();
   void ReleaseSnapshot(SequenceNumber snapshot);
 
@@ -254,7 +255,7 @@ class Database final {
   that is current when they arrive; and iterator seeds count from 1, as
   LevelDB's `++seed_` does.
 - Obsolete-file cleanup follows LevelDB's rules above.
-- `~Database` sets the closing flag, closes the log, which no write can use
+- `~DatabaseEngine` sets the closing flag, closes the log, which no write can use
   any longer, ignoring an error as LevelDB's destructor does and containing
   any exception because a destructor cannot report either failure, waits
   until no background task is scheduled, and then releases the directory

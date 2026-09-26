@@ -9,10 +9,10 @@ namespace modern_leveldb {
 namespace {
 
 TEST(DatabaseWithoutPosixTest, NeedsAFileSystemFromTheCaller) {
-  DatabaseOptions options;
+  DatabaseEngineOptions options;
   options.create_if_missing = true;
 
-  const Result<std::unique_ptr<Database>> database = Database::Open(options, "db");
+  const Result<std::unique_ptr<DatabaseEngine>> database = DatabaseEngine::Open(options, "db");
 
   ASSERT_FALSE(database.has_value());
   EXPECT_EQ(database.error().code(), ErrorCode::NotSupported);
