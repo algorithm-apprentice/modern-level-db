@@ -119,9 +119,11 @@ if the original `Database` handle is destroyed first. See
 ## Development
 
 The project uses C++23, CMake, Ninja, CTest, and GoogleTest.
-Compression uses private Snappy 1.3.1 and Zstd 1.5.7 dependencies. CMake reuses
+Compression uses private Snappy 1.3.1 and Zstd 1.5.7 dependencies; CRC32C uses
+Google's runtime-dispatched implementation at the pinned revision recorded in
+[ADR-0044](docs/adr/0044-profile-guided-crc32c-acceleration.md). CMake reuses
 parent-provided codec targets or fetches pinned source revisions; the fallback
-also requires a C compiler for Zstd. No codec headers enter the public API.
+also requires a C compiler. No codec headers enter the public API.
 
 ```bash
 cmake --preset dev-debug

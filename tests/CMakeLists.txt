@@ -160,6 +160,7 @@ foreach(
     tests_disabled
     gtest_options
     dependency_targets
+    crc32c_parent_target
     dependency_parent_values
     dependency_shared_only
 )
@@ -176,9 +177,25 @@ foreach(
       "-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=${googletest_SOURCE_DIR}"
       "-DFETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_SNAPPY=${MODERN_LEVELDB_SNAPPY_SOURCE_DIR}"
       "-DFETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_ZSTD=${MODERN_LEVELDB_ZSTD_SOURCE_DIR}"
+      "-DFETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_CRC32C=${MODERN_LEVELDB_CRC32C_SOURCE_DIR}"
   )
   set_tests_properties("cmake.${scenario}" PROPERTIES LABELS cmake TIMEOUT 120)
 endforeach()
+
+add_test(
+  NAME cmake.crc32c_declaration
+  COMMAND "${CMAKE_COMMAND}"
+    "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/cmake/crc32c_declaration"
+    "-DGENERATOR=${CMAKE_GENERATOR}" "-DCOMPILER=${CMAKE_CXX_COMPILER}"
+    "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+    "-DSNAPPY_SOURCE=${MODERN_LEVELDB_SNAPPY_SOURCE_DIR}"
+    "-DZSTD_SOURCE=${MODERN_LEVELDB_ZSTD_SOURCE_DIR}"
+    "-DCRC32C_SOURCE=${MODERN_LEVELDB_CRC32C_SOURCE_DIR}"
+    -DTEST_SCENARIO=crc32c_declaration
+    "-DEXPECTED_ERROR=predeclared private CRC32C dependency"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/reject_reference.cmake"
+)
+set_tests_properties(cmake.crc32c_declaration PROPERTIES LABELS cmake TIMEOUT 120)
 
 set_tests_properties(cmake.dependency_shared_only PROPERTIES FIXTURES_SETUP shared_codec)
 add_test(
@@ -205,6 +222,7 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
       "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
       "-DSNAPPY_SOURCE=${MODERN_LEVELDB_SNAPPY_SOURCE_DIR}"
       "-DZSTD_SOURCE=${MODERN_LEVELDB_ZSTD_SOURCE_DIR}"
+      "-DCRC32C_SOURCE=${MODERN_LEVELDB_CRC32C_SOURCE_DIR}"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/reject_reference.cmake"
   )
   set_tests_properties(cmake.benchmark_reference_collision PROPERTIES LABELS cmake TIMEOUT 120)
@@ -216,6 +234,7 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
       "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
       "-DSNAPPY_SOURCE=${MODERN_LEVELDB_SNAPPY_SOURCE_DIR}"
       "-DZSTD_SOURCE=${MODERN_LEVELDB_ZSTD_SOURCE_DIR}"
+      "-DCRC32C_SOURCE=${MODERN_LEVELDB_CRC32C_SOURCE_DIR}"
       -DTEST_SCENARIO=profiling_framework_collision
       "-DEXPECTED_ERROR=require their pinned Google Benchmark target"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/reject_reference.cmake"

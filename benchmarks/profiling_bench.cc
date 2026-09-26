@@ -593,6 +593,13 @@ void AddContext(const Case& selected) {
   add("zstd_target", ZstdTarget);
   add("zstd_source", ZstdSource);
   add("zstd_source_override", ZstdOverride);
+  add("crc32c_target", Crc32cTarget);
+  add("crc32c_provider", Crc32cProvider);
+  add("crc32c_source", Crc32cSource);
+  add("crc32c_source_override", Crc32cOverride);
+  add("crc32c_requested_revision", Crc32cRequestedRevision);
+  add("crc32c_compiled_arm64", Crc32cArm64);
+  add("crc32c_compiled_sse42", Crc32cSse42);
 #if MODERN_LEVELDB_PROFILE_MARKERS
   add("profile_capture_supported", "true");
 #else
