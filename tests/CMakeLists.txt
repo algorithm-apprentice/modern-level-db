@@ -55,6 +55,7 @@ add_executable(
   unit/table/block_format_test.cc
   unit/table/block_test.cc
   unit/table/bloom_filter_test.cc
+  unit/table/compression_test.cc
   unit/table/filter_block_test.cc
   unit/table/table_builder_test.cc
   unit/table/table_test.cc
@@ -128,7 +129,40 @@ gtest_discover_tests(
     TIMEOUT 10
 )
 
-foreach(scenario IN ITEMS module_shadow default_tests tests_disabled gtest_options)
+add_executable(
+  modern_leveldb_compression_failure_tests
+  unit/table/compression_failure_test.cc
+  "${PROJECT_SOURCE_DIR}/src/table/compression.cc"
+)
+target_compile_features(modern_leveldb_compression_failure_tests PRIVATE cxx_std_23)
+target_include_directories(
+  modern_leveldb_compression_failure_tests
+  PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/include"
+)
+target_include_directories(
+  modern_leveldb_compression_failure_tests
+  SYSTEM PRIVATE
+    "$<TARGET_PROPERTY:${MODERN_LEVELDB_SNAPPY_TARGET},INTERFACE_INCLUDE_DIRECTORIES>"
+    "$<TARGET_PROPERTY:${MODERN_LEVELDB_ZSTD_TARGET},INTERFACE_INCLUDE_DIRECTORIES>"
+)
+target_link_libraries(modern_leveldb_compression_failure_tests PRIVATE GTest::gtest_main)
+modern_leveldb_set_project_warnings(modern_leveldb_compression_failure_tests PRIVATE)
+gtest_discover_tests(
+  modern_leveldb_compression_failure_tests
+  PROPERTIES LABELS unit TIMEOUT 10
+)
+
+foreach(
+  scenario
+  IN ITEMS
+    module_shadow
+    default_tests
+    tests_disabled
+    gtest_options
+    dependency_targets
+    dependency_parent_values
+    dependency_shared_only
+)
   add_test(
     NAME "cmake.${scenario}"
     COMMAND "${CMAKE_COMMAND}"
@@ -140,6 +174,20 @@ foreach(scenario IN ITEMS module_shadow default_tests tests_disabled gtest_optio
       "-DMODERN_LEVELDB_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
       "-DTEST_SCENARIO=${scenario}"
       "-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=${googletest_SOURCE_DIR}"
+      "-DFETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_SNAPPY=${MODERN_LEVELDB_SNAPPY_SOURCE_DIR}"
+      "-DFETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_ZSTD=${MODERN_LEVELDB_ZSTD_SOURCE_DIR}"
   )
   set_tests_properties("cmake.${scenario}" PROPERTIES LABELS cmake TIMEOUT 120)
 endforeach()
+
+set_tests_properties(cmake.dependency_shared_only PROPERTIES FIXTURES_SETUP shared_codec)
+add_test(
+  NAME cmake.dependency_shared_only_build
+  COMMAND "${CMAKE_COMMAND}" --build
+    "${CMAKE_CURRENT_BINARY_DIR}/cmake/dependency_shared_only"
+    --config "$<CONFIG>" --target codec_consumer --parallel 2
+)
+set_tests_properties(
+  cmake.dependency_shared_only_build
+  PROPERTIES LABELS cmake FIXTURES_REQUIRED shared_codec TIMEOUT 180
+)

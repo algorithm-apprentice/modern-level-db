@@ -9,6 +9,7 @@
 
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
+#include "table/compression.h"
 
 namespace modern_leveldb {
 
@@ -35,11 +36,11 @@ struct Footer {
 [[nodiscard]] std::array<std::byte, FooterSize> EncodeFooter(const Footer& footer);
 [[nodiscard]] Result<Footer> DecodeFooter(std::span<const std::byte, FooterSize> encoded);
 
-// Returns the trailer that stores contents uncompressed.
+// Returns the trailer for the bytes and compression type written to the file.
 [[nodiscard]] std::array<std::byte, BlockTrailerSize> EncodeBlockTrailer(
-    ByteView contents) noexcept;
-// Verifies a stored block, which is its contents followed by the trailer, and
-// returns the contents in the same buffer.
+    ByteView contents, BlockCompression type) noexcept;
+// Verifies a stored block and returns decoded contents. Uncompressed contents
+// reuse the input buffer.
 [[nodiscard]] Result<std::vector<std::byte>> DecodeStoredBlock(std::vector<std::byte> stored);
 
 }  // namespace modern_leveldb

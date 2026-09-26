@@ -15,6 +15,7 @@
 #include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/crc32c.h"
 #include "modern_leveldb/base/result.h"
+#include "table/compression.h"
 
 namespace modern_leveldb {
 namespace {
@@ -50,7 +51,7 @@ std::vector<std::byte> StoredBlock(ByteView contents, unsigned int type) {
 
 std::vector<std::byte> StoredBlock(ByteView contents) {
   std::vector<std::byte> stored = Materialize(contents);
-  const auto trailer = EncodeBlockTrailer(contents);
+  const auto trailer = EncodeBlockTrailer(contents, BlockCompression::None);
   stored.insert(stored.end(), trailer.begin(), trailer.end());
   return stored;
 }
@@ -175,10 +176,19 @@ TEST(FooterTest, RejectsNonzeroPadding) {
 }
 
 TEST(BlockTrailerTest, StoresTypeNoneAndTheMaskedChecksum) {
-  const auto trailer = EncodeBlockTrailer(Bytes({'h', 'e', 'l', 'l', 'o'}));
+  const auto trailer = EncodeBlockTrailer(Bytes({'h', 'e', 'l', 'l', 'o'}), BlockCompression::None);
 
   // LevelDB's trailer for "hello": type 0, then the masked CRC32C of "hello\0".
   EXPECT_EQ(Materialize(trailer), Bytes({0x00, 0x97, 0xa8, 0x8f, 0x83}));
+}
+
+TEST(BlockTrailerTest, StoresTheSelectedTypeInTheChecksum) {
+  const std::vector<std::byte> contents = Bytes({'h', 'e', 'l', 'l', 'o'});
+
+  EXPECT_EQ(Materialize(EncodeBlockTrailer(contents, BlockCompression::Snappy)),
+            Materialize(ByteView(StoredBlock(contents, 1)).last<BlockTrailerSize>()));
+  EXPECT_EQ(Materialize(EncodeBlockTrailer(contents, BlockCompression::Zstd)),
+            Materialize(ByteView(StoredBlock(contents, 2)).last<BlockTrailerSize>()));
 }
 
 TEST(StoredBlockTest, ReturnsVerifiedContentsInTheSameBuffer) {
@@ -214,11 +224,18 @@ TEST(StoredBlockTest, RejectsChecksumMismatches) {
   }
 }
 
-TEST(StoredBlockTest, ReportsCompressedBlocksAsNotSupported) {
-  const std::vector<std::byte> contents = Bytes({'z', 'z'});
+TEST(StoredBlockTest, DecompressesSnappyAndZstdAfterVerifyingTheChecksum) {
+  const std::vector<std::byte> snappy = Bytes({0x05, 0x10, 'h', 'e', 'l', 'l', 'o'});
+  const std::vector<std::byte> zstd = Bytes({0x28, 0xb5, 0x2f, 0xfd, 0x24, 0x05, 0x29, 0x00, 0x00,
+                                             'h', 'e', 'l', 'l', 'o', 0xa3, 0x6d, 0x9f, 0x88});
 
-  ExpectError(DecodeStoredBlock(StoredBlock(contents, 1)), ErrorCode::NotSupported);
-  ExpectError(DecodeStoredBlock(StoredBlock(contents, 2)), ErrorCode::NotSupported);
+  const Result<std::vector<std::byte>> decoded_snappy = DecodeStoredBlock(StoredBlock(snappy, 1));
+  ASSERT_TRUE(decoded_snappy.has_value()) << decoded_snappy.error().ToString();
+  EXPECT_EQ(*decoded_snappy, Bytes({'h', 'e', 'l', 'l', 'o'}));
+
+  const Result<std::vector<std::byte>> decoded_zstd = DecodeStoredBlock(StoredBlock(zstd, 2));
+  ASSERT_TRUE(decoded_zstd.has_value()) << decoded_zstd.error().ToString();
+  EXPECT_EQ(*decoded_zstd, Bytes({'h', 'e', 'l', 'l', 'o'}));
 }
 
 TEST(StoredBlockTest, RejectsUnknownTypes) {

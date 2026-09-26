@@ -10,6 +10,7 @@
 #include "format/write_batch.h"
 #include "modern_leveldb/db.h"
 #include "table/bloom_filter.h"
+#include "table/compression.h"
 
 namespace modern_leveldb {
 namespace {
@@ -41,7 +42,19 @@ Result<PreparedRead> PrepareRead(const std::shared_ptr<detail::DatabaseState>& s
   return prepared;
 }
 
-DatabaseEngineOptions EngineOptions(const Options& options) {
+Result<BlockCompression> EngineCompression(Compression compression) {
+  switch (compression) {
+    case Compression::None:
+      return BlockCompression::None;
+    case Compression::Snappy:
+      return BlockCompression::Snappy;
+    case Compression::Zstd:
+      return BlockCompression::Zstd;
+  }
+  return std::unexpected(Error::InvalidArgument("compression type is invalid"));
+}
+
+DatabaseEngineOptions EngineOptions(const Options& options, BlockCompression compression) {
   DatabaseEngineOptions engine;
   engine.comparator =
       options.comparator != nullptr ? options.comparator.get() : &BytewiseComparator();
@@ -52,6 +65,8 @@ DatabaseEngineOptions EngineOptions(const Options& options) {
   engine.max_open_files = options.max_open_files;
   engine.table_options.block_size = options.block_size;
   engine.table_options.restart_interval = options.block_restart_interval;
+  engine.table_options.compression = compression;
+  engine.table_options.zstd_compression_level = options.zstd_compression_level;
   if (options.bloom_bits_per_key.has_value()) {
     engine.table_options.filter_policy.emplace(*options.bloom_bits_per_key);
   }
@@ -64,7 +79,15 @@ Result<Database> Database::Open(Options options, std::filesystem::path directory
   if (options.block_restart_interval == 0) {
     return std::unexpected(Error::InvalidArgument("block_restart_interval must be at least one"));
   }
-  DatabaseEngineOptions engine_options = EngineOptions(options);
+  Result<BlockCompression> compression = EngineCompression(options.compression);
+  if (!compression.has_value()) {
+    return std::unexpected(compression.error());
+  }
+  const Status valid = ValidateCompressionOptions(*compression, options.zstd_compression_level);
+  if (!valid.has_value()) {
+    return std::unexpected(valid.error());
+  }
+  DatabaseEngineOptions engine_options = EngineOptions(options, *compression);
   Result<std::unique_ptr<DatabaseEngine>> engine =
       DatabaseEngine::Open(std::move(engine_options), std::move(directory));
   if (!engine.has_value()) {

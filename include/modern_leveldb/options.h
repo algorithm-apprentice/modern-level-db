@@ -12,6 +12,12 @@ namespace modern_leveldb {
 
 class Snapshot;
 
+enum class Compression {
+  None = 0,
+  Snappy = 1,
+  Zstd = 2,
+};
+
 struct Options {
   // Null selects BytewiseComparator. A custom comparator is retained by every
   // database and child handle that uses it.
@@ -24,6 +30,10 @@ struct Options {
   std::size_t block_size = std::size_t{4} << 10U;
   std::uint32_t block_restart_interval = 16;
   std::optional<std::uint32_t> bloom_bits_per_key;
+  // Snappy matches LevelDB's default. Incompressible blocks are stored raw.
+  Compression compression = Compression::Snappy;
+  // Used only by Zstd; LevelDB supports levels -5 through 22.
+  int zstd_compression_level = 1;
 };
 
 struct ReadOptions {

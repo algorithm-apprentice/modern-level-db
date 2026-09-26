@@ -1,6 +1,11 @@
 # ADR-0022: SSTable Block Format
 
 - Status: Accepted
+
+The original uncompressed-only scope is extended by
+[ADR-0039](0039-sstable-block-compression.md). Trailers now record the selected
+type, and verified Snappy and Zstd blocks are decoded instead of returning
+`NotSupported`.
 - Date: 2026-09-23
 
 ## Context

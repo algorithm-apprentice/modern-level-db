@@ -15,6 +15,7 @@
 #include "table/block_builder.h"
 #include "table/block_format.h"
 #include "table/bloom_filter.h"
+#include "table/compression.h"
 #include "table/filter_block.h"
 
 namespace modern_leveldb {
@@ -27,6 +28,8 @@ struct TableBuilderOptions {
   // Without a policy, the table has no filter block. A policy requires a user
   // comparator that considers keys equal only when their bytes are equal.
   std::optional<BloomFilterPolicy> filter_policy;
+  BlockCompression compression = BlockCompression::None;
+  int zstd_compression_level = 1;
 };
 
 // Writes one SSTable of internal keys, which must strictly increase under the
@@ -69,17 +72,21 @@ class TableBuilder final {
   void AddPendingIndexEntry();
   void WriteDataBlock();
   void WriteBlock(ByteView contents, BlockHandle& handle);
+  void WriteRawBlock(ByteView contents, BlockCompression type, BlockHandle& handle);
   void WriteTail();
 
   std::unique_ptr<WritableFile> file_;
   const InternalKeyComparator* comparator_;
   std::size_t block_size_;
   std::uint32_t restart_interval_;
+  BlockCompression compression_;
+  int zstd_compression_level_;
   BlockBuilder data_block_;
   BlockBuilder index_block_;
   std::optional<FilterBlockBuilder> filter_block_;
   // The metaindex key of the filter block.
   std::string filter_key_;
+  std::vector<std::byte> compressed_output_;
   std::vector<std::byte> last_key_;
   // The last written data block, whose index entry waits for the next key.
   BlockHandle pending_handle_{};

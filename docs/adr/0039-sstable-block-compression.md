@@ -46,6 +46,8 @@ If no suitable target exists, `FetchContent` obtains the pinned release.
 Dependency tests, benchmarks, programs, installation, legacy Zstd decoders,
 dictionary builders, and Zstd multithreading default off when the parent has
 not already chosen those options. Existing parent values are never forced.
+The default is a static-only Zstd build; if the parent disables the static
+library without specifying the shared option, shared defaults on instead.
 The Zstd fallback configures the release's `build/cmake` source directory;
 the archive root is not a CMake project. Fallback subdirectories are excluded
 from the default build and installation, while linking their selected static
@@ -58,6 +60,9 @@ Modern LevelDB snapshots whether those variables exist and their values before
 configuring a fallback, then restores or removes them exactly afterward.
 Consumer tests cover both initially undefined variables and parent-selected
 values. Codec-specific options follow the same set-only-when-undefined rule.
+The fallback uses `FetchContent_MakeAvailable`, not the deprecated
+single-argument `FetchContent_Populate`. For CMake 3.25 compatibility, the
+dependency directory's `EXCLUDE_FROM_ALL` property is set after configuration.
 The compression libraries are private implementation dependencies; no public
 header includes them.
 
@@ -221,6 +226,11 @@ Unit and format tests cover:
   builds that add no dependency tests, programs, benchmarks, or install
   targets, locate Zstd below `build/cmake`, and do not introduce or replace
   the parent's `BUILD_SHARED_LIBS` or `CMAKE_BUILD_TYPE` values.
+
+A separate unit executable links the compression adapter against test codec
+functions instead of the codec libraries. It exercises allocation-bound,
+codec-failure, and inconsistent-result handling without production injection
+hooks or actual multi-gibibyte allocations.
 
 An isolated differential helper has both implementations write randomized
 tables and databases with each compression mode, then opens and scans the

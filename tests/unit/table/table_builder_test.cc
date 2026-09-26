@@ -24,6 +24,7 @@
 #include "table/block.h"
 #include "table/block_format.h"
 #include "table/bloom_filter.h"
+#include "table/compression.h"
 #include "table/filter_block.h"
 
 namespace modern_leveldb {
@@ -152,8 +153,14 @@ struct TableContents {
   std::vector<std::vector<std::byte>> index_keys;
   std::vector<BlockHandle> data_handles;
   std::vector<std::uint64_t> entry_block_offsets;
+  std::optional<BlockHandle> filter_handle;
   std::optional<FilterBlockReader> filter;
 };
+
+BlockCompression StoredCompression(ByteView file, BlockHandle handle) {
+  EXPECT_LT(handle.offset + handle.size, file.size());
+  return static_cast<BlockCompression>(file[handle.offset + handle.size]);
+}
 
 std::vector<std::byte> StoredContents(ByteView file, BlockHandle handle) {
   EXPECT_LE(handle.offset + handle.size + BlockTrailerSize, file.size());
@@ -176,6 +183,7 @@ void ReadTable(ByteView file, const Comparator& comparator, TableContents& table
     ByteView value = meta.value();
     const auto handle = ConsumeBlockHandle(value);
     ASSERT_TRUE(handle.has_value());
+    table.filter_handle = *handle;
     auto filter = FilterBlockReader::Create(StoredContents(file, *handle), BloomFilterPolicy(10));
     ASSERT_TRUE(filter.has_value());
     table.filter.emplace(std::move(*filter));
@@ -266,6 +274,90 @@ TEST_F(TableBuilderTest, CountsBytesAsBlocksAreWritten) {
 
   ASSERT_TRUE(builder->Finish().has_value());
   EXPECT_EQ(builder->file_size(), state_->data.size());
+}
+
+TEST_F(TableBuilderTest, CompressesDataBlocksWithSnappyAndZstd) {
+  const std::vector<std::byte> value(16 * 1024, std::byte{'x'});
+  for (const BlockCompression compression : {BlockCompression::Snappy, BlockCompression::Zstd}) {
+    SCOPED_TRACE(static_cast<int>(compression));
+    state_ = std::make_shared<WritableState>();
+    TableBuilderOptions options = WithFilter();
+    options.block_size = 1 << 20;
+    options.compression = compression;
+    auto builder = MakeBuilder(options);
+    ASSERT_TRUE(builder->Add(Key("key", 1), value).has_value());
+    ASSERT_TRUE(builder->Finish().has_value());
+
+    TableContents table;
+    ASSERT_NO_FATAL_FAILURE(ReadTable(state_->data, comparator_, table));
+    ASSERT_EQ(table.data_handles.size(), 1U);
+    EXPECT_EQ(StoredCompression(state_->data, table.data_handles.front()), compression);
+    ASSERT_EQ(table.entries.size(), 1U);
+    EXPECT_EQ(table.entries.front().second, value);
+  }
+}
+
+TEST_F(TableBuilderTest, LeavesFilterBlocksUncompressed) {
+  std::mt19937_64 random(20260926);
+  std::vector<std::byte> value(128 * 1024);
+  for (std::byte& byte : value) {
+    byte = static_cast<std::byte>(random());
+  }
+  TableBuilderOptions options = WithFilter();
+  options.block_size = 64 * 1024;
+  options.compression = BlockCompression::Snappy;
+  auto builder = MakeBuilder(options);
+  ASSERT_TRUE(builder->Add(Key("a", 1), value).has_value());
+  ASSERT_TRUE(builder->Add(Key("b", 1), {}).has_value());
+  ASSERT_TRUE(builder->Finish().has_value());
+
+  TableContents table;
+  ASSERT_NO_FATAL_FAILURE(ReadTable(state_->data, comparator_, table));
+  ASSERT_TRUE(table.filter_handle.has_value());
+  EXPECT_EQ(StoredCompression(state_->data, *table.filter_handle), BlockCompression::None);
+}
+
+TEST_F(TableBuilderTest, CompressesLargeIndexBlocks) {
+  TableBuilderOptions options;
+  options.block_size = 1;
+  options.compression = BlockCompression::Snappy;
+  auto builder = MakeBuilder(options);
+  for (int index = 0; index < 500; ++index) {
+    ASSERT_TRUE(builder->Add(Key("key" + std::to_string(1000 + index), 1), {}).has_value());
+  }
+  ASSERT_TRUE(builder->Finish().has_value());
+
+  const auto footer = DecodeFooter(ByteView(state_->data).last<FooterSize>());
+  ASSERT_TRUE(footer.has_value());
+  EXPECT_EQ(StoredCompression(state_->data, footer->index), BlockCompression::Snappy);
+}
+
+TEST_F(TableBuilderTest, RejectsInvalidCompressionBeforeWriting) {
+  for (const BlockCompression compression :
+       {static_cast<BlockCompression>(0xff), static_cast<BlockCompression>(3)}) {
+    SCOPED_TRACE(static_cast<int>(compression));
+    state_ = std::make_shared<WritableState>();
+    TableBuilderOptions options;
+    options.compression = compression;
+    auto builder = MakeBuilder(options);
+    ExpectError(builder->Add(Key("a", 1), {}), ErrorCode::InvalidArgument);
+    ExpectError(builder->Finish(), ErrorCode::InvalidArgument);
+    EXPECT_TRUE(state_->data.empty());
+    EXPECT_EQ(state_->close_calls, 1);
+  }
+
+  for (const int level : {-6, 23}) {
+    SCOPED_TRACE(level);
+    state_ = std::make_shared<WritableState>();
+    TableBuilderOptions options;
+    options.compression = BlockCompression::Zstd;
+    options.zstd_compression_level = level;
+    auto builder = MakeBuilder(options);
+    ExpectError(builder->Add(Key("a", 1), {}), ErrorCode::InvalidArgument);
+    ExpectError(builder->Finish(), ErrorCode::InvalidArgument);
+    EXPECT_TRUE(state_->data.empty());
+    EXPECT_EQ(state_->close_calls, 1);
+  }
 }
 
 TEST_F(TableBuilderTest, RejectsKeysThatAreNotInternalKeys) {

@@ -20,10 +20,6 @@ namespace {
 
 constexpr std::size_t FooterHandlesSize = 2 * BlockHandleMaxEncodedSize;
 
-constexpr std::byte NoCompression{0x00};
-constexpr std::byte SnappyCompression{0x01};
-constexpr std::byte ZstdCompression{0x02};
-
 std::uint32_t BlockChecksum(ByteView contents, std::byte type) noexcept {
   return MaskCrc32c(ExtendCrc32c(Crc32c(contents), ByteView(&type, 1)));
 }
@@ -80,11 +76,12 @@ Result<Footer> DecodeFooter(std::span<const std::byte, FooterSize> encoded) {
   return Footer{.metaindex = *metaindex, .index = *index};
 }
 
-std::array<std::byte, BlockTrailerSize> EncodeBlockTrailer(ByteView contents) noexcept {
+std::array<std::byte, BlockTrailerSize> EncodeBlockTrailer(ByteView contents,
+                                                           BlockCompression type) noexcept {
   std::array<std::byte, BlockTrailerSize> trailer{};
-  trailer[0] = NoCompression;
+  trailer[0] = static_cast<std::byte>(type);
   EncodeFixed32(std::span(trailer).last<sizeof(std::uint32_t)>(),
-                BlockChecksum(contents, NoCompression));
+                BlockChecksum(contents, trailer[0]));
   return trailer;
 }
 
@@ -99,14 +96,15 @@ Result<std::vector<std::byte>> DecodeStoredBlock(std::vector<std::byte> stored) 
   if (checksum != BlockChecksum(view.first(contents_size), type)) {
     return std::unexpected(Error::Corruption("block checksum mismatch"));
   }
-  if (type == SnappyCompression || type == ZstdCompression) {
-    return std::unexpected(Error::NotSupported("compressed blocks are not supported"));
+  const auto compression = static_cast<BlockCompression>(type);
+  if (compression == BlockCompression::None) {
+    stored.resize(contents_size);
+    return stored;
   }
-  if (type != NoCompression) {
-    return std::unexpected(Error::Corruption("block has an unknown compression type"));
+  if (compression == BlockCompression::Snappy || compression == BlockCompression::Zstd) {
+    return DecompressBlock(view.first(contents_size), compression);
   }
-  stored.resize(contents_size);
-  return stored;
+  return std::unexpected(Error::Corruption("block has an unknown compression type"));
 }
 
 }  // namespace modern_leveldb

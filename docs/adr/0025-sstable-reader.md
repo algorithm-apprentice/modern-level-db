@@ -1,6 +1,10 @@
 # ADR-0025: SSTable Reader
 
 - Status: Accepted
+
+[ADR-0039](0039-sstable-block-compression.md) extends this reader to decode
+Snappy and Zstd blocks. Cache charges count decoded bytes rather than the
+stored compressed size; malformed compressed input returns `Corruption`.
 - Date: 2026-09-24
 
 ## Context
