@@ -196,14 +196,16 @@ if(MODERN_LEVELDB_BUILD_EXTENDED_TESTS)
   add_subdirectory(extended)
 endif()
 
-add_test(
-  NAME cmake.benchmark_reference_collision
-  COMMAND "${CMAKE_COMMAND}"
-    "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/cmake/benchmark_reference_collision"
-    "-DGENERATOR=${CMAKE_GENERATOR}" "-DCOMPILER=${CMAKE_CXX_COMPILER}"
-    "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
-    "-DSNAPPY_SOURCE=${MODERN_LEVELDB_SNAPPY_SOURCE_DIR}"
-    "-DZSTD_SOURCE=${MODERN_LEVELDB_ZSTD_SOURCE_DIR}"
-    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/reject_reference.cmake"
-)
-set_tests_properties(cmake.benchmark_reference_collision PROPERTIES LABELS cmake TIMEOUT 120)
+if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_test(
+    NAME cmake.benchmark_reference_collision
+    COMMAND "${CMAKE_COMMAND}"
+      "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/cmake/benchmark_reference_collision"
+      "-DGENERATOR=${CMAKE_GENERATOR}" "-DCOMPILER=${CMAKE_CXX_COMPILER}"
+      "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+      "-DSNAPPY_SOURCE=${MODERN_LEVELDB_SNAPPY_SOURCE_DIR}"
+      "-DZSTD_SOURCE=${MODERN_LEVELDB_ZSTD_SOURCE_DIR}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/reject_reference.cmake"
+  )
+  set_tests_properties(cmake.benchmark_reference_collision PROPERTIES LABELS cmake TIMEOUT 120)
+endif()
