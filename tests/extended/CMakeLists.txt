@@ -1,6 +1,3 @@
-include("${PROJECT_SOURCE_DIR}/cmake/LevelDbReference.cmake")
-modern_leveldb_add_reference()
-
 function(modern_leveldb_extended_test name tier)
   add_executable("${name}" ${ARGN})
   target_include_directories(
@@ -33,6 +30,7 @@ target_compile_options(
 modern_leveldb_extended_test(
   modern_leveldb_crash_tests crash
   ../crash/power_loss_test.cc
+  ../crash/process_crash_test.cc
   ../support/crash_file_system.cc
   ../support/memory_file_system.cc
 )

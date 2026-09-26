@@ -218,5 +218,46 @@ TEST(PowerLossTest, PreservesAcknowledgedBatchesAtEveryMutationBoundary) {
   }
 }
 
+TEST(PowerLossTest, RecoversEveryPrefixOfAnUnsyncedFinalWalBatchAtomically) {
+  CrashDatabase writer;
+  Check(writer.Open(true));
+  EncodedWriteBatch baseline;
+  Check(baseline.Put(AsBytes("baseline"), AsBytes("durable")));
+  Check(writer.database->Write(baseline, true));
+  const CrashImage durable = writer.file_system.DurableImage();
+  std::optional<std::filesystem::path> log;
+  for (const auto& [path, bytes] : durable.files) {
+    static_cast<void>(bytes);
+    if (path.extension() == ".log") {
+      ASSERT_FALSE(log.has_value());
+      log = path;
+    }
+  }
+  ASSERT_TRUE(log.has_value());
+  const std::size_t prefix = durable.files.at(*log).size();
+  EncodedWriteBatch pending;
+  Check(pending.Put(AsBytes("a"), AsBytes("pending")));
+  Check(pending.Put(AsBytes("b"), AsBytes("pending")));
+  Check(writer.database->Write(pending, false));
+  const auto complete = writer.file_system.Contents(*log).value();
+  writer.Close();
+  ASSERT_GT(complete.size(), prefix);
+
+  for (std::size_t length = prefix; length <= complete.size(); ++length) {
+    SCOPED_TRACE(length - prefix);
+    CrashImage image = durable;
+    image.files[*log].assign(complete.begin(),
+                             complete.begin() + static_cast<std::ptrdiff_t>(length));
+    CrashDatabase recovered(image);
+    Check(recovered.Open(false));
+    Model expected{{"baseline", "durable"}};
+    if (length == complete.size()) {
+      expected["a"] = "pending";
+      expected["b"] = "pending";
+    }
+    EXPECT_EQ(recovered.ReadAll(), expected);
+  }
+}
+
 }  // namespace
 }  // namespace modern_leveldb

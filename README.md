@@ -51,7 +51,8 @@ serves reads and iterators at snapshots, runs size and seek compactions,
 slows or stops writes while level 0 backs up, and removes obsolete files. The
 public RAII facade exposes database handles, atomic write batches, snapshots,
 and bidirectional iterators while keeping engine and child-handle lifetimes
-safe.
+safe. The canonical MVP implementation also includes reproducible model,
+upstream compatibility, power-loss, sanitizer, fuzz, and benchmark gates.
 
 ## Goals
 
@@ -165,6 +166,37 @@ explicit input, time, and memory bounds. Reproducers are retained under
 `build/fuzz/fuzz/`; replay one by passing its path directly to the relevant
 fuzzer executable. See [ADR-0040](docs/adr/0040-compatibility-and-crash-harness.md)
 for the persistence model and its limits.
+
+The hardening presets are separate from the fast development loop:
+
+```bash
+cmake --preset asan
+cmake --build --preset asan
+ctest --preset asan
+
+cmake --preset tsan
+cmake --build --preset tsan
+ctest --preset tsan
+
+cmake --preset benchmarks
+cmake --build --preset benchmarks
+ctest --preset benchmarks
+```
+
+ASan/UBSan runs the full correctness tiers and stops on sanitizer findings.
+TSan runs unit and model tests; its CI runtime is macOS Clang. Crash checks
+include torn WAL tails and a real child process exiting without database
+destructors. The Release benchmark verifies all returned data, records three
+same-machine trials against Google LevelDB, and rejects phase medians more
+than 20 times the reference. Its raw report is
+`build/benchmarks/benchmarks/results.json`; this is a severe-regression guard,
+not a throughput SLA.
+
+The `extended-hardening` workflow adds weekly and manually dispatchable
+100,000-input fuzz campaigns with sanitizer-instrumented codecs. Failure
+inputs and corpora are retained as CI artifacts. See
+[ADR-0041](docs/adr/0041-engine-hardening-gates.md) for the fixed budgets,
+benchmark methodology, and limitations.
 
 CI also measures unit-test coverage of `src/` and `include/`. Every added or
 modified production line and branch must be executed by tests unless an

@@ -1,0 +1,54 @@
+name: extended-hardening
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/hardening.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz-campaign:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LLVM toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang-19 libclang-rt-19-dev
+      - name: Configure instrumented engine and codecs
+        run: >
+          cmake --preset fuzz
+          -DCMAKE_C_COMPILER=clang-19
+          -DCMAKE_CXX_COMPILER=clang++-19
+          "-DCMAKE_C_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all"
+          "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all"
+          "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined"
+      - name: Build fuzzers
+        run: cmake --build --preset fuzz --parallel 2
+      - name: Exercise binary formats
+        run: >
+          python3 tools/run_fuzz.py
+          --binary build/fuzz/fuzz/modern_leveldb_formats_fuzzer
+          --kind formats
+          --output build/fuzz/fuzz/formats-long
+          --runs 100000
+      - name: Exercise database state machine
+        run: >
+          python3 tools/run_fuzz.py
+          --binary build/fuzz/fuzz/modern_leveldb_database_fuzzer
+          --kind database
+          --output build/fuzz/fuzz/database-long
+          --runs 100000
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extended-fuzz-results
+          path: |
+            build/fuzz/fuzz/*-long/corpus/
+            build/fuzz/fuzz/*-long/artifacts/

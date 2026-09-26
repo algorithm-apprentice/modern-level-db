@@ -55,6 +55,8 @@ dispatchable workflow runs each target for 100,000 inputs with the same
 limit, and 1 GiB RSS limit. That build instruments both codec dependencies
 and the production library. Corpus and failure artifacts are uploaded, and
 the workflow has a finite overall timeout.
+Changes to the long-campaign workflow itself also run it on the pull request,
+so its first installation and later edits are exercised before merging.
 
 The longer workflow does not silently replace PR smoke coverage and is not
 described as exhaustive. The gate driver is also invoked manually on this
@@ -65,6 +67,9 @@ branch before the node is declared complete.
 Add an optional `MODERN_LEVELDB_BUILD_BENCHMARKS` target and a `benchmarks`
 preset. Tests are not a dependency of this build; it reuses the existing
 pinned LevelDB reference and codec setup.
+The root configures that reference once when either the extended harness or
+benchmark is enabled. A pre-existing parent `leveldb` target is rejected,
+not silently substituted for the pinned oracle.
 
 Measure both public APIs on the same machine, toolchain, seed, and options:
 

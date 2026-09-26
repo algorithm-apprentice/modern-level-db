@@ -2,7 +2,7 @@ include(FetchContent)
 
 function(modern_leveldb_add_reference)
   if(TARGET leveldb)
-    message(FATAL_ERROR "Extended tests require their pinned LevelDB reference target")
+    message(FATAL_ERROR "Harness and benchmarks require their pinned LevelDB reference target")
   endif()
   set(BUILD_SHARED_LIBS OFF)
   set(LEVELDB_BUILD_TESTS OFF)
