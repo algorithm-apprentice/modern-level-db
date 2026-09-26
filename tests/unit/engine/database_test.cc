@@ -925,7 +925,7 @@ TEST_F(DatabaseTest, IgnoresAnExceptionWhileClosingTheCurrentLog) {
         options.write_buffer_size = 1;
         Result<std::unique_ptr<Database>> opened = Database::Open(options, "database");
         if (!opened.has_value()) {
-          std::_Exit(1);
+          std::exit(1);
         }
         std::unique_ptr<Database> database = std::move(*opened);
         file_system.SetOperationHook([](std::string_view operation) -> Status {
@@ -936,7 +936,7 @@ TEST_F(DatabaseTest, IgnoresAnExceptionWhileClosingTheCurrentLog) {
         });
 
         database.reset();
-        std::_Exit(0);
+        std::exit(0);
       },
       testing::ExitedWithCode(0), "");
 }
