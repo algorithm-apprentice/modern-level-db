@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted; merge this design before its separate implementation PR.
+Experiment completed; the candidate was rejected by its admission criteria.
+The original comparator remains in production.
 
 ## Evidence and candidate selection
 
@@ -92,6 +93,39 @@ evidence only, not the reported speedup.
 
 Merge only this optimization's code PR after its results and review. Then
 reassess CRC32C against the new baseline before starting another change.
+
+## Outcome
+
+The clean baseline was built from `ca92618`; candidate `5041943` changed only
+the comparator and added the independent ordering oracle. Both implementations
+passed the expanded oracle, units, and ASan/UBSan correctness tiers.
+
+Two paired rounds alternated baseline/candidate process order. Each process
+used three repetitions calibrated from a 0.3-second minimum. Aggregating the
+six individual wall-time samples for each variant gave:
+
+| Case | Median wall-time reduction, candidate vs baseline |
+|---|---:|
+| `modern/readrandom/4096` | 3.56% |
+| `modern/readrandom/65536` | -0.43% |
+| `modern/readmissing/4096` | 3.48% |
+| `modern/readmissing/65536` | 0.43% |
+| `modern/scan/4096` | -1.30% |
+| `modern/scan/65536` | -0.18% |
+| `modern/seek_reuse/4096` | -21.36% |
+| `modern/seek_reuse/65536` | -23.34% |
+
+Negative reductions mean slower runs. The primary result did not reach the
+predeclared 5% threshold, and the reused-seek cases showed substantial
+regressions in this experiment. These results do not prove that `memcmp` is
+universally slower: compiler/code-generation and fixture/background state
+can affect the result. They do mean the evidence does not justify this patch.
+
+Restore the original production comparator, retain the stronger correctness
+oracle, and keep CRC32C as the next independent candidate. Do not retune
+workloads or relax the admission metric merely to rescue this change.
+Raw local results and executable digests are retained under
+`build/bytewise-optimization/`.
 
 ## References
 
