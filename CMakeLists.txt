@@ -17,6 +17,8 @@ option(
   "Treat Modern LevelDB compiler warnings as errors"
   ON
 )
+option(MODERN_LEVELDB_BUILD_EXTENDED_TESTS "Build model, compatibility, and crash tests" OFF)
+option(MODERN_LEVELDB_BUILD_FUZZERS "Build coverage-guided libFuzzer targets" OFF)
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompilerWarnings.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompressionDependencies.cmake")
@@ -100,7 +102,22 @@ modern_leveldb_set_project_warnings(modern_leveldb PRIVATE)
 
 if(MODERN_LEVELDB_BUILD_TESTS)
   include(CTest)
-  if(BUILD_TESTING)
-    add_subdirectory(tests)
+endif()
+
+if(MODERN_LEVELDB_BUILD_EXTENDED_TESTS)
+  if(NOT MODERN_LEVELDB_BUILD_TESTS OR NOT BUILD_TESTING)
+    message(FATAL_ERROR "Extended tests require MODERN_LEVELDB_BUILD_TESTS and BUILD_TESTING")
   endif()
+  if(NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "Extended database tests require the POSIX filesystem backend")
+  endif()
+endif()
+
+if(MODERN_LEVELDB_BUILD_TESTS AND BUILD_TESTING)
+  add_subdirectory(tests)
+endif()
+
+if(MODERN_LEVELDB_BUILD_FUZZERS)
+  enable_testing()
+  add_subdirectory(fuzz)
 endif()

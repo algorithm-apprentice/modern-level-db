@@ -191,3 +191,7 @@ set_tests_properties(
   cmake.dependency_shared_only_build
   PROPERTIES LABELS cmake FIXTURES_REQUIRED shared_codec TIMEOUT 180
 )
+
+if(MODERN_LEVELDB_BUILD_EXTENDED_TESTS)
+  add_subdirectory(extended)
+endif()

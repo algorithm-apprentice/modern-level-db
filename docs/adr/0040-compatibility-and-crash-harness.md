@@ -59,7 +59,9 @@ point reads, scans in both directions, seeks, and reopenings. An independent
 snapshot state. Assertions report the seed and operation index.
 
 Reopening releases every iterator and snapshot first. Snapshot operations
-never use released handles. Tests select each compression mode and a small
+never use released handles. Every successful reopen immediately verifies the
+entire recovered map before later writes can mask a lost key.
+Tests select each compression mode and a small
 write buffer so that reads traverse WAL recovery and flushed tables as well
 as the active memtable.
 
@@ -111,6 +113,8 @@ sync batch must survive. Recovery may include a whole in-flight batch, but
 never a partial batch. A final asynchronous batch may be absent. The oracle
 compares the recovered map with allowed complete transaction states rather
 than assuming every attempted write committed.
+Every batch also writes a unique retained marker so later overwrites cannot
+erase the evidence of an earlier acknowledged batch.
 
 A manually drained executor makes each trace repeatable and avoids timing
 sleeps. All accepted tasks are drained before destroying the test engine,
