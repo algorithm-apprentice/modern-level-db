@@ -144,7 +144,11 @@ Database::~Database() {
   // No write can use the log any longer, and a close error has no one to go
   // to, as in LevelDB's destructor. A failed open may have no log.
   if (log_ != nullptr) {
-    static_cast<void>(log_->Close());
+    try {
+      static_cast<void>(log_->Close());
+    } catch (...) {
+      // Destructors cannot report close failures; continue releasing resources.
+    }
   }
   background_finished_.wait(lock, [this] { return !background_scheduled_; });
 }

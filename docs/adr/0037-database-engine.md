@@ -255,10 +255,11 @@ class Database final {
   LevelDB's `++seed_` does.
 - Obsolete-file cleanup follows LevelDB's rules above.
 - `~Database` sets the closing flag, closes the log, which no write can use
-  any longer, ignoring an error as LevelDB's destructor does, waits until no
-  background task is scheduled, and then releases the directory lock last.
-  Closing the log first also gives tests a file operation that shows the
-  closing flag is set.
+  any longer, ignoring an error as LevelDB's destructor does and containing
+  any exception because a destructor cannot report either failure, waits
+  until no background task is scheduled, and then releases the directory
+  lock last. Closing the log first also gives tests a file operation that
+  shows the closing flag is set.
 
 The first node implements everything except compactions, the level-0
 slowdown and stop, and seek charges; its background tasks only flush. The

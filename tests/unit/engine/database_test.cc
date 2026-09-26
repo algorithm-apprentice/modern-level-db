@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <future>
@@ -908,6 +909,36 @@ TEST_F(DatabaseTest, StopsWritesWhenSchedulingThrows) {
   const Status waited = database->WaitForBackgroundWork();
   ASSERT_FALSE(waited.has_value());
   EXPECT_EQ(waited.error().code(), ErrorCode::Aborted);
+}
+
+TEST_F(DatabaseTest, IgnoresAnExceptionWhileClosingTheCurrentLog) {
+  EXPECT_EXIT(
+      {
+        MemoryFileSystem file_system;
+        ManualExecutor executor;
+        ManualClock clock;
+        DatabaseOptions options;
+        options.file_system = &file_system;
+        options.executor = &executor;
+        options.clock = &clock;
+        options.create_if_missing = true;
+        options.write_buffer_size = 1;
+        Result<std::unique_ptr<Database>> opened = Database::Open(options, "database");
+        if (!opened.has_value()) {
+          std::_Exit(1);
+        }
+        std::unique_ptr<Database> database = std::move(*opened);
+        file_system.SetOperationHook([](std::string_view operation) -> Status {
+          if (operation.starts_with("close ") && operation.ends_with(".log")) {
+            throw std::runtime_error("thrown");
+          }
+          return {};
+        });
+
+        database.reset();
+        std::_Exit(0);
+      },
+      testing::ExitedWithCode(0), "");
 }
 
 TEST_F(DatabaseTest, StopsWritesWhenTheExecutorRejectsTheNextTask) {
