@@ -25,6 +25,15 @@ static_assert(std::is_copy_constructible_v<WriteBatch>);
 static_assert(std::is_copy_assignable_v<WriteBatch>);
 static_assert(std::is_nothrow_move_constructible_v<WriteBatch>);
 static_assert(std::is_nothrow_move_assignable_v<WriteBatch>);
+static_assert(static_cast<int>(Compression::None) == 0);
+static_assert(static_cast<int>(Compression::Snappy) == 1);
+static_assert(static_cast<int>(Compression::Zstd) == 2);
+
+TEST(PublicOptionsTest, DefaultsToSnappyCompression) {
+  const Options options;
+  EXPECT_EQ(options.compression, Compression::Snappy);
+  EXPECT_EQ(options.zstd_compression_level, 1);
+}
 
 TEST(PublicWriteBatchTest, OwnsCopiesAppendsAndClearsOperations) {
   WriteBatch batch;

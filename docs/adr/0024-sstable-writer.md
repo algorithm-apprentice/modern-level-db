@@ -1,6 +1,11 @@
 # ADR-0024: SSTable Writer
 
 - Status: Accepted
+
+[ADR-0039](0039-sstable-block-compression.md) extends this writer with optional
+Snappy and Zstd compression for data, metaindex, and index blocks. Filter
+blocks remain uncompressed; the uncompressed default of the internal writer
+preserves this ADR's golden files.
 - Date: 2026-09-24
 
 ## Context

@@ -19,7 +19,12 @@ option(
 )
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompilerWarnings.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompressionDependencies.cmake")
 find_package(Threads REQUIRED)
+modern_leveldb_compression_dependencies(
+  MODERN_LEVELDB_SNAPPY_TARGET
+  MODERN_LEVELDB_ZSTD_TARGET
+)
 
 add_library(
   modern_leveldb
@@ -59,6 +64,7 @@ add_library(
     src/table/block_builder.cc
     src/table/block_format.cc
     src/table/bloom_filter.cc
+    src/table/compression.cc
     src/table/filter_block.cc
     src/table/table.cc
     src/table/table_builder.cc
@@ -83,7 +89,13 @@ target_include_directories(
   PRIVATE
     "${PROJECT_SOURCE_DIR}/src"
 )
-target_link_libraries(modern_leveldb PUBLIC Threads::Threads)
+target_link_libraries(
+  modern_leveldb
+  PUBLIC Threads::Threads
+  PRIVATE
+    "${MODERN_LEVELDB_SNAPPY_TARGET}"
+    "${MODERN_LEVELDB_ZSTD_TARGET}"
+)
 modern_leveldb_set_project_warnings(modern_leveldb PRIVATE)
 
 if(MODERN_LEVELDB_BUILD_TESTS)

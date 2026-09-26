@@ -274,6 +274,30 @@ TEST(PublicDatabaseTest, ValidatesOptionsAndRetainsTheComparator) {
   EXPECT_EQ(rejected.error().code(), ErrorCode::InvalidArgument);
   EXPECT_FALSE(std::filesystem::exists(invalid_directory.path()));
 
+  for (const Compression compression :
+       {static_cast<Compression>(-1), static_cast<Compression>(3)}) {
+    SCOPED_TRACE(static_cast<int>(compression));
+    TemporaryDatabaseDirectory directory;
+    Options invalid_compression = CreatingOptions();
+    invalid_compression.compression = compression;
+    const Result<Database> result = Database::Open(invalid_compression, directory.path());
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code(), ErrorCode::InvalidArgument);
+    EXPECT_FALSE(std::filesystem::exists(directory.path()));
+  }
+
+  for (const int level : {-6, 23}) {
+    SCOPED_TRACE(level);
+    TemporaryDatabaseDirectory directory;
+    Options invalid_level = CreatingOptions();
+    invalid_level.compression = Compression::Zstd;
+    invalid_level.zstd_compression_level = level;
+    const Result<Database> result = Database::Open(invalid_level, directory.path());
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code(), ErrorCode::InvalidArgument);
+    EXPECT_FALSE(std::filesystem::exists(directory.path()));
+  }
+
   TemporaryDatabaseDirectory comparator_directory;
   auto destroyed = std::make_shared<std::atomic<bool>>(false);
   auto comparator = std::make_shared<TrackingComparator>(destroyed);
@@ -310,6 +334,33 @@ TEST(PublicDatabaseTest, WiresBloomFiltersIntoWrittenTables) {
   const auto value = reopened->Get(AsBytes("large"));
   ASSERT_TRUE(value.has_value() && value->has_value());
   EXPECT_EQ(value->value().size(), std::size_t{70} << 10U);
+}
+
+TEST(PublicDatabaseTest, WritesAndReopensEveryCompressionMode) {
+  for (const Compression compression :
+       {Compression::None, Compression::Snappy, Compression::Zstd}) {
+    SCOPED_TRACE(static_cast<int>(compression));
+    TemporaryDatabaseDirectory directory;
+    Options options = CreatingOptions();
+    options.write_buffer_size = 1;
+    options.compression = compression;
+    if (compression == Compression::Zstd) {
+      options.zstd_compression_level = -5;
+    }
+    {
+      Result<Database> opened = Database::Open(options, directory.path());
+      ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+      const std::string large(std::size_t{70} << 10U, 'v');
+      ASSERT_TRUE(opened->Put(AsBytes("large"), AsBytes(large)).has_value());
+      ASSERT_TRUE(opened->Put(AsBytes("trigger"), AsBytes("1")).has_value());
+    }
+
+    Result<Database> reopened = Database::Open(Options(), directory.path());
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().ToString();
+    const auto value = reopened->Get(AsBytes("large"));
+    ASSERT_TRUE(value.has_value() && value->has_value());
+    EXPECT_EQ(value->value().size(), std::size_t{70} << 10U);
+  }
 }
 
 }  // namespace

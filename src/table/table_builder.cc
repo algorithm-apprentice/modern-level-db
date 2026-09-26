@@ -24,11 +24,14 @@ TableBuilder::TableBuilder(std::unique_ptr<WritableFile> file,
       comparator_(&comparator),
       block_size_(options.block_size),
       restart_interval_(options.restart_interval),
+      compression_(options.compression),
+      zstd_compression_level_(options.zstd_compression_level),
       data_block_(options.restart_interval),
       index_block_(1) {
   if (file_ == nullptr) {
     first_error_ = Error::InvalidArgument("table builder has no file");
   }
+  Record(ValidateCompressionOptions(compression_, zstd_compression_level_));
   if (options.filter_policy.has_value()) {
     filter_block_.emplace(*options.filter_policy);
     const Status started = filter_block_->StartBlock(0);
@@ -129,8 +132,20 @@ void TableBuilder::WriteBlock(ByteView contents, BlockHandle& handle) {
   if (first_error_.has_value()) {
     return;
   }
+  const bool compressed =
+      TryCompressBlock(contents, compression_, zstd_compression_level_, compressed_output_);
+  const ByteView stored = compressed ? ByteView(compressed_output_) : contents;
+  const BlockCompression type = compressed ? compression_ : BlockCompression::None;
+  WriteRawBlock(stored, type, handle);
+  compressed_output_.clear();
+}
+
+void TableBuilder::WriteRawBlock(ByteView contents, BlockCompression type, BlockHandle& handle) {
+  if (first_error_.has_value()) {
+    return;
+  }
   handle = BlockHandle{.offset = file_size_, .size = contents.size()};
-  const auto trailer = EncodeBlockTrailer(contents);
+  const auto trailer = EncodeBlockTrailer(contents, type);
   // Separate statements keep each Status temporary unconditional; see ADR-0019.
   if (!Record(file_->Append(contents))) {
     return;
@@ -148,7 +163,7 @@ void TableBuilder::WriteTail() {
   BlockBuilder metaindex(restart_interval_);
   if (filter_block_.has_value()) {
     BlockHandle filter_handle{};
-    WriteBlock(filter_block_->Finish(), filter_handle);
+    WriteRawBlock(filter_block_->Finish(), BlockCompression::None, filter_handle);
     std::vector<std::byte> handle;
     AppendBlockHandle(handle, filter_handle);
     const Status added = metaindex.Add(AsBytes(filter_key_), handle);

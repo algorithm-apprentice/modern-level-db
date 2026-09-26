@@ -44,6 +44,7 @@ class Block final {
   ~Block() = default;
 
   [[nodiscard]] bool empty() const noexcept { return layout_.entries_end == 0; }
+  [[nodiscard]] std::size_t size() const noexcept { return contents_.size(); }
 
  private:
   Block(std::vector<std::byte> contents, const Comparator& comparator, std::size_t entries_end,

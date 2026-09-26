@@ -26,7 +26,8 @@ validated immutable versions from them, and creates, recovers, and appends to
 the MANIFEST with durable `CURRENT` installation.
 The table layer builds and reads LevelDB-compatible sorted blocks, block
 handles, footers, checksummed block trailers, Bloom filters, and filter
-blocks, writes complete SSTables durably, and reads them through lookups,
+blocks, compresses blocks with Snappy or Zstd when they beat LevelDB's space
+threshold, writes complete SSTables durably, and reads them through lookups,
 bidirectional iteration, and a block cache. The engine layer keeps recently
 used tables open in an LRU cache by file number, writes memtables to durable,
 verified level-0 tables, and opens databases: it locks the directory, creates
@@ -91,6 +92,8 @@ Link `modern_leveldb::modern_leveldb` and include the public facade:
 
 modern_leveldb::Options options;
 options.create_if_missing = true;
+// Snappy is the default. Compression::None and Compression::Zstd are also
+// available; Zstd levels -5 through 22 are accepted.
 auto opened = modern_leveldb::Database::Open(options, "example-db");
 if (!opened.has_value()) {
   return opened.error();
@@ -114,6 +117,9 @@ if the original `Database` handle is destroyed first. See
 ## Development
 
 The project uses C++23, CMake, Ninja, CTest, and GoogleTest.
+Compression uses private Snappy 1.3.1 and Zstd 1.5.7 dependencies. CMake reuses
+parent-provided codec targets or fetches pinned source revisions; the fallback
+also requires a C compiler for Zstd. No codec headers enter the public API.
 
 ```bash
 cmake --preset dev-debug

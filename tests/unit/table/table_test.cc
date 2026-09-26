@@ -63,6 +63,17 @@ constexpr std::string_view ThreeBlockTable =
     "001e1b0009026301ffffffffffffff3e1900000000100000002400000003000000001fe95e41732f"
     "a70142000000000000000000000000000000000000000000000000000000000000000000000057fb"
     "808b247547db";
+// Unmodified Google LevelDB tables containing a=256*"x", b=256*"y".
+constexpr std::string_view SnappyCompressedTable =
+    "920414000180026178fe0100fe0100fe0100fa01002105046279fe0100fe0100fe0100fa01001c0000"
+    "00000100000001810a0bb8000000000100000000c0f2a1b000010263002f000000000100000000d1"
+    "dc2bbb3408410e000000000000000000000000000000000000000000000000000000000000000000"
+    "00000057fb808b247547db";
+constexpr std::string_view ZstdCompressedTable =
+    "28b52ffd601201ed0000a0000180026178000180026279000000000100000002007c40153e058a025d"
+    "85c3da000000000100000000c0f2a1b0000102630027000000000100000000246737712c08390e0000"
+    "0000000000000000000000000000000000000000000000000000000000000000000057fb808b2475"
+    "47db";
 
 std::vector<std::byte> FromHex(std::string_view hex) {
   std::vector<std::byte> bytes;
@@ -329,6 +340,19 @@ TEST_F(TableTest, ReadsLevelDbTables) {
   EXPECT_FALSE(Get(*empty, "apple", MaxSequenceNumber).has_value());
 }
 
+TEST_F(TableTest, ReadsLevelDbSnappyAndZstdGoldenTables) {
+  for (const std::string_view encoded : {SnappyCompressedTable, ZstdCompressedTable}) {
+    const auto table = Open(FromHex(encoded));
+    ASSERT_NE(table, nullptr);
+    const std::vector<Entry> entries = ScanForward(*table);
+    ASSERT_EQ(entries.size(), 2U);
+    EXPECT_EQ(entries[0].key, Materialize(AsBytes("a")));
+    EXPECT_EQ(entries[0].value, std::vector<std::byte>(256, std::byte{'x'}));
+    EXPECT_EQ(entries[1].key, Materialize(AsBytes("b")));
+    EXPECT_EQ(entries[1].value, std::vector<std::byte>(256, std::byte{'y'}));
+  }
+}
+
 TEST_F(TableTest, FindsTheVersionVisibleAtTheLookupSequence) {
   const auto table = Open(VersionedTable());
   ASSERT_NE(table, nullptr);
@@ -451,6 +475,45 @@ TEST_F(TableTest, ServesRepeatedReadsFromTheBlockCache) {
   const int after_scan = state_->read_calls;
   static_cast<void>(ScanForward(*table));
   EXPECT_EQ(state_->read_calls, after_scan);
+}
+
+TEST_F(TableTest, ChargesCompressedBlocksByTheirDecodedSize) {
+  TableBuilderOptions builder_options;
+  builder_options.block_size = 1 << 20;
+  builder_options.compression = BlockCompression::Snappy;
+  const std::vector<std::byte> value(64 * 1024, std::byte{'x'});
+  const std::vector<std::byte> data =
+      BuildTable({{Key("key", 1), value}}, builder_options, comparator_);
+
+  const Result<Footer> footer = DecodeFooter(ByteView(data).last<FooterSize>());
+  ASSERT_TRUE(footer.has_value());
+  const auto stored_index =
+      ByteView(data).subspan(footer->index.offset, footer->index.size + BlockTrailerSize);
+  Result<std::vector<std::byte>> index_contents = DecodeStoredBlock(Materialize(stored_index));
+  ASSERT_TRUE(index_contents.has_value()) << index_contents.error().ToString();
+  Result<Block> index = Block::Create(std::move(*index_contents), comparator_);
+  ASSERT_TRUE(index.has_value()) << index.error().ToString();
+  Block::Iterator entry(*index);
+  entry.SeekToFirst();
+  ASSERT_TRUE(entry.valid());
+  ByteView encoded_handle = entry.value();
+  const Result<BlockHandle> handle = ConsumeBlockHandle(encoded_handle);
+  ASSERT_TRUE(handle.has_value());
+  ASSERT_TRUE(encoded_handle.empty());
+  const auto stored_data = ByteView(data).subspan(handle->offset, handle->size + BlockTrailerSize);
+  Result<std::vector<std::byte>> decoded = DecodeStoredBlock(Materialize(stored_data));
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().ToString();
+  ASSERT_LT(handle->size, decoded->size());
+
+  BlockCache cache(1 << 20);
+  TableOptions options;
+  options.block_cache = &cache;
+  const auto table = Open(data, options);
+  ASSERT_NE(table, nullptr);
+  const std::optional<TableLookup> lookup = Get(*table, "key", 1);
+  ASSERT_TRUE(lookup.has_value());
+  EXPECT_EQ(lookup->value, value);
+  EXPECT_EQ(cache.total_charge(), decoded->size());
 }
 
 TEST_F(TableTest, ReadsWithoutFillingTheCacheWhenAsked) {
@@ -577,7 +640,7 @@ TEST_F(TableTest, RejectsDamagedIndexBlocks) {
   TableAssembler compressed;
   const BlockHandle meta = compressed.AddBlock(BlockOf({}));
   ExpectError(TryOpen(compressed.Finish(meta, compressed.AddBlock(BlockOf({}), 1))),
-              ErrorCode::NotSupported);
+              ErrorCode::Corruption);
 }
 
 TEST_F(TableTest, RejectsIndexValuesThatAreNotBlockHandles) {

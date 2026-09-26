@@ -253,9 +253,7 @@ Result<Table::BlockReference> Table::ReadDataBlock(BlockHandle handle,
   }
   auto shared = std::make_shared<const Block>(std::move(*block));
   if (block_cache_ != nullptr && options.fill_cache) {
-    // ReadBlock checked that the size fits in memory.
-    Result<BlockCache::Handle> inserted =
-        block_cache_->Insert(cache_key, shared, static_cast<std::size_t>(handle.size));
+    Result<BlockCache::Handle> inserted = block_cache_->Insert(cache_key, shared, shared->size());
     // A cache whose charge accounting would overflow leaves the block uncached.
     if (inserted.has_value()) {
       return BlockReference(std::move(*inserted));
