@@ -226,19 +226,40 @@ class Database final {
   The mutex still guards the state itself.
 - The compaction follows ADR-0034 and ADR-0035: it picks from the current
   version with `SeekStatistics::FileToCompact`, applies a trivial move's edit
-  at once, and otherwise runs the compaction with hooks. The output-number
-  hook allocates, protects, and records each number with the mutex held. The
-  entry hook returns `Aborted` once the closing flag is set; when the
-  immutable flag is set, it takes the mutex, checks the immutable memtable
-  again, flushes it, and so wakes the writers that wait for it before the
-  compaction continues. The recorded numbers are released after the edit is
-  applied or a background error is recorded, and the input iterator and the
-  compaction are destroyed before obsolete-file cleanup.
+  at once, and otherwise runs the compaction with hooks. A task finds a
+  compaction whenever it finds no immutable memtable, since the need that
+  scheduled it remains: only background work installs versions or drops a
+  seek record. The smallest snapshot is the oldest one, or the last sequence
+  if there is none. The output-number hook allocates, protects, and records
+  each number with the mutex held. The entry hook returns `Aborted` once the
+  closing flag is set; when the immutable flag is set, it takes the mutex,
+  flushes the immutable memtable, which only background work drops, and so
+  wakes the writers that wait for it before the compaction continues. If a
+  background error exists after that flush, such as its own failure, the
+  hook returns it, which stops the compaction. A compaction that finishes its
+  entries after the closing flag is set returns `Aborted` before its edit is
+  applied, as LevelDB's check after its loop does. The recorded numbers are
+  released after the edit is applied or a background error is recorded, and
+  the input iterator and the compaction are destroyed before obsolete-file
+  cleanup. A trivial move makes no file obsolete, so it runs no cleanup, as
+  in LevelDB.
+- Making room adds LevelDB's level-0 triggers, `Level0SlowdownWritesTrigger`
+  (8) and `Level0StopWritesTrigger` (12): a writer that is not forced sleeps
+  one millisecond through the clock with the mutex released, once per write,
+  while level 0 has at least 8 files, and a writer that needs a switch waits
+  for background work while level 0 has at least 12.
 - Seek charges follow ADR-0036, and `SeekStatistics::Retain` runs after
-  every version the engine installs.
+  every version the engine installs. `Get` charges its read's version with
+  the mutex held after the read; an iterator's samples charge the version
+  that is current when they arrive; and iterator seeds count from 1, as
+  LevelDB's `++seed_` does.
 - Obsolete-file cleanup follows LevelDB's rules above.
-- `~Database` sets the closing flag, waits until no background task is
-  scheduled, and then releases the directory lock last.
+- `~Database` sets the closing flag, closes the log, which no write can use
+  any longer, ignoring an error as LevelDB's destructor does and containing
+  any exception because a destructor cannot report either failure, waits
+  until no background task is scheduled, and then releases the directory
+  lock last. Closing the log first also gives tests a file operation that
+  shows the closing flag is set.
 
 The first node implements everything except compactions, the level-0
 slowdown and stop, and seek charges; its background tasks only flush. The
@@ -282,16 +303,25 @@ by hand cover, in the first node:
 - Closing while background work is pending, and reopening afterward.
 
 The second node adds tests of compactions and trivial moves that background
-work runs, the slowdown and the stop of writes, compaction failures, a
-rejected `Schedule` while opening, seek compactions from read charges and
-iterator samples, and closing during a compaction. Its compaction tests hold snapshots and check reads and new
-iterators at them afterward: a compaction keeps what the oldest live snapshot
-reads, moves on to the next oldest once it is released, uses the last
-sequence once none is left, and keeps entries for two snapshots at one
-sequence until both are released. A gated compaction shows that a writer
-waiting for an immutable memtable proceeds after the flush inside the
-compaction while the compaction stays paused. Each node covers every line and
-branch of its code, as required by [ADR-0019](0019-test-coverage-policy.md).
+work runs, the slowdown and the stop of writes, compaction failures, a failed
+flush inside a compaction, a rejected `Schedule` while opening, seek
+compactions from read charges and iterator samples, and closing during a
+compaction and after its last entry. A flush lands on level 0 only when it
+overlaps level 0 or 1, so tests either flush after warm-up flushes that fill
+levels 2 and 1, or craft the version with `VersionSet` and `BuildTable`, and
+they read the layout back from the MANIFEST. Level-0 files come from writes
+that switch the memtable before a queued task runs; a forced flush and a
+close wait for their log's close before the queued task runs; and every test
+runs the queued tasks before it closes. Its compaction tests hold snapshots
+and check point reads and new iterators at them afterward: a compaction
+keeps what the oldest live snapshot reads, moves on to the next oldest once
+it is released, uses the last sequence once none is left, and keeps entries
+for two snapshots at one sequence until both are released; reads at a
+released snapshot's sequence show what a compaction dropped. A gated
+compaction shows that a writer waiting for an immutable memtable proceeds
+after the flush inside the compaction while the compaction stays paused.
+Each node covers every line and branch of its code, as required by
+[ADR-0019](0019-test-coverage-policy.md).
 
 A differential helper in the second node has unmodified Google LevelDB and
 Modern LevelDB apply the same random writes and reads, including reopening

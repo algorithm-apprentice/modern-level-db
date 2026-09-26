@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "engine/db_iterator.h"
+#include "engine/seek_statistics.h"
 #include "engine/table_cache.h"
 #include "engine/write_path.h"
 #include "format/internal_key.h"
@@ -30,6 +31,13 @@
 #include "wal/wal_io.h"
 
 namespace modern_leveldb {
+
+// LevelDB's kL0_SlowdownWritesTrigger: while level 0 has at least this many
+// files, each write first sleeps a millisecond once.
+inline constexpr std::size_t Level0SlowdownWritesTrigger = 8;
+// LevelDB's kL0_StopWritesTrigger: while level 0 has at least this many files,
+// a write that needs a new memtable waits for background work.
+inline constexpr std::size_t Level0StopWritesTrigger = 12;
 
 struct DatabaseOptions {
   // Must outlive the database.
@@ -83,8 +91,9 @@ class Database final {
   Database& operator=(const Database&) = delete;
   Database(Database&&) = delete;
   Database& operator=(Database&&) = delete;
-  // Waits until no background task is scheduled, and then releases the
-  // directory lock last. No other call may be running.
+  // Marks the database as closing, closes the log, waits until no background
+  // task is scheduled, and then releases the directory lock last. No other
+  // call may be running.
   ~Database();
 
   // Commits the batch, syncing the log first if asked. After a background
@@ -95,7 +104,8 @@ class Database final {
   [[nodiscard]] Result<std::optional<std::vector<std::byte>>> Get(
       ByteView key, const DatabaseReadOptions& options = {});
 
-  // Returns an iterator that must be destroyed before the database.
+  // Returns an iterator that must be destroyed before the database, since its
+  // samples of what it reads charge the database's seek budgets.
   [[nodiscard]] std::unique_ptr<DbIterator> NewIterator(const DatabaseReadOptions& options = {});
 
   // Returns the last sequence and keeps what it reads until it is released.
@@ -117,9 +127,21 @@ class Database final {
   [[nodiscard]] Status SwitchMemTable();
   [[nodiscard]] Status CommitWrite(std::unique_lock<std::mutex>& lock, WriteBatch& group,
                                    bool sync);
+  [[nodiscard]] bool NeedsCompaction() const;
   void MaybeScheduleBackgroundWork();
   void BackgroundCall();
   void FlushImmutable(std::unique_lock<std::mutex>& lock);
+  void BackgroundCompaction(std::unique_lock<std::mutex>& lock);
+  // Runs the compaction that the current version needs, recording each output
+  // number. Returns whether it ran one rather than moving a file.
+  [[nodiscard]] bool Compact(std::unique_lock<std::mutex>& lock,
+                             std::vector<std::uint64_t>& outputs);
+  // Records the error of applying a compaction's edit, or forgets the seek
+  // budgets that the new version no longer needs.
+  void FinishCompaction(const Status& applied);
+  // A compaction's check before each entry, which takes the mutex itself.
+  [[nodiscard]] Status BeforeCompactionEntry();
+  void RecordReadSample(ByteView internal_key);
   void RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock);
   void RecordBackgroundError(Error error);
   [[nodiscard]] std::unexpected<Error> BackgroundError() const;
@@ -127,6 +149,7 @@ class Database final {
   // Owned resources, destroyed after everything that uses them.
   std::unique_ptr<FileSystem> owned_file_system_;
   std::unique_ptr<BlockCache> owned_block_cache_;
+  std::unique_ptr<Clock> owned_clock_;
   std::unique_ptr<FileLock> lock_;
 
   std::size_t write_buffer_size_;
@@ -134,6 +157,7 @@ class Database final {
   TableBuilderOptions table_options_;
   std::filesystem::path directory_;
   FileSystem* file_system_;
+  Clock* clock_;
   InternalKeyComparator comparator_;
   TableCache table_cache_;
 
@@ -147,10 +171,14 @@ class Database final {
   WriteQueue write_queue_;
   std::multiset<SequenceNumber> snapshots_;
   std::set<std::uint64_t> pending_outputs_;
+  SeekStatistics seek_statistics_;
+  // The last seed of an iterator's read sampling.
+  std::uint32_t seed_ = 0;
   std::optional<Error> background_error_;
   bool background_scheduled_ = false;
-  // Mirrors state that code without the mutex checks.
+  // Mirror state that a compaction checks without the mutex.
   std::atomic<bool> closing_ = false;
+  std::atomic<bool> has_immutable_ = false;
 
   // Destroyed first, so that it stops before anything that its tasks use.
   std::unique_ptr<BackgroundExecutor> owned_executor_;
