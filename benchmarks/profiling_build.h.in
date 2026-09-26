@@ -27,6 +27,15 @@ inline constexpr std::string_view SnappyTarget = "@MODERN_LEVELDB_SNAPPY_TARGET@
 inline constexpr std::string_view ZstdTarget = "@MODERN_LEVELDB_ZSTD_TARGET@";
 inline constexpr std::string_view SnappySource = R"ml(@MODERN_LEVELDB_SNAPPY_SOURCE_DIR@)ml";
 inline constexpr std::string_view ZstdSource = R"ml(@MODERN_LEVELDB_ZSTD_SOURCE_DIR@)ml";
+inline constexpr std::string_view Crc32cTarget = "@MODERN_LEVELDB_CRC32C_TARGET@";
+inline constexpr std::string_view Crc32cProvider = "@MODERN_LEVELDB_CRC32C_PROVIDER@";
+inline constexpr std::string_view Crc32cRequestedRevision =
+    "@MODERN_LEVELDB_CRC32C_REQUESTED_REVISION@";
+inline constexpr std::string_view Crc32cSource = R"ml(@MODERN_LEVELDB_CRC32C_SOURCE_DIR@)ml";
+inline constexpr std::string_view Crc32cOverride =
+    R"ml(@FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_CRC32C@)ml";
+inline constexpr std::string_view Crc32cArm64 = "@MODERN_LEVELDB_CRC32C_COMPILED_ARM64@";
+inline constexpr std::string_view Crc32cSse42 = "@MODERN_LEVELDB_CRC32C_COMPILED_SSE42@";
 
 }  // namespace modern_leveldb::profiling
 

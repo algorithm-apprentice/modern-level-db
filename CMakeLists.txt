@@ -24,11 +24,13 @@ option(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS "Build the selected-workload profi
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompilerWarnings.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompressionDependencies.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/Crc32cDependency.cmake")
 find_package(Threads REQUIRED)
 modern_leveldb_compression_dependencies(
   MODERN_LEVELDB_SNAPPY_TARGET
   MODERN_LEVELDB_ZSTD_TARGET
 )
+modern_leveldb_crc32c_dependency(MODERN_LEVELDB_CRC32C_TARGET)
 
 add_library(
   modern_leveldb
@@ -99,6 +101,7 @@ target_link_libraries(
   PRIVATE
     "${MODERN_LEVELDB_SNAPPY_TARGET}"
     "${MODERN_LEVELDB_ZSTD_TARGET}"
+    "${MODERN_LEVELDB_CRC32C_TARGET}"
 )
 modern_leveldb_set_project_warnings(modern_leveldb PRIVATE)
 

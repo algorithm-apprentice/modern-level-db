@@ -236,8 +236,18 @@ class PerformanceExecutableTest(unittest.TestCase):
         done = json.loads((self.root / "completion.json").read_text())
         validate_completion(done, "modern/readrandom/4096")
         self.assertGreater(done["callback_invocations"], 3)
-        validate_benchmark(json.loads((self.root / "benchmark.json").read_text()),
-                           "modern/readrandom/4096", 3)
+        data = json.loads((self.root / "benchmark.json").read_text())
+        validate_benchmark(data, "modern/readrandom/4096", 3)
+        context = data["context"]
+        self.assertIn(context["crc32c_target"], ("crc32c", "Crc32c::crc32c"))
+        self.assertIn(context["crc32c_provider"],
+                      ("pinned-source", "source-override", "parent-target"))
+        self.assertEqual(context["crc32c_requested_revision"],
+                         "2bbb3be42e20a0e6c0f7b39dc07dc863d9ffbc07")
+        self.assertIn(context["crc32c_compiled_arm64"], ("true", "false", "external"))
+        self.assertIn(context["crc32c_compiled_sse42"], ("true", "false", "external"))
+        for field in ("crc32c_source", "crc32c_source_override"):
+            self.assertIsInstance(context[field], str)
 
 
 if __name__ == "__main__":

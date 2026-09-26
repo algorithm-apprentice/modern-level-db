@@ -16,12 +16,13 @@ execute_process(
     "-DTEST_SCENARIO=${TEST_SCENARIO}"
     "-DFETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_SNAPPY=${SNAPPY_SOURCE}"
     "-DFETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_ZSTD=${ZSTD_SOURCE}"
+    "-DFETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_CRC32C=${CRC32C_SOURCE}"
   RESULT_VARIABLE result
   OUTPUT_VARIABLE output
   ERROR_VARIABLE error
 )
 if(result EQUAL 0)
-  message(FATAL_ERROR "The benchmark accepted a conflicting parent reference target")
+  message(FATAL_ERROR "The consumer accepted a conflicting dependency")
 endif()
 if(NOT "${output}${error}" MATCHES "${EXPECTED_ERROR}")
   message(FATAL_ERROR "Configuration failed for the wrong reason:\n${output}\n${error}")

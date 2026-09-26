@@ -5,6 +5,10 @@
 
 ## Context
 
+The initial checksum implementation is extended by
+[ADR-0044](0044-profile-guided-crc32c-acceleration.md), which preserves these
+public and persistent contracts while adopting runtime-dispatched CRC32C.
+
 LevelDB WAL records and SSTable blocks use masked CRC32C checksums. Its Bloom
 filters use a seeded 32-bit hash whose output must remain stable to read
 existing filter data. Substituting ordinary CRC32, `std::hash`, or a different

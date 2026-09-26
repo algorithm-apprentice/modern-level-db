@@ -38,6 +38,26 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
 
+  crc32c-portable:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CC: gcc-13
+      CXX: g++-13
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure portable CRC32C
+        run: >
+          cmake -S . -B build/crc32c-portable -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DMODERN_LEVELDB_BUILD_TESTS=ON
+          -DHAVE_ARM64_CRC32C:BOOL=OFF
+          -DHAVE_SSE42:BOOL=OFF
+      - name: Build checksum tests
+        run: cmake --build build/crc32c-portable --target modern_leveldb_unit_tests --parallel 2
+      - name: Check portable checksum contracts
+        run: ctest --test-dir build/crc32c-portable -R '^Crc32cTest\.' --output-on-failure
+
   coverage:
     runs-on: ubuntu-24.04
     env:
