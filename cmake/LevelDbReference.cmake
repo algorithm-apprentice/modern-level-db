@@ -32,4 +32,8 @@ function(modern_leveldb_add_reference)
     TARGET leveldb PROPERTY INTERFACE_LINK_LIBRARIES
     "${MODERN_LEVELDB_SNAPPY_TARGET};${MODERN_LEVELDB_ZSTD_TARGET};Threads::Threads"
   )
+  # Keep reference interfaces compatible with RTTI-enabled tests and UBSan vptr checks.
+  target_compile_options(
+    leveldb PRIVATE "$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-frtti>"
+  )
 endfunction()

@@ -25,6 +25,10 @@ and C++ and fails on the first sanitizer finding, including undefined
 behavior that would otherwise only print a diagnostic. Its CTest selection
 includes unit, model, compatibility, and crash tiers, not repeated nested
 CMake configuration.
+The unmodified reference sources are compiled with RTTI enabled, overriding
+upstream's `-fno-rtti` option. This keeps its public virtual interfaces and
+GoogleTest factories compatible with UBSan's vptr checks; disabling RTTI for
+the whole test driver would hide required dynamic type information.
 
 TSan is a separate build because it cannot be combined with ASan. Its gate
 runs the concurrent component tests and ordered-map model. CI uses a macOS
