@@ -97,6 +97,37 @@ gtest_discover_tests(
     TIMEOUT 10
 )
 
+add_executable(
+  modern_leveldb_public_api_tests
+  unit/api/public_api_test.cc
+)
+if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(
+    modern_leveldb_public_api_tests
+    PRIVATE
+      unit/api/public_api_posix_test.cc
+  )
+else()
+  target_sources(
+    modern_leveldb_public_api_tests
+    PRIVATE
+      unit/api/public_api_without_posix_test.cc
+  )
+endif()
+target_link_libraries(
+  modern_leveldb_public_api_tests
+  PRIVATE
+    modern_leveldb::modern_leveldb
+    GTest::gtest_main
+)
+modern_leveldb_set_project_warnings(modern_leveldb_public_api_tests PRIVATE)
+gtest_discover_tests(
+  modern_leveldb_public_api_tests
+  PROPERTIES
+    LABELS unit
+    TIMEOUT 10
+)
+
 foreach(scenario IN ITEMS module_shadow default_tests tests_disabled gtest_options)
   add_test(
     NAME "cmake.${scenario}"
