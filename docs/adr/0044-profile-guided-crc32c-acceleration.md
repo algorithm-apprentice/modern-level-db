@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted; merge this design before its separate implementation PR.
+Accepted. Design-only PR #42 was merged before implementation; the candidate
+meets the admission criteria recorded below.
 
 ## Evidence and prior art
 
@@ -119,6 +120,74 @@ implementation rather than loosening thresholds or changing workloads.
 This PR changes only checksum implementation/dependency wiring and directly
 related tests/provenance/docs. Do not add mmap, change block validation, replace
 the cache, or revisit the rejected comparator in the same change.
+
+## Outcome
+
+The clean original-CRC baseline was built from `fca15f1`, after the design
+merge. Candidate `693e4fa` implements the private dependency and adapter.
+Both frozen executables used macOS ARM64, AppleClang 21, and the same Release
+flags (`-O3 -DNDEBUG -g -fno-omit-frame-pointer`). Candidate provenance records
+the pinned source and compiled ARM64 path; the CPU capture confirms that the
+ARM64 implementation actually ran.
+
+| Executable | SHA-256 |
+|---|---|
+| Baseline | `be531431d12b0331d5597fa8030f8f9626245889bf7acbd8aec545437a13b34d` |
+| Candidate | `d0b723acf34e1bfb68c17abd61edc20d6681b89bbb5a06a84fc5969fd7a1209c` |
+
+The collection budget was fixed before execution: two paired rounds with
+three repetitions per process and a 0.3-second calibration minimum, reversing
+baseline/candidate process order in the second round. All 32 processes
+completed with the unchanged canonical
+corpus, workload lifecycle, and options. The table aggregates the six
+individual samples per variant, not framework aggregate rows:
+
+| Case | Baseline wall ns/item | Candidate wall ns/item | Wall reduction | Process CPU reduction |
+|---|---:|---:|---:|---:|
+| `modern/readrandom/4096` | 601.62 | 596.34 | 0.88% | 0.88% |
+| `modern/readrandom/65536` | 2940.95 | 1623.97 | 44.78% | 44.89% |
+| `modern/readmissing/4096` | 583.66 | 573.10 | 1.81% | 1.81% |
+| `modern/readmissing/65536` | 2851.10 | 1590.08 | 44.23% | 44.32% |
+| `modern/scan/4096` | 47.04 | 47.66 | -1.31% | -1.31% |
+| `modern/scan/65536` | 283.37 | 136.46 | 51.84% | 51.84% |
+| `modern/seek_reuse/4096` | 4366.01 | 4373.13 | -0.16% | -0.16% |
+| `modern/seek_reuse/65536` | 7338.33 | 5803.29 | 20.92% | 20.86% |
+
+Both primary cases exceed 20% in each round as well as the combined result:
+random reads improve 45.90% and 43.50%; scans improve 51.72% and 51.88%.
+Negative reductions mean slower runs. The cache-fit scan slowdown repeats
+at about 1.5% per round, but amounts to approximately 0.62 ns/item in the
+combined medians; cache-fit reused seeks are about 7.12 ns slower. Retain
+these small measured tradeoffs rather than claiming universal improvement
+or retuning the workload. They do not outweigh the substantial, repeatable
+benefit in checksum-heavy cases.
+
+After unprofiled collection, capture both frozen binaries again for the two
+primary cases. All four marked windows contain more than 5,800 CPU samples
+and resolve the foreground workload. Their reported self sample weights are:
+
+| Case | Original checksum frame | Candidate `crc32c::ReadUint64LE` | Candidate `crc32c::ExtendArm64` |
+|---|---:|---:|---:|
+| `modern/readrandom/65536` | 43.01% | 1.50% | 0.39% |
+| `modern/scan/65536` | 50.35% | 1.91% | 0.56% |
+
+These are the CRC-related self frames present in the top-50 summaries, not
+a claim that unlisted frames have zero cost. They confirm that checksum
+computation is no longer the dominant sampled hotspot. Profiled timings are
+not used for admission or the improvement percentages above.
+
+The expanded independent CRC oracle passes with default dispatch and with
+both hardware paths disabled. The native, sanitizer, differential/format,
+crash, fuzz, platform, profiling-contract, and changed-code coverage gates
+pass. CI now retains a dedicated GCC 13 forced-portable checksum gate.
+The bounded GPT-5.6 Sol implementation review found no actionable issues.
+
+Admit this candidate without changing the comparator, reference checksum
+configuration, or persistent formats. Results establish a local ARM64 benefit
+for these named workloads, not a universal percentage or a comparison with
+hardware-enabled LevelDB. The fixed collection plan, raw individual reports,
+binary/build identities, and all four native captures remain under
+`build/crc32c-optimization/`; native traces are not uploaded.
 
 ## References
 
