@@ -83,6 +83,8 @@ upstream compatibility, power-loss, sanitizer, fuzz, and benchmark gates.
 - [LevelDB architecture analysis](docs/architecture.md)
 - [Implementation dependency DAG](docs/dependency-dag.md)
 - [Architecture decision records](docs/adr/)
+- [Next-step benchmark and profiling design](docs/profiling-design.md)
+  (design complete; implementation pending)
 
 ## Using the library
 
