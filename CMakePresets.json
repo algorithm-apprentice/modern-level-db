@@ -30,6 +30,28 @@
       }
     },
     {
+      "name": "compatibility",
+      "displayName": "Extended Compatibility Harness",
+      "inherits": "dev-debug",
+      "binaryDir": "${sourceDir}/build/compatibility",
+      "cacheVariables": {
+        "MODERN_LEVELDB_BUILD_EXTENDED_TESTS": "ON"
+      }
+    },
+    {
+      "name": "fuzz",
+      "displayName": "LLVM Fuzzing",
+      "inherits": "dev-debug",
+      "binaryDir": "${sourceDir}/build/fuzz",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "MODERN_LEVELDB_BUILD_TESTS": "OFF",
+        "MODERN_LEVELDB_BUILD_FUZZERS": "ON"
+      }
+    },
+    {
       "name": "coverage",
       "displayName": "Coverage",
       "generator": "Ninja",
@@ -45,6 +67,14 @@
   ],
   "buildPresets": [
     {
+      "name": "fuzz",
+      "configurePreset": "fuzz"
+    },
+    {
+      "name": "compatibility",
+      "configurePreset": "compatibility"
+    },
+    {
       "name": "dev-debug",
       "configurePreset": "dev-debug"
     },
@@ -58,6 +88,30 @@
     }
   ],
   "testPresets": [
+    {
+      "name": "fuzz",
+      "configurePreset": "fuzz",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "fuzz"
+        }
+      }
+    },
+    {
+      "name": "compatibility",
+      "configurePreset": "compatibility",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "model|compatibility|crash"
+        }
+      }
+    },
     {
       "name": "dev-debug",
       "configurePreset": "dev-debug",

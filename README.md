@@ -136,6 +136,36 @@ preserved.
 Run `ctest --preset dev-debug` to include the `cmake` consumer-configuration
 checks as well as the fast `unit` suite.
 
+The optional extended harness keeps slower verification out of the unit loop:
+
+```bash
+cmake --preset compatibility
+cmake --build --preset compatibility --target modern_leveldb_extended_tests
+ctest --preset compatibility
+```
+
+It compares seeded binary-key/snapshot traces with an independent map and a
+pinned Google LevelDB reference, opens a frozen upstream database image, and
+recovers simulated power-loss images at every mutating I/O boundary. These
+database tests require the POSIX backend. The reference source is fetched
+only when `MODERN_LEVELDB_BUILD_EXTENDED_TESTS=ON`.
+
+Coverage-guided fuzzing requires a full LLVM toolchain with libFuzzer
+(`brew install llvm` on macOS; select that installation's `clang`/`clang++`
+with `-DCMAKE_C_COMPILER` and `-DCMAKE_CXX_COMPILER`):
+
+```bash
+cmake --preset fuzz
+cmake --build --preset fuzz
+ctest --preset fuzz
+```
+
+The format and stateful-engine targets use deterministic seed corpora and
+explicit input, time, and memory bounds. Reproducers are retained under
+`build/fuzz/fuzz/`; replay one by passing its path directly to the relevant
+fuzzer executable. See [ADR-0040](docs/adr/0040-compatibility-and-crash-harness.md)
+for the persistence model and its limits.
+
 CI also measures unit-test coverage of `src/` and `include/`. Every added or
 modified production line and branch must be executed by tests unless an
 explicitly justified `GCOVR_EXCL_*` marker excludes it. See

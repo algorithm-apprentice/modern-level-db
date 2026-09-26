@@ -92,3 +92,46 @@ jobs:
           path: |
             build/coverage/coverage.xml
             build/coverage/html/
+
+  compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CC: gcc-13
+      CXX: g++-13
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure extended harness
+        run: cmake --preset compatibility -DCMAKE_BUILD_TYPE=Release
+      - name: Build extended harness
+        run: cmake --build --preset compatibility --target modern_leveldb_extended_tests --parallel 2
+      - name: Run model, differential, and crash tests
+        run: ctest --preset compatibility
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: compatibility-failure
+          path: build/compatibility/Testing/Temporary/
+
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LLVM fuzzing toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang-19 libclang-rt-19-dev
+      - name: Configure fuzz targets
+        run: cmake --preset fuzz -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19
+      - name: Build fuzz targets
+        run: cmake --build --preset fuzz --parallel 2
+      - name: Run bounded fuzz campaigns
+        run: ctest --preset fuzz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fuzz-results
+          path: |
+            build/fuzz/fuzz/
+            build/fuzz/Testing/Temporary/
