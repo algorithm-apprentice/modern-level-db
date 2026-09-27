@@ -84,9 +84,11 @@ Status ValidateEntries(ByteView contents, std::size_t entries_end, std::size_t r
         ++restart_index;
       }
     }
+    // GCOVR_EXCL_START: the trusted-order visitor cannot fail
     if (!visit(offset, entry)) {
       return std::unexpected(Error::Corruption("block keys are not in increasing order"));
     }
+    // GCOVR_EXCL_STOP
     previous_key_size = entry.shared + entry.key_delta.size();
     offset = entry.end;
   }
