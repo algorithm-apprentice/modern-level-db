@@ -164,10 +164,13 @@ void ExpectCorruptBlock(std::vector<std::byte> contents,
 }
 
 void ExpectStructurallyCorruptBlock(std::vector<std::byte> contents) {
-  const Result<Block> block =
+  const Result<Block> ordered = Block::Create(contents, BytewiseComparator());
+  ASSERT_FALSE(ordered.has_value());
+  EXPECT_EQ(ordered.error().code(), ErrorCode::Corruption);
+  const Result<Block> trusted =
       Block::CreateWithTrustedKeyOrder(std::move(contents), BytewiseComparator());
-  ASSERT_FALSE(block.has_value());
-  EXPECT_EQ(block.error().code(), ErrorCode::Corruption);
+  ASSERT_FALSE(trusted.has_value());
+  EXPECT_EQ(trusted.error().code(), ErrorCode::Corruption);
 }
 
 void ExpectAt(const Block::Iterator& iterator, std::string_view key, std::string_view value) {
@@ -239,31 +242,35 @@ TEST(BlockTest, ReportsWhetherItHasEntries) {
 }
 
 TEST(BlockTest, RejectsBlocksWithoutAValidRestartCount) {
-  ExpectCorruptBlock({});
-  ExpectCorruptBlock(Bytes({0x00, 0x00, 0x00}));
-  ExpectCorruptBlock(WithRestarts({}, {}));
-  ExpectCorruptBlock(Bytes({0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00}));
+  ExpectStructurallyCorruptBlock({});
+  ExpectStructurallyCorruptBlock(Bytes({0x00, 0x00, 0x00}));
+  ExpectStructurallyCorruptBlock(WithRestarts({}, {}));
+  ExpectStructurallyCorruptBlock(
+      Bytes({0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00}));
 }
 
 TEST(BlockTest, RejectsInvalidRestartPoints) {
-  ExpectCorruptBlock(WithRestarts({}, {4}));
-  ExpectCorruptBlock(WithRestarts({}, {0, 0}));
-  ExpectCorruptBlock(WithRestarts(GoldenEntries(), {9, 18}));
-  ExpectCorruptBlock(WithRestarts(GoldenEntries(), {0, 19}));
-  ExpectCorruptBlock(WithRestarts(GoldenEntries(), {0, 0}));
-  ExpectCorruptBlock(WithRestarts(GoldenEntries(), {0, 18, 9}));
-  ExpectCorruptBlock(WithRestarts(GoldenEntries(), {0, 18, 28}));
-  ExpectCorruptBlock(WithRestarts(GoldenEntries(), {0, 9}));
+  ExpectStructurallyCorruptBlock(WithRestarts({}, {4}));
+  ExpectStructurallyCorruptBlock(WithRestarts({}, {0, 0}));
+  ExpectStructurallyCorruptBlock(WithRestarts(GoldenEntries(), {9, 18}));
+  ExpectStructurallyCorruptBlock(WithRestarts(GoldenEntries(), {0, 19}));
+  ExpectStructurallyCorruptBlock(WithRestarts(GoldenEntries(), {0, 0}));
+  ExpectStructurallyCorruptBlock(WithRestarts(GoldenEntries(), {0, 18, 9}));
+  ExpectStructurallyCorruptBlock(WithRestarts(GoldenEntries(), {0, 18, 28}));
+  ExpectStructurallyCorruptBlock(WithRestarts(GoldenEntries(), {0, 9}));
 }
 
 TEST(BlockTest, RejectsMalformedEntries) {
-  ExpectCorruptBlock(WithRestarts(Bytes({0x80}), {0}));
-  ExpectCorruptBlock(WithRestarts(Bytes({0x00}), {0}));
-  ExpectCorruptBlock(WithRestarts(Bytes({0x00, 0x05}), {0}));
-  ExpectCorruptBlock(WithRestarts(Bytes({0x00, 0x05, 0x01, 'a', 'p'}), {0}));
-  ExpectCorruptBlock(WithRestarts(Bytes({0x00, 0x01, 0x80, 'a'}), {0}));
-  ExpectCorruptBlock(WithRestarts(Bytes({0xff, 0xff, 0xff, 0xff, 0x7f, 0x00, 0x00}), {0}));
-  ExpectCorruptBlock(WithRestarts(Concat({EntryBytes(0, "a", ""), EntryBytes(2, "", "")}), {0}));
+  ExpectStructurallyCorruptBlock(WithRestarts(Bytes({0x80}), {0}));
+  ExpectStructurallyCorruptBlock(WithRestarts(Bytes({0x00}), {0}));
+  ExpectStructurallyCorruptBlock(WithRestarts(Bytes({0x00, 0x05}), {0}));
+  ExpectStructurallyCorruptBlock(
+      WithRestarts(Bytes({0x00, 0x05, 0x01, 'a', 'p'}), {0}));
+  ExpectStructurallyCorruptBlock(WithRestarts(Bytes({0x00, 0x01, 0x80, 'a'}), {0}));
+  ExpectStructurallyCorruptBlock(
+      WithRestarts(Bytes({0xff, 0xff, 0xff, 0xff, 0x7f, 0x00, 0x00}), {0}));
+  ExpectStructurallyCorruptBlock(
+      WithRestarts(Concat({EntryBytes(0, "a", ""), EntryBytes(2, "", "")}), {0}));
 }
 
 TEST(BlockTest, RejectsUnterminatedExtendedLengthsAtCreation) {
@@ -271,7 +278,7 @@ TEST(BlockTest, RejectsUnterminatedExtendedLengthsAtCreation) {
     std::vector<std::byte> entries(field, std::byte{0});
     entries.insert(entries.end(), 5, std::byte{0x80});
     entries.push_back(std::byte{0});
-    ExpectCorruptBlock(WithRestarts(std::move(entries), {0}));
+    ExpectStructurallyCorruptBlock(WithRestarts(std::move(entries), {0}));
   }
 }
 
@@ -295,8 +302,6 @@ TEST(BlockTest, TrustedOrderCreationSkipsOnlyKeyOrderValidation) {
       Block::CreateWithTrustedKeyOrder(descending, BytewiseComparator()).has_value());
   EXPECT_TRUE(Block::CreateWithTrustedKeyOrder(duplicate, BytewiseComparator()).has_value());
 
-  ExpectStructurallyCorruptBlock(WithRestarts(Bytes({0x80}), {0}));
-  ExpectStructurallyCorruptBlock(WithRestarts(GoldenEntries(), {9, 18}));
 }
 
 TEST(BlockTest, TrustedOrderCreationDoesNotCallTheComparator) {
