@@ -50,15 +50,39 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
   configure_file(profiling_build.h.in profiling_build.h @ONLY)
 
   add_executable(modern_leveldb_performance profiling_bench.cc)
-  target_include_directories(modern_leveldb_performance PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+  target_compile_definitions(
+    modern_leveldb_performance PRIVATE MODERN_LEVELDB_READ_DIAGNOSTICS=0
+  )
+  target_include_directories(
+    modern_leveldb_performance
+    PRIVATE
+      "${CMAKE_CURRENT_BINARY_DIR}"
+      "${MODERN_LEVELDB_REFERENCE_SOURCE_DIR}"
+  )
   target_link_libraries(
     modern_leveldb_performance PRIVATE modern_leveldb::modern_leveldb leveldb benchmark::benchmark
   )
   modern_leveldb_set_project_warnings(modern_leveldb_performance PRIVATE)
+
+  add_executable(modern_leveldb_read_diagnostics profiling_bench.cc)
+  target_include_directories(
+    modern_leveldb_read_diagnostics
+    PRIVATE
+      "${CMAKE_CURRENT_BINARY_DIR}"
+      "${PROJECT_SOURCE_DIR}/src"
+      "${MODERN_LEVELDB_REFERENCE_SOURCE_DIR}"
+  )
+  target_link_libraries(
+    modern_leveldb_read_diagnostics
+    PRIVATE modern_leveldb_read_diagnostic leveldb benchmark::benchmark
+  )
+  modern_leveldb_set_project_warnings(modern_leveldb_read_diagnostics PRIVATE)
+
   add_test(
     NAME performance.contracts
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/performance_test.py"
       --binary "$<TARGET_FILE:modern_leveldb_performance>"
+      --reference-pread-control "${MODERN_LEVELDB_REFERENCE_PREAD_CONTROL}"
   )
   add_test(
     NAME performance.profile_parser
@@ -85,11 +109,20 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
       --output "${CMAKE_CURRENT_BINARY_DIR}/performance-mutations"
       --full-mutations
   )
+  add_test(
+    NAME performance.read_diagnostics
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/read_diagnostics_smoke.py"
+      --binary "$<TARGET_FILE:modern_leveldb_read_diagnostics>"
+      --output "${CMAKE_CURRENT_BINARY_DIR}/performance-read-diagnostics"
+  )
   set_tests_properties(
     performance.contracts performance.profile_parser performance.process_control performance.mutation_stream
     PROPERTIES LABELS performance TIMEOUT 120
   )
-  set_tests_properties(performance.smoke performance.mutations PROPERTIES LABELS performance TIMEOUT 600)
+  set_tests_properties(
+    performance.smoke performance.mutations performance.read_diagnostics
+    PROPERTIES LABELS performance TIMEOUT 600
+  )
   add_test(
     NAME performance.capture_capabilities
     COMMAND "${CMAKE_COMMAND}" -P "${PROJECT_SOURCE_DIR}/tests/cmake/profile_capabilities.cmake"
@@ -104,8 +137,31 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
       "-DEXPECTED_ERROR=predeclared Google Benchmark dependency"
       -P "${PROJECT_SOURCE_DIR}/tests/cmake/reject_reference.cmake"
   )
+  add_test(
+    NAME performance.reference_declaration
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCONSUMER_SOURCE_DIR=${PROJECT_SOURCE_DIR}/tests/cmake/reference_declaration"
+      "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/reference-declaration"
+      "-DGENERATOR=${CMAKE_GENERATOR}" "-DCOMPILER=${CMAKE_CXX_COMPILER}"
+      "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+      "-DEXPECTED_ERROR=predeclared LevelDB reference dependency"
+      "-DSENTINEL=${PROJECT_SOURCE_DIR}/tests/cmake/reference_declaration/source/sentinel.txt"
+      -P "${PROJECT_SOURCE_DIR}/tests/cmake/reject_reference.cmake"
+  )
+  add_test(
+    NAME performance.reference_provider
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCONSUMER_SOURCE_DIR=${PROJECT_SOURCE_DIR}/tests/cmake/reference_provider"
+      "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/reference-provider"
+      "-DGENERATOR=${CMAKE_GENERATOR}" "-DCOMPILER=${CMAKE_CXX_COMPILER}"
+      "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+      "-DEXPECTED_ERROR=provider-populated"
+      "-DSENTINEL=${PROJECT_SOURCE_DIR}/tests/cmake/reference_provider/source/sentinel.txt"
+      -P "${PROJECT_SOURCE_DIR}/tests/cmake/reject_reference.cmake"
+  )
   set_tests_properties(
     performance.capture_capabilities performance.dependency_declaration
+    performance.reference_declaration performance.reference_provider
     PROPERTIES LABELS performance TIMEOUT 120
   )
 endif()

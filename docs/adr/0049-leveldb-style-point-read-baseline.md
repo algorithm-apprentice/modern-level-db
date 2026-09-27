@@ -352,6 +352,35 @@ follow-up must select one mechanism with its own admission gate.
   instead of being inferred from overlapping CPU samples.
 - Additional read-path ideas remain sequential and independently attributable.
 
+## Diagnostic tooling implementation
+
+The follow-up tooling builds two binaries from separate library targets:
+`modern_leveldb_performance` links the normal library with diagnostics
+compiled out, while `modern_leveldb_read_diagnostics` links a diagnostic copy.
+The ordinary runner rejects a diagnostic binary as throughput evidence.
+
+The diagnostic runner executes exactly 4,194,304 foreground Gets after the
+existing verification and warmup, and before final verification. Its
+`splitmix64-v1` schedule with seed 401 selects exactly 991 Gets for inclusive,
+non-additive stage timing. The JSON report validates source decisions,
+candidate and cache relationships, complete short-read accounting, block
+decoding and restart probes, result bytes, corpus fingerprints, and Release
+build provenance.
+
+The pinned LevelDB archive is SHA-256 authenticated and populated without
+dependency-provider substitution. A build-owned source copy exposes only the
+existing POSIX mmap-limit test setter; explicit source overrides remain
+unmodified and report the forced-`pread` control as unavailable. Prior
+declarations and provider-populated sources are rejected before use.
+
+Local validation built the normal and diagnostic binaries with Apple Clang and
+GCC 16, exercised both 4,096-record read modes and the 65,536-record miss path,
+and passed all 546 normal unit tests. The normal performance binary contains no
+read-diagnostic symbols. A bounded GPT-5.6 Sol implementation review found no
+remaining material issue after the source-provenance, short-read,
+missing-range, and restart-probe corrections. The structural-validation
+candidate remains unstarted.
+
 ## Delivery boundary
 
 The bounded design review narrowed the first candidate to data blocks, made

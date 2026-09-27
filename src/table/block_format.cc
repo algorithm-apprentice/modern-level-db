@@ -10,6 +10,9 @@
 #include <utility>
 #include <vector>
 
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+#include "engine/read_diagnostics.h"
+#endif
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/crc32c.h"
@@ -86,6 +89,11 @@ std::array<std::byte, BlockTrailerSize> EncodeBlockTrailer(ByteView contents,
 }
 
 Result<std::vector<std::byte>> DecodeStoredBlock(std::vector<std::byte> stored) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::StageScope decode(read_diagnostics::Stage::StoredBlockDecode);
+  read_diagnostics::Add(read_diagnostics::Counter::StoredBlocks);
+  read_diagnostics::Add(read_diagnostics::Counter::StoredBlockBytes, stored.size());
+#endif
   if (stored.size() < BlockTrailerSize) {
     return std::unexpected(Error::Corruption("stored block is shorter than its trailer"));
   }
@@ -99,10 +107,23 @@ Result<std::vector<std::byte>> DecodeStoredBlock(std::vector<std::byte> stored) 
   const auto compression = static_cast<BlockCompression>(type);
   if (compression == BlockCompression::None) {
     stored.resize(contents_size);
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    read_diagnostics::Add(read_diagnostics::Counter::DecodedBlocks);
+    read_diagnostics::Add(read_diagnostics::Counter::DecodedBlockBytes, stored.size());
+#endif
     return stored;
   }
   if (compression == BlockCompression::Snappy || compression == BlockCompression::Zstd) {
-    return DecompressBlock(view.first(contents_size), compression);
+    Result<std::vector<std::byte>> decompressed =
+        DecompressBlock(view.first(contents_size), compression);
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    if (decompressed.has_value()) {
+      read_diagnostics::Add(read_diagnostics::Counter::DecodedBlocks);
+      read_diagnostics::Add(read_diagnostics::Counter::DecodedBlockBytes, decompressed->size());
+      read_diagnostics::Add(read_diagnostics::Counter::DecompressedBlocks);
+    }
+#endif
+    return decompressed;
   }
   return std::unexpected(Error::Corruption("block has an unknown compression type"));
 }

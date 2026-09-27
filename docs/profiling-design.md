@@ -16,6 +16,11 @@ The implemented read family remains unchanged when extended by
 [ADR-0045's fixed-work mutable family](write-profiling-design.md). The
 adaptive repetition rules below apply to read cases only.
 
+[ADR-0049](adr/0049-leveldb-style-point-read-baseline.md) further adds a
+separate fixed-count read-diagnostic executable and a forced-`pread` LevelDB
+control. Those runs preserve the corpus and warmup below but are not ordinary
+Google Benchmark throughput measurements.
+
 ## Decisions backed by primary sources and probes
 
 Research used Google Benchmark v1.9.5 at
@@ -167,6 +172,16 @@ uncached blocks but does not prevent the engine from reading a block already
 in cache. Automatic compactions may still run, and their CPU activity is
 part of the process-wide profile rather than an unproven quiescence assumption.
 
+The ADR-0049 diagnostic mode instead starts one foreground-thread-only epoch
+after the same preparation, verification, and warmup. It resets the query
+cursor and counters, executes exactly 4,194,304 point reads, disables
+collection, and then performs final verification. It does not run Google
+Benchmark calibration or include setup, warmup, final verification, or
+background-thread events. A deterministic recorded seed samples approximately
+one Get in 4,096 for stage timing; the `splitmix64-v1` schedule currently
+selects exactly 991 Gets. All diagnostic counters cover the complete fixed
+epoch.
+
 ### Avoiding misleading comparisons
 
 - Match storage options, including the 8 MiB block-cache budget, WAL,
@@ -201,6 +216,24 @@ before development:
 Keep these changes in one infrastructure PR. Do not extract or rewrite legacy
 benchmark helpers merely for aesthetic deduplication. Do not add public cache
 configuration or statistics APIs as a prerequisite for this slice.
+
+ADR-0049 extends the implementation with two narrowly scoped surfaces:
+
+- `modern_leveldb_read_diagnostics`, linked to a separately compiled
+  diagnostic library so the ordinary performance executable retains no read
+  hooks.
+- A POSIX-only `--reference-file-access pread` mode that exposes the pinned
+  reference's existing mmap-limit test setter without replacing either
+  upstream random-access implementation.
+
+The access patch is applied only to the build-owned pinned source. A
+`FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_REFERENCE` override is never modified;
+that build records the control as unavailable and rejects forced-`pread`
+runs explicitly. The pinned archive is verified by SHA-256 and populated
+without dependency-provider substitution; prior declarations and
+provider-populated trees are rejected before use. Its patchable source stays
+under the current build directory even when a parent configures a shared
+`FETCHCONTENT_BASE_DIR`.
 
 ### Artifact contract
 
@@ -275,6 +308,32 @@ python3 tools/run_performance.py \
   --case modern/readrandom/65536 \
   --output build/performance/modern-readrandom-64k
 ```
+
+Run the pinned reference through its existing `pread` path:
+
+```bash
+python3 tools/run_performance.py \
+  --binary build/profiling/benchmarks/modern_leveldb_performance \
+  --case leveldb/readrandom/65536 \
+  --reference-file-access pread \
+  --output build/performance/leveldb-pread-readrandom-64k
+```
+
+Run the fixed Modern read-path diagnostic epoch:
+
+```bash
+python3 tools/run_performance.py \
+  --binary build/profiling/benchmarks/modern_leveldb_read_diagnostics \
+  --case modern/readrandom/65536 \
+  --read-diagnostics \
+  --output build/performance/modern-readrandom-64k-diagnostics
+```
+
+The diagnostic runner accepts only Modern `readrandom` and `readmissing`
+cases. Its `read-diagnostics.json` records raw and per-Get counters, sampled
+inclusive stage totals, the exact sample count, corpus fingerprints, and build
+provenance. Its manifest marks these timings as attribution rather than
+speedup evidence.
 
 Select the same case with `--capture-cpu` for CPU attribution. This needs a
 macOS Apple Clang build and Xcode's `xctrace`/`dsymutil`:

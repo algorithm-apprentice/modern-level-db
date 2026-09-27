@@ -11,6 +11,9 @@
 #include <utility>
 #include <vector>
 
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+#include "engine/read_diagnostics.h"
+#endif
 #include "metadata/version_edit.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/comparator.h"
@@ -26,6 +29,9 @@ using Decision = std::optional<Value>;
 
 Result<Decision> SearchFile(TableCache& table_cache, const FileMetadata& file, const LookupKey& key,
                             const TableReadOptions& options) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::Add(read_diagnostics::Counter::FilesSearched);
+#endif
   const Result<TableCache::Handle> table = table_cache.Find(file.number, file.file_size);
   if (!table.has_value()) {
     return std::unexpected(table.error());
@@ -68,6 +74,9 @@ std::vector<Candidate> Level0Candidates(const Version& version, const Comparator
   // Level-0 files are numbered in the order they were written.
   std::ranges::sort(candidates, std::ranges::greater{},
                     [](const Candidate& candidate) { return (*candidate.file)->number; });
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::Add(read_diagnostics::Counter::Level0Candidates, candidates.size());
+#endif
   return candidates;
 }
 
@@ -97,6 +106,9 @@ std::vector<Candidate> Candidates(const Version& version, const InternalKeyCompa
         LevelCandidate(version.files(level), comparator, user_key, internal_key);
     if (file != nullptr) {
       candidates.push_back(Candidate{.level = level, .file = file});
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+      read_diagnostics::Add(read_diagnostics::Counter::DeeperCandidates);
+#endif
     }
   }
   return candidates;
@@ -115,22 +127,51 @@ Result<PointRead> LookupValue(const MemTable& memtable, const MemTable* immutabl
     }
     const MemTableLookup found = source->Lookup(key);
     if (found.kind == MemTableLookupKind::Value) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+      read_diagnostics::Add(source == &memtable ? read_diagnostics::Counter::MutableHits
+                                                : read_diagnostics::Counter::ImmutableHits);
+      {
+        read_diagnostics::StageScope copy(read_diagnostics::Stage::ResultCopy);
+        read_diagnostics::Add(read_diagnostics::Counter::ResultBytes, found.value.size());
+        read.value.emplace(found.value.begin(), found.value.end());
+      }
+#else
       read.value.emplace(found.value.begin(), found.value.end());
+#endif
       return read;
     }
     if (found.kind == MemTableLookupKind::Deletion) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+      read_diagnostics::Add(source == &memtable ? read_diagnostics::Counter::MutableHits
+                                                : read_diagnostics::Counter::ImmutableHits);
+      read_diagnostics::Add(read_diagnostics::Counter::Deletions);
+#endif
       return read;
     }
   }
 
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  std::vector<Candidate> candidates;
+  {
+    read_diagnostics::StageScope selection(read_diagnostics::Stage::CandidateSelection);
+    candidates = Candidates(version, comparator, key.user_key(), key.internal_key());
+  }
+#else
   const std::vector<Candidate> candidates =
       Candidates(version, comparator, key.user_key(), key.internal_key());
+#endif
   for (std::size_t index = 0; index < candidates.size(); ++index) {
     Result<Decision> decision = SearchFile(table_cache, **candidates[index].file, key, options);
     if (!decision.has_value()) {
       return std::unexpected(std::move(decision).error());
     }
     if (decision->has_value()) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+      read_diagnostics::Add(read_diagnostics::Counter::SstableHits);
+      if (!(**decision).has_value()) {
+        read_diagnostics::Add(read_diagnostics::Counter::Deletions);
+      }
+#endif
       read.value = std::move(**decision);
       if (index > 0) {
         read.seek = ChargeOf(candidates.front());
@@ -141,6 +182,9 @@ Result<PointRead> LookupValue(const MemTable& memtable, const MemTable* immutabl
   if (candidates.size() > 1) {
     read.seek = ChargeOf(candidates.front());
   }
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::Add(read_diagnostics::Counter::Misses);
+#endif
   return read;
 }
 

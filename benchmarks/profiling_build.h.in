@@ -4,6 +4,7 @@
 #include <string_view>
 
 #cmakedefine01 MODERN_LEVELDB_PROFILE_MARKERS
+#cmakedefine01 MODERN_LEVELDB_REFERENCE_PREAD_CONTROL
 
 namespace modern_leveldb::profiling {
 
@@ -19,6 +20,8 @@ inline constexpr std::string_view BenchmarkOverride =
     R"ml(@FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_BENCHMARK@)ml";
 inline constexpr std::string_view ReferenceOverride =
     R"ml(@FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_REFERENCE@)ml";
+inline constexpr std::string_view ReferenceControlPatchSha256 =
+    "@MODERN_LEVELDB_REFERENCE_CONTROL_PATCH_SHA256@";
 inline constexpr std::string_view SnappyOverride =
     R"ml(@FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_SNAPPY@)ml";
 inline constexpr std::string_view ZstdOverride =

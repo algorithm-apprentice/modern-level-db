@@ -226,6 +226,27 @@ python3 tools/run_performance.py \
   --output build/performance/overwrite-64k
 ```
 
+On POSIX profiling builds, add `--reference-file-access pread` to a LevelDB
+`readrandom` or `readmissing` case to disable its default read-only mmap path
+in that fresh process. This is an attribution control, not a replacement
+implementation.
+
+The profiling build also produces a separate diagnostic executable. Its
+fixed foreground epoch records counters for source decisions, candidate
+files, cache outcomes, reads, block decoding, key comparisons, and copied
+bytes, plus sparsely sampled stage durations:
+
+```bash
+python3 tools/run_performance.py \
+  --binary build/profiling/benchmarks/modern_leveldb_read_diagnostics \
+  --case modern/readrandom/65536 \
+  --read-diagnostics \
+  --output build/performance/readrandom-64k-diagnostics
+```
+
+Diagnostic timings are attribution evidence only. Throughput conclusions must
+use the uninstrumented `modern_leveldb_performance` executable.
+
 Mutable cases use fixed operation counts and one repetition, with a fresh
 database per process. Use new output paths and independent invocations for
 additional samples; `--min-time` and repetitions other than one are rejected.
