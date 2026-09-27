@@ -249,7 +249,7 @@ explicitly justified `GCOVR_EXCL_*` marker excludes it. See
 coverage commands.
 
 When every changed path is `README.md` or a Markdown file under `docs/`, CI
-runs only lightweight change-routing checks and matrix acknowledgements,
+runs only lightweight change-routing checks and check acknowledgements,
 skipping engine builds, tests, sanitizers, fuzzing, and benchmarks.
 Code, test, dependency, CMake, workflow, and mixed changes retain full CI;
 uncertain comparisons conservatively run it too. Pull requests consider their
