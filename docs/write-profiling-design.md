@@ -237,3 +237,37 @@ activity alone is not evidence of compaction.
 Record actual outcomes rather than deriving speed claims from budget probes.
 If a platform cannot finish the fixed case within the stated limit, fail and
 investigate; do not silently shrink work or turn a timeout into a success.
+
+## Implementation acceptance
+
+Implementation `b428aba` was built from a clean checkout after design-only
+PR #44 merged. Its frozen native AppleClang executable has SHA-256
+`d19aa6ab333858539920adacb05ba60ef1b1400220d87638222134c0acabd869`.
+All eight normal mutable cases produced their exact operation budgets and
+expected final-state fingerprints. The 24-case smoke matrix, recording
+diagnostic, report/trace contracts, and direct ASan/UBSan executable checks
+passed. Linux GCC 13 and macOS performance CI also exercised the full matrices.
+
+Eight clean unprofiled baseline processes were followed by normal overwrite
+CPU captures from that same frozen executable:
+
+| Engine | Measured samples | Compaction samples by quarter | Flush samples by quarter |
+|---|---:|---|---|
+| Modern | 9,647 | 1,888 / 1,995 / 2,025 / 2,001 | 109 / 54 / 34 / 42 |
+| LevelDB | 10,710 | 2,348 / 2,344 / 2,431 / 2,423 | 35 / 39 / 40 / 49 |
+
+Both captures had exactly one complete measured interval, zero calibration
+intervals, a resolved foreground loop, successful target exit, and observed
+nontrivial compaction in every quarter. They confirm that the pressure
+scenario exercises background work; they do not prove steady state or imply
+a performance advantage between engines.
+
+The bounded Sol implementation review identified two validation omissions:
+contradictory engine/workload/record metadata and preceding calibration
+intervals in mutable CPU captures. Focused regressions reproduced both before
+the fixes; narrow follow-up review confirmed the corrections while preserving
+old read-report/capture behavior.
+
+Raw baselines, manifests, copied build metadata, the frozen executable, and
+native captures remain local under `build/write-profiling-evidence/`. The
+per-process scratch databases were removed only after verified termination.
