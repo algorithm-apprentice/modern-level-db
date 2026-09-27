@@ -75,6 +75,25 @@ std::vector<std::byte> EntryBytes(std::uint32_t shared, std::string_view delta,
   return entry;
 }
 
+std::vector<std::byte> ExtendedEntryBytes(std::uint32_t shared, std::string_view delta,
+                                          std::string_view value, std::size_t width,
+                                          unsigned int terminal_bits) {
+  std::vector<std::byte> entry;
+  for (const auto length : {shared, static_cast<std::uint32_t>(delta.size()),
+                            static_cast<std::uint32_t>(value.size())}) {
+    for (std::size_t index = 0; index < width; ++index) {
+      unsigned int byte = (length >> (index * 7U)) & 0x7fU;
+      byte |= index + 1 < width ? 0x80U : terminal_bits;
+      entry.push_back(static_cast<std::byte>(byte));
+    }
+  }
+  const ByteView delta_bytes = AsBytes(delta);
+  const ByteView value_bytes = AsBytes(value);
+  entry.insert(entry.end(), delta_bytes.begin(), delta_bytes.end());
+  entry.insert(entry.end(), value_bytes.begin(), value_bytes.end());
+  return entry;
+}
+
 std::vector<std::byte> Concat(std::initializer_list<std::vector<std::byte>> parts) {
   std::vector<std::byte> result;
   for (const std::vector<std::byte>& part : parts) {
@@ -219,6 +238,15 @@ TEST(BlockTest, RejectsMalformedEntries) {
   ExpectCorruptBlock(WithRestarts(Concat({EntryBytes(0, "a", ""), EntryBytes(2, "", "")}), {0}));
 }
 
+TEST(BlockTest, RejectsUnterminatedExtendedLengthsAtCreation) {
+  for (std::size_t field = 0; field < 3; ++field) {
+    std::vector<std::byte> entries(field, std::byte{0});
+    entries.insert(entries.end(), 5, std::byte{0x80});
+    entries.push_back(std::byte{0});
+    ExpectCorruptBlock(WithRestarts(std::move(entries), {0}));
+  }
+}
+
 TEST(BlockTest, RejectsKeysThatDoNotStrictlyIncrease) {
   const std::vector<std::byte> ascending =
       WithRestarts(Concat({EntryBytes(0, "a", ""), EntryBytes(0, "b", "")}), {0});
@@ -292,6 +320,47 @@ TEST(BlockIteratorTest, ChangesDirectionAcrossRestartPoints) {
   ExpectAt(iterator, "apple", "1");
   iterator.Next();
   ExpectAt(iterator, "applesauce", "2");
+}
+
+TEST(BlockIteratorTest, DecodesEveryAcceptedExtendedLengthEncoding) {
+  constexpr std::array<std::pair<std::size_t, unsigned int>, 6> Encodings{
+      {{1, 0}, {2, 0}, {3, 0}, {4, 0}, {5, 0}, {5, 0x70}}};
+  constexpr std::string_view BinaryValue("1\0\xff", 3);
+  for (const auto& [width, terminal_bits] : Encodings) {
+    SCOPED_TRACE(testing::Message() << width << "/" << terminal_bits);
+    const auto first = ExtendedEntryBytes(0, "a", BinaryValue, width, terminal_bits);
+    const auto second = ExtendedEntryBytes(1, "b", "", width, terminal_bits);
+    const auto restart = static_cast<std::uint32_t>(first.size() + second.size());
+    const Block block = MakeBlock(WithRestarts(
+        Concat({first, second, ExtendedEntryBytes(0, "c", "last", width, terminal_bits)}),
+        {0, restart}));
+    Block::Iterator iterator(block);
+
+    iterator.SeekToFirst();
+    ExpectAt(iterator, "a", BinaryValue);
+    iterator.Next();
+    ExpectAt(iterator, "ab", "");
+    iterator.Next();
+    ExpectAt(iterator, "c", "last");
+    iterator.Next();
+    EXPECT_FALSE(iterator.valid());
+
+    iterator.Seek(AsBytes("ab"));
+    ExpectAt(iterator, "ab", "");
+    iterator.Seek(AsBytes("b"));
+    ExpectAt(iterator, "c", "last");
+    iterator.Prev();
+    ExpectAt(iterator, "ab", "");
+    iterator.Next();
+    ExpectAt(iterator, "c", "last");
+    iterator.SeekToLast();
+    ExpectAt(iterator, "c", "last");
+    iterator.Prev();
+    iterator.Prev();
+    ExpectAt(iterator, "a", BinaryValue);
+    iterator.Prev();
+    EXPECT_FALSE(iterator.valid());
+  }
 }
 
 TEST(BlockIteratorTest, RemainsValidWhenTheBlockMoves) {
