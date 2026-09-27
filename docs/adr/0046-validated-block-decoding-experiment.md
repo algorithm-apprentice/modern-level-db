@@ -141,6 +141,15 @@ the fallible generic decoder; assertions alone are not proof of a faster path.
 After this design merges, build and retain a clean baseline executable,
 configure header, compile commands, revision, and SHA-256. Build the
 candidate with the identical profiling preset and preserve its identity.
+Keep candidate implementation changes uncommitted and local until correctness
+and the performance admission below pass. Preserve the exact source patch,
+its digest, base revision, build metadata, and executable digest; report the
+dirty worktree honestly rather than claiming a clean committed candidate.
+Only then commit and push the accepted implementation for final CI/review.
+For a rejected candidate, restore production before committing the outcome
+and applicable regression tests. The prior design-only commit is separate
+from committing an experimental implementation.
+
 The production comparator, CRC selection, block validation policy, cache,
 codecs, and all benchmark workloads/options stay unchanged.
 
