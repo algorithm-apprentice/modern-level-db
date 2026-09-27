@@ -33,6 +33,8 @@ checks, reproducing the failure before fixing a configuration bug.
 Documentation-only changes are reviewed for accuracy, consistency, references,
 and dependency ordering rather than subjected to unit tests with no executable
 behavior.
+[ADR-0048](0048-documentation-only-ci.md) defines conservative CI routing for
+those changes while retaining the existing checks for non-documentation work.
 
 Every module test suite must cover, where applicable:
 
