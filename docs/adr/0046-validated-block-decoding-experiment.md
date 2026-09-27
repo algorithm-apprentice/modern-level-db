@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted design. Merge this design before its separate experiment.
+Accepted. Design-only PR #46 merged before implementation. The local
+experiment passed the throughput criteria below before its code was committed.
 
 ## Context and experiment selection
 
@@ -189,6 +190,73 @@ reduce validation after seeing results. If admitted, capture matched
 baseline/candidate cache-fit Get CPU intervals afterward for attribution;
 profiled timings are not the speedup claim. If rejected, restore production
 code and retain applicable tests and the recorded outcome.
+
+## Outcome
+
+The original baseline was built clean from `d4894f6`. Candidate changes stayed
+uncommitted throughout correctness checks, the fixed sampling budget, and
+the matched CPU captures. The exact accepted source patch was then committed
+as `adf3475`; the candidate artifacts honestly record `configure_dirty=true`
+and the baseline revision rather than inventing a pre-existing clean commit.
+
+| Artifact | SHA-256 |
+|---|---|
+| Original executable | `a92e81da9ab5ca443ebd4f6cbc11e7d6959b937a2810c1e7885f0bb4a53062d6` |
+| Candidate executable | `fc8ae08927668c8826ee8752d1bfb425a1904dc6463be1838c0334cf0148760c` |
+| Candidate source patch | `acc52e7089bd2d557065257f4360e4d707a9cebd2d27217afccd57907b8a9758` |
+
+All 54 predetermined processes completed. Nine individual samples per
+Modern variant/case gave the following medians on macOS ARM64, AppleClang 21,
+with the identical Release/symbol/frame-pointer flags:
+
+| Case | Original items/s | Candidate items/s | Throughput gain | Average wall-time reduction |
+|---|---:|---:|---:|---:|
+| `modern/readrandom/4096` | 1,632,725 | 2,123,604 | 30.07% | 23.12% |
+| `modern/readrandom/65536` | 577,012 | 647,809 | 12.27% | 10.93% |
+| `modern/readmissing/4096` | 1,707,533 | 2,232,028 | 30.72% | 23.50% |
+| `modern/readmissing/65536` | 607,137 | 677,063 | 11.52% | 10.33% |
+| `modern/scan/4096` | 20,623,349 | 22,860,288 | 10.85% | 9.79% |
+| `modern/scan/65536` | 7,052,423 | 7,350,188 | 4.22% | 4.05% |
+| `modern/seek_reuse/4096` | 320,048 | 404,872 | 26.50% | 20.95% |
+| `modern/seek_reuse/65536` | 185,042 | 241,232 | 30.37% | 23.29% |
+
+Items are Get calls, scanned records, or seek operations as specified by
+ADR-0042, not a mixture of request counts and full-scan counts.
+The primary throughput gains were 30.94%, 28.60%, and 30.07% per round.
+Its aggregate process CPU reduction was 23.26%.
+
+Every control's aggregate gain was positive. The pressure reused-seek case
+did regress 10.84% in round one, then improved 41.43% and 30.80% in the next
+two rounds. Retain that variation explicitly: it does not meet the
+predeclared repeated-regression rejection rule, and no samples were removed
+or added to rescue the result.
+
+The six contemporary LevelDB reference processes gave median random-read
+rates of 2,424,372 Get/s at 4,096 records and 965,877 Get/s at 65,536 records.
+The candidate remains approximately 12.41% and 32.93% below those reference
+rates. This experiment improves Modern-before versus Modern-after; it does
+not establish parity, concurrent capacity, or a comparison against
+hardware-CRC-enabled LevelDB or RocksDB.
+
+Matched cache-fit CPU captures collected afterward contained 7,029 baseline
+and 7,005 candidate samples and resolved the foreground workload. The
+reported inclusive share of checked `DecodeEntry` was 12.95% before;
+the candidate's `DecodeValidatedEntry` share was 3.47%. These are attribution
+observations, not the throughput calculation or an exhaustive accounting of
+every changed instruction.
+
+Disassembly confirms that `RestartKey` and `ParseEntry` no longer call the
+fallible entry decoder, while `Block::Validate` retains the checked varint
+path. The strengthened block/model oracle passed on both implementations;
+the candidate passed 544 native unit cases and 554 ASan/UBSan,
+model/differential/crash cases. The bounded Sol implementation review found
+no actionable issues. Existing platform, fuzz, coverage, and profiling CI
+remain final delivery gates.
+
+Admit this narrow candidate without removing any creation-time validation,
+CRC, or I/O error handling. Raw reports, frozen binaries, the uncommitted
+source patch, optimized call-site evidence, and native captures remain local
+under `build/validated-block-optimization/`.
 
 ## Scope and delivery
 
