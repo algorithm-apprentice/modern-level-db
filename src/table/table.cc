@@ -86,6 +86,19 @@ Result<Block> ReadBlock(const RandomAccessFile& file, std::uint64_t blocks_end, 
   return Block::Create(std::move(*contents), comparator);
 }
 
+Result<Block> ReadBlockWithTrustedKeyOrder(const RandomAccessFile& file,
+                                           std::uint64_t blocks_end, BlockHandle handle,
+                                           const Comparator& comparator) {
+  Result<std::vector<std::byte>> contents = ReadStoredBlock(file, blocks_end, handle);
+  if (!contents.has_value()) {
+    return std::unexpected(std::move(contents).error());
+  }
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::StageScope construction(read_diagnostics::Stage::BlockConstruction);
+#endif
+  return Block::CreateWithTrustedKeyOrder(std::move(*contents), comparator);
+}
+
 // Decodes an index value, which Open validated.
 BlockHandle IndexHandle(ByteView value) {
   const Result<BlockHandle> handle = ConsumeBlockHandle(value);
@@ -293,7 +306,8 @@ Result<Table::BlockReference> Table::ReadDataBlock(BlockHandle handle,
 #endif
   }
 
-  Result<Block> block = ReadBlock(*file_, blocks_end_, handle, *comparator_);
+  Result<Block> block =
+      ReadBlockWithTrustedKeyOrder(*file_, blocks_end_, handle, *comparator_);
   if (!block.has_value()) {
     return std::unexpected(std::move(block).error());
   }

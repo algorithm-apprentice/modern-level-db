@@ -34,9 +34,27 @@ class ReverseComparator final : public Comparator {
   void FindShortSuccessor(std::vector<std::byte>&) const override {}
 };
 
+class CountingComparator final : public Comparator {
+ public:
+  int Compare(ByteView left, ByteView right) const noexcept override {
+    ++comparisons;
+    return BytewiseComparator().Compare(left, right);
+  }
+  std::string_view Name() const noexcept override { return "test.CountingComparator"; }
+  void FindShortestSeparator(std::vector<std::byte>&, ByteView) const override {}
+  void FindShortSuccessor(std::vector<std::byte>&) const override {}
+
+  mutable std::size_t comparisons = 0;
+};
+
 template <typename T>
 concept CreatableWith = requires(std::vector<std::byte> contents, T&& comparator) {
   Block::Create(std::move(contents), std::forward<T>(comparator));
+};
+
+template <typename T>
+concept TrustedOrderCreatableWith = requires(std::vector<std::byte> contents, T&& comparator) {
+  Block::CreateWithTrustedKeyOrder(std::move(contents), std::forward<T>(comparator));
 };
 
 static_assert(!std::is_copy_constructible_v<Block>);
@@ -47,6 +65,8 @@ static_assert(!std::is_move_constructible_v<BlockBuilder>);
 static_assert(!std::is_move_assignable_v<BlockBuilder>);
 static_assert(CreatableWith<const ReverseComparator&>);
 static_assert(!CreatableWith<ReverseComparator>);
+static_assert(TrustedOrderCreatableWith<const ReverseComparator&>);
+static_assert(!TrustedOrderCreatableWith<ReverseComparator>);
 static_assert(!std::is_constructible_v<Block::Iterator, Block&&>);
 static_assert(!std::is_constructible_v<Block::Iterator, const Block&&>);
 
@@ -139,6 +159,13 @@ Block MakeBlock(std::vector<std::byte> contents,
 void ExpectCorruptBlock(std::vector<std::byte> contents,
                         const Comparator& comparator = BytewiseComparator()) {
   const Result<Block> block = Block::Create(std::move(contents), comparator);
+  ASSERT_FALSE(block.has_value());
+  EXPECT_EQ(block.error().code(), ErrorCode::Corruption);
+}
+
+void ExpectStructurallyCorruptBlock(std::vector<std::byte> contents) {
+  const Result<Block> block =
+      Block::CreateWithTrustedKeyOrder(std::move(contents), BytewiseComparator());
   ASSERT_FALSE(block.has_value());
   EXPECT_EQ(block.error().code(), ErrorCode::Corruption);
 }
@@ -256,6 +283,30 @@ TEST(BlockTest, RejectsKeysThatDoNotStrictlyIncrease) {
   ExpectCorruptBlock(WithRestarts(Concat({EntryBytes(0, "a", ""), EntryBytes(1, "", "")}), {0}));
   ExpectCorruptBlock(ascending, ReverseComparator());
   EXPECT_TRUE(Block::Create(ascending, BytewiseComparator()).has_value());
+}
+
+TEST(BlockTest, TrustedOrderCreationSkipsOnlyKeyOrderValidation) {
+  const std::vector<std::byte> descending =
+      WithRestarts(Concat({EntryBytes(0, "b", ""), EntryBytes(0, "a", "")}), {0});
+  const std::vector<std::byte> duplicate =
+      WithRestarts(Concat({EntryBytes(0, "a", ""), EntryBytes(1, "", "")}), {0});
+
+  EXPECT_TRUE(
+      Block::CreateWithTrustedKeyOrder(descending, BytewiseComparator()).has_value());
+  EXPECT_TRUE(Block::CreateWithTrustedKeyOrder(duplicate, BytewiseComparator()).has_value());
+
+  ExpectStructurallyCorruptBlock(WithRestarts(Bytes({0x80}), {0}));
+  ExpectStructurallyCorruptBlock(WithRestarts(GoldenEntries(), {9, 18}));
+}
+
+TEST(BlockTest, TrustedOrderCreationDoesNotCallTheComparator) {
+  const std::vector<std::byte> contents = BuildGoldenBlock();
+  CountingComparator comparator;
+
+  EXPECT_TRUE(Block::CreateWithTrustedKeyOrder(contents, comparator).has_value());
+  EXPECT_EQ(comparator.comparisons, 0U);
+  EXPECT_TRUE(Block::Create(contents, comparator).has_value());
+  EXPECT_GT(comparator.comparisons, 0U);
 }
 
 TEST(BlockIteratorTest, StartsUnpositioned) {

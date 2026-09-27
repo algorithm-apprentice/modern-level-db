@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted design. Merge this design before the separate diagnostic-tooling
-change and before any read-path implementation experiment.
+Accepted. Design PR #52 and diagnostic-tooling PR #53 merged before the
+separately reviewed and measured structural-validation candidate below.
 
 ## Context
 
@@ -351,6 +351,86 @@ follow-up must select one mechanism with its own admission gate.
 - File-access policy and semantic validation become separately measurable
   instead of being inferred from overlapping CPU samples.
 - Additional read-path ideas remain sequential and independently attributable.
+
+## Outcome
+
+Diagnostic tooling merged at `742c9b5`. A clean build from that revision
+captured the following three-mode point-read baseline; each value is the
+median of three individual repetitions in one fresh process:
+
+| Case | Modern Get/s | LevelDB mmap Get/s | LevelDB `pread` Get/s | `pread` latency vs mmap | Modern latency vs LevelDB `pread` |
+|---|---:|---:|---:|---:|---:|
+| `readrandom/4096` | 2,009,777 | 2,341,758 | 2,355,774 | -0.59% | +17.22% |
+| `readrandom/65536` | 607,866 | 951,299 | 751,982 | +26.51% | +23.71% |
+| `readmissing/4096` | 2,088,531 | 2,304,855 | 2,282,174 | +0.99% | +9.27% |
+| `readmissing/65536` | 672,215 | 987,636 | 802,479 | +23.07% | +19.38% |
+
+The 4,096-record mmap/`pread` differences are noise-sized because the block
+cache serves nearly every lookup. In the 65,536-record cases, forcing the
+reference through `pread` adds 23-27% latency. This explains roughly half of
+the observed Modern-versus-default-reference latency gap in this workload,
+while leaving a substantial same-access-policy difference.
+
+The Modern diagnostic runs used 4,194,304 Gets and exactly 991 sampled Gets
+per case. The 65,536-record cases observed about 0.55 data-block cache misses
+and one `pread` per Get. These measurements support evaluating data-block
+construction independently from file-access policy.
+
+The structural-validation candidate was frozen against `742c9b5` with source
+patch SHA-256
+`72ecd5259e27ac59ecd3ae273aae740f47a228d374ae3df18f7b3f0b93c50c7e`.
+Its uninstrumented and diagnostic executable SHA-256 values were respectively
+`1ce1907866a841d850804bfbccc552ace9214ff1e85c9f2a492f104301a29578`
+and
+`d94a6d40e89695bf5e5c8dfb55f7fc9835f1942e93c2a62c260f03d31c4ea1ee`.
+
+All 48 predetermined throughput processes completed. The nine individual
+samples per variant/case gave:
+
+| Case | Baseline items/s | Candidate items/s | Throughput gain |
+|---|---:|---:|---:|
+| `modern/readrandom/4096` | 1,988,435 | 2,008,978 | +1.03% |
+| `modern/readrandom/65536` | 622,090 | 660,397 | +6.16% |
+| `modern/readmissing/4096` | 2,106,812 | 2,099,710 | -0.34% |
+| `modern/readmissing/65536` | 654,883 | 687,037 | +4.91% |
+| `modern/scan/4096` | 21,363,321 | 21,844,336 | +2.25% |
+| `modern/scan/65536` | 6,999,821 | 7,492,081 | +7.03% |
+| `modern/seek_reuse/4096` | 347,430 | 340,870 | -1.89% |
+| `modern/seek_reuse/65536` | 215,366 | 190,085 | -11.74% |
+
+The primary `readrandom/65536` gains were +7.35%, +8.28%, and +2.43% by
+round, satisfying its predeclared gate. The original adaptive
+`seek_reuse/65536` control mechanically failed: its baseline median moved from
+about 5.19 us to 4.64 us and then 4.29 us across rounds, while the candidate
+stayed near 5.05-5.33 us. Because that large baseline drift contradicted the
+candidate's isolated mechanism, a bounded fixed-work confirmation used
+262,144 iterations and five repetitions per process, once in each execution
+order. The complete pair results were +8.56% and +0.53% candidate throughput;
+no sample was discarded or replaced.
+
+The diagnostic comparison agrees with the intended mechanism:
+
+| 65,536-record case | Metric | Baseline | Candidate | Change |
+|---|---|---:|---:|---:|
+| `readrandom` | Internal-key comparisons/Get | 31.27 | 23.01 | -8.26 |
+| `readrandom` | Sampled block construction | 367.63 ns | 220.70 ns | -39.97% |
+| `readrandom` | Sampled Get | 1,783.36 ns | 1,672.20 ns | -6.23% |
+| `readmissing` | Internal-key comparisons/Get | 31.23 | 23.00 | -8.23 |
+| `readmissing` | Sampled block construction | 371.26 ns | 221.41 ns | -40.36% |
+| `readmissing` | Sampled Get | 1,750.59 ns | 1,609.89 ns | -8.04% |
+
+The fixed-work confirmation resolves the only unstable control, so the
+candidate is accepted. It removes semantic key-order work only from data-block
+cache misses; it does not weaken structural validation, index/metaindex
+validation, the defensive internal-key comparator, or persisted bytes.
+
+The exact candidate passed 548 native unit tests, targeted ASan block/table
+and model tests, the LevelDB compatibility model, the 1,000-input format fuzz
+smoke, Apple Clang and GCC 16 warning-clean builds, and bounded GPT-5.6 Sol
+review. Raw baseline, paired throughput, diagnostic, fixed-work confirmation,
+binary, and patch artifacts remain local under
+`build/read-path-baseline-742c9b5/` and
+`build/structural-validation-742c9b5/`.
 
 ## Diagnostic tooling implementation
 

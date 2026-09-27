@@ -155,6 +155,10 @@ class DbIterator final {
   target. `key` and `value` require a valid position and remain valid until
   the iterator moves; `Next` and `Prev` require a valid position. A failed
   move leaves the iterator invalid, and the next seek starts over.
+- Table iterators rely on the data-block key-order invariant established by
+  `TableBuilder`. ADR-0049 retains structural validation but no longer
+  rechecks that semantic order on every data-block load; a checksum-consistent
+  unordered external table is therefore outside the iterator guarantee.
 - A level iterator reads files that are sorted by key and do not overlap,
   such as a level of the version or a run of its files; the version must hold
   the files. When a seek stays in the file that is already open, the table is

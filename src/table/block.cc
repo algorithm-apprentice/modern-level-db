@@ -55,6 +55,51 @@ struct Entry {
   return true;
 }
 
+template <typename Visitor>
+Status ValidateEntries(ByteView contents, std::size_t entries_end, std::size_t restart_count,
+                       Visitor visit) {
+  const auto restart_point = [&](std::size_t index) {
+    return DecodeFixed32(contents.subspan(entries_end + Fixed32Size * index).first<Fixed32Size>());
+  };
+  if (restart_point(0) != 0) {
+    return std::unexpected(Error::Corruption("block restart points are invalid"));
+  }
+
+  std::size_t previous_key_size = 0;
+  std::size_t restart_index = 0;
+  for (std::size_t offset = 0; offset < entries_end;) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    read_diagnostics::Add(read_diagnostics::Counter::ValidationEntries);
+#endif
+    Entry entry{};
+    if (!DecodeEntry(contents, offset, entries_end, entry) || entry.shared > previous_key_size) {
+      return std::unexpected(Error::Corruption("block entry is malformed"));
+    }
+    if (restart_index < restart_count) {
+      const std::size_t restart = restart_point(restart_index);
+      if (restart < offset || (restart == offset && entry.shared != 0)) {
+        return std::unexpected(Error::Corruption("block restart points are invalid"));
+      }
+      if (restart == offset) {
+        ++restart_index;
+      }
+    }
+    if (!visit(offset, entry)) {
+      return std::unexpected(Error::Corruption("block keys are not in increasing order"));
+    }
+    previous_key_size = entry.shared + entry.key_delta.size();
+    offset = entry.end;
+  }
+
+  // A block without entries has only the restart point at zero. Otherwise,
+  // every restart point must be the offset of an entry.
+  const std::size_t matched_restarts = entries_end == 0 ? 1 : restart_index;
+  if (matched_restarts != restart_count) {
+    return std::unexpected(Error::Corruption("block restart points are invalid"));
+  }
+  return {};
+}
+
 std::uint32_t ConsumeValidatedVarint32(const std::byte*& input) noexcept {
   std::uint32_t value = 0;
   unsigned int shift = 0;
@@ -103,6 +148,16 @@ ByteView Block::Layout::RestartKey(std::size_t index) const {
 }
 
 Result<Block> Block::Create(std::vector<std::byte> contents, const Comparator& comparator) {
+  return CreateImpl(std::move(contents), comparator, true);
+}
+
+Result<Block> Block::CreateWithTrustedKeyOrder(std::vector<std::byte> contents,
+                                               const Comparator& comparator) {
+  return CreateImpl(std::move(contents), comparator, false);
+}
+
+Result<Block> Block::CreateImpl(std::vector<std::byte> contents, const Comparator& comparator,
+                                bool validate_key_order) {
   if (contents.size() < Fixed32Size) {
     return std::unexpected(Error::Corruption("block is too short"));
   }
@@ -112,7 +167,7 @@ Result<Block> Block::Create(std::vector<std::byte> contents, const Comparator& c
   }
   const std::size_t entries_end = contents.size() - Fixed32Size * (restart_count + 1);
   Block block(std::move(contents), comparator, entries_end, restart_count);
-  Status valid = block.Validate();
+  Status valid = validate_key_order ? block.Validate() : block.ValidateStructure();
   if (!valid.has_value()) {
     return std::unexpected(std::move(valid).error());
   }
@@ -131,48 +186,25 @@ Block::Block(std::vector<std::byte> contents, const Comparator& comparator, std:
 
 Status Block::Validate() const {
   const Layout& layout = layout_;
-  if (layout.RestartPoint(0) != 0) {
-    return std::unexpected(Error::Corruption("block restart points are invalid"));
-  }
   std::vector<std::byte> previous_key;
   std::vector<std::byte> key;
-  std::size_t restart_index = 0;
-  for (std::size_t offset = 0; offset < layout.entries_end;) {
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    read_diagnostics::Add(read_diagnostics::Counter::ValidationEntries);
-#endif
-    Entry entry{};
-    if (!DecodeEntry(layout.contents, offset, layout.entries_end, entry) ||
-        entry.shared > previous_key.size()) {
-      return std::unexpected(Error::Corruption("block entry is malformed"));
-    }
-    if (restart_index < layout.restart_count) {
-      const std::size_t restart = layout.RestartPoint(restart_index);
-      if (restart < offset || (restart == offset && entry.shared != 0)) {
-        return std::unexpected(Error::Corruption("block restart points are invalid"));
-      }
-      if (restart == offset) {
-        ++restart_index;
-      }
-    }
-
+  return ValidateEntries(layout.contents, layout.entries_end, layout.restart_count,
+                         [&](std::size_t offset, const Entry& entry) {
     const ByteView prefix = ByteView(previous_key).first(entry.shared);
     key.assign(prefix.begin(), prefix.end());
     key.insert(key.end(), entry.key_delta.begin(), entry.key_delta.end());
     if (offset != 0 && layout.comparator->Compare(previous_key, key) >= 0) {
-      return std::unexpected(Error::Corruption("block keys are not in increasing order"));
+      return false;
     }
     previous_key.swap(key);
-    offset = entry.end;
-  }
+    return true;
+  });
+}
 
-  // A block without entries has only the restart point at zero. Otherwise,
-  // every restart point must be the offset of an entry.
-  const std::size_t matched_restarts = layout.entries_end == 0 ? 1 : restart_index;
-  if (matched_restarts != layout.restart_count) {
-    return std::unexpected(Error::Corruption("block restart points are invalid"));
-  }
-  return {};
+Status Block::ValidateStructure() const {
+  const Layout& layout = layout_;
+  return ValidateEntries(layout.contents, layout.entries_end, layout.restart_count,
+                         [](std::size_t, const Entry&) { return true; });
 }
 
 Block::Iterator::Iterator(const Block& block) noexcept

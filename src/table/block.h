@@ -10,8 +10,9 @@
 
 namespace modern_leveldb {
 
-// An immutable sorted block whose structure and key order were validated when
-// it was created, so iteration cannot fail.
+// An immutable block whose structure was validated when it was created, so
+// iteration cannot fail. Its key order is either validated or a caller
+// invariant selected explicitly at creation.
 class Block final {
  private:
   // The validated structure of the contents. It views the contents buffer,
@@ -35,6 +36,12 @@ class Block final {
                                             const Comparator& comparator);
   static Result<Block> Create(std::vector<std::byte> contents,
                               const Comparator&& comparator) = delete;
+  // The caller guarantees strict key order. Structure is still fully
+  // validated before the trusted iterator decoder can use the block.
+  [[nodiscard]] static Result<Block> CreateWithTrustedKeyOrder(
+      std::vector<std::byte> contents, const Comparator& comparator);
+  static Result<Block> CreateWithTrustedKeyOrder(std::vector<std::byte> contents,
+                                                 const Comparator&& comparator) = delete;
 
   Block(const Block&) = delete;
   Block& operator=(const Block&) = delete;
@@ -50,7 +57,11 @@ class Block final {
   Block(std::vector<std::byte> contents, const Comparator& comparator, std::size_t entries_end,
         std::size_t restart_count) noexcept;
 
+  [[nodiscard]] static Result<Block> CreateImpl(std::vector<std::byte> contents,
+                                                const Comparator& comparator,
+                                                bool validate_key_order);
   [[nodiscard]] Status Validate() const;
+  [[nodiscard]] Status ValidateStructure() const;
 
   std::vector<std::byte> contents_;
   Layout layout_;

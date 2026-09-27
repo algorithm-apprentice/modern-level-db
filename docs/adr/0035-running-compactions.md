@@ -56,6 +56,10 @@ Adopt `VersionSet::MakeInputIterator`, `DBImpl::DoCompactionWork`,
   user key, because nothing older remains that it hides; the entries it
   shadowed in this compaction are dropped by the first rule. The check
   scans each deeper level once, since keys arrive in order.
+- The ordered-input premise is established by the internal table writer.
+  ADR-0049 stops rechecking data-block key order while loading compaction
+  inputs, so a checksum-consistent external table that violates the format's
+  ordering contract may also invalidate compaction keep/drop decisions.
 - Every other entry goes to the current output, which opens at the first
   such entry with a fresh file number. An output ends once its size reaches
   the target file size, and after the last entry.
