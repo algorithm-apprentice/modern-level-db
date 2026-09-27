@@ -255,6 +255,8 @@ Code, test, dependency, CMake, workflow, and mixed changes retain full CI;
 uncertain comparisons conservatively run it too. Pull requests consider their
 entire diff, not only the latest commit. Existing PR check names remain stable;
 push checks use a `push / ` prefix so their results cannot replace PR checks.
+On documentation-only runs, platform-labelled checks are acknowledgements on
+Ubuntu, not claims that platform builds or tests were executed.
 Scheduled/manual hardening campaigns are unchanged. See
 [ADR-0048](docs/adr/0048-documentation-only-ci.md) for event and failure semantics.
 Run the routing contracts locally with `python3 tests/tools/ci_changes_test.py`.
