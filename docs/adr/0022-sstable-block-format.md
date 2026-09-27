@@ -215,6 +215,8 @@ truncated even in a block larger than 4 GiB.
 [ADR-0046](0046-validated-block-decoding-experiment.md) evaluates removing
 redundant internal decoding checks after this validation, without weakening
 the construction boundary or changing accepted bytes.
+[ADR-0047](0047-inline-iterator-key-experiment.md) separately evaluates a
+private inline key buffer while preserving these iterator contracts.
 
 `Block` is move-constructible but neither copyable nor assignable. An
 iterator copies the validated layout of the block, which views the contents
