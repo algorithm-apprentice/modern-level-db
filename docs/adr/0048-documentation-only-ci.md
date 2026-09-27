@@ -135,6 +135,21 @@ The bounded design review identified the risk of same-name push checks
 satisfying full PR checks. The event-specific push names above resolve that
 finding while preserving the existing PR merge-gate identities.
 
+## Implementation verification
+
+The separately reviewed implementation, `197be5f` in PR #51, passed the
+16 local routing contracts, including real Git-history comparisons, in
+under half a second. A structural workflow comparison confirmed that the
+existing full-CI commands, matrices, timeouts, permissions, and artifact
+settings were preserved.
+
+Both real code-changing executions completed all 16 checks successfully:
+the new routing check plus the 15 existing expanded checks. The PR execution
+kept the original check names; the push execution used the distinct `push / `
+prefix throughout. A documentation-only follow-up must be classified
+independently for push, while the same revision's PR still contains the
+implementation and must run full CI.
+
 ## Scope
 
 Do not change test algorithms, split CMake tests out of the unit job, tune
