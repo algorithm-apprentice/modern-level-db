@@ -82,6 +82,14 @@ ownership, and runtime model.
 - Explain non-obvious contracts and invariants in comments; do not narrate
   straightforward code.
 
+For performance-sensitive internal loops, establish validity at explicit
+boundaries and rely on documented object/loop invariants afterward. Do not
+repeat recoverable-error checks for states those invariants exclude. Keep
+external-input and I/O failures explicit, and use debug assertions for proven
+internal preconditions. Any unchecked helper needs identified callers and a
+complete validity/lifetime argument; see
+[ADR-0046](adr/0046-validated-block-decoding-experiment.md).
+
 ## Review and changes
 
 Use behavior-oriented test names, as in

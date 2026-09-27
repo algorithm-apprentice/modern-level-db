@@ -212,6 +212,10 @@ comparator, which must outlive it, and its iterators use it. Offsets within a
 block are `std::size_t` and only restart values are 32-bit, so no offset is
 truncated even in a block larger than 4 GiB.
 
+[ADR-0046](0046-validated-block-decoding-experiment.md) evaluates removing
+redundant internal decoding checks after this validation, without weakening
+the construction boundary or changing accepted bytes.
+
 `Block` is move-constructible but neither copyable nor assignable. An
 iterator copies the validated layout of the block, which views the contents
 buffer; moving the block keeps that buffer and its iterators valid, and
