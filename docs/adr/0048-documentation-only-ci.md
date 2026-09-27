@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted design. Merge this design before its separate implementation.
+Accepted. Design-only PR #50 was reviewed and merged before implementation.
 
 ## Context
 
@@ -13,8 +13,9 @@ that deliberately precede implementation.
 
 GitHub documents that workflow-level path filters can leave required checks
 pending, while a skipped job reports a successful check. Job conditions are
-evaluated before matrix expansion, so skipping a matrix job is not a reliable
-way to retain each existing expanded check name.
+evaluated before matrix expansion. Real acceptance also found that a skipped
+job's dynamic name can remain an unevaluated expression, so job-level skipping
+is not a reliable way to retain the required event-specific check names.
 
 The change must reduce unnecessary work without weakening checks for code,
 test, dependency, or workflow changes, or changing branch-protection settings.
@@ -87,19 +88,19 @@ the exact output `true` permits skipping work. On a missing or failed
 classification result/output, full jobs still run unless the workflow was
 cancelled.
 
-- Non-matrix jobs keep their PR names and skip at job level for documentation.
-- `unit` and `performance` retain all existing matrix combinations and PR names.
-  For documentation only, each runs a short acknowledgement on Ubuntu and
-  skips checkout, dependency installation, configuration, builds, tests, and
-  artifact upload. No macOS or Windows worker is needed for these no-op checks.
+- Every existing job, including all `unit` and `performance` matrix
+  combinations, keeps its PR name. For documentation only, each runs a short
+  acknowledgement on Ubuntu and skips checkout, dependency installation,
+  configuration, builds, tests, and artifact upload. Starting these lightweight
+  jobs makes GitHub resolve their names; no macOS or Windows worker is needed.
 - With any other change, matrix runners, commands, timeouts, test coverage,
   artifact behavior, and all non-matrix gates stay as before.
 
-The lightweight `changes` check and matrix acknowledgements finish normally;
-other existing checks are explicitly skipped rather than absent because the
-whole workflow was filtered out. Push uses the same event-specific prefix
-for all checks, including `changes`. No new branch-protection requirements
-are installed by this change.
+The lightweight `changes` check and all check acknowledgements finish
+normally; expensive work is skipped at step level, not by filtering out the
+workflow or skipping a dynamically named job. Push uses the same event-specific
+prefix for all checks, including `changes`. No new branch-protection
+requirements are installed by this change.
 
 The weekly/manual `extended-hardening` workflow is unchanged. Its scheduled
 campaigns run independently of which files changed most recently, and its
@@ -134,6 +135,26 @@ separate implementation PR after this design, with bounded review.
 The bounded design review identified the risk of same-name push checks
 satisfying full PR checks. The event-specific push names above resolve that
 finding while preserving the existing PR merge-gate identities.
+
+## Implementation verification
+
+The separately reviewed implementation, `197be5f` in PR #51, passed the
+16 local routing contracts, including real Git-history comparisons, in
+under half a second. A structural workflow comparison confirmed that the
+existing full-CI commands, matrices, timeouts, permissions, and artifact
+settings were preserved.
+
+Both real code-changing executions completed all 16 checks successfully:
+the new routing check plus the 15 existing expanded checks. The PR execution
+kept the original check names; the push execution used the distinct `push / `
+prefix throughout. A documentation-only follow-up must be classified
+independently for push, while the same revision's PR still contains the
+implementation and must run full CI.
+
+The first docs-only push completed quickly but exposed GitHub's unevaluated
+names for skipped non-matrix jobs. It did not pass the check-identity
+acceptance. All jobs now use the same lightweight acknowledgement strategy
+to retain evaluated names; their heavy steps remain disabled for documentation.
 
 ## Scope
 
