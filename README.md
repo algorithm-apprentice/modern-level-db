@@ -248,6 +248,17 @@ explicitly justified `GCOVR_EXCL_*` marker excludes it. See
 [ADR-0019](docs/adr/0019-test-coverage-policy.md) for the policy and the local
 coverage commands.
 
+When every changed path is `README.md` or a Markdown file under `docs/`, CI
+runs only lightweight change-routing checks and matrix acknowledgements,
+skipping engine builds, tests, sanitizers, fuzzing, and benchmarks.
+Code, test, dependency, CMake, workflow, and mixed changes retain full CI;
+uncertain comparisons conservatively run it too. Pull requests consider their
+entire diff, not only the latest commit. Existing PR check names remain stable;
+push checks use a `push / ` prefix so their results cannot replace PR checks.
+Scheduled/manual hardening campaigns are unchanged. See
+[ADR-0048](docs/adr/0048-documentation-only-ci.md) for event and failure semantics.
+Run the routing contracts locally with `python3 tests/tools/ci_changes_test.py`.
+
 New or changed production behavior follows test-driven development: start with
 a focused failing unit test, implement the smallest correct change, and
 refactor while tests remain green. Configuration and documentation changes use

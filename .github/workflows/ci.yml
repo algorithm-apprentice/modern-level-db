@@ -8,7 +8,26 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: ${{ github.event_name == 'push' && 'push / changes' || 'changes' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check change-routing contracts
+        run: python3 tests/tools/ci_changes_test.py
+      - name: Classify changed paths
+        id: classify
+        run: python3 tools/ci_changes.py
+
   unit:
+    name: ${{ github.event_name == 'push' && 'push / unit' || 'unit' }} (${{ matrix.os }}, ${{ matrix.build_type }})
+    needs: changes
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -20,12 +39,19 @@ jobs:
           - Debug
           - Release
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true' && 'ubuntu-24.04' || matrix.os }}
+    env:
+      RUN_FULL_CI: ${{ needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true' }}
 
     steps:
+      - name: Acknowledge documentation-only change
+        if: env.RUN_FULL_CI == 'false'
+        run: echo "Documentation-only change; engine build and tests are not required."
       - uses: actions/checkout@v4
+        if: env.RUN_FULL_CI == 'true'
 
       - name: Configure
+        if: env.RUN_FULL_CI == 'true'
         run: >
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
@@ -33,12 +59,17 @@ jobs:
           -DMODERN_LEVELDB_WARNINGS_AS_ERRORS=ON
 
       - name: Build
+        if: env.RUN_FULL_CI == 'true'
         run: cmake --build build
 
       - name: Run tests
+        if: env.RUN_FULL_CI == 'true'
         run: ctest --test-dir build --output-on-failure
 
   crc32c-portable:
+    name: ${{ github.event_name == 'push' && 'push / crc32c-portable' || 'crc32c-portable' }}
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -59,6 +90,9 @@ jobs:
         run: ctest --test-dir build/crc32c-portable -R '^Crc32cTest\.' --output-on-failure
 
   coverage:
+    name: ${{ github.event_name == 'push' && 'push / coverage' || 'coverage' }}
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') }}
     runs-on: ubuntu-24.04
     env:
       CXX: g++-13
@@ -114,6 +148,9 @@ jobs:
             build/coverage/html/
 
   compatibility:
+    name: ${{ github.event_name == 'push' && 'push / compatibility' || 'compatibility' }}
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -134,6 +171,9 @@ jobs:
           path: build/compatibility/Testing/Temporary/
 
   fuzz:
+    name: ${{ github.event_name == 'push' && 'push / fuzz' || 'fuzz' }}
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -158,6 +198,9 @@ jobs:
             build/fuzz/Testing/Temporary/
 
   asan:
+    name: ${{ github.event_name == 'push' && 'push / asan' || 'asan' }}
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -179,6 +222,9 @@ jobs:
           path: build/asan/Testing/Temporary/
 
   tsan:
+    name: ${{ github.event_name == 'push' && 'push / tsan' || 'tsan' }}
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') }}
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
@@ -196,6 +242,9 @@ jobs:
           path: build/tsan/Testing/Temporary/
 
   benchmark:
+    name: ${{ github.event_name == 'push' && 'push / benchmark' || 'benchmark' }}
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -218,15 +267,25 @@ jobs:
             build/benchmarks/Testing/Temporary/
 
   performance:
+    name: ${{ github.event_name == 'push' && 'push / performance' || 'performance' }} (${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true' && 'ubuntu-24.04' || matrix.os }}
     timeout-minutes: 20
+    env:
+      RUN_FULL_CI: ${{ needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true' }}
     steps:
+      - name: Acknowledge documentation-only change
+        if: env.RUN_FULL_CI == 'false'
+        run: echo "Documentation-only change; profiling build and tests are not required."
       - uses: actions/checkout@v4
+        if: env.RUN_FULL_CI == 'true'
       - name: Configure optimized profiling harness
+        if: env.RUN_FULL_CI == 'true'
         shell: bash
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
@@ -235,11 +294,13 @@ jobs:
             cmake --preset profiling
           fi
       - name: Build profiling harness
+        if: env.RUN_FULL_CI == 'true'
         run: cmake --build --preset profiling --parallel 2
       - name: Run workload and report contracts
+        if: env.RUN_FULL_CI == 'true'
         run: ctest --preset profiling
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && env.RUN_FULL_CI == 'true'
         with:
           name: performance-${{ matrix.os }}
           path: |
