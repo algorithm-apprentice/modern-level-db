@@ -23,6 +23,9 @@
 #include <utility>
 #include <vector>
 
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+#include "engine/read_diagnostics.h"
+#endif
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
 #include "platform/file_system.h"
@@ -240,6 +243,11 @@ class PosixRandomAccessFile final : public RandomAccessFile {
     }
 
     const std::size_t request = MaximumIoSize(output.size());
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    read_diagnostics::StageScope read(read_diagnostics::Stage::RandomRead);
+    read_diagnostics::Add(read_diagnostics::Counter::RandomReadCalls);
+    read_diagnostics::Add(read_diagnostics::Counter::RandomReadRequestedBytes, request);
+#endif
     ssize_t result;
     do {
       result = ::pread(descriptor_, output.data(), request, *posix_offset);
@@ -247,6 +255,10 @@ class PosixRandomAccessFile final : public RandomAccessFile {
     if (result < 0) {
       return std::unexpected(FileError("positioned read", path_, errno));
     }
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    read_diagnostics::Add(read_diagnostics::Counter::RandomReadReturnedBytes,
+                          static_cast<std::size_t>(result));
+#endif
     return static_cast<std::size_t>(result);
   }
 

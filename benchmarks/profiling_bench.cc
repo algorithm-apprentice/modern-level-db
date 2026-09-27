@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <locale>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -29,6 +30,13 @@
 #include <os/signpost.h>
 #endif
 
+#if MODERN_LEVELDB_REFERENCE_PREAD_CONTROL
+#include "util/env_posix_test_helper.h"
+#endif
+
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+#include "engine/read_diagnostics.h"
+#endif
 #include "modern_leveldb/base/crc32c.h"
 #include "modern_leveldb/db.h"
 
@@ -40,6 +48,11 @@ constexpr std::array<std::string_view, 4> Workloads{"readrandom", "readmissing",
                                                     "seek_reuse"};
 constexpr std::array<std::size_t, 2> RecordCounts{4096, 65536};
 constexpr std::size_t ValueSize = 256;
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+constexpr std::size_t DiagnosticOperations = 4'194'304;
+constexpr std::uint64_t DiagnosticSampleSeed = 401;
+constexpr std::uint64_t DiagnosticSampleDenominator = 4'096;
+#endif
 
 struct Case {
   std::string name;
@@ -131,11 +144,14 @@ struct Arguments {
   std::string case_name;
   std::filesystem::path database;
   std::filesystem::path completion;
+  std::filesystem::path diagnostic_report;
+  std::string reference_file_access = "default";
   bool profile = false;
   bool list = false;
   bool help = false;
   bool smoke = false;
   bool check_mutations = false;
+  bool reference_file_access_set = false;
   std::vector<char*> framework;
 };
 
@@ -144,7 +160,8 @@ Arguments ParseArguments(int argc, char** argv) {
   args.framework.push_back(argv[0]);
   for (int index = 1; index < argc; ++index) {
     const std::string_view option = argv[index];
-    if (option == "--case" || option == "--database" || option == "--completion-report") {
+    if (option == "--case" || option == "--database" || option == "--completion-report" ||
+        option == "--diagnostic-report" || option == "--reference-file-access") {
       Require(index + 1 < argc, "performance option needs a value");
       const char* value = argv[++index];
       if (option == "--case") {
@@ -153,10 +170,18 @@ Arguments ParseArguments(int argc, char** argv) {
       } else if (option == "--database") {
         Require(args.database.empty(), "duplicate --database");
         args.database = value;
-      } else {
+      } else if (option == "--completion-report") {
         Require(args.completion.empty(), "duplicate --completion-report");
         args.completion = value;
+      } else if (option == "--diagnostic-report") {
+        Require(args.diagnostic_report.empty(), "duplicate --diagnostic-report");
+        args.diagnostic_report = value;
+      } else {
+        Require(!args.reference_file_access_set, "duplicate --reference-file-access");
+        args.reference_file_access = value;
+        args.reference_file_access_set = true;
       }
+
     } else if (option == "--profile-markers") {
       args.profile = true;
     } else if (option == "--list-cases") {
@@ -172,6 +197,67 @@ Arguments ParseArguments(int argc, char** argv) {
     }
   }
   return args;
+}
+
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+void WriteJsonString(std::ostream& output, std::string_view value) {
+  constexpr char Hex[] = "0123456789abcdef";
+  output << '"';
+  for (const char character : value) {
+    const auto byte = static_cast<unsigned char>(character);
+    switch (byte) {
+      case '"':
+        output << "\\\"";
+        break;
+      case '\\':
+        output << "\\\\";
+        break;
+      case '\b':
+        output << "\\b";
+        break;
+      case '\f':
+        output << "\\f";
+        break;
+      case '\n':
+        output << "\\n";
+        break;
+      case '\r':
+        output << "\\r";
+        break;
+      case '\t':
+        output << "\\t";
+        break;
+      default:
+        if (byte < 0x20U) {
+          output << "\\u00" << Hex[byte >> 4U] << Hex[byte & 0x0fU];
+        } else {
+          output << character;
+        }
+        break;
+    }
+  }
+  output << '"';
+}
+#endif
+
+void ConfigureReferenceFileAccess(const Case& selected, const Arguments& args) {
+  Require(args.reference_file_access == "default" || args.reference_file_access == "pread",
+          "--reference-file-access must be default or pread");
+  if (selected.engine != "leveldb") {
+    Require(!args.reference_file_access_set,
+            "--reference-file-access is valid only for LevelDB cases");
+    return;
+  }
+  if (args.reference_file_access == "default") {
+    return;
+  }
+  Require(selected.workload == "readrandom" || selected.workload == "readmissing",
+          "forced LevelDB pread control requires readrandom or readmissing");
+#if MODERN_LEVELDB_REFERENCE_PREAD_CONTROL
+  leveldb::EnvPosixTestHelper::SetReadOnlyMMapLimit(0);
+#else
+  Require(false, "forced LevelDB pread control is unavailable in this build");
+#endif
 }
 
 std::string Key(std::size_t number) {
@@ -518,6 +604,121 @@ class Fixture final {
     database_.reset();
   }
 
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  void RunDiagnostics() {
+    Require(selected_.workload == "readrandom" || selected_.workload == "readmissing",
+            "read diagnostics require readrandom or readmissing");
+    ResetCursor();
+    {
+      read_diagnostics::Session session(diagnostics_, DiagnosticSampleSeed,
+                                        DiagnosticSampleDenominator);
+      for (std::size_t operation = 0; operation < DiagnosticOperations; ++operation) {
+        Operation();
+      }
+    }
+  }
+
+  void WriteDiagnostics(const std::filesystem::path& path) const {
+    Require(!std::filesystem::exists(path) && !std::filesystem::is_symlink(path),
+            "diagnostic report must not already exist");
+    std::ofstream output(path);
+    output.imbue(std::locale::classic());
+    output << std::setprecision(17);
+    output << "{\"schema_version\":1,\"case\":";
+    WriteJsonString(output, selected_.name);
+    output << ",\"operations\":" << DiagnosticOperations
+           << ",\"sample_schedule\":\"splitmix64-v1\""
+           << ",\"sample_seed\":" << diagnostics_.sample_seed
+           << ",\"sample_denominator\":" << diagnostics_.sample_denominator
+           << ",\"sampled_gets\":" << diagnostics_.sampled_gets
+           << ",\"foreground_thread_only\":true"
+           << ",\"stage_durations_are_inclusive\":true"
+           << ",\"setup_warmup_and_verification_excluded\":true"
+           << ",\"preparations\":1"
+           << ",\"verifications\":" << verifications_ << ",\"cursor_resets\":" << cursor_resets_
+           << ",\"warmup_operations\":" << warmup_operations_;
+    constexpr std::array FingerprintNames{"record_crc32c", "insertion_crc32c", "present_crc32c",
+                                          "missing_crc32c"};
+    for (std::size_t index = 0; index < FingerprintNames.size(); ++index) {
+      output << ",\"" << FingerprintNames[index] << "\":\"" << std::hex << std::setfill('0')
+             << std::setw(8) << corpus_.fingerprints[index] << std::dec << '"';
+    }
+    output << ",\"counters\":{";
+    for (std::size_t index = 0; index < read_diagnostics::CounterNames.size(); ++index) {
+      if (index != 0) {
+        output << ',';
+      }
+      WriteJsonString(output, read_diagnostics::CounterNames[index]);
+      const std::uint64_t total = diagnostics_.counters[index];
+      output << ":{\"total\":" << total << ",\"per_get\":"
+             << static_cast<double>(total) / static_cast<double>(DiagnosticOperations) << '}';
+    }
+    output << "},\"stages\":{";
+    for (std::size_t index = 0; index < read_diagnostics::StageNames.size(); ++index) {
+      if (index != 0) {
+        output << ',';
+      }
+      WriteJsonString(output, read_diagnostics::StageNames[index]);
+      const read_diagnostics::StageTotal& total = diagnostics_.stages[index];
+      output << ":{\"events\":" << total.events << ",\"total_ns\":" << total.nanoseconds
+             << ",\"mean_ns\":"
+             << (total.events == 0
+                     ? 0.0
+                     : static_cast<double>(total.nanoseconds) / static_cast<double>(total.events))
+             << '}';
+    }
+    output << "},\"build\":{";
+    const std::array build{
+        std::pair{"source_directory", SourceDirectory},
+        std::pair{"build_directory", BuildDirectory},
+        std::pair{"configure_revision", ConfigureRevision},
+        std::pair{"configure_dirty", ConfigureDirty},
+        std::pair{"build_type", BuildType},
+        std::pair{"compiler", Compiler},
+        std::pair{"c_flags", CFlags},
+        std::pair{"cxx_flags", CxxFlags},
+        std::pair{"benchmark_requested_revision",
+                  std::string_view{"192ef10025eb2c4cdd392bc502f0c852196baa48"}},
+        std::pair{"benchmark_source_override", BenchmarkOverride},
+        std::pair{"reference_requested_revision",
+                  std::string_view{"7ee830d02b623e8ffe0b95d59a74db1e58da04c5"}},
+        std::pair{"reference_source_override", ReferenceOverride},
+        std::pair{"reference_hardware_crc", std::string_view{"disabled"}},
+        std::pair{"reference_file_access", std::string_view{"not_applicable"}},
+        std::pair{"reference_pread_control_available",
+                  std::string_view{MODERN_LEVELDB_REFERENCE_PREAD_CONTROL ? "true" : "false"}},
+        std::pair{"reference_control_patch_sha256", ReferenceControlPatchSha256},
+        std::pair{"snappy_target", SnappyTarget},
+        std::pair{"snappy_source", SnappySource},
+        std::pair{"snappy_source_override", SnappyOverride},
+        std::pair{"zstd_target", ZstdTarget},
+        std::pair{"zstd_source", ZstdSource},
+        std::pair{"zstd_source_override", ZstdOverride},
+        std::pair{"crc32c_target", Crc32cTarget},
+        std::pair{"crc32c_provider", Crc32cProvider},
+        std::pair{"crc32c_source", Crc32cSource},
+        std::pair{"crc32c_source_override", Crc32cOverride},
+        std::pair{"crc32c_requested_revision", Crc32cRequestedRevision},
+        std::pair{"crc32c_compiled_arm64", Crc32cArm64},
+        std::pair{"crc32c_compiled_sse42", Crc32cSse42},
+        std::pair{"profile_capture_supported",
+                  std::string_view{MODERN_LEVELDB_PROFILE_MARKERS ? "true" : "false"}},
+        std::pair{"read_diagnostics_compiled", std::string_view{"true"}},
+    };
+    for (std::size_t index = 0; index < build.size(); ++index) {
+      if (index != 0) {
+        output << ',';
+      }
+      WriteJsonString(output, build[index].first);
+      output << ':';
+      WriteJsonString(output, build[index].second);
+    }
+    output << "}}\n";
+    output.close();
+    Require(output.good(), "failed to write the diagnostic report");
+  }
+#endif
+
   void WriteCompletion(const std::filesystem::path& path, std::size_t invocations) const {
     Require(!std::filesystem::exists(path) && !std::filesystem::is_symlink(path),
             "completion report must not already exist");
@@ -610,6 +811,9 @@ class Fixture final {
   std::size_t scan_creations_ = 0;
   std::size_t scan_destructions_ = 0;
   std::size_t verifications_ = 0;
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::Snapshot diagnostics_;
+#endif
 };
 
 struct MutationData {
@@ -1033,7 +1237,7 @@ class StatusReporter final : public benchmark::ConsoleReporter {
   bool failed = false;
 };
 
-void AddContext(const Case& selected, bool smoke) {
+void AddContext(const Case& selected, const Arguments& args) {
   const auto add = [](std::string_view key, std::string_view value) {
     benchmark::AddCustomContext(std::string(key), std::string(value));
   };
@@ -1054,10 +1258,10 @@ void AddContext(const Case& selected, bool smoke) {
   add("timing", "wall_and_process_cpu");
   add("background_quiescence_forced", "false");
   if (IsMutable(selected)) {
-    const MutationSpec specification = MutationSpecification(selected, smoke);
+    const MutationSpec specification = MutationSpecification(selected, args.smoke);
     add("workload_family", "mutable");
     add("measurement_budget", "fixed");
-    add("mutation_smoke", smoke ? "true" : "false");
+    add("mutation_smoke", args.smoke ? "true" : "false");
     add("measured_sync", specification.kind == MutationKind::Sync ? "true" : "false");
     add("batch_size", std::to_string(specification.batch_size));
     add("background_completion", "not_drained");
@@ -1076,6 +1280,12 @@ void AddContext(const Case& selected, bool smoke) {
   add("reference_requested_revision", "7ee830d02b623e8ffe0b95d59a74db1e58da04c5");
   add("reference_source_override", ReferenceOverride);
   add("reference_hardware_crc", "disabled");
+  add("reference_file_access",
+      selected.engine == "leveldb" ? args.reference_file_access : "not_applicable");
+  add("reference_pread_control_available",
+      MODERN_LEVELDB_REFERENCE_PREAD_CONTROL ? "true" : "false");
+  add("reference_control_patch_sha256", ReferenceControlPatchSha256);
+  add("read_diagnostics_compiled", MODERN_LEVELDB_READ_DIAGNOSTICS ? "true" : "false");
   add("snappy_target", SnappyTarget);
   add("snappy_source", SnappySource);
   add("snappy_source_override", SnappyOverride);
@@ -1152,8 +1362,8 @@ int Main(int argc, char** argv) {
   Arguments args = ParseArguments(argc, argv);
   if (args.check_mutations) {
     Require(args.case_name.empty() && args.database.empty() && args.completion.empty() &&
-                !args.profile && !args.smoke && !args.list && !args.help &&
-                args.framework.size() == 1,
+                args.diagnostic_report.empty() && !args.profile && !args.smoke && !args.list &&
+                !args.help && !args.reference_file_access_set && args.framework.size() == 1,
             "--check-mutation-stream cannot combine with other options");
     CheckMutationStreams();
     return 0;
@@ -1164,15 +1374,39 @@ int Main(int argc, char** argv) {
   }
   if (args.help) {
     std::cout << "Usage: modern_leveldb_performance --case ENGINE/WORKLOAD/RECORDS "
-                 "--database NEW_PATH --completion-report NEW_FILE [benchmark flags]\n"
+                 "--database NEW_PATH --completion-report NEW_FILE "
+                 "[--reference-file-access default|pread] [benchmark flags]\n"
                  "Use --list-cases to list supported cases. --profile-markers requires macOS "
                  "Apple Clang. Mutable cases use fixed work and one repetition; --smoke "
                  "reduces them to one iteration. --check-mutation-stream checks their dispatcher "
                  "without a database. The runner owns and removes the database directory.\n";
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    std::cout << "This diagnostic build also accepts --diagnostic-report NEW_FILE for an exact "
+                 "4,194,304-operation modern readrandom/readmissing run without benchmark "
+                 "framework flags.\n";
+#endif
     benchmark::PrintDefaultHelp();
     return 0;
   }
   const Case selected = FindCase(args.case_name);
+  ConfigureReferenceFileAccess(selected, args);
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  if (!args.diagnostic_report.empty()) {
+    Require(selected.engine == "modern" &&
+                (selected.workload == "readrandom" || selected.workload == "readmissing"),
+            "read diagnostics require a Modern readrandom or readmissing case");
+    Require(args.completion.empty() && !args.profile && !args.smoke && args.framework.size() == 1,
+            "read diagnostics cannot combine with benchmark or completion options");
+    Require(!args.database.empty(), "--database is required");
+    Fixture<Modern> fixture(selected, args.database);
+    fixture.RunDiagnostics();
+    fixture.Finish();
+    fixture.WriteDiagnostics(args.diagnostic_report);
+    return 0;
+  }
+#else
+  Require(args.diagnostic_report.empty(), "read diagnostics require the diagnostic executable");
+#endif
   Require(!args.smoke || (IsMutable(selected) && !args.profile),
           "--smoke requires a mutable case without profile markers");
   Require(!args.database.empty() && !args.completion.empty(),
@@ -1186,7 +1420,7 @@ int Main(int argc, char** argv) {
   Require(!benchmark::ReportUnrecognizedArguments(framework_argc, args.framework.data()),
           "unrecognized benchmark argument");
   Require(benchmark::GetBenchmarkVersion() == "v1.9.5", "unexpected Google Benchmark version");
-  AddContext(selected, args.smoke);
+  AddContext(selected, args);
   if (IsMutable(selected)) {
     if (selected.engine == "modern") {
       return RunCase<Modern, true>(selected, args);

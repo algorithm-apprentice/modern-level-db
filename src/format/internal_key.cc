@@ -11,6 +11,9 @@
 #include <utility>
 #include <vector>
 
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+#include "engine/read_diagnostics.h"
+#endif
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/comparator.h"
@@ -205,6 +208,9 @@ ByteView InternalKey::user_key() const noexcept {
 }
 
 int InternalKeyComparator::Compare(ByteView left, ByteView right) const noexcept {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::Add(read_diagnostics::Counter::InternalKeyComparisons);
+#endif
   DecodedInternalKey left_key;
   DecodedInternalKey right_key;
   const bool left_valid = TryDecodeInternalKey(left, left_key);

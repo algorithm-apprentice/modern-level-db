@@ -9,6 +9,9 @@
 #include <optional>
 #include <utility>
 
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+#include "engine/read_diagnostics.h"
+#endif
 #include "metadata/filenames.h"
 #include "modern_leveldb/base/coding.h"
 
@@ -33,11 +36,20 @@ TableCache::TableCache(FileSystem& file_system, std::filesystem::path directory,
       tables_(capacity) {}
 
 Result<TableCache::Handle> TableCache::Find(std::uint64_t file_number, std::uint64_t file_size) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::StageScope lookup(read_diagnostics::Stage::TableCacheLookup);
+#endif
   const auto key = CacheKey(file_number);
   std::optional<Handle> cached = tables_.Lookup(key);
   if (cached.has_value()) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    read_diagnostics::Add(read_diagnostics::Counter::TableCacheHits);
+#endif
     return std::move(*cached);
   }
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::Add(read_diagnostics::Counter::TableCacheMisses);
+#endif
 
   Result<std::unique_ptr<RandomAccessFile>> file =
       file_system_->OpenRandomAccess(TableFileName(directory_, file_number));

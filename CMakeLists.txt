@@ -32,9 +32,8 @@ modern_leveldb_compression_dependencies(
 )
 modern_leveldb_crc32c_dependency(MODERN_LEVELDB_CRC32C_TARGET)
 
-add_library(
-  modern_leveldb
-  STATIC
+set(
+  MODERN_LEVELDB_LIBRARY_SOURCES
     src/api/database.cc
     src/api/iterator.cc
     src/api/snapshot.cc
@@ -51,6 +50,7 @@ add_library(
     src/engine/flush.cc
     src/engine/iterators.cc
     src/engine/lookup.cc
+    src/engine/read_diagnostics.cc
     src/engine/recovery.cc
     src/engine/seek_statistics.cc
     src/engine/table_cache.cc
@@ -76,34 +76,48 @@ add_library(
     src/table/table_builder.cc
     src/wal/wal_io.cc
 )
-if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_sources(
-    modern_leveldb
+
+function(modern_leveldb_add_library target)
+  add_library("${target}" STATIC ${MODERN_LEVELDB_LIBRARY_SOURCES})
+  if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(
+      "${target}"
+      PRIVATE
+        src/platform/posix_file_system.cc
+    )
+    target_compile_definitions("${target}" PRIVATE MODERN_LEVELDB_HAVE_POSIX_FILE_SYSTEM)
+  endif()
+  target_compile_features("${target}" PUBLIC cxx_std_23)
+  target_include_directories(
+    "${target}"
+    PUBLIC
+      "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
+      "$<INSTALL_INTERFACE:include>"
     PRIVATE
-      src/platform/posix_file_system.cc
+      "${PROJECT_SOURCE_DIR}/src"
   )
-  target_compile_definitions(modern_leveldb PRIVATE MODERN_LEVELDB_HAVE_POSIX_FILE_SYSTEM)
-endif()
+  target_link_libraries(
+    "${target}"
+    PUBLIC Threads::Threads
+    PRIVATE
+      "${MODERN_LEVELDB_SNAPPY_TARGET}"
+      "${MODERN_LEVELDB_ZSTD_TARGET}"
+      "${MODERN_LEVELDB_CRC32C_TARGET}"
+  )
+  modern_leveldb_set_project_warnings("${target}" PRIVATE)
+endfunction()
+
+modern_leveldb_add_library(modern_leveldb)
+target_compile_definitions(modern_leveldb PRIVATE MODERN_LEVELDB_READ_DIAGNOSTICS=0)
 add_library(modern_leveldb::modern_leveldb ALIAS modern_leveldb)
 
-target_compile_features(modern_leveldb PUBLIC cxx_std_23)
-target_include_directories(
-  modern_leveldb
-  PUBLIC
-    "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
-    "$<INSTALL_INTERFACE:include>"
-  PRIVATE
-    "${PROJECT_SOURCE_DIR}/src"
-)
-target_link_libraries(
-  modern_leveldb
-  PUBLIC Threads::Threads
-  PRIVATE
-    "${MODERN_LEVELDB_SNAPPY_TARGET}"
-    "${MODERN_LEVELDB_ZSTD_TARGET}"
-    "${MODERN_LEVELDB_CRC32C_TARGET}"
-)
-modern_leveldb_set_project_warnings(modern_leveldb PRIVATE)
+if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
+  # Keep the ordinary throughput binary free of read-path instrumentation.
+  modern_leveldb_add_library(modern_leveldb_read_diagnostic)
+  target_compile_definitions(
+    modern_leveldb_read_diagnostic PUBLIC MODERN_LEVELDB_READ_DIAGNOSTICS=1
+  )
+endif()
 
 if(MODERN_LEVELDB_BUILD_TESTS)
   include(CTest)

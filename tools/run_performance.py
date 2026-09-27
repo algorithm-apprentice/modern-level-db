@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one ADR-0042 workload, preserving native results and explicit provenance."""
+"""Run one performance or read-diagnostic workload with explicit provenance."""
 
 import argparse
 import hashlib
@@ -33,6 +33,30 @@ MUTATION_CASES = tuple(
     for workload, specification in MUTATIONS.items()
 )
 CASES = READ_CASES + MUTATION_CASES
+READ_DIAGNOSTIC_CASES = tuple(
+    f"modern/{workload}/{records}"
+    for workload in ("readrandom", "readmissing")
+    for records in (4096, 65536)
+)
+READ_DIAGNOSTIC_OPERATIONS = 4_194_304
+READ_DIAGNOSTIC_SAMPLE_SEED = 401
+READ_DIAGNOSTIC_SAMPLE_DENOMINATOR = 4_096
+READ_DIAGNOSTIC_SAMPLES = 991
+READ_DIAGNOSTIC_SAMPLE_SCHEDULE = "splitmix64-v1"
+READ_DIAGNOSTIC_COUNTERS = (
+    "gets", "mutable_hits", "immutable_hits", "sstable_hits", "deletions", "misses",
+    "level0_candidates", "deeper_candidates", "files_searched", "table_cache_hits",
+    "table_cache_misses", "block_cache_hits", "block_cache_misses", "random_read_calls",
+    "random_read_requested_bytes", "random_read_returned_bytes", "stored_blocks",
+    "stored_block_bytes", "decoded_blocks", "decoded_block_bytes", "decompressed_blocks",
+    "validation_entries", "restart_entries_decoded", "index_entries_decoded",
+    "data_entries_decoded", "internal_key_comparisons", "result_bytes",
+)
+READ_DIAGNOSTIC_STAGES = (
+    "get", "candidate_selection", "table_cache_lookup", "block_cache_lookup",
+    "random_read", "stored_block_decode", "block_construction", "index_seek",
+    "data_seek", "result_copy",
+)
 FINGERPRINTS = {
     4096: ("e966aa2f", "387c287f", "c3e3b3de", "7883c9b4"),
     65536: ("3fbabb34", "347ed266", "2422abad", "8ee790ec"),
@@ -64,8 +88,14 @@ def mutation_specification(case, smoke=False):
     return specification
 
 
-def validate_benchmark(report, case, repetitions, smoke=False):
+def validate_benchmark(report, case, repetitions, smoke=False, reference_file_access="default"):
     engine, workload, records = case_parts(case)
+    if reference_file_access not in ("default", "pread"):
+        raise ValueError("unknown reference file access mode")
+    if engine != "leveldb" and reference_file_access != "default":
+        raise ValueError("reference file access mode requires a LevelDB case")
+    if reference_file_access == "pread" and workload not in ("readrandom", "readmissing"):
+        raise ValueError("forced pread control requires a LevelDB point-read case")
     if not isinstance(report, dict) or not isinstance(report.get("context"), dict):
         raise ValueError("missing Google Benchmark context")
     context = report["context"]
@@ -75,8 +105,18 @@ def validate_benchmark(report, case, repetitions, smoke=False):
             or context["json_schema_version"] != 1
             or context.get("profile_case") != case
             or context.get("timing") != "wall_and_process_cpu"
-            or context.get("build_type") != "Release"):
+            or context.get("build_type") != "Release"
+            or context.get("read_diagnostics_compiled") != "false"
+            or context.get("reference_file_access")
+               != (reference_file_access if engine == "leveldb" else "not_applicable")):
         raise ValueError("incorrect benchmark version, case, timing mode, or build type")
+    if (context.get("reference_pread_control_available") not in ("true", "false")
+            or not isinstance(context.get("reference_control_patch_sha256"), str)):
+        raise ValueError("invalid reference file-access provenance")
+    if reference_file_access == "pread":
+        patch = context["reference_control_patch_sha256"]
+        if context["reference_pread_control_available"] != "true" or len(patch) != 64:
+            raise ValueError("forced pread control is unavailable or unverified")
     if mutation:
         expected_context = {
             "engine": engine, "workload": workload, "records": str(records),
@@ -231,6 +271,161 @@ def validate_mutation_completion(report, case, specification, smoke):
     return report
 
 
+def validate_read_diagnostics(report, case):
+    if case not in READ_DIAGNOSTIC_CASES:
+        raise ValueError("unsupported read diagnostic case")
+    _, workload, records = case_parts(case)
+    fields = {
+        "schema_version", "case", "operations", "sample_schedule", "sample_seed",
+        "sample_denominator", "sampled_gets", "foreground_thread_only",
+        "stage_durations_are_inclusive", "setup_warmup_and_verification_excluded",
+        "preparations", "verifications", "cursor_resets", "warmup_operations",
+        "record_crc32c", "insertion_crc32c", "present_crc32c", "missing_crc32c",
+        "counters", "stages", "build",
+    }
+    if not isinstance(report, dict) or set(report) != fields:
+        raise ValueError("invalid read diagnostic schema")
+    expected = {
+        "schema_version": 1,
+        "case": case,
+        "operations": READ_DIAGNOSTIC_OPERATIONS,
+        "sample_schedule": READ_DIAGNOSTIC_SAMPLE_SCHEDULE,
+        "sample_seed": READ_DIAGNOSTIC_SAMPLE_SEED,
+        "sample_denominator": READ_DIAGNOSTIC_SAMPLE_DENOMINATOR,
+        "foreground_thread_only": True,
+        "stage_durations_are_inclusive": True,
+        "setup_warmup_and_verification_excluded": True,
+        "preparations": 1,
+        "verifications": 2,
+        "cursor_resets": 1,
+        "warmup_operations": records - (workload == "readmissing"),
+    }
+    for field, value in expected.items():
+        if type(report[field]) is not type(value) or report[field] != value:
+            raise ValueError(f"incorrect read diagnostic field: {field}")
+    if report["sampled_gets"] != READ_DIAGNOSTIC_SAMPLES:
+        raise ValueError("invalid sampled Get count")
+    for field, value in zip(
+        ("record_crc32c", "insertion_crc32c", "present_crc32c", "missing_crc32c"),
+        FINGERPRINTS[records],
+    ):
+        if report[field] != value:
+            raise ValueError(f"canonical corpus drift: {field}")
+
+    counters = report["counters"]
+    if not isinstance(counters, dict) or set(counters) != set(READ_DIAGNOSTIC_COUNTERS):
+        raise ValueError("invalid read diagnostic counters")
+    totals = {}
+    for name in READ_DIAGNOSTIC_COUNTERS:
+        counter = counters[name]
+        if not isinstance(counter, dict) or set(counter) != {"total", "per_get"}:
+            raise ValueError(f"invalid read diagnostic counter: {name}")
+        total = counter["total"]
+        per_get = counter["per_get"]
+        if not integer(total, 0) or not number(per_get):
+            raise ValueError(f"invalid read diagnostic counter value: {name}")
+        if not math.isclose(
+            per_get, total / READ_DIAGNOSTIC_OPERATIONS, rel_tol=1e-12, abs_tol=1e-12
+        ):
+            raise ValueError(f"incorrect normalized read diagnostic counter: {name}")
+        totals[name] = total
+    if totals["gets"] != READ_DIAGNOSTIC_OPERATIONS:
+        raise ValueError("read diagnostic Get count changed")
+    if (totals["mutable_hits"] + totals["immutable_hits"] + totals["sstable_hits"]
+            + totals["misses"] != READ_DIAGNOSTIC_OPERATIONS):
+        raise ValueError("read diagnostic outcomes do not cover every Get")
+    if totals["table_cache_hits"] + totals["table_cache_misses"] != totals["files_searched"]:
+        raise ValueError("table cache outcomes do not match searched files")
+    if totals["table_cache_misses"] != 0:
+        raise ValueError("post-warmup diagnostics unexpectedly reopened a table")
+    block_lookups = totals["block_cache_hits"] + totals["block_cache_misses"]
+    if block_lookups > totals["files_searched"]:
+        raise ValueError("block cache lookups exceed searched files")
+    if totals["stored_blocks"] != totals["block_cache_misses"]:
+        raise ValueError("stored block reads do not match block cache misses")
+    if totals["decoded_blocks"] != totals["stored_blocks"]:
+        raise ValueError("decoded block count does not match stored block count")
+    if totals["random_read_calls"] < totals["stored_blocks"]:
+        raise ValueError("stored blocks have no corresponding random reads")
+    if totals["random_read_returned_bytes"] > totals["random_read_requested_bytes"]:
+        raise ValueError("random reads returned more bytes than requested")
+    if totals["random_read_returned_bytes"] < totals["stored_block_bytes"]:
+        raise ValueError("stored block bytes exceed completed random reads")
+    if totals["validation_entries"] < totals["decoded_blocks"]:
+        raise ValueError("decoded blocks have no validated entries")
+    if totals["files_searched"] < totals["sstable_hits"]:
+        raise ValueError("SSTable hits exceed searched files")
+    if totals["index_entries_decoded"] < totals["files_searched"]:
+        raise ValueError("searched files have no index decode work")
+    if totals["data_entries_decoded"] < block_lookups:
+        raise ValueError("data-block lookups have no decoded entries")
+    decoded_entries = totals["index_entries_decoded"] + totals["data_entries_decoded"]
+    if (totals["restart_entries_decoded"] == 0
+            or totals["restart_entries_decoded"] > decoded_entries):
+        raise ValueError("restart-point decode accounting is inconsistent")
+    if totals["internal_key_comparisons"] < decoded_entries:
+        raise ValueError("internal-key comparisons undercount decoded entries")
+    if workload == "readrandom":
+        if totals["sstable_hits"] != READ_DIAGNOSTIC_OPERATIONS or totals["misses"] != 0:
+            raise ValueError("present-read diagnostic outcomes changed")
+        if totals["result_bytes"] != READ_DIAGNOSTIC_OPERATIONS * 256:
+            raise ValueError("present-read diagnostic result bytes changed")
+    elif (totals["sstable_hits"] != 0 or totals["misses"] != READ_DIAGNOSTIC_OPERATIONS
+          or totals["result_bytes"] != 0):
+        raise ValueError("missing-read diagnostic outcomes changed")
+
+    stages = report["stages"]
+    if not isinstance(stages, dict) or set(stages) != set(READ_DIAGNOSTIC_STAGES):
+        raise ValueError("invalid read diagnostic stages")
+    for name in READ_DIAGNOSTIC_STAGES:
+        stage = stages[name]
+        if not isinstance(stage, dict) or set(stage) != {"events", "total_ns", "mean_ns"}:
+            raise ValueError(f"invalid read diagnostic stage: {name}")
+        events = stage["events"]
+        total = stage["total_ns"]
+        mean = stage["mean_ns"]
+        if not integer(events, 0) or not integer(total, 0) or not number(mean):
+            raise ValueError(f"invalid read diagnostic stage value: {name}")
+        if events == 0 and (total != 0 or mean != 0):
+            raise ValueError(f"empty read diagnostic stage has timing data: {name}")
+        expected_mean = 0 if events == 0 else total / events
+        if not math.isclose(mean, expected_mean, rel_tol=1e-12, abs_tol=1e-12):
+            raise ValueError(f"incorrect read diagnostic stage mean: {name}")
+    if stages["get"]["events"] != report["sampled_gets"]:
+        raise ValueError("sampled Get count does not match Get timing events")
+    if stages["candidate_selection"]["events"] != report["sampled_gets"]:
+        raise ValueError("sampled Get count does not match candidate-selection events")
+    if stages["table_cache_lookup"]["events"] != stages["index_seek"]["events"]:
+        raise ValueError("sampled table-cache and index-seek events disagree")
+    if stages["block_cache_lookup"]["events"] != stages["data_seek"]["events"]:
+        raise ValueError("sampled block-cache and data-seek events disagree")
+    if stages["table_cache_lookup"]["events"] < stages["block_cache_lookup"]["events"]:
+        raise ValueError("sampled block-cache lookups exceed table-cache lookups")
+    if workload == "readrandom":
+        for name in ("table_cache_lookup", "block_cache_lookup", "index_seek", "data_seek"):
+            if stages[name]["events"] < report["sampled_gets"]:
+                raise ValueError(f"sampled present Gets have no {name} events")
+    expected_copies = report["sampled_gets"] if workload == "readrandom" else 0
+    if stages["result_copy"]["events"] != expected_copies:
+        raise ValueError("sampled result-copy events changed")
+    if records == 65536:
+        for counter in ("block_cache_misses", "random_read_calls", "stored_blocks"):
+            if totals[counter] == 0:
+                raise ValueError(f"cache-pressure diagnostic has no {counter}")
+        for stage in ("random_read", "stored_block_decode", "block_construction"):
+            if stages[stage]["events"] == 0:
+                raise ValueError(f"cache-pressure diagnostic has no {stage} samples")
+    build = report["build"]
+    if not isinstance(build, dict):
+        raise ValueError("missing read diagnostic build provenance")
+    validate_build_context(build)
+    if (build.get("build_type") != "Release"
+            or build.get("reference_file_access") != "not_applicable"
+            or build.get("read_diagnostics_compiled") != "true"):
+        raise ValueError("report did not come from a read diagnostic build")
+    return report
+
+
 def reject_duplicate_keys(pairs):
     result = {}
     for key, value in pairs:
@@ -276,15 +471,23 @@ def source_state(source):
 def validate_build_context(context):
     required = (
         "source_directory", "build_directory", "configure_revision", "configure_dirty",
-        "compiler", "c_flags", "cxx_flags", "benchmark_requested_revision", "benchmark_source_override",
+        "build_type", "compiler", "c_flags", "cxx_flags", "benchmark_requested_revision",
+        "benchmark_source_override",
         "reference_requested_revision", "reference_source_override",
+        "reference_file_access", "reference_pread_control_available",
+        "reference_control_patch_sha256", "read_diagnostics_compiled",
         "snappy_target", "snappy_source", "snappy_source_override",
         "zstd_target", "zstd_source", "zstd_source_override", "profile_capture_supported",
     )
     if any(not isinstance(context.get(key), str) for key in required):
         raise ValueError("benchmark build provenance is incomplete")
-    if (context["configure_dirty"] not in ("true", "false", "unknown")
-            or context["profile_capture_supported"] not in ("true", "false")):
+    if (context["build_type"] != "Release"
+            or context["configure_dirty"] not in ("true", "false", "unknown")
+            or context["profile_capture_supported"] not in ("true", "false")
+            or context["reference_pread_control_available"] not in ("true", "false")
+            or context["read_diagnostics_compiled"] not in ("true", "false")
+            or context["reference_file_access"] not in ("default", "pread", "not_applicable")
+            or len(context["reference_control_patch_sha256"]) != 64):
         raise ValueError("invalid build provenance flags")
     flags = context["c_flags"] + " " + context["cxx_flags"]
     if any(flag in flags for flag in ("--coverage", "-fprofile", "-fsanitize")):
@@ -314,8 +517,14 @@ def record_diagnostics(manifest, output):
 
 
 def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=None,
-             min_time=None, timeout=None):
-    case_parts(case)
+             min_time=None, timeout=None, reference_file_access="default"):
+    engine, workload, _ = case_parts(case)
+    if reference_file_access not in ("default", "pread"):
+        raise ValueError("unknown reference file access mode")
+    if engine != "leveldb" and reference_file_access != "default":
+        raise ValueError("reference file access mode requires a LevelDB case")
+    if reference_file_access == "pread" and workload not in ("readrandom", "readmissing"):
+        raise ValueError("forced pread control requires a LevelDB point-read case")
     mutation = mutation_specification(case, smoke)
     if mutation:
         if repetitions is not None and (not integer(repetitions) or repetitions != 1):
@@ -356,6 +565,9 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
         "python_version": platform.python_version(),
         "commands": [],
         "artifacts": {"raw_benchmark": "benchmark.json", "completion": "completion.json"},
+        "reference_file_access": (
+            reference_file_access if engine == "leveldb" else "not_applicable"
+        ),
         "recording_timings_are_not_speedup_evidence": capture_cpu,
     }
     manifest_path = output / "manifest.json"
@@ -372,6 +584,8 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
         f"--benchmark_out={output / 'benchmark.json'}", "--benchmark_out_format=json",
         "--benchmark_color=false",
     ]
+    if engine == "leveldb":
+        command.extend(["--reference-file-access", reference_file_access])
     if mutation and smoke:
         command.append("--smoke")
     started = time.monotonic()
@@ -393,7 +607,10 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
                 [str(binary), *command], output / "benchmark.log", timeout, manifest["commands"]
             )
         raw = read_json(output / "benchmark.json")
-        manifest["measurement"] = validate_benchmark(raw, case, repetitions, smoke=smoke)
+        manifest["measurement"] = validate_benchmark(
+            raw, case, repetitions, smoke=smoke,
+            reference_file_access=reference_file_access,
+        )
         manifest["completion"] = validate_completion(read_json(output / "completion.json"), case,
                                                      smoke=smoke)
         context = raw["context"]
@@ -452,6 +669,91 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
     return manifest
 
 
+def run_read_diagnostics(binary, case, output, timeout=300.0):
+    if case not in READ_DIAGNOSTIC_CASES:
+        raise ValueError("unsupported read diagnostic case")
+    if not number(timeout) or timeout <= 0:
+        raise ValueError("timeout must be positive and finite")
+    binary = Path(binary).resolve(strict=True)
+    output = Path(output).absolute()
+    if not binary.is_file():
+        raise ValueError("diagnostic binary is not a file")
+    output.mkdir(parents=True, exist_ok=False)
+    output = output.resolve()
+    work = output / "work"
+    work.mkdir()
+    manifest = {
+        "schema_version": 1,
+        "case": case,
+        "mode": "read_diagnostics",
+        "status": "running",
+        "executable_sha256": file_digest(binary),
+        "original_executable": str(binary),
+        "host_platform": platform.platform(),
+        "python_version": platform.python_version(),
+        "commands": [],
+        "artifacts": {"read_diagnostics": "read-diagnostics.json"},
+        "recording_timings_are_not_speedup_evidence": True,
+    }
+    manifest_path = output / "manifest.json"
+    write_json(manifest_path, manifest)
+    command = [
+        str(binary), "--case", case, "--database", str(work / "db"),
+        "--diagnostic-report", str(output / "read-diagnostics.json"),
+    ]
+    started = time.monotonic()
+    try:
+        profile_report.run_owned(
+            command, output / "diagnostics.log", timeout, manifest["commands"]
+        )
+        report = validate_read_diagnostics(
+            read_json(output / "read-diagnostics.json"), case
+        )
+        manifest["diagnostics"] = report
+        manifest["build"] = report["build"]
+        source = Path(report["build"]["source_directory"])
+        manifest["runtime_source"] = source_state(source)
+        manifest["configure_revision_matches_runtime"] = (
+            manifest["runtime_source"].get("revision")
+            == report["build"].get("configure_revision")
+        )
+        compile_commands = Path(report["build"]["build_directory"]) / "compile_commands.json"
+        if compile_commands.is_file():
+            shutil.copy2(compile_commands, output / "compile_commands.json")
+            manifest["artifacts"]["compile_commands"] = "compile_commands.json"
+            manifest["compile_commands_sha256"] = file_digest(output / "compile_commands.json")
+        else:
+            manifest["compile_commands_unavailable"] = True
+        manifest["status"] = "complete"
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        manifest["status"] = "failed"
+        manifest["error"] = str(error)
+        raise
+    except KeyboardInterrupt:
+        manifest["status"] = "cancelled"
+        manifest["error"] = "interrupted by user"
+        raise
+    finally:
+        manifest["elapsed_seconds"] = time.monotonic() - started
+        cleanup_verified = all(item["cleanup_verified"] for item in manifest["commands"])
+        manifest["process_cleanup_verified"] = cleanup_verified
+        try:
+            record_diagnostics(manifest, output)
+            if cleanup_verified:
+                if work.is_symlink() or work.resolve().parent != output:
+                    raise RuntimeError("scratch ownership changed; refusing cleanup")
+                shutil.rmtree(work)
+            else:
+                manifest["scratch_retained"] = "work"
+        except (OSError, RuntimeError, ValueError) as error:
+            manifest["status"] = "failed"
+            manifest["cleanup_error"] = str(error)
+            raise
+        finally:
+            write_json(manifest_path, manifest)
+    return manifest
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
@@ -462,20 +764,37 @@ def main():
     parser.add_argument("--repetitions", type=int)
     parser.add_argument("--min-time", type=float)
     parser.add_argument("--timeout", type=float)
+    parser.add_argument("--reference-file-access", choices=("default", "pread"),
+                        default="default")
+    parser.add_argument("--read-diagnostics", action="store_true")
     args = parser.parse_args()
     try:
-        result = run_case(
-            args.binary, args.case, args.output, args.capture_cpu, args.smoke,
-            args.repetitions, args.min_time, args.timeout,
-        )
+        if args.read_diagnostics:
+            if (args.capture_cpu or args.smoke or args.repetitions is not None
+                    or args.min_time is not None or args.reference_file_access != "default"):
+                raise ValueError("read diagnostics cannot combine with benchmark options")
+            result = run_read_diagnostics(
+                args.binary, args.case, args.output,
+                args.timeout if args.timeout is not None else 300.0,
+            )
+        else:
+            result = run_case(
+                args.binary, args.case, args.output, args.capture_cpu, args.smoke,
+                args.repetitions, args.min_time, args.timeout, args.reference_file_access,
+            )
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, ET.ParseError) as error:
         print(f"performance run failed: {error}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         print("performance run cancelled; see preserved artifacts", file=sys.stderr)
         return 130
-    print(json.dumps({"case": result["case"], "mode": result["mode"],
-                      "measurement": result["measurement"], "artifacts": str(args.output)}))
+    summary = {"case": result["case"], "mode": result["mode"], "artifacts": str(args.output)}
+    if result["mode"] == "read_diagnostics":
+        summary["operations"] = result["diagnostics"]["operations"]
+        summary["sampled_gets"] = result["diagnostics"]["sampled_gets"]
+    else:
+        summary["measurement"] = result["measurement"]
+    print(json.dumps(summary))
     return 0
 
 

@@ -9,13 +9,32 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
-from run_performance import CASES, read_json, record_diagnostics, run_case, validate_benchmark, validate_completion
+from run_performance import (
+    CASES,
+    FINGERPRINTS,
+    READ_DIAGNOSTIC_COUNTERS,
+    READ_DIAGNOSTIC_OPERATIONS,
+    READ_DIAGNOSTIC_SAMPLE_DENOMINATOR,
+    READ_DIAGNOSTIC_SAMPLE_SCHEDULE,
+    READ_DIAGNOSTIC_SAMPLE_SEED,
+    READ_DIAGNOSTIC_SAMPLES,
+    READ_DIAGNOSTIC_STAGES,
+    read_json,
+    record_diagnostics,
+    run_case,
+    run_read_diagnostics,
+    validate_benchmark,
+    validate_completion,
+    validate_read_diagnostics,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = None
+REFERENCE_PREAD_CONTROL = None
 
 
 def report(case="modern/readrandom/4096", repetitions=3):
+    engine = case.split("/", 1)[0]
     return {
         "context": {
             "library_version": "v1.9.5",
@@ -23,6 +42,10 @@ def report(case="modern/readrandom/4096", repetitions=3):
             "profile_case": case,
             "build_type": "Release",
             "timing": "wall_and_process_cpu",
+            "reference_file_access": "default" if engine == "leveldb" else "not_applicable",
+            "reference_pread_control_available": "true",
+            "reference_control_patch_sha256": "a" * 64,
+            "read_diagnostics_compiled": "false",
         },
         "benchmarks": [
             {
@@ -63,6 +86,155 @@ def completion(case="modern/readrandom/4096"):
     }
 
 
+def diagnostic_report(case="modern/readrandom/4096"):
+    _, workload, records = case.split("/")
+    counters = {
+        name: {"total": 0, "per_get": 0.0}
+        for name in READ_DIAGNOSTIC_COUNTERS
+    }
+    counters["gets"] = {
+        "total": READ_DIAGNOSTIC_OPERATIONS,
+        "per_get": 1.0,
+    }
+    outcome = "sstable_hits" if workload == "readrandom" else "misses"
+    counters[outcome] = {
+        "total": READ_DIAGNOSTIC_OPERATIONS,
+        "per_get": 1.0,
+    }
+    for name, total in (
+        ("deeper_candidates", READ_DIAGNOSTIC_OPERATIONS),
+        ("files_searched", READ_DIAGNOSTIC_OPERATIONS),
+        ("table_cache_hits", READ_DIAGNOSTIC_OPERATIONS),
+        ("block_cache_hits", READ_DIAGNOSTIC_OPERATIONS),
+        ("index_entries_decoded", READ_DIAGNOSTIC_OPERATIONS * 2),
+        ("data_entries_decoded", READ_DIAGNOSTIC_OPERATIONS * 4),
+        ("restart_entries_decoded", READ_DIAGNOSTIC_OPERATIONS * 2),
+        ("internal_key_comparisons", READ_DIAGNOSTIC_OPERATIONS * 8),
+    ):
+        counters[name] = {
+            "total": total,
+            "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
+        }
+    if int(records) == 65536:
+        misses = 1024
+        counters["block_cache_hits"] = {
+            "total": READ_DIAGNOSTIC_OPERATIONS - misses,
+            "per_get": (READ_DIAGNOSTIC_OPERATIONS - misses) / READ_DIAGNOSTIC_OPERATIONS,
+        }
+        for name, total in (
+            ("block_cache_misses", misses),
+            ("random_read_calls", misses),
+            ("stored_blocks", misses),
+            ("decoded_blocks", misses),
+            ("decompressed_blocks", misses),
+        ):
+            counters[name] = {
+                "total": total,
+                "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
+            }
+        for name in ("random_read_requested_bytes", "random_read_returned_bytes",
+                     "stored_block_bytes"):
+            total = misses * 1024
+            counters[name] = {
+                "total": total,
+                "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
+            }
+        total = misses * 4096
+        counters["decoded_block_bytes"] = {
+            "total": total,
+            "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
+        }
+        total = misses * 16
+        counters["validation_entries"] = {
+            "total": total,
+            "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
+        }
+    if workload == "readrandom":
+        total = READ_DIAGNOSTIC_OPERATIONS * 256
+        counters["result_bytes"] = {"total": total, "per_get": 256.0}
+    stages = {
+        name: {"events": 0, "total_ns": 0, "mean_ns": 0.0}
+        for name in READ_DIAGNOSTIC_STAGES
+    }
+    stages["get"] = {
+        "events": READ_DIAGNOSTIC_SAMPLES,
+        "total_ns": READ_DIAGNOSTIC_SAMPLES * 100,
+        "mean_ns": 100.0,
+    }
+    for name in ("candidate_selection", "table_cache_lookup", "block_cache_lookup",
+                 "index_seek", "data_seek"):
+        stages[name] = {
+            "events": READ_DIAGNOSTIC_SAMPLES,
+            "total_ns": READ_DIAGNOSTIC_SAMPLES * 10,
+            "mean_ns": 10.0,
+        }
+    if workload == "readrandom":
+        stages["result_copy"] = {
+            "events": READ_DIAGNOSTIC_SAMPLES,
+            "total_ns": READ_DIAGNOSTIC_SAMPLES * 10,
+            "mean_ns": 10.0,
+        }
+    if int(records) == 65536:
+        for name in ("random_read", "stored_block_decode", "block_construction"):
+            stages[name] = {"events": 1, "total_ns": 10, "mean_ns": 10.0}
+    build = {
+        "source_directory": "/source",
+        "build_directory": "/build",
+        "configure_revision": "revision",
+        "configure_dirty": "false",
+        "build_type": "Release",
+        "compiler": "compiler",
+        "c_flags": "-O3",
+        "cxx_flags": "-O3",
+        "benchmark_requested_revision": "192ef10025eb2c4cdd392bc502f0c852196baa48",
+        "benchmark_source_override": "",
+        "reference_requested_revision": "7ee830d02b623e8ffe0b95d59a74db1e58da04c5",
+        "reference_source_override": "",
+        "reference_hardware_crc": "disabled",
+        "reference_file_access": "not_applicable",
+        "reference_pread_control_available": "true",
+        "reference_control_patch_sha256": "a" * 64,
+        "snappy_target": "snappy",
+        "snappy_source": "/snappy",
+        "snappy_source_override": "",
+        "zstd_target": "zstd",
+        "zstd_source": "/zstd",
+        "zstd_source_override": "",
+        "crc32c_target": "crc32c",
+        "crc32c_provider": "pinned-source",
+        "crc32c_source": "/crc32c",
+        "crc32c_source_override": "",
+        "crc32c_requested_revision": "2bbb3be42e20a0e6c0f7b39dc07dc863d9ffbc07",
+        "crc32c_compiled_arm64": "true",
+        "crc32c_compiled_sse42": "false",
+        "profile_capture_supported": "false",
+        "read_diagnostics_compiled": "true",
+    }
+    return {
+        "schema_version": 1,
+        "case": case,
+        "operations": READ_DIAGNOSTIC_OPERATIONS,
+        "sample_schedule": READ_DIAGNOSTIC_SAMPLE_SCHEDULE,
+        "sample_seed": READ_DIAGNOSTIC_SAMPLE_SEED,
+        "sample_denominator": READ_DIAGNOSTIC_SAMPLE_DENOMINATOR,
+        "sampled_gets": READ_DIAGNOSTIC_SAMPLES,
+        "foreground_thread_only": True,
+        "stage_durations_are_inclusive": True,
+        "setup_warmup_and_verification_excluded": True,
+        "preparations": 1,
+        "verifications": 2,
+        "cursor_resets": 1,
+        "warmup_operations": int(records) - (workload == "readmissing"),
+        "record_crc32c": FINGERPRINTS[int(records)][0],
+        "insertion_crc32c": FINGERPRINTS[int(records)][1],
+        "present_crc32c": FINGERPRINTS[int(records)][2],
+        "missing_crc32c": FINGERPRINTS[int(records)][3],
+        "counters": counters,
+        "stages": stages,
+        "build": build,
+    }
+
+
 class PerformanceReportTest(unittest.TestCase):
     def test_accepts_individual_runs_and_ignores_aggregate_counters(self):
         data = report()
@@ -82,6 +254,34 @@ class PerformanceReportTest(unittest.TestCase):
         result = validate_benchmark(data, "leveldb/scan/65536", 3)
         self.assertEqual(result["wall_ns_per_item"], [1.0] * 3)
         self.assertEqual(result["process_cpu_ns_per_item"], [2.0] * 3)
+
+    def test_validates_reference_file_access_provenance(self):
+        data = report("leveldb/readrandom/4096")
+        validate_benchmark(data, "leveldb/readrandom/4096", 3)
+        data["context"]["reference_file_access"] = "pread"
+        validate_benchmark(
+            data, "leveldb/readrandom/4096", 3, reference_file_access="pread"
+        )
+        data["context"]["reference_pread_control_available"] = "false"
+        with self.assertRaises(ValueError):
+            validate_benchmark(
+                data, "leveldb/readrandom/4096", 3, reference_file_access="pread"
+            )
+        with self.assertRaises(ValueError):
+            validate_benchmark(
+                report(), "modern/readrandom/4096", 3, reference_file_access="pread"
+            )
+        data = report()
+        data["context"]["read_diagnostics_compiled"] = "true"
+        with self.assertRaises(ValueError):
+            validate_benchmark(data, "modern/readrandom/4096", 3)
+        with self.assertRaises(ValueError):
+            validate_benchmark(
+                report("leveldb/scan/4096"),
+                "leveldb/scan/4096",
+                3,
+                reference_file_access="pread",
+            )
 
     def test_rejects_errors_skips_missing_runs_and_duplicate_repetitions(self):
         for key in ("error_occurred", "skipped"):
@@ -174,6 +374,83 @@ class PerformanceReportTest(unittest.TestCase):
             (root / "collector-version.log").write_text("not a version")
             with self.assertRaises(ValueError):
                 record_diagnostics(manifest, root)
+
+
+class ReadDiagnosticsReportTest(unittest.TestCase):
+    def test_accepts_fixed_present_and_missing_reports(self):
+        validate_read_diagnostics(
+            diagnostic_report("modern/readrandom/4096"), "modern/readrandom/4096"
+        )
+        validate_read_diagnostics(
+            diagnostic_report("modern/readmissing/65536"), "modern/readmissing/65536"
+        )
+
+    def test_rejects_changed_epoch_outcomes_and_normalization(self):
+        for field, value in (
+            ("operations", 1),
+            ("sample_seed", 1),
+            ("sample_denominator", 1),
+            ("sampled_gets", 0),
+            ("foreground_thread_only", False),
+            ("verifications", 1),
+            ("cursor_resets", 2),
+        ):
+            changed = diagnostic_report()
+            changed[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                validate_read_diagnostics(changed, "modern/readrandom/4096")
+
+        changed = diagnostic_report()
+        changed["counters"]["gets"]["per_get"] = 2.0
+        with self.assertRaises(ValueError):
+            validate_read_diagnostics(changed, "modern/readrandom/4096")
+
+        changed = diagnostic_report()
+        changed["counters"]["misses"]["total"] = 1
+        changed["counters"]["misses"]["per_get"] = 1 / READ_DIAGNOSTIC_OPERATIONS
+        with self.assertRaises(ValueError):
+            validate_read_diagnostics(changed, "modern/readrandom/4096")
+
+        changed = diagnostic_report()
+        changed["stages"]["get"]["events"] = 1023
+        with self.assertRaises(ValueError):
+            validate_read_diagnostics(changed, "modern/readrandom/4096")
+
+    def test_rejects_incomplete_counter_stage_and_build_provenance(self):
+        for section, key in (
+            ("counters", "files_searched"),
+            ("stages", "data_seek"),
+            ("build", "read_diagnostics_compiled"),
+        ):
+            changed = diagnostic_report()
+            del changed[section][key]
+            with self.subTest(section=section, key=key), self.assertRaises(ValueError):
+                validate_read_diagnostics(changed, "modern/readrandom/4096")
+
+    def test_accepts_completed_short_random_reads(self):
+        changed = diagnostic_report("modern/readmissing/65536")
+        requested = changed["counters"]["random_read_requested_bytes"]["total"] * 2
+        changed["counters"]["random_read_requested_bytes"] = {
+            "total": requested,
+            "per_get": requested / READ_DIAGNOSTIC_OPERATIONS,
+        }
+        validate_read_diagnostics(changed, "modern/readmissing/65536")
+
+    def test_runner_preserves_failure_artifacts_and_rejects_existing_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "failed"
+            with self.assertRaises(subprocess.CalledProcessError):
+                run_read_diagnostics(
+                    Path("/usr/bin/false"), "modern/readrandom/4096", output
+                )
+            self.assertFalse((output / "work").exists())
+            manifest = read_json(output / "manifest.json")
+            self.assertEqual(manifest["status"], "failed")
+            self.assertEqual(manifest["artifacts"]["command_logs"], ["diagnostics.log"])
+            with self.assertRaises(FileExistsError):
+                run_read_diagnostics(
+                    Path("/usr/bin/false"), "modern/readrandom/4096", output
+                )
 
 
 class MutationReportTest(unittest.TestCase):
@@ -408,10 +685,60 @@ class PerformanceExecutableTest(unittest.TestCase):
         for field in ("crc32c_source", "crc32c_source_override"):
             self.assertIsInstance(context[field], str)
 
+    def test_forced_reference_pread_is_explicit_and_reproducible(self):
+        access = "pread" if REFERENCE_PREAD_CONTROL else "default"
+        result = self.invoke(
+            "--case", "leveldb/readmissing/4096",
+            "--reference-file-access", access,
+            "--database", str(self.root / "db"),
+            "--completion-report", str(self.root / "completion.json"),
+            "--benchmark_min_time=1x", "--benchmark_repetitions=1",
+            f"--benchmark_out={self.root / 'benchmark.json'}",
+            "--benchmark_out_format=json",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        data = read_json(self.root / "benchmark.json")
+        validate_benchmark(
+            data, "leveldb/readmissing/4096", 1, reference_file_access=access
+        )
+        self.assertEqual(data["context"]["reference_file_access"], access)
+        self.assertEqual(
+            data["context"]["reference_pread_control_available"],
+            str(REFERENCE_PREAD_CONTROL).lower(),
+        )
+        if not REFERENCE_PREAD_CONTROL:
+            unavailable = self.invoke(
+                "--case", "leveldb/readmissing/4096",
+                "--reference-file-access", "pread",
+                "--database", str(self.root / "unavailable-db"),
+                "--completion-report", str(self.root / "unavailable-completion.json"),
+            )
+            self.assertNotEqual(unavailable.returncode, 0)
+            self.assertFalse((self.root / "unavailable-db").exists())
+        rejected = self.invoke(
+            "--case", "leveldb/scan/4096",
+            "--reference-file-access", "pread",
+            "--database", str(self.root / "scan-db"),
+            "--completion-report", str(self.root / "scan-completion.json"),
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertFalse((self.root / "scan-db").exists())
+
+    def test_normal_binary_rejects_read_diagnostics(self):
+        rejected = self.invoke(
+            "--case", "modern/readrandom/4096",
+            "--database", str(self.root / "normal-db"),
+            "--diagnostic-report", str(self.root / "normal-report.json"),
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertFalse((self.root / "normal-report.json").exists())
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--binary", type=Path)
+    parser.add_argument("--reference-pread-control", choices=("TRUE", "FALSE"), default="TRUE")
     arguments, remaining = parser.parse_known_args()
     BINARY = arguments.binary.resolve() if arguments.binary else None
+    REFERENCE_PREAD_CONTROL = arguments.reference_pread_control == "TRUE"
     unittest.main(argv=[sys.argv[0], *remaining])

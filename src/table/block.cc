@@ -7,6 +7,9 @@
 #include <utility>
 #include <vector>
 
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+#include "engine/read_diagnostics.h"
+#endif
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/comparator.h"
@@ -91,6 +94,9 @@ std::size_t Block::Layout::RestartPoint(std::size_t index) const noexcept {
 }
 
 ByteView Block::Layout::RestartKey(std::size_t index) const {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::RecordDecodedEntry(true);
+#endif
   const Entry entry = DecodeValidatedEntry(contents.first(entries_end), RestartPoint(index));
   assert(entry.shared == 0);
   return entry.key_delta;
@@ -132,6 +138,9 @@ Status Block::Validate() const {
   std::vector<std::byte> key;
   std::size_t restart_index = 0;
   for (std::size_t offset = 0; offset < layout.entries_end;) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    read_diagnostics::Add(read_diagnostics::Counter::ValidationEntries);
+#endif
     Entry entry{};
     if (!DecodeEntry(layout.contents, offset, layout.entries_end, entry) ||
         entry.shared > previous_key.size()) {
@@ -239,6 +248,9 @@ void Block::Iterator::SeekToRestartPoint(std::size_t index) noexcept {
 }
 
 void Block::Iterator::ParseEntry() {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::RecordDecodedEntry();
+#endif
   const Entry entry = DecodeValidatedEntry(layout_.contents.first(layout_.entries_end), next_);
   // Reserve first, so that an allocation failure leaves the iterator unchanged.
   key_.reserve(entry.shared + entry.key_delta.size());
