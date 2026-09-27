@@ -52,6 +52,38 @@ struct Entry {
   return true;
 }
 
+std::uint32_t ConsumeValidatedVarint32(const std::byte*& input) noexcept {
+  std::uint32_t value = 0;
+  unsigned int shift = 0;
+  while (true) {
+    assert(shift < 32);
+    const auto byte = std::to_integer<std::uint32_t>(*input++);
+    value |= (byte & 0x7fU) << shift;
+    if ((byte & 0x80U) == 0U) {
+      return value;
+    }
+    shift += 7;
+  }
+}
+
+// Only entry boundaries in immutable blocks accepted by Block::Create reach here.
+Entry DecodeValidatedEntry(ByteView entries, std::size_t offset) noexcept {
+  assert(offset < entries.size());
+  const std::byte* input = entries.data() + offset;
+  const std::uint32_t shared = ConsumeValidatedVarint32(input);
+  const std::uint32_t non_shared = ConsumeValidatedVarint32(input);
+  const std::uint32_t value_size = ConsumeValidatedVarint32(input);
+  const auto header_end = static_cast<std::size_t>(input - entries.data());
+  assert(header_end <= entries.size());
+  assert(std::uint64_t{non_shared} + value_size <= entries.size() - header_end);
+  return Entry{
+      .shared = shared,
+      .key_delta = ByteView(input, non_shared),
+      .value = ByteView(input + non_shared, value_size),
+      .end = header_end + non_shared + value_size,
+  };
+}
+
 }  // namespace
 
 std::size_t Block::Layout::RestartPoint(std::size_t index) const noexcept {
@@ -59,10 +91,8 @@ std::size_t Block::Layout::RestartPoint(std::size_t index) const noexcept {
 }
 
 ByteView Block::Layout::RestartKey(std::size_t index) const {
-  Entry entry{};
-  const bool decoded = DecodeEntry(contents, RestartPoint(index), entries_end, entry);
-  assert(decoded && entry.shared == 0);
-  (void)decoded;
+  const Entry entry = DecodeValidatedEntry(contents.first(entries_end), RestartPoint(index));
+  assert(entry.shared == 0);
   return entry.key_delta;
 }
 
@@ -209,10 +239,7 @@ void Block::Iterator::SeekToRestartPoint(std::size_t index) noexcept {
 }
 
 void Block::Iterator::ParseEntry() {
-  Entry entry{};
-  const bool decoded = DecodeEntry(layout_.contents, next_, layout_.entries_end, entry);
-  assert(decoded);
-  (void)decoded;
+  const Entry entry = DecodeValidatedEntry(layout_.contents.first(layout_.entries_end), next_);
   // Reserve first, so that an allocation failure leaves the iterator unchanged.
   key_.reserve(entry.shared + entry.key_delta.size());
   current_ = next_;
