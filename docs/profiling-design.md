@@ -12,6 +12,10 @@ strict result collection, and a macOS CPU profile with an explicit measured
 window. Automatic Linux perf capture, tail-latency load testing, production
 statistics, and engine changes are outside this slice.
 
+The implemented read family remains unchanged when extended by
+[ADR-0045's fixed-work mutable family](write-profiling-design.md). The
+adaptive repetition rules below apply to read cases only.
+
 ## Decisions backed by primary sources and probes
 
 Research used Google Benchmark v1.9.5 at
@@ -286,9 +290,11 @@ python3 tools/run_performance.py \
 Output paths must be new. The runner preserves raw results and diagnostics,
 removes only its stopped process's `work/` scratch directory, and leaves
 unverifiable cleanup as an explicit failure. `--smoke` runs one iteration
-without making a performance claim. `--min-time`, `--repetitions`, and
-`--timeout` accept explicit collection budgets; CPU capture requires one
-repetition and does not permit smoke mode.
+without making a performance claim. For read cases, `--min-time` and
+`--repetitions` accept explicit collection budgets. Mutable cases use fixed
+work and one repetition, rejecting `--min-time` and other repetition counts.
+Both families accept `--timeout`; CPU capture requires one repetition and
+does not permit smoke mode.
 
 Use `manifest.json` for provenance and normalized per-item times,
 `benchmark.json` for untouched Google Benchmark output, and `completion.json`

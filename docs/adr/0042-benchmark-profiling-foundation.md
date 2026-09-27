@@ -4,7 +4,7 @@
 
 Accepted
 
-[ADR-0045](0045-fixed-work-write-profiling.md) proposes an additive fixed-work
+[ADR-0045](0045-fixed-work-write-profiling.md) adds a fixed-work
 mutable family; this ADR's read workloads and report contracts remain unchanged.
 
 ## Context

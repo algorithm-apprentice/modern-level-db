@@ -74,11 +74,22 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
       --binary "$<TARGET_FILE:modern_leveldb_performance>"
       --output "${CMAKE_CURRENT_BINARY_DIR}/performance-smoke"
   )
+  add_test(
+    NAME performance.mutation_stream
+    COMMAND "$<TARGET_FILE:modern_leveldb_performance>" --check-mutation-stream
+  )
+  add_test(
+    NAME performance.mutations
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/performance_smoke.py"
+      --binary "$<TARGET_FILE:modern_leveldb_performance>"
+      --output "${CMAKE_CURRENT_BINARY_DIR}/performance-mutations"
+      --full-mutations
+  )
   set_tests_properties(
-    performance.contracts performance.profile_parser performance.process_control
+    performance.contracts performance.profile_parser performance.process_control performance.mutation_stream
     PROPERTIES LABELS performance TIMEOUT 120
   )
-  set_tests_properties(performance.smoke PROPERTIES LABELS performance TIMEOUT 600)
+  set_tests_properties(performance.smoke performance.mutations PROPERTIES LABELS performance TIMEOUT 600)
   add_test(
     NAME performance.capture_capabilities
     COMMAND "${CMAKE_COMMAND}" -P "${PROJECT_SOURCE_DIR}/tests/cmake/profile_capabilities.cmake"

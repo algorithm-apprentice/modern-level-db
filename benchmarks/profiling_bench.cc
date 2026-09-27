@@ -1,6 +1,8 @@
 #include <benchmark/benchmark.h>
 #include <leveldb/db.h>
+#include <leveldb/write_batch.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -16,6 +18,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -44,6 +47,30 @@ struct Case {
   std::string workload;
   std::size_t records;
 };
+
+enum class MutationKind { Overwrite, Batch, Sync, Mixed };
+
+struct MutationSpec {
+  MutationKind kind;
+  std::size_t iterations;
+  std::size_t batch_size;
+  bool smoke;
+};
+
+bool IsMutable(const Case& selected) {
+  return selected.workload == "overwrite" || selected.workload == "writebatch" ||
+         selected.workload == "writesync" || selected.workload == "mixed50";
+}
+
+MutationSpec MutationSpecification(const Case& selected, bool smoke) {
+  const auto kind = selected.workload == "writebatch"  ? MutationKind::Batch
+                    : selected.workload == "writesync" ? MutationKind::Sync
+                    : selected.workload == "mixed50"   ? MutationKind::Mixed
+                                                       : MutationKind::Overwrite;
+  const std::size_t batch = kind == MutationKind::Batch ? 32 : 1;
+  const std::size_t iterations = kind == MutationKind::Sync ? 1024 : selected.records * 4 / batch;
+  return {kind, smoke ? 1 : iterations, batch, smoke};
+}
 
 void Require(bool condition, std::string_view message) {
   if (!condition) {
@@ -81,6 +108,11 @@ void ForEachCase(Function function) {
         function(Case{name, std::string(engine), std::string(workload), records});
       }
     }
+    for (const auto workload : {"overwrite", "writebatch", "writesync", "mixed50"}) {
+      const std::size_t records = std::string_view(workload) == "writesync" ? 4096 : 65536;
+      const std::string name = std::string(engine) + "/" + workload + "/" + std::to_string(records);
+      function(Case{name, std::string(engine), workload, records});
+    }
   }
 }
 
@@ -102,6 +134,8 @@ struct Arguments {
   bool profile = false;
   bool list = false;
   bool help = false;
+  bool smoke = false;
+  bool check_mutations = false;
   std::vector<char*> framework;
 };
 
@@ -129,6 +163,10 @@ Arguments ParseArguments(int argc, char** argv) {
       args.list = true;
     } else if (option == "--help") {
       args.help = true;
+    } else if (option == "--smoke") {
+      args.smoke = true;
+    } else if (option == "--check-mutation-stream") {
+      args.check_mutations = true;
     } else {
       args.framework.push_back(argv[index]);
     }
@@ -231,6 +269,7 @@ struct Corpus {
 class Modern final {
  public:
   using Cursor = Iterator;
+  using Batch = WriteBatch;
 
   explicit Modern(const std::filesystem::path& path) : database_(Open(path)) {}
   void Put(const Record& record) {
@@ -240,6 +279,19 @@ class Modern final {
     auto value = Take(database_.Get(AsBytes(key)));
     Require(value.has_value() == present, "Modern LevelDB returned incorrect key presence");
     benchmark::DoNotOptimize(value);
+  }
+  void WriteValue(std::string_view key, std::string_view value, bool sync) {
+    Check(database_.Put(AsBytes(key), AsBytes(value), {.sync = sync}));
+  }
+  static void Clear(Batch& batch) { batch.Clear(); }
+  static void Add(Batch& batch, std::string_view key, std::string_view value) {
+    Check(batch.Put(AsBytes(key), AsBytes(value)));
+  }
+  void Commit(Batch& batch) { Check(database_.Write(batch)); }
+  void ReadExpected(std::string_view key, std::string_view expected) {
+    auto value = Take(database_.Get(AsBytes(key)));
+    Require(value.has_value() && AsStringView(*value) == expected,
+            "Modern LevelDB returned an incorrect current value");
   }
   Cursor NewIterator(bool fill_cache) {
     return Take(database_.NewIterator({.fill_cache = fill_cache}));
@@ -267,6 +319,7 @@ class Modern final {
 class Reference final {
  public:
   using Cursor = std::unique_ptr<leveldb::Iterator>;
+  using Batch = leveldb::WriteBatch;
 
   explicit Reference(const std::filesystem::path& path) {
     leveldb::Options options;
@@ -290,6 +343,22 @@ class Reference final {
     }
     Require(status.ok() == present, "LevelDB reference returned incorrect key presence");
     benchmark::DoNotOptimize(read_value_);
+  }
+  void WriteValue(std::string_view key, std::string_view value, bool sync) {
+    leveldb::WriteOptions options;
+    options.sync = sync;
+    Check(database_->Put(options, Slice(key), Slice(value)));
+  }
+  static void Clear(Batch& batch) { batch.Clear(); }
+  static void Add(Batch& batch, std::string_view key, std::string_view value) {
+    batch.Put(Slice(key), Slice(value));
+  }
+  void Commit(Batch& batch) { Check(database_->Write({}, &batch)); }
+  void ReadExpected(std::string_view key, std::string_view expected) {
+    leveldb::ReadOptions options;
+    options.verify_checksums = true;
+    Check(database_->Get(options, Slice(key), &read_value_));
+    Require(read_value_ == expected, "LevelDB reference returned an incorrect current value");
   }
   Cursor NewIterator(bool fill_cache) {
     leveldb::ReadOptions options;
@@ -543,6 +612,416 @@ class Fixture final {
   std::size_t verifications_ = 0;
 };
 
+struct MutationData {
+  explicit MutationData(std::size_t count)
+      : corpus(count), order(Permutation(count, 305)), values(count), generations(count, 0) {
+    Fingerprint fingerprint;
+    fingerprint.Bytes(AsBytes("modern-perf-write-values-v1"));
+    fingerprint.Integer(count);
+    fingerprint.Integer(5);
+    for (std::size_t index = 0; index < count; ++index) {
+      fingerprint.Field(corpus.records[index].key);
+      for (unsigned generation = 1; generation <= 5; ++generation) {
+        std::string& value = values[index][generation - 1];
+        value = corpus.records[index].value;
+        for (unsigned byte = 0; byte < 8; ++byte) {
+          value[byte] = static_cast<char>((std::uint64_t{generation} >> (byte * 8U)) & 255U);
+        }
+        fingerprint.Integer(generation);
+        fingerprint.Field(value);
+      }
+    }
+    order_crc = OrderFingerprint("modern-perf-write-order-v1", order);
+    values_crc = fingerprint.crc;
+  }
+
+  const std::string& Value(std::size_t index, unsigned generation) const {
+    return generation == 0 ? corpus.records[index].value : values[index][generation - 1];
+  }
+
+  Corpus corpus;
+  std::vector<std::size_t> order;
+  std::vector<std::array<std::string, 5>> values;
+  std::vector<unsigned> generations;
+  std::uint32_t order_crc = 0;
+  std::uint32_t values_crc = 0;
+};
+
+class MutationWorkload final {
+ public:
+  explicit MutationWorkload(MutationData& data) : data_(data) {}
+
+  template <MutationKind Kind, typename Adapter>
+  void RunOne(Adapter& database, typename Adapter::Batch& batch) {
+    const std::size_t count = data_.order.size();
+    if constexpr (Kind == MutationKind::Mixed) {
+      const std::size_t index = data_.corpus.present[iterations % count];
+      database.ReadExpected(data_.corpus.records[index].key,
+                            data_.Value(index, data_.generations[index]));
+      ++reads;
+    }
+    if constexpr (Kind == MutationKind::Batch) {
+      database.Clear(batch);
+      for (std::size_t offset = 0; offset < 32; ++offset) {
+        const std::size_t index = data_.order[(writes + offset) % count];
+        const auto generation = static_cast<unsigned>(2 + (writes + offset) / count);
+        database.Add(batch, data_.corpus.records[index].key, data_.Value(index, generation));
+      }
+      database.Commit(batch);
+      for (std::size_t offset = 0; offset < 32; ++offset) {
+        data_.generations[data_.order[(writes + offset) % count]] =
+            static_cast<unsigned>(2 + (writes + offset) / count);
+      }
+      writes += 32;
+    } else {
+      const std::size_t index = data_.order[writes % count];
+      const auto generation = static_cast<unsigned>(2 + writes / count);
+      database.WriteValue(data_.corpus.records[index].key, data_.Value(index, generation),
+                          Kind == MutationKind::Sync);
+      data_.generations[index] = generation;
+      ++writes;
+      if constexpr (Kind == MutationKind::Sync) {
+        ++sync_calls;
+      }
+    }
+    ++iterations;
+  }
+
+  std::size_t iterations = 0;
+  std::size_t reads = 0;
+  std::size_t writes = 0;
+  std::size_t sync_calls = 0;
+
+ private:
+  MutationData& data_;
+};
+
+class RecordingAdapter final {
+ public:
+  struct Batch {
+    std::size_t entries = 0;
+  };
+
+  RecordingAdapter(const MutationData& data, MutationSpec specification)
+      : data_(data), specification_(specification), generations_(data.order.size(), 1) {}
+
+  void ReadExpected(std::string_view key, std::string_view value) {
+    Require(specification_.kind == MutationKind::Mixed && !read_pending_,
+            "recorded an unexpected or repeated read");
+    const std::size_t index = data_.corpus.present[calls_ % data_.order.size()];
+    Require(
+        key == data_.corpus.records[index].key && value == data_.Value(index, generations_[index]),
+        "recorded a wrong read key or generation");
+    read_pending_ = true;
+  }
+  void WriteValue(std::string_view key, std::string_view value, bool sync) {
+    Require(specification_.kind != MutationKind::Batch, "a batch was split into individual puts");
+    Require(sync == (specification_.kind == MutationKind::Sync), "recorded wrong sync policy");
+    Require(specification_.kind != MutationKind::Mixed || read_pending_,
+            "mixed write preceded its read");
+    CheckWrite(key, value, writes_);
+    AdvanceGeneration(writes_);
+    ++writes_;
+    ++calls_;
+    read_pending_ = false;
+  }
+  void Clear(Batch& batch) {
+    Require(specification_.kind == MutationKind::Batch && !batch_open_,
+            "recorded an unexpected batch begin");
+    batch.entries = 0;
+    batch_open_ = true;
+  }
+  void Add(Batch& batch, std::string_view key, std::string_view value) {
+    Require(batch_open_ && batch.entries < 32, "recorded an invalid batch entry");
+    CheckWrite(key, value, writes_ + batch.entries);
+    ++batch.entries;
+  }
+  void Commit(Batch& batch) {
+    Require(batch_open_ && batch.entries == 32, "recorded an incomplete batch commit");
+    for (std::size_t offset = 0; offset < batch.entries; ++offset) {
+      AdvanceGeneration(writes_ + offset);
+    }
+    writes_ += batch.entries;
+    ++calls_;
+    batch_open_ = false;
+  }
+  void Finish() const {
+    Require(calls_ == specification_.iterations &&
+                writes_ == specification_.iterations * specification_.batch_size &&
+                !read_pending_ && !batch_open_,
+            "recorded an incomplete mutation stream");
+    Require(generations_ == data_.generations, "driver generation model disagrees with calls");
+  }
+
+ private:
+  void CheckWrite(std::string_view key, std::string_view value, std::size_t ordinal) const {
+    Require(ordinal < specification_.iterations * specification_.batch_size,
+            "recorded too many writes");
+    const std::size_t index = data_.order[ordinal % data_.order.size()];
+    const auto generation = static_cast<unsigned>(2 + ordinal / data_.order.size());
+    Require(key == data_.corpus.records[index].key && value == data_.Value(index, generation),
+            "recorded a wrong write key, order, or generation");
+  }
+  void AdvanceGeneration(std::size_t ordinal) {
+    generations_[data_.order[ordinal % data_.order.size()]] =
+        static_cast<unsigned>(2 + ordinal / data_.order.size());
+  }
+
+  const MutationData& data_;
+  MutationSpec specification_;
+  std::vector<unsigned> generations_;
+  std::size_t writes_ = 0;
+  std::size_t calls_ = 0;
+  bool read_pending_ = false;
+  bool batch_open_ = false;
+};
+
+template <typename Function>
+void ExpectRejected(Function function) {
+  bool rejected = false;
+  try {
+    function();
+  } catch (const std::runtime_error&) {
+    rejected = true;
+  }
+  Require(rejected, "the recording adapter accepted an incorrect operation stream");
+}
+
+void CheckMutationStreams() {
+  ForEachCase([](const Case& selected) {
+    if (selected.engine != "modern" || !IsMutable(selected)) {
+      return;
+    }
+    MutationData data(selected.records);
+    for (const bool smoke : {false, true}) {
+      const MutationSpec specification = MutationSpecification(selected, smoke);
+      std::fill(data.generations.begin(), data.generations.end(), 1);
+      MutationWorkload workload(data);
+      RecordingAdapter recorder(data, specification);
+      RecordingAdapter::Batch batch;
+      for (std::size_t iteration = 0; iteration < specification.iterations; ++iteration) {
+        switch (specification.kind) {
+          case MutationKind::Overwrite:
+            workload.RunOne<MutationKind::Overwrite>(recorder, batch);
+            break;
+          case MutationKind::Batch:
+            workload.RunOne<MutationKind::Batch>(recorder, batch);
+            break;
+          case MutationKind::Sync:
+            workload.RunOne<MutationKind::Sync>(recorder, batch);
+            break;
+          case MutationKind::Mixed:
+            workload.RunOne<MutationKind::Mixed>(recorder, batch);
+            break;
+        }
+      }
+      recorder.Finish();
+    }
+  });
+  MutationData data(4096);
+  const auto first = data.order[0];
+  const auto second = data.order[1];
+  const auto read = data.corpus.present[0];
+  for (const bool wrong_order : {false, true}) {
+    ExpectRejected([&] {
+      RecordingAdapter recorder(data, {MutationKind::Overwrite, 1, 1, true});
+      const auto index = wrong_order ? second : first;
+      recorder.WriteValue(data.corpus.records[index].key, data.Value(index, wrong_order ? 2 : 5),
+                          false);
+    });
+  }
+  ExpectRejected([&] {
+    RecordingAdapter recorder(data, {MutationKind::Sync, 1, 1, true});
+    recorder.WriteValue(data.corpus.records[first].key, data.Value(first, 2), false);
+  });
+  ExpectRejected([&] {
+    RecordingAdapter recorder(data, {MutationKind::Mixed, 1, 1, true});
+    recorder.WriteValue(data.corpus.records[first].key, data.Value(first, 2), false);
+  });
+  ExpectRejected([&] {
+    RecordingAdapter recorder(data, {MutationKind::Mixed, 1, 1, true});
+    recorder.ReadExpected(data.corpus.records[read].key, data.Value(read, 1));
+    recorder.ReadExpected(data.corpus.records[read].key, data.Value(read, 1));
+  });
+  ExpectRejected([&] {
+    RecordingAdapter recorder(data, {MutationKind::Batch, 1, 32, true});
+    recorder.WriteValue(data.corpus.records[first].key, data.Value(first, 2), false);
+  });
+  ExpectRejected([&] {
+    RecordingAdapter recorder(data, {MutationKind::Batch, 1, 32, true});
+    RecordingAdapter::Batch batch;
+    recorder.Clear(batch);
+    recorder.Add(batch, data.corpus.records[first].key, data.Value(first, 2));
+    recorder.Commit(batch);
+  });
+  std::cout << "Verified all normal/smoke mutation streams and rejected incorrect dispatches\n";
+}
+
+template <typename Adapter>
+class MutationFixture final {
+ public:
+  MutationFixture(const Case& selected, const std::filesystem::path& path, bool smoke)
+      : selected_(selected),
+        path_(path),
+        specification_(MutationSpecification(selected, smoke)),
+        data_(selected.records),
+        workload_(data_) {
+    Require(!std::filesystem::exists(path) && !std::filesystem::is_symlink(path),
+            "performance database path must not already exist");
+    database_ = std::make_unique<Adapter>(path_);
+    for (const auto index : data_.corpus.insertion) {
+      database_->Put(data_.corpus.records[index]);
+    }
+    Reopen();
+    static_cast<void>(Verify());
+    for (const auto index : data_.order) {
+      database_->WriteValue(data_.corpus.records[index].key, data_.Value(index, 1), false);
+      data_.generations[index] = 1;
+      ++warmup_writes_;
+    }
+  }
+
+  [[gnu::noinline]] void RunOverwrite(benchmark::State& state) {
+    for (auto ignored : state) {
+      static_cast<void>(ignored);
+      workload_.template RunOne<MutationKind::Overwrite>(*database_, batch_);
+    }
+  }
+  [[gnu::noinline]] void RunWriteBatch(benchmark::State& state) {
+    for (auto ignored : state) {
+      static_cast<void>(ignored);
+      workload_.template RunOne<MutationKind::Batch>(*database_, batch_);
+    }
+  }
+  [[gnu::noinline]] void RunWriteSync(benchmark::State& state) {
+    for (auto ignored : state) {
+      static_cast<void>(ignored);
+      workload_.template RunOne<MutationKind::Sync>(*database_, batch_);
+    }
+  }
+  [[gnu::noinline]] void RunMixed50(benchmark::State& state) {
+    for (auto ignored : state) {
+      static_cast<void>(ignored);
+      workload_.template RunOne<MutationKind::Mixed>(*database_, batch_);
+    }
+  }
+
+  void Run(benchmark::State& state, bool profile) {
+    ++cursor_resets_;
+    {
+      ProfileInterval interval(profile, selected_.name, state);
+      switch (specification_.kind) {
+        case MutationKind::Overwrite:
+          RunOverwrite(state);
+          break;
+        case MutationKind::Batch:
+          RunWriteBatch(state);
+          break;
+        case MutationKind::Sync:
+          RunWriteSync(state);
+          break;
+        case MutationKind::Mixed:
+          RunMixed50(state);
+          break;
+      }
+    }
+    const std::size_t reads = specification_.kind == MutationKind::Mixed ? 1 : 0;
+    const std::size_t items = specification_.batch_size + reads;
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(items));
+    state.counters["items_per_iteration"] = static_cast<double>(items);
+    state.counters["reads_per_iteration"] = static_cast<double>(reads);
+    state.counters["writes_per_iteration"] = static_cast<double>(specification_.batch_size);
+    state.counters["batch_size"] = static_cast<double>(specification_.batch_size);
+    state.counters["sync_writes_per_iteration"] =
+        specification_.kind == MutationKind::Sync ? 1.0 : 0.0;
+  }
+
+  void Finish() {
+    static_cast<void>(Verify());
+    Reopen();
+    final_crc_ = Verify();
+    database_.reset();
+  }
+
+  void WriteCompletion(const std::filesystem::path& path, std::size_t invocations) const {
+    Require(!std::filesystem::exists(path) && !std::filesystem::is_symlink(path),
+            "completion report must not already exist");
+    std::ofstream output(path);
+    output << "{\"schema_version\":2,\"case\":\"" << selected_.name
+           << "\",\"smoke\":" << (specification_.smoke ? "true" : "false")
+           << ",\"preparations\":1,\"verifications\":" << verifications_
+           << ",\"reopens\":" << reopens_ << ",\"callback_invocations\":" << invocations
+           << ",\"cursor_resets\":" << cursor_resets_ << ",\"warmup_writes\":" << warmup_writes_
+           << ",\"measured_iterations\":" << workload_.iterations
+           << ",\"batch_size\":" << specification_.batch_size
+           << ",\"measured_reads\":" << workload_.reads
+           << ",\"measured_writes\":" << workload_.writes
+           << ",\"write_calls\":" << workload_.iterations
+           << ",\"sync_write_calls\":" << workload_.sync_calls
+           << ",\"logical_write_bytes\":" << workload_.writes * 267;
+    constexpr std::array Names{"record_crc32c",  "insertion_crc32c",   "present_crc32c",
+                               "missing_crc32c", "write_order_crc32c", "version_values_crc32c",
+                               "final_crc32c"};
+    const std::array values{data_.corpus.fingerprints[0],
+                            data_.corpus.fingerprints[1],
+                            data_.corpus.fingerprints[2],
+                            data_.corpus.fingerprints[3],
+                            data_.order_crc,
+                            data_.values_crc,
+                            final_crc_};
+    for (std::size_t index = 0; index < Names.size(); ++index) {
+      output << ",\"" << Names[index] << "\":\"" << std::hex << std::setfill('0') << std::setw(8)
+             << values[index] << '"';
+    }
+    output << "}\n";
+    output.close();
+    Require(output.good(), "failed to write the completion report");
+  }
+
+ private:
+  void Reopen() {
+    database_.reset();
+    database_ = std::make_unique<Adapter>(path_);
+    ++reopens_;
+  }
+  std::uint32_t Verify() {
+    Fingerprint fingerprint;
+    fingerprint.Bytes(AsBytes("modern-perf-write-final-v1"));
+    fingerprint.Integer(selected_.records);
+    auto iterator = database_->NewIterator(false);
+    Adapter::First(iterator);
+    std::size_t count = 0;
+    while (Adapter::Valid(iterator)) {
+      Require(count < selected_.records, "mutation verification yielded extra records");
+      const auto key = Adapter::CursorKey(iterator);
+      const auto value = Adapter::CursorValue(iterator);
+      Require(key == data_.corpus.records[count].key, "mutation verification found a wrong key");
+      Require(value == data_.Value(count, data_.generations[count]),
+              "mutation verification found a stale or incorrect value");
+      fingerprint.Field(key);
+      fingerprint.Field(value);
+      ++count;
+      Adapter::Next(iterator);
+    }
+    Require(count == selected_.records, "mutation verification lost records");
+    ++verifications_;
+    return fingerprint.crc;
+  }
+
+  Case selected_;
+  std::filesystem::path path_;
+  MutationSpec specification_;
+  MutationData data_;
+  MutationWorkload workload_;
+  typename Adapter::Batch batch_;
+  std::unique_ptr<Adapter> database_;
+  std::size_t cursor_resets_ = 0;
+  std::size_t warmup_writes_ = 0;
+  std::size_t verifications_ = 0;
+  std::size_t reopens_ = 0;
+  std::uint32_t final_crc_ = 0;
+};
+
 class StatusReporter final : public benchmark::ConsoleReporter {
  public:
   void ReportRuns(const std::vector<Run>& reports) override {
@@ -554,7 +1033,7 @@ class StatusReporter final : public benchmark::ConsoleReporter {
   bool failed = false;
 };
 
-void AddContext(const Case& selected) {
+void AddContext(const Case& selected, bool smoke) {
   const auto add = [](std::string_view key, std::string_view value) {
     benchmark::AddCustomContext(std::string(key), std::string(value));
   };
@@ -574,6 +1053,16 @@ void AddContext(const Case& selected) {
   add("read_checksums", "true");
   add("timing", "wall_and_process_cpu");
   add("background_quiescence_forced", "false");
+  if (IsMutable(selected)) {
+    const MutationSpec specification = MutationSpecification(selected, smoke);
+    add("workload_family", "mutable");
+    add("measurement_budget", "fixed");
+    add("mutation_smoke", smoke ? "true" : "false");
+    add("measured_sync", specification.kind == MutationKind::Sync ? "true" : "false");
+    add("batch_size", std::to_string(specification.batch_size));
+    add("background_completion", "not_drained");
+    add("steady_state_claimed", "false");
+  }
   add("source_directory", SourceDirectory);
   add("build_directory", BuildDirectory);
   add("configure_revision", ConfigureRevision);
@@ -607,32 +1096,47 @@ void AddContext(const Case& selected) {
 #endif
 }
 
-template <typename Adapter>
+template <typename Adapter, bool Mutable = false>
 int RunCase(const Case& selected, const Arguments& args) {
-  std::unique_ptr<Fixture<Adapter>> fixture;
+  using SelectedFixture = std::conditional_t<Mutable, MutationFixture<Adapter>, Fixture<Adapter>>;
+  std::unique_ptr<SelectedFixture> fixture;
   bool failed = false;
   std::size_t invocations = 0;
-  benchmark::RegisterBenchmark(selected.name.c_str(),
-                               [&](benchmark::State& state) {
-                                 ++invocations;
-                                 if (failed) {
-                                   state.SkipWithError("an earlier invocation failed");
-                                   return;
-                                 }
-                                 try {
-                                   if (fixture == nullptr) {
-                                     fixture = std::make_unique<Fixture<Adapter>>(selected,
-                                                                                  args.database);
-                                   }
-                                   fixture->Run(state, args.profile);
-                                 } catch (const std::exception& error) {
-                                   failed = true;
-                                   state.SkipWithError(error.what());
-                                 }
-                               })
-      ->UseRealTime()
-      ->MeasureProcessCPUTime()
-      ->Unit(benchmark::kNanosecond);
+  auto* registered =
+      benchmark::RegisterBenchmark(selected.name.c_str(), [&](benchmark::State& state) {
+        ++invocations;
+        if (failed) {
+          state.SkipWithError("an earlier invocation failed");
+          return;
+        }
+        try {
+          if constexpr (Mutable) {
+            Require(invocations == 1, "mutable workloads cannot repeat or calibrate");
+            Require(
+                state.max_iterations == static_cast<std::int64_t>(
+                                            MutationSpecification(selected, args.smoke).iterations),
+                "mutable workload iteration count changed");
+          }
+          if (fixture == nullptr) {
+            if constexpr (Mutable) {
+              fixture = std::make_unique<SelectedFixture>(selected, args.database, args.smoke);
+            } else {
+              fixture = std::make_unique<SelectedFixture>(selected, args.database);
+            }
+          }
+          fixture->Run(state, args.profile);
+        } catch (const std::exception& error) {
+          failed = true;
+          state.SkipWithError(error.what());
+        }
+      });
+  registered->UseRealTime()->MeasureProcessCPUTime()->Unit(benchmark::kNanosecond);
+  if constexpr (Mutable) {
+    registered
+        ->Iterations(
+            static_cast<std::int64_t>(MutationSpecification(selected, args.smoke).iterations))
+        ->Repetitions(1);
+  }
   StatusReporter reporter;
   const std::size_t matched = benchmark::RunSpecifiedBenchmarks(&reporter);
   Require(matched == 1, "the framework did not match exactly one case");
@@ -646,6 +1150,14 @@ int RunCase(const Case& selected, const Arguments& args) {
 
 int Main(int argc, char** argv) {
   Arguments args = ParseArguments(argc, argv);
+  if (args.check_mutations) {
+    Require(args.case_name.empty() && args.database.empty() && args.completion.empty() &&
+                !args.profile && !args.smoke && !args.list && !args.help &&
+                args.framework.size() == 1,
+            "--check-mutation-stream cannot combine with other options");
+    CheckMutationStreams();
+    return 0;
+  }
   if (args.list) {
     ForEachCase([](const Case& selected) { std::cout << selected.name << '\n'; });
     return 0;
@@ -654,11 +1166,15 @@ int Main(int argc, char** argv) {
     std::cout << "Usage: modern_leveldb_performance --case ENGINE/WORKLOAD/RECORDS "
                  "--database NEW_PATH --completion-report NEW_FILE [benchmark flags]\n"
                  "Use --list-cases to list supported cases. --profile-markers requires macOS "
-                 "Apple Clang. The runner owns and removes the database directory.\n";
+                 "Apple Clang. Mutable cases use fixed work and one repetition; --smoke "
+                 "reduces them to one iteration. --check-mutation-stream checks their dispatcher "
+                 "without a database. The runner owns and removes the database directory.\n";
     benchmark::PrintDefaultHelp();
     return 0;
   }
   const Case selected = FindCase(args.case_name);
+  Require(!args.smoke || (IsMutable(selected) && !args.profile),
+          "--smoke requires a mutable case without profile markers");
   Require(!args.database.empty() && !args.completion.empty(),
           "--database and --completion-report are required");
 #if !MODERN_LEVELDB_PROFILE_MARKERS
@@ -670,7 +1186,13 @@ int Main(int argc, char** argv) {
   Require(!benchmark::ReportUnrecognizedArguments(framework_argc, args.framework.data()),
           "unrecognized benchmark argument");
   Require(benchmark::GetBenchmarkVersion() == "v1.9.5", "unexpected Google Benchmark version");
-  AddContext(selected);
+  AddContext(selected, args.smoke);
+  if (IsMutable(selected)) {
+    if (selected.engine == "modern") {
+      return RunCase<Modern, true>(selected, args);
+    }
+    return RunCase<Reference, true>(selected, args);
+  }
   if (selected.engine == "modern") {
     return RunCase<Modern>(selected, args);
   }

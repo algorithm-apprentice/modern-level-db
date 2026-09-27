@@ -4,6 +4,47 @@ This document implements the decisions in
 [ADR-0045](adr/0045-fixed-work-write-profiling.md). It extends the existing
 profiling harness, not the engine or its public API.
 
+## Running the fixed-work cases
+
+Build the existing `profiling` preset, then select one case per process:
+
+```bash
+python3 tools/run_performance.py \
+  --binary build/profiling/benchmarks/modern_leveldb_performance \
+  --case modern/overwrite/65536 \
+  --output build/performance/modern-overwrite-run-1
+```
+
+The other workload identifiers are `writebatch/65536`, `writesync/4096`, and
+`mixed50/65536`; each supports both engine prefixes. The normal budgets are
+262,144 single writes, 8,192 batches of 32, 1,024 sync writes, or 262,144
+read/write pairs, respectively. Use `--smoke` for one iteration with unchanged
+preparation; it is not a performance sample.
+
+Do not pass `--min-time` or request multiple repetitions. To compare engines
+or revisions, collect independent invocations with new output directories in
+a predetermined alternating order. Do not aggregate samples from different
+budgets. `items_per_iteration` is 1, 32, or 2: mixed per-item time averages a
+read and a write, and batch per-item time is per submitted key.
+
+On macOS AppleClang builds, `--capture-cpu` captures the same normal fixed work.
+Inspect `background_activity.quarters` in `profile-summary.json` for sampled
+non-foreground compaction and flush activity. A false
+`sustained_compaction_observed` means the evidence was not observed, not that
+there was no compaction. A true value still does not establish steady state
+or completion of outstanding background work.
+
+Run the no-database operation-stream diagnostic directly with:
+
+```bash
+build/profiling/benchmarks/modern_leveldb_performance --check-mutation-stream
+```
+
+`ctest --preset profiling` retains the original contracts, runs all 24 cases
+in smoke mode, checks the recording diagnostic, and executes all eight normal
+mutable cases. Its raw reports are under `build/profiling/benchmarks/`
+in `performance-smoke/` and `performance-mutations/`.
+
 ## Resolved research
 
 The isolated native probe linked the existing pinned Google Benchmark,

@@ -176,6 +176,119 @@ class PerformanceReportTest(unittest.TestCase):
                 record_diagnostics(manifest, root)
 
 
+class MutationReportTest(unittest.TestCase):
+    CASES = (
+        ("overwrite", 65536, 262144, 1, 0, 0),
+        ("writebatch", 65536, 8192, 32, 0, 0),
+        ("writesync", 4096, 1024, 1, 0, 1),
+        ("mixed50", 65536, 262144, 1, 1, 0),
+    )
+
+    def reports(self, engine, specification, smoke=False):
+        workload, records, iterations, batch, reads, sync = specification
+        iterations = 1 if smoke else iterations
+        case = f"{engine}/{workload}/{records}"
+        data = report(case, 1)
+        data["context"].update(
+            engine=engine, workload=workload, records=str(records),
+            workload_family="mutable", measurement_budget="fixed",
+            mutation_smoke=str(smoke).lower(), measured_sync=str(bool(sync)).lower(),
+            batch_size=str(batch), background_completion="not_drained",
+            steady_state_claimed="false",
+        )
+        row = data["benchmarks"][0]
+        name = f"{case}/iterations:{iterations}/repeats:1/process_time/real_time"
+        row.update(name=name, run_name=name, iterations=iterations,
+                   items_per_iteration=batch + reads, reads_per_iteration=reads,
+                   writes_per_iteration=batch, batch_size=batch,
+                   sync_writes_per_iteration=sync,
+                   items_per_second=(batch + reads) * 1e9 / row["real_time"])
+        done = completion(case)
+        for field in ("warmup_operations", "retained_iterators", "scan_creations", "scan_destructions"):
+            del done[field]
+        done.update(
+            schema_version=2, smoke=smoke, verifications=3, reopens=2,
+            warmup_writes=records, measured_iterations=iterations, batch_size=batch,
+            measured_reads=iterations * reads, measured_writes=iterations * batch,
+            write_calls=iterations, sync_write_calls=iterations * sync,
+            logical_write_bytes=iterations * batch * 267,
+            write_order_crc32c="f117174a", version_values_crc32c="204ed629",
+            final_crc32c="92030b01" if smoke else "5ff7de22",
+        )
+        if records == 65536:
+            done.update(
+                record_crc32c="3fbabb34", insertion_crc32c="347ed266",
+                present_crc32c="2422abad", missing_crc32c="8ee790ec",
+                write_order_crc32c="365dce99", version_values_crc32c="c93270ce",
+                final_crc32c=("86c2c994" if batch == 32 else "7dc2dbe1") if smoke else "b9ae033b",
+            )
+        return case, data, done
+
+    def test_all_normal_and_smoke_mutation_contracts(self):
+        for engine in ("modern", "leveldb"):
+            for specification in self.CASES:
+                for smoke in (False, True):
+                    case, data, done = self.reports(engine, specification, smoke)
+                    with self.subTest(case=case, smoke=smoke):
+                        measured = validate_benchmark(data, case, 1, smoke=smoke)
+                        validate_completion(done, case, smoke=smoke)
+                        self.assertEqual(measured["iterations"], [done["measured_iterations"]])
+                        self.assertEqual(measured["wall_ns_per_item"],
+                                         [123.0 / data["benchmarks"][0]["items_per_iteration"]])
+
+    def test_rejects_changed_counts_ratios_names_and_context(self):
+        case, data, _ = self.reports("modern", self.CASES[3])
+        for field, value in (
+            ("iterations", 1), ("reads_per_iteration", 0), ("writes_per_iteration", 2),
+            ("batch_size", 32), ("sync_writes_per_iteration", True),
+            ("name", case + "/process_time/real_time"),
+        ):
+            changed = copy.deepcopy(data)
+            changed["benchmarks"][0][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                validate_benchmark(changed, case, 1)
+        for field in ("engine", "workload", "records", "workload_family", "measurement_budget", "mutation_smoke",
+                      "measured_sync", "batch_size", "background_completion", "steady_state_claimed"):
+            changed = copy.deepcopy(data)
+            changed["context"][field] = "wrong"
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                validate_benchmark(changed, case, 1)
+            del changed["context"][field]
+            with self.subTest(missing=field), self.assertRaises(ValueError):
+                validate_benchmark(changed, case, 1)
+        with self.assertRaises(ValueError):
+            validate_benchmark(data, case, 3)
+
+    def test_rejects_mutation_completion_drift_and_mode_mismatch(self):
+        case, _, done = self.reports("leveldb", self.CASES[1])
+        for field, value in (
+            ("schema_version", 1), ("smoke", 0), ("preparations", 2),
+            ("callback_invocations", 2), ("cursor_resets", 2), ("verifications", 2),
+            ("reopens", 1), ("warmup_writes", 0), ("measured_iterations", 1),
+            ("batch_size", 1), ("measured_reads", 1), ("measured_writes", 8192),
+            ("write_calls", 262144), ("sync_write_calls", 1), ("logical_write_bytes", 0),
+            ("record_crc32c", "00000000"), ("write_order_crc32c", "00000000"),
+            ("version_values_crc32c", "00000000"), ("final_crc32c", "00000000"),
+        ):
+            changed = copy.deepcopy(done)
+            changed[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                validate_completion(changed, case)
+        with self.assertRaises(ValueError):
+            validate_completion(done, case, smoke=True)
+        for changed in ({**done, "extra": 0}, {k: v for k, v in done.items() if k != "final_crc32c"}):
+            with self.assertRaises(ValueError):
+                validate_completion(changed, case)
+
+    def test_runner_rejects_mutable_calibration_options_without_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "unused"
+            for options in ({"repetitions": 3}, {"min_time": 0.2}):
+                with self.subTest(options=options), self.assertRaises(ValueError):
+                    run_case(Path("/usr/bin/false"), "modern/overwrite/65536", output, **options)
+                self.assertFalse(output.exists())
+
+
 class PerformanceExecutableTest(unittest.TestCase):
     def setUp(self):
         if BINARY is None:
@@ -188,12 +301,58 @@ class PerformanceExecutableTest(unittest.TestCase):
         return subprocess.run([str(BINARY), *args], cwd=self.root, capture_output=True,
                               text=True, check=check, timeout=90)
 
-    def test_lists_exactly_sixteen_cases_without_creating_a_database(self):
+    def test_lists_exactly_twenty_four_cases_without_creating_a_database(self):
         result = self.invoke("--list-cases", check=True)
+        self.assertEqual(len(result.stdout.splitlines()), 24)
         self.assertEqual(set(result.stdout.splitlines()), set(CASES))
         self.assertEqual(list(self.root.iterdir()), [])
         self.invoke("--help", check=True)
         self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_recording_diagnostic_uses_no_database(self):
+        self.invoke("--check-mutation-stream", check=True)
+        self.assertEqual(list(self.root.iterdir()), [])
+        result = self.invoke("--check-mutation-stream", "--case", "modern/overwrite/65536")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_mutable_fixed_counts_override_cli_and_smoke_is_explicit(self):
+        self.invoke(
+            "--case", "modern/writesync/4096", "--smoke",
+            "--database", str(self.root / "db"),
+            "--completion-report", str(self.root / "completion.json"),
+            "--benchmark_min_time=999x", "--benchmark_repetitions=7",
+            "--benchmark_min_warmup_time=0",
+            f"--benchmark_out={self.root / 'benchmark.json'}",
+            "--benchmark_out_format=json", check=True)
+        validate_benchmark(read_json(self.root / "benchmark.json"), "modern/writesync/4096", 1, smoke=True)
+        validate_completion(read_json(self.root / "completion.json"), "modern/writesync/4096", smoke=True)
+
+    def test_mutable_dry_run_cannot_silently_reduce_normal_work(self):
+        result = self.invoke(
+            "--case", "modern/overwrite/65536", "--database", str(self.root / "db"),
+            "--completion-report", str(self.root / "completion.json"),
+            "--benchmark_dry_run=true")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / "db").exists())
+        self.assertFalse((self.root / "completion.json").exists())
+
+    def test_mutable_warmup_cannot_yield_a_successful_second_callback(self):
+        result = self.invoke(
+            "--case", "modern/writesync/4096", "--smoke",
+            "--database", str(self.root / "db"),
+            "--completion-report", str(self.root / "completion.json"),
+            "--benchmark_min_warmup_time=0.001")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / "completion.json").exists())
+
+    def test_rejects_smoke_profile_combination_before_opening(self):
+        result = self.invoke(
+            "--case", "modern/writesync/4096", "--smoke", "--profile-markers",
+            "--database", str(self.root / "db"),
+            "--completion-report", str(self.root / "completion.json"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / "db").exists())
 
     def test_rejects_invalid_cases_and_empty_framework_filter(self):
         for case in ("modern/readrandom/4097", "other/scan/4096", "modern/write/4096"):
