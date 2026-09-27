@@ -5,6 +5,11 @@
 [ADR-0039](0039-sstable-block-compression.md) extends this reader to decode
 Snappy and Zstd blocks. Cache charges count decoded bytes rather than the
 stored compressed size; malformed compressed input returns `Corruption`.
+
+[ADR-0049](0049-leveldb-style-point-read-baseline.md) defines the reference
+controls and diagnostic evidence required before changing data-block
+validation. The reader contracts below remain current until a separately
+measured candidate is accepted.
 - Date: 2026-09-24
 
 ## Context
