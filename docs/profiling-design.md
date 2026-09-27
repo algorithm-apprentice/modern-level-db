@@ -309,6 +309,25 @@ output.
 Raw traces and compiler command paths stay local by default. Do not upload
 them from a developer machine without reviewing their contents.
 
+### Frozen binaries and macOS symbols
+
+A copied Mach-O executable still has a debug map referencing object/archive
+files in its build directory. Copying the executable alone does not freeze
+all information needed by `dsymutil`. For before/after CPU captures, use
+separate baseline and candidate build directories and retain their matching
+objects unchanged until collection completes.
+
+Inspect the preserved `symbols.log`. Missing-object or timestamp-mismatch
+warnings mean fine-grained attribution may be incomplete even if `dsymutil`
+exits successfully and a foreground workload symbol is resolved. Do not use
+such a capture as a precise fully symbolized comparison. This limitation
+does not alter separately collected unprofiled throughput.
+
+Archiving a matching dSYM while the objects are current is also useful, but
+the present automated collector regenerates symbols; it does not yet accept
+an explicitly supplied frozen dSYM. Retaining independent build directories
+works with the existing collector without assuming that missing support.
+
 ## Fixed acceptance checklist
 
 ### Framework and workload contract

@@ -238,12 +238,15 @@ rates. This experiment improves Modern-before versus Modern-after; it does
 not establish parity, concurrent capacity, or a comparison against
 hardware-CRC-enabled LevelDB or RocksDB.
 
-Matched cache-fit CPU captures collected afterward contained 7,029 baseline
-and 7,005 candidate samples and resolved the foreground workload. The
-reported inclusive share of checked `DecodeEntry` was 12.95% before;
-the candidate's `DecodeValidatedEntry` share was 3.47%. These are attribution
-observations, not the throughput calculation or an exhaustive accounting of
-every changed instruction.
+Cache-fit CPU captures collected afterward contained 7,029 baseline and
+7,005 candidate samples and resolved the foreground workload. A later review
+during ADR-0047 found object timestamp/missing-object warnings in the
+baseline's `symbols.log`: its shared build objects had been replaced before
+symbol generation. The initially reported 12.95% checked-decoder share must
+therefore not be treated as a precise, fully symbolized before/after comparison.
+The candidate capture had no such warnings and reported a 3.47% inclusive
+validated-decoder share. The unprofiled throughput results and disassembly
+evidence are independent of this attribution limitation and remain unchanged.
 
 Disassembly confirms that `RestartKey` and `ParseEntry` no longer call the
 fallible entry decoder, while `Block::Validate` retains the checked varint

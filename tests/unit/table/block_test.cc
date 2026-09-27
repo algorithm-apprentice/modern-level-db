@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <random>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -320,6 +321,58 @@ TEST(BlockIteratorTest, ChangesDirectionAcrossRestartPoints) {
   ExpectAt(iterator, "apple", "1");
   iterator.Next();
   ExpectAt(iterator, "applesauce", "2");
+}
+
+TEST(BlockIteratorTest, HandlesGrowingAndShrinkingKeysAcrossRestarts) {
+  const std::array keys{std::string{},        std::string(19, 'a'), std::string(31, 'a'),
+                        std::string(32, 'a'), std::string(33, 'a'), std::string(80, 'a'),
+                        std::string("b")};
+  for (const std::uint32_t restart_interval : {1U, 3U, 16U}) {
+    SCOPED_TRACE(restart_interval);
+    BlockBuilder builder(restart_interval);
+    for (const auto& key : keys) {
+      ASSERT_TRUE(builder.Add(AsBytes(key), AsBytes("value")).has_value());
+    }
+    const Block block = MakeBlock(Materialize(builder.Finish()));
+    Block::Iterator iterator(block);
+    iterator.SeekToFirst();
+    for (const auto& key : keys) {
+      ExpectAt(iterator, key, "value");
+      iterator.Next();
+    }
+    EXPECT_FALSE(iterator.valid());
+    for (const auto& key : keys) {
+      iterator.Seek(AsBytes(key));
+      ExpectAt(iterator, key, "value");
+    }
+    iterator.SeekToLast();
+    for (std::size_t remaining = keys.size(); remaining > 0; --remaining) {
+      ExpectAt(iterator, keys[remaining - 1], "value");
+      iterator.Prev();
+    }
+    EXPECT_FALSE(iterator.valid());
+  }
+}
+
+TEST(BlockIteratorTest, ReconstructsBinaryRestartKeys) {
+  std::string short_key(19, 'a');
+  std::string long_key(33, 'b');
+  short_key[1] = long_key[1] = '\0';
+  short_key[2] = long_key[2] = '\xff';
+  constexpr std::string_view BinaryValue("v\0\xff", 3);
+  BlockBuilder builder(1);
+  ASSERT_TRUE(builder.Add(AsBytes(short_key), AsBytes(BinaryValue)).has_value());
+  ASSERT_TRUE(builder.Add(AsBytes(long_key), AsBytes("last")).has_value());
+  const Block block = MakeBlock(Materialize(builder.Finish()));
+  Block::Iterator iterator(block);
+  iterator.SeekToLast();
+  ExpectAt(iterator, long_key, "last");
+  iterator.Prev();
+  ExpectAt(iterator, short_key, BinaryValue);
+  iterator.Next();
+  ExpectAt(iterator, long_key, "last");
+  iterator.Seek(AsBytes(short_key));
+  ExpectAt(iterator, short_key, BinaryValue);
 }
 
 TEST(BlockIteratorTest, DecodesEveryAcceptedExtendedLengthEncoding) {

@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted design. Merge this design before the separate local implementation experiment.
+Experiment completed; the candidate failed admission and was not committed.
+The original vector-based iterator key remains in production.
 
 ## Evidence and prior art
 
@@ -167,6 +168,76 @@ If the candidate passes, capture the exact frozen binaries for cache-fit
 random-read CPU attribution, then commit/push the accepted source for final
 CI and delivery. If it fails, restore production and record the outcome,
 retaining only tests applicable to the retained implementation.
+
+## Outcome
+
+Design-only PR #48 merged at `0f91137`. The candidate remained uncommitted
+through correctness checks, the fixed throughput experiment, and one
+post-measurement diagnostic CPU capture. No candidate implementation commit
+was made or pushed.
+
+| Artifact | SHA-256 |
+|---|---|
+| Clean original executable | `c9a87f6b676780c5a3daf13c86f81e70a701f9e7fee05345c0705809b82ac6b3` |
+| Candidate executable | `562ff2d4331c561f1552a6294a43cbd437209adc04ac9319b6d98d07ee165042` |
+| Candidate source patch | `8193680552e565abb3403ae2ac8f39d5d16171c8f543fbd591062a4f01521e6a` |
+
+The candidate passed 547 native unit cases, 557 sanitizer/model/differential/
+crash cases, and bounded Sol implementation review. Its 144-byte iterator
+footprint was confirmed with both local standard libraries. Storage tests
+proved short keys were inline, and optimized code no longer called vector
+reconstruction machinery. Correctness and simpler generated code were not
+substituted for the performance gate.
+
+All 54 predetermined processes completed. The nine individual samples per
+Modern variant/case gave:
+
+| Case | Original items/s | Candidate items/s | Throughput gain |
+|---|---:|---:|---:|
+| `modern/readrandom/4096` | 2,126,602 | 2,137,891 | 0.53% |
+| `modern/readrandom/65536` | 664,323 | 676,577 | 1.84% |
+| `modern/readmissing/4096` | 2,249,112 | 2,239,713 | -0.42% |
+| `modern/readmissing/65536` | 688,010 | 707,554 | 2.84% |
+| `modern/scan/4096` | 22,861,086 | 24,530,608 | 7.30% |
+| `modern/scan/65536` | 7,515,884 | 7,768,707 | 3.36% |
+| `modern/seek_reuse/4096` | 415,458 | 473,811 | 14.05% |
+| `modern/seek_reuse/65536` | 197,401 | 228,325 | 15.67% |
+
+The primary gains by round were 1.11%, 0.28%, and -0.55%. It fails both the
+5% aggregate threshold and the requirement for positive gains in every
+round. Controls do not trigger rejection, but their improvements cannot
+replace the predeclared primary target. In particular, the 7.30% cache-fit
+scan gain does not justify changing the objective after measurement.
+
+The reference processes measured 2,469,320 and 973,277 Get/s for their two
+random-read sizes. These provide context only; the candidate did not
+materially close the cache-fit read gap.
+
+One additional candidate-only CPU capture, not a new throughput run,
+contained 6,996 samples with no symbol-generation warnings. It placed
+15.32% inclusive sample weight in entry parsing and 47.31% in internal-key
+comparison. The work distribution changed, but this does not override the
+end-to-end result or prove exactly which costs offset the expected benefit.
+Do not conclude that inline storage is universally ineffective.
+
+Restore `block.h` and `block.cc` exactly to their pre-experiment state and
+rebuild the normal binaries. Remove assertions requiring the rejected inline
+layout; retain only general growing/shrinking-key and binary-restart behavior
+regressions. The restored implementation passed 546 native unit cases and
+23 sanitizer block/model cases.
+
+The diagnostic review also found symbol-generation warnings in ADR-0046's
+older frozen-baseline capture, after its shared build objects had been
+replaced. That earlier fine-grained CPU comparison is now qualified in its
+outcome; the unprofiled throughput results are unaffected. The warning-free
+candidate capture used to select this experiment remains a valid observation.
+Future frozen-baseline CPU collection must retain matching build objects or
+explicitly preserved symbols, as documented in the profiling guide.
+
+Raw samples, the rejected source patch, frozen binaries, code-generation
+evidence, and the diagnostic capture remain local under
+`build/inline-key-optimization/`. Do not tune capacity or add favorable
+rounds to rescue this candidate.
 
 ## Delivery boundary
 
