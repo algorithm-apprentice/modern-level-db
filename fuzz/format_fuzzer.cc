@@ -78,8 +78,11 @@ void FuzzFormat(ByteView input) {
       break;
     }
     case 3: {
-      auto block =
-          Block::Create(std::vector<std::byte>(input.begin(), input.end()), BytewiseComparator());
+      std::vector<std::byte> contents(input.begin(), input.end());
+      auto block = (command & 8U) == 0U
+                       ? Block::Create(std::move(contents), BytewiseComparator())
+                       : Block::CreateWithTrustedKeyOrder(std::move(contents),
+                                                          BytewiseComparator());
       if (block.has_value()) {
         Block::Iterator iterator(*block);
         std::vector<std::pair<std::string, std::string>> forward;

@@ -8,9 +8,9 @@ type, and verified Snappy and Zstd blocks are decoded instead of returning
 `NotSupported`.
 
 [ADR-0049](0049-leveldb-style-point-read-baseline.md) defines a measured
-follow-up that may stop rechecking data-block key order while retaining the
-one-pass structural proof required by trusted decoding. This ADR remains the
-production contract until that separate candidate passes admission.
+follow-up that stops rechecking data-block key order while retaining the
+one-pass structural proof required by trusted decoding. Index, metaindex, and
+general-purpose blocks retain the complete validation described below.
 - Date: 2026-09-23
 
 ## Context
@@ -147,6 +147,8 @@ class Block {
  public:
   static Result<Block> Create(std::vector<std::byte> contents,
                               const Comparator& comparator);
+  static Result<Block> CreateWithTrustedKeyOrder(
+      std::vector<std::byte> contents, const Comparator& comparator);
 
   class Iterator {
    public:
@@ -211,6 +213,12 @@ unless:
   holds;
 - keys strictly increase under the comparator.
 
+`Block::CreateWithTrustedKeyOrder` checks the same restart, entry-boundary,
+length, and prefix invariants but treats strict key order as a caller
+precondition. The table reader uses it only for data blocks. `TableBuilder`
+and the tested internal write path establish that invariant; index,
+metaindex, and general-purpose callers continue to use `Block::Create`.
+
 LevelDB writes every data, index, and metaindex block this way, including the
 empty index and metaindex blocks of an empty table. The block keeps the
 comparator, which must outlive it, and its iterators use it. Offsets within a
@@ -265,8 +273,9 @@ footer, trailer, and block code.
 - Written blocks and footers are byte-compatible with LevelDB.
 - Until `implement-compression`, Modern LevelDB cannot read LevelDB tables
   that use compression.
-- Block iteration has no error path; every structural or ordering error
-  surfaces when the block is loaded.
+- Block iteration has no error path; every structural error surfaces when the
+  block is loaded. Data-block key-order violations are outside that guarantee
+  because ADR-0049 deliberately trusts the writer-established order.
 
 ## References
 

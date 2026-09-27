@@ -7,9 +7,9 @@ Snappy and Zstd blocks. Cache charges count decoded bytes rather than the
 stored compressed size; malformed compressed input returns `Corruption`.
 
 [ADR-0049](0049-leveldb-style-point-read-baseline.md) defines the reference
-controls and diagnostic evidence required before changing data-block
-validation. The reader contracts below remain current until a separately
-measured candidate is accepted.
+controls and diagnostic evidence used to change data-block validation. Data
+blocks now retain complete structural validation while trusting the writer's
+key order; index and metaindex blocks retain full order validation.
 - Date: 2026-09-24
 
 ## Context
@@ -67,7 +67,9 @@ Change:
   blocks must follow one another in file order without overlapping, so a
   block's offset identifies it in the block cache. Every problem is
   `Corruption`, found when `Open` reads the block or when a data block is
-  first read.
+  first read. ADR-0049 narrows this promise for data blocks: structurally
+  valid but unordered entries are not diagnosed, because their order is an
+  invariant of conforming table writers.
 - **Non-empty data blocks.** LevelDB skips data blocks without entries, which
   its writer never produces. Here such a block is `Corruption`, so an iterator
   that leaves a data block needs only the adjacent block.
@@ -168,6 +170,10 @@ class Table {
 - Data blocks are read through the block cache when one is configured.
   `fill_cache = false` still uses cached blocks but does not insert new ones.
   A block whose charge the cache cannot account is used without caching it.
+- Data blocks use `Block::CreateWithTrustedKeyOrder`: every encoded length,
+  prefix, entry boundary, and restart point is checked before the block can
+  use its trusted decoder, but the load does not reconstruct and compare every
+  key. Index and metaindex blocks continue to use full `Block::Create`.
 - A block iterator borrows its block, so an iterator keeps the current block's
   cache handle, or its own `shared_ptr<const Block>` for a block that is not
   in the cache, while it is positioned in that block. `Get` keeps the block
