@@ -6,6 +6,11 @@ The original uncompressed-only scope is extended by
 [ADR-0039](0039-sstable-block-compression.md). Trailers now record the selected
 type, and verified Snappy and Zstd blocks are decoded instead of returning
 `NotSupported`.
+
+[ADR-0049](0049-leveldb-style-point-read-baseline.md) defines a measured
+follow-up that may stop rechecking data-block key order while retaining the
+one-pass structural proof required by trusted decoding. This ADR remains the
+production contract until that separate candidate passes admission.
 - Date: 2026-09-23
 
 ## Context

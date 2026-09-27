@@ -3,6 +3,11 @@
 - Status: Accepted
 - Date: 2026-09-24
 
+[ADR-0049](0049-leveldb-style-point-read-baseline.md) audits this path against
+the pinned LevelDB implementation and defines sequential attribution and
+validation experiments. Candidate traversal, caching, and ownership behavior
+here remains unchanged until a separate candidate passes admission.
+
 ## Context
 
 A point read finds the newest version of a user key that a snapshot can see.
