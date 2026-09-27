@@ -272,11 +272,23 @@ def summarize_trace(toc, markers, samples, case, iterations):
     workload_symbols = {
         "readrandom": "RunReadRandom", "readmissing": "RunReadMissing",
         "scan": "RunScan", "seek_reuse": "RunSeekReuse",
+        "overwrite": "RunOverwrite", "writebatch": "RunWriteBatch",
+        "writesync": "RunWriteSync", "mixed50": "RunMixed50",
     }
     parts = case.split("/")
     if len(parts) != 3 or parts[1] not in workload_symbols:
         raise ValueError("unknown profile workload")
     workload_symbol = workload_symbols[parts[1]]
+    mutable = parts[1] in ("overwrite", "writebatch", "writesync", "mixed50")
+    if mutable and window["calibration_intervals"] != 0:
+        raise ValueError("mutable CPU captures cannot contain calibration or warmup intervals")
+    background = [{"compaction_samples": 0, "flush_samples": 0} for _ in range(4)]
+    activity_symbols = {
+        "modern": ("modern_leveldb::RunCompaction(", "modern_leveldb::FlushMemTable("),
+        "leveldb": ("leveldb::DBImpl::DoCompactionWork(", "leveldb::DBImpl::CompactMemTable("),
+    }
+    if parts[0] not in activity_symbols:
+        raise ValueError("unknown profile engine")
     resolved_workload = False
     for row in export.root.findall(".//row"):
         timestamp = export.integer(row.find("sample-time"))
@@ -304,6 +316,10 @@ def summarize_trace(toc, markers, samples, case, iterations):
         seen.add(identity)
         if thread == window["foreground_thread"]:
             resolved_workload = resolved_workload or any(workload_symbol in name for _, name in stack)
+        elif mutable:
+            quarter = (timestamp - window["start_ns"]) * 4 // (window["end_ns"] - window["start_ns"])
+            for category, symbol in zip(("compaction_samples", "flush_samples"), activity_symbols[parts[0]]):
+                background[quarter][category] += any(symbol in name for _, name in stack)
         sample_count += 1
         total_weight += weight
         unresolved += any(name.startswith("0x") or name == "<unresolved>" for _, name in stack)
@@ -325,7 +341,7 @@ def summarize_trace(toc, markers, samples, case, iterations):
             for (module, name), weight in counter.most_common(50)
         ]
 
-    return {
+    result = {
         "schema_version": 1,
         "case": case,
         "measurement": "sampled_cpu_not_operation_latency",
@@ -344,6 +360,13 @@ def summarize_trace(toc, markers, samples, case, iterations):
         "inclusive": top(inclusive_weights),
         "inclusive_percentages_overlap": True,
     }
+    if mutable:
+        result["background_activity"] = {
+            "measurement": "sampled_stacks_not_completed_jobs", "quarters": background,
+            "sustained_compaction_observed": all(part["compaction_samples"] > 0 for part in background),
+            "steady_state_proven": False,
+        }
+    return result
 
 
 def collector_version(path):

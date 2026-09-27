@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted design. Merge this design before the separate implementation PR.
+Accepted. Design-only PR #44 was reviewed and merged before implementation.
 
 ## Context and research
 

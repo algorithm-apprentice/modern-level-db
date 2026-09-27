@@ -62,14 +62,25 @@ SAMPLES = """<trace-query-result><node>
 <weight ref="weight"/><tagged-backtrace ref="stack"/></row>
 </node></trace-query-result>"""
 
+FIXED_MARKERS = f"""<trace-query-result><node><row>
+<event-time>100</event-time><thread id="t"><tid>7</tid></thread>
+<process id="p"><pid>42</pid></process>
+<subsystem id="s">modern_leveldb.profiling</subsystem><signpost-name id="n">workload</signpost-name>
+<event-type>Begin</event-type><os-signpost-identifier id="i">1</os-signpost-identifier>
+<os-log-metadata id="m"><string>{CASE}</string><uint64>1000</uint64></os-log-metadata>
+</row><row><event-time>200</event-time><thread ref="t"/><process ref="p"/>
+<subsystem ref="s"/><signpost-name ref="n"/><event-type>End</event-type>
+<os-signpost-identifier ref="i"/><os-log-metadata ref="m"/>
+</row></node></trace-query-result>"""
+
 
 class ProfileReportTest(unittest.TestCase):
-    def report(self, toc=TOC, markers=MARKERS, samples=SAMPLES, iterations=1000):
+    def report(self, toc=TOC, markers=MARKERS, samples=SAMPLES, iterations=1000, case=CASE):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for name, text in (("toc", toc), ("markers", markers), ("samples", samples)):
                 (root / name).write_text(text)
-            return summarize_trace(root / "toc", root / "markers", root / "samples", CASE, iterations)
+            return summarize_trace(root / "toc", root / "markers", root / "samples", case, iterations)
 
     def test_resolves_references_deduplicates_and_excludes_preparation_and_other_processes(self):
         report = self.report()
@@ -128,6 +139,54 @@ class ProfileReportTest(unittest.TestCase):
     def test_rejects_captures_without_a_symbolized_workload(self):
         with self.assertRaises(ValueError):
             self.report(samples=SAMPLES.replace('name="RunReadRandom"', 'name="0xabcd"'))
+
+    def test_mutable_background_quarters_count_only_distinct_matching_background_stacks(self):
+        for engine, compaction, flush in (
+            ("modern", "modern_leveldb::RunCompaction(", "modern_leveldb::FlushMemTable("),
+            ("leveldb", "leveldb::DBImpl::DoCompactionWork(", "leveldb::DBImpl::CompactMemTable("),
+        ):
+            case = f"{engine}/overwrite/65536"
+            samples = SAMPLES.replace("RunReadRandom", "RunOverwrite")
+            rows = []
+            for timestamp in (100, 125, 150, 175, 200):
+                rows.append(
+                    f'<row><sample-time>{timestamp}</sample-time><process ref="p"/>'
+                    '<thread><tid>8</tid></thread><weight ref="weight"/><tagged-backtrace>'
+                    f'<frame name="{compaction}args)"><binary ref="bin"/></frame>'
+                    f'<frame name="{compaction}args)"><binary ref="bin"/></frame>'
+                    f'<frame name="{flush}args)"><binary ref="bin"/></frame>'
+                    '</tagged-backtrace></row>')
+            samples = samples.replace("</node>", "".join(rows + [rows[0]]) + "</node>")
+            result = self.report(case=case, markers=FIXED_MARKERS.replace(CASE, case), samples=samples)
+            activity = result["background_activity"]
+            self.assertTrue(activity["sustained_compaction_observed"])
+            self.assertFalse(activity["steady_state_proven"])
+            self.assertEqual(activity["quarters"],
+                             [{"compaction_samples": 1, "flush_samples": 1}] * 4)
+            foreground = samples.replace('<thread><tid>8</tid></thread>', '<thread ref="t"/>')
+            result = self.report(case=case, markers=FIXED_MARKERS.replace(CASE, case), samples=foreground)
+            self.assertFalse(result["background_activity"]["sustained_compaction_observed"])
+            other_pid = samples.replace('<process ref="p"/>', '<process><pid>99</pid></process>')
+            other_pid = other_pid.replace('<sample-time ref="inside"/><process><pid>99</pid></process>',
+                                          '<sample-time ref="inside"/><process ref="p"/>', 1)
+            result = self.report(case=case, markers=FIXED_MARKERS.replace(CASE, case), samples=other_pid)
+            self.assertFalse(result["background_activity"]["sustained_compaction_observed"])
+
+    def test_sync_capture_without_compaction_is_not_a_fake_steady_state(self):
+        case = "modern/writesync/4096"
+        result = self.report(case=case, markers=FIXED_MARKERS.replace(CASE, case),
+                             samples=SAMPLES.replace("RunReadRandom", "RunWriteSync"))
+        activity = result["background_activity"]
+        self.assertEqual(activity["measurement"], "sampled_stacks_not_completed_jobs")
+        self.assertFalse(activity["sustained_compaction_observed"])
+        self.assertEqual(activity["quarters"],
+                         [{"compaction_samples": 0, "flush_samples": 0}] * 4)
+
+    def test_rejects_mutable_capture_with_calibration_or_warmup(self):
+        case = "modern/overwrite/65536"
+        with self.assertRaises(ValueError):
+            self.report(case=case, markers=MARKERS.replace(CASE, case),
+                        samples=SAMPLES.replace("RunReadRandom", "RunOverwrite"))
 
 
 if __name__ == "__main__":

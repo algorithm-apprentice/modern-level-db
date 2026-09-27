@@ -15,12 +15,24 @@ import xml.etree.ElementTree as ET
 
 import profile_report
 
-CASES = tuple(
+READ_CASES = tuple(
     f"{engine}/{workload}/{records}"
     for engine in ("modern", "leveldb")
     for workload in ("readrandom", "readmissing", "scan", "seek_reuse")
     for records in (4096, 65536)
 )
+MUTATIONS = {
+    "overwrite": {"records": 65536, "iterations": 262144, "batch": 1, "reads": 0, "sync": 0},
+    "writebatch": {"records": 65536, "iterations": 8192, "batch": 32, "reads": 0, "sync": 0},
+    "writesync": {"records": 4096, "iterations": 1024, "batch": 1, "reads": 0, "sync": 1},
+    "mixed50": {"records": 65536, "iterations": 262144, "batch": 1, "reads": 1, "sync": 0},
+}
+MUTATION_CASES = tuple(
+    f"{engine}/{workload}/{specification['records']}"
+    for engine in ("modern", "leveldb")
+    for workload, specification in MUTATIONS.items()
+)
+CASES = READ_CASES + MUTATION_CASES
 FINGERPRINTS = {
     4096: ("e966aa2f", "387c287f", "c3e3b3de", "7883c9b4"),
     65536: ("3fbabb34", "347ed266", "2422abad", "8ee790ec"),
@@ -42,11 +54,22 @@ def number(value, minimum=0):
     return type(value) in (int, float) and math.isfinite(value) and value >= minimum
 
 
-def validate_benchmark(report, case, repetitions):
-    _, workload, records = case_parts(case)
+def mutation_specification(case, smoke=False):
+    _, workload, _ = case_parts(case)
+    if workload not in MUTATIONS:
+        return None
+    specification = dict(MUTATIONS[workload])
+    if smoke:
+        specification["iterations"] = 1
+    return specification
+
+
+def validate_benchmark(report, case, repetitions, smoke=False):
+    engine, workload, records = case_parts(case)
     if not isinstance(report, dict) or not isinstance(report.get("context"), dict):
         raise ValueError("missing Google Benchmark context")
     context = report["context"]
+    mutation = mutation_specification(case, smoke)
     if (context.get("library_version") != "v1.9.5"
             or type(context.get("json_schema_version")) is not int
             or context["json_schema_version"] != 1
@@ -54,11 +77,24 @@ def validate_benchmark(report, case, repetitions):
             or context.get("timing") != "wall_and_process_cpu"
             or context.get("build_type") != "Release"):
         raise ValueError("incorrect benchmark version, case, timing mode, or build type")
+    if mutation:
+        expected_context = {
+            "engine": engine, "workload": workload, "records": str(records),
+            "workload_family": "mutable", "measurement_budget": "fixed",
+            "mutation_smoke": str(smoke).lower(),
+            "measured_sync": str(bool(mutation["sync"])).lower(),
+            "batch_size": str(mutation["batch"]), "background_completion": "not_drained",
+            "steady_state_claimed": "false",
+        }
+        if repetitions != 1 or any(context.get(key) != value for key, value in expected_context.items()):
+            raise ValueError("incorrect fixed-work mutation context or repetition count")
     rows = report.get("benchmarks")
     if not isinstance(rows, list) or not rows:
         raise ValueError("no benchmark results")
     individuals = []
     expected_name = f"{case}/process_time/real_time"
+    if mutation:
+        expected_name = f"{case}/iterations:{mutation['iterations']}/repeats:1/process_time/real_time"
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError("malformed benchmark row")
@@ -73,6 +109,8 @@ def validate_benchmark(report, case, repetitions):
     if len(individuals) != repetitions or not integer(repetitions):
         raise ValueError("incorrect individual repetition count")
     items = records if workload == "scan" else 1
+    if mutation:
+        items = mutation["batch"] + mutation["reads"]
     seen = set()
     for row in individuals:
         index = row.get("repetition_index")
@@ -87,6 +125,17 @@ def validate_benchmark(report, case, repetitions):
         if (not number(row.get("items_per_iteration"), 1)
                 or row["items_per_iteration"] != items):
             raise ValueError("incorrect work items per benchmark iteration")
+        if mutation:
+            if row["iterations"] != mutation["iterations"]:
+                raise ValueError("incorrect fixed mutation iteration count")
+            counters = {
+                "reads_per_iteration": mutation["reads"],
+                "writes_per_iteration": mutation["batch"],
+                "batch_size": mutation["batch"],
+                "sync_writes_per_iteration": mutation["sync"],
+            }
+            if any(not number(row.get(key)) or row[key] != value for key, value in counters.items()):
+                raise ValueError("incorrect mutation operation counters")
         if not number(row.get("real_time")) or row["real_time"] <= 0:
             raise ValueError("wall time must be positive and finite")
         if not number(row.get("cpu_time")):
@@ -105,7 +154,10 @@ def validate_benchmark(report, case, repetitions):
     }
 
 
-def validate_completion(report, case):
+def validate_completion(report, case, smoke=False):
+    mutation = mutation_specification(case, smoke)
+    if mutation:
+        return validate_mutation_completion(report, case, mutation, smoke)
     _, workload, records = case_parts(case)
     fields = {
         "schema_version", "case", "preparations", "verifications", "callback_invocations",
@@ -145,6 +197,37 @@ def validate_completion(report, case):
     ):
         if report[field] != expected:
             raise ValueError(f"canonical corpus drift: {field}")
+    return report
+
+
+def validate_mutation_completion(report, case, specification, smoke):
+    records = specification["records"]
+    iterations = specification["iterations"]
+    batch = specification["batch"]
+    expected = {
+        "schema_version": 2, "case": case, "smoke": smoke, "preparations": 1,
+        "verifications": 3, "reopens": 2, "callback_invocations": 1, "cursor_resets": 1,
+        "warmup_writes": records, "measured_iterations": iterations, "batch_size": batch,
+        "measured_reads": iterations * specification["reads"],
+        "measured_writes": iterations * batch, "write_calls": iterations,
+        "sync_write_calls": iterations * specification["sync"],
+        "logical_write_bytes": iterations * batch * 267,
+    }
+    expected.update(zip(
+        ("record_crc32c", "insertion_crc32c", "present_crc32c", "missing_crc32c"),
+        FINGERPRINTS[records],
+    ))
+    if records == 4096:
+        expected.update(write_order_crc32c="f117174a", version_values_crc32c="204ed629",
+                        final_crc32c="92030b01" if smoke else "5ff7de22")
+    else:
+        expected.update(write_order_crc32c="365dce99", version_values_crc32c="c93270ce",
+                        final_crc32c=("86c2c994" if batch == 32 else "7dc2dbe1") if smoke else "b9ae033b")
+    if not isinstance(report, dict) or set(report) != set(expected):
+        raise ValueError("invalid mutable completion schema")
+    for field, value in expected.items():
+        if type(report[field]) is not type(value) or report[field] != value:
+            raise ValueError(f"incorrect mutable completion field: {field}")
     return report
 
 
@@ -233,6 +316,12 @@ def record_diagnostics(manifest, output):
 def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=None,
              min_time=None, timeout=None):
     case_parts(case)
+    mutation = mutation_specification(case, smoke)
+    if mutation:
+        if repetitions is not None and (not integer(repetitions) or repetitions != 1):
+            raise ValueError("mutable cases require one repetition; use independent fresh processes")
+        if min_time is not None:
+            raise ValueError("mutable cases have fixed work; --min-time is not supported")
     binary = Path(binary).resolve(strict=True)
     output = Path(output).absolute()
     if not binary.is_file():
@@ -241,7 +330,7 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
         raise ValueError("CPU collection requires macOS Xcode Time Profiler")
     if capture_cpu and smoke:
         raise ValueError("a one-iteration smoke run is not a CPU profile")
-    repetitions = repetitions if repetitions is not None else (1 if capture_cpu or smoke else 3)
+    repetitions = repetitions if repetitions is not None else (1 if capture_cpu or smoke or mutation else 3)
     min_time = min_time if min_time is not None else (5.0 if capture_cpu else 0.2)
     timeout = timeout if timeout is not None else (180.0 if capture_cpu else 300.0)
     if not integer(repetitions) or repetitions > 31:
@@ -271,10 +360,11 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
     }
     manifest_path = output / "manifest.json"
     write_json(manifest_path, manifest)
+    benchmark_time = f"{mutation['iterations']}x" if mutation else ("1x" if smoke else f"{min_time}s")
     command = [
         "--case", case, "--database", str(work / "db"),
         "--completion-report", str(output / "completion.json"),
-        f"--benchmark_min_time={'1x' if smoke else str(min_time) + 's'}",
+        f"--benchmark_min_time={benchmark_time}",
         f"--benchmark_repetitions={repetitions}", "--benchmark_min_warmup_time=0",
         "--benchmark_enable_random_interleaving=false", "--benchmark_dry_run=false",
         "--benchmark_list_tests=false",
@@ -282,6 +372,8 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
         f"--benchmark_out={output / 'benchmark.json'}", "--benchmark_out_format=json",
         "--benchmark_color=false",
     ]
+    if mutation and smoke:
+        command.append("--smoke")
     started = time.monotonic()
     try:
         if capture_cpu:
@@ -301,8 +393,9 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
                 [str(binary), *command], output / "benchmark.log", timeout, manifest["commands"]
             )
         raw = read_json(output / "benchmark.json")
-        manifest["measurement"] = validate_benchmark(raw, case, repetitions)
-        manifest["completion"] = validate_completion(read_json(output / "completion.json"), case)
+        manifest["measurement"] = validate_benchmark(raw, case, repetitions, smoke=smoke)
+        manifest["completion"] = validate_completion(read_json(output / "completion.json"), case,
+                                                     smoke=smoke)
         context = raw["context"]
         validate_build_context(context)
         manifest["build"] = {

@@ -244,4 +244,5 @@ jobs:
           name: performance-${{ matrix.os }}
           path: |
             build/profiling/benchmarks/performance-smoke/
+            build/profiling/benchmarks/performance-mutations/
             build/profiling/Testing/Temporary/

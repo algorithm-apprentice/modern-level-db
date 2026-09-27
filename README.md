@@ -201,8 +201,8 @@ inputs and corpora are retained as CI artifacts. See
 [ADR-0041](docs/adr/0041-engine-hardening-gates.md) for the fixed budgets,
 benchmark methodology, and limitations.
 
-For separate, reproducible read-workload measurements, use the optional Google
-Benchmark harness:
+For separate, reproducible read and fixed-work write/mixed measurements, use
+the optional Google Benchmark harness:
 
 ```bash
 cmake --preset profiling
@@ -214,8 +214,27 @@ python3 tools/run_performance.py \
   --output build/performance/readrandom-64k
 ```
 
-Sixteen cases cover both implementations, two data sizes, and random reads,
-interior missing-key reads, scans, and reused-iterator seeks. On macOS with
+Sixteen read cases cover both implementations, two data sizes, random reads,
+interior missing-key reads, scans, and reused-iterator seeks. Eight additional
+cases cover overwrite, 32-key batches, synchronous writes, and a serialized
+50/50 read/write mix:
+
+```bash
+python3 tools/run_performance.py \
+  --binary build/profiling/benchmarks/modern_leveldb_performance \
+  --case modern/overwrite/65536 \
+  --output build/performance/overwrite-64k
+```
+
+Mutable cases use fixed operation counts and one repetition, with a fresh
+database per process. Use new output paths and independent invocations for
+additional samples; `--min-time` and repetitions other than one are rejected.
+Their timing covers acknowledged operations and overlapping background CPU,
+not drained compaction debt, steady state, or per-request tail latency. See
+[the write profiling guide](docs/write-profiling-design.md) for exact budgets,
+versioned data, recording-adapter checks, and units.
+
+On macOS with
 Apple Clang and Xcode, add `--capture-cpu` and a new output path for a symbolized
 Time Profiler capture limited to the measured interval. Native traces stay
 local, and profiled timings are not speedup evidence. See
