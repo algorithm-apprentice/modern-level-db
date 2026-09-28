@@ -3,6 +3,10 @@
 - Status: Accepted
 - Date: 2026-09-24
 
+[ADR-0050](0050-posix-mmap-table-reads.md) designs bounded POSIX mappings owned
+by cached tables and confirms the existing evict-before-unlink order. This ADR
+remains the current table ownership contract until that candidate is accepted.
+
 ## Context
 
 Reads, compactions, and the checks that flushes and compactions run on new

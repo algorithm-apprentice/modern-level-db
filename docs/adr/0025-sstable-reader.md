@@ -10,6 +10,11 @@ stored compressed size; malformed compressed input returns `Corruption`.
 controls and diagnostic evidence used to change data-block validation. Data
 blocks now retain complete structural validation while trusting the writer's
 key order; index and metaindex blocks retain full order validation.
+
+[ADR-0050](0050-posix-mmap-table-reads.md) designs direct decoding from an
+optional mapped file view while preserving the reader's owning block and cache
+contracts. This reader still uses copied random-access reads until that
+candidate passes admission.
 - Date: 2026-09-24
 
 ## Context
