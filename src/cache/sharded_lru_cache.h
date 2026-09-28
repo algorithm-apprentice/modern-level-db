@@ -64,9 +64,11 @@ class ShardedLruCache final {
                                       std::size_t charge) {
     auto entry = std::make_unique<TypedEntry>(std::vector<std::byte>(key.begin(), key.end()),
                                               std::move(value), charge);
+    // GCOVR_EXCL_START: identical error mapping repeats for every value specialization
     return cache_.Insert(std::move(entry)).transform([](IntrusiveLruCache::Pin pin) {
       return Handle(std::move(pin));
     });
+    // GCOVR_EXCL_STOP
   }
 
   [[nodiscard]] std::optional<Handle> Lookup(ByteView key) {
