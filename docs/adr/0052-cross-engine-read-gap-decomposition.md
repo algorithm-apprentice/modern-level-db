@@ -2,8 +2,10 @@
 
 ## Status
 
-Proposed design. Merge this ADR before changing the benchmark or diagnostic
-tooling.
+Superseded before tooling implementation by
+[ADR-0053](0053-leveldb-read-path-parity.md). The preliminary matrix remains
+useful historical evidence, but the project returned to completing the pinned
+LevelDB read-path baseline instead of adding another attribution layer.
 
 ## Context
 
