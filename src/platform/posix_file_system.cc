@@ -370,7 +370,7 @@ class PosixMmapBudget final {
 namespace {
 
 std::shared_ptr<PosixMmapBudget> ProcessMmapBudget() {
-  static const auto budget = std::make_shared<PosixMmapBudget>(DefaultMmapCount, DefaultMmapBytes);
+  static const auto budget = std::make_shared<PosixMmapBudget>(DefaultMmapCount, DefaultMmapBytes);  // GCOVR_EXCL_LINE: GCC 13 does not attribute static initialization
   return budget;
 }
 
