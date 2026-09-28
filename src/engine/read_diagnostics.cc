@@ -20,10 +20,13 @@ struct ActiveSession {
 };
 
 thread_local ActiveSession active;
+thread_local SetupSnapshot* active_setup = nullptr;
 
 std::size_t Index(Counter counter) noexcept { return static_cast<std::size_t>(counter); }
 
 std::size_t Index(Stage stage) noexcept { return static_cast<std::size_t>(stage); }
+
+std::size_t Index(FileOpenReason reason) noexcept { return static_cast<std::size_t>(reason); }
 
 std::uint64_t Mix(std::uint64_t value) noexcept {
   value += 0x9e3779b97f4a7c15ULL;
@@ -50,6 +53,17 @@ void AddStage(Stage stage, std::chrono::steady_clock::time_point started) noexce
 }
 
 }  // namespace
+
+SetupSession::SetupSession(SetupSnapshot& snapshot) noexcept {
+  assert(active_setup == nullptr);
+  snapshot = {};
+  active_setup = &snapshot;
+}
+
+SetupSession::~SetupSession() {
+  assert(active_setup != nullptr);
+  active_setup = nullptr;
+}
 
 Session::Session(Snapshot& snapshot, std::uint64_t sample_seed,
                  std::uint64_t sample_denominator) noexcept {
@@ -146,6 +160,17 @@ void RecordDecodedEntry(bool restart) noexcept {
     }
     Add(Counter::DataEntriesDecoded);
   }
+}
+
+void RecordFileOpen(FileOpenReason reason, std::uint64_t bytes) noexcept {
+  if (active_setup == nullptr) {
+    return;
+  }
+  FileOpenTotal& total = active_setup->file_opens[Index(reason)];
+  assert(total.files < std::numeric_limits<std::uint64_t>::max());
+  assert(bytes <= std::numeric_limits<std::uint64_t>::max() - total.bytes);
+  ++total.files;
+  total.bytes += bytes;
 }
 
 }  // namespace modern_leveldb::read_diagnostics

@@ -329,6 +329,13 @@ python3 tools/run_performance.py \
   --output build/performance/modern-readrandom-64k-diagnostics
 ```
 
+Add `--modern-file-access mmap` to either the throughput or diagnostic command
+to select the explicit mmap candidate. The manifest and native report record
+the access mode. Mmap diagnostic reports use schema version 2, include setup
+file-open/fallback reasons, and account for mapped-view versus copied blocks.
+Use `tools/compare_read_diagnostics.py` to enforce the ADR-0050 2% storage-work
+drift limit against a frozen pread diagnostic.
+
 The diagnostic runner accepts only Modern `readrandom` and `readmissing`
 cases. Its `read-diagnostics.json` records raw and per-Get counters, sampled
 inclusive stage totals, the exact sample count, corpus fingerprints, and build

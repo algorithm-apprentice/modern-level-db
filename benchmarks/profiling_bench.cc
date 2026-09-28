@@ -145,12 +145,14 @@ struct Arguments {
   std::filesystem::path database;
   std::filesystem::path completion;
   std::filesystem::path diagnostic_report;
+  std::string modern_file_access = "default";
   std::string reference_file_access = "default";
   bool profile = false;
   bool list = false;
   bool help = false;
   bool smoke = false;
   bool check_mutations = false;
+  bool modern_file_access_set = false;
   bool reference_file_access_set = false;
   std::vector<char*> framework;
 };
@@ -161,7 +163,8 @@ Arguments ParseArguments(int argc, char** argv) {
   for (int index = 1; index < argc; ++index) {
     const std::string_view option = argv[index];
     if (option == "--case" || option == "--database" || option == "--completion-report" ||
-        option == "--diagnostic-report" || option == "--reference-file-access") {
+        option == "--diagnostic-report" || option == "--modern-file-access" ||
+        option == "--reference-file-access") {
       Require(index + 1 < argc, "performance option needs a value");
       const char* value = argv[++index];
       if (option == "--case") {
@@ -176,6 +179,10 @@ Arguments ParseArguments(int argc, char** argv) {
       } else if (option == "--diagnostic-report") {
         Require(args.diagnostic_report.empty(), "duplicate --diagnostic-report");
         args.diagnostic_report = value;
+      } else if (option == "--modern-file-access") {
+        Require(!args.modern_file_access_set, "duplicate --modern-file-access");
+        args.modern_file_access = value;
+        args.modern_file_access_set = true;
       } else {
         Require(!args.reference_file_access_set, "duplicate --reference-file-access");
         args.reference_file_access = value;
@@ -239,6 +246,22 @@ void WriteJsonString(std::ostream& output, std::string_view value) {
   output << '"';
 }
 #endif
+
+bool UseModernMmapReads = false;
+
+void ConfigureModernFileAccess(const Case& selected, const Arguments& args) {
+  Require(args.modern_file_access == "default" || args.modern_file_access == "mmap",
+          "--modern-file-access must be default or mmap");
+  if (selected.engine != "modern") {
+    Require(!args.modern_file_access_set,
+            "--modern-file-access is valid only for Modern LevelDB cases");
+    return;
+  }
+  if (args.modern_file_access == "mmap") {
+    Require(!IsMutable(selected), "Modern mmap control requires a read-family case");
+    UseModernMmapReads = true;
+  }
+}
 
 void ConfigureReferenceFileAccess(const Case& selected, const Arguments& args) {
   Require(args.reference_file_access == "default" || args.reference_file_access == "pread",
@@ -394,6 +417,7 @@ class Modern final {
     Options options;
     options.create_if_missing = true;
     options.write_buffer_size = 64 * 1024;
+    options.allow_mmap_reads = UseModernMmapReads;
     options.block_size = 4096;
     options.block_restart_interval = 16;
     options.compression = Compression::Snappy;
@@ -618,16 +642,16 @@ class Fixture final {
     }
   }
 
-  void WriteDiagnostics(const std::filesystem::path& path) const {
+  void WriteDiagnostics(const std::filesystem::path& path,
+                        const read_diagnostics::SetupSnapshot& setup) const {
     Require(!std::filesystem::exists(path) && !std::filesystem::is_symlink(path),
             "diagnostic report must not already exist");
     std::ofstream output(path);
     output.imbue(std::locale::classic());
     output << std::setprecision(17);
-    output << "{\"schema_version\":1,\"case\":";
+    output << "{\"schema_version\":2,\"case\":";
     WriteJsonString(output, selected_.name);
-    output << ",\"operations\":" << DiagnosticOperations
-           << ",\"sample_schedule\":\"splitmix64-v1\""
+    output << ",\"operations\":" << DiagnosticOperations << ",\"sample_schedule\":\"splitmix64-v1\""
            << ",\"sample_seed\":" << diagnostics_.sample_seed
            << ",\"sample_denominator\":" << diagnostics_.sample_denominator
            << ",\"sampled_gets\":" << diagnostics_.sampled_gets
@@ -643,7 +667,16 @@ class Fixture final {
       output << ",\"" << FingerprintNames[index] << "\":\"" << std::hex << std::setfill('0')
              << std::setw(8) << corpus_.fingerprints[index] << std::dec << '"';
     }
-    output << ",\"counters\":{";
+    output << ",\"setup_file_opens\":{";
+    for (std::size_t index = 0; index < read_diagnostics::FileOpenReasonNames.size(); ++index) {
+      if (index != 0) {
+        output << ',';
+      }
+      WriteJsonString(output, read_diagnostics::FileOpenReasonNames[index]);
+      const read_diagnostics::FileOpenTotal& total = setup.file_opens[index];
+      output << ":{\"files\":" << total.files << ",\"bytes\":" << total.bytes << '}';
+    }
+    output << "},\"counters\":{";
     for (std::size_t index = 0; index < read_diagnostics::CounterNames.size(); ++index) {
       if (index != 0) {
         output << ',';
@@ -684,6 +717,7 @@ class Fixture final {
                   std::string_view{"7ee830d02b623e8ffe0b95d59a74db1e58da04c5"}},
         std::pair{"reference_source_override", ReferenceOverride},
         std::pair{"reference_hardware_crc", std::string_view{"disabled"}},
+        std::pair{"modern_file_access", std::string_view{UseModernMmapReads ? "mmap" : "default"}},
         std::pair{"reference_file_access", std::string_view{"not_applicable"}},
         std::pair{"reference_pread_control_available",
                   std::string_view{MODERN_LEVELDB_REFERENCE_PREAD_CONTROL ? "true" : "false"}},
@@ -1257,6 +1291,8 @@ void AddContext(const Case& selected, const Arguments& args) {
   add("read_checksums", "true");
   add("timing", "wall_and_process_cpu");
   add("background_quiescence_forced", "false");
+  add("modern_file_access",
+      selected.engine == "modern" ? args.modern_file_access : "not_applicable");
   if (IsMutable(selected)) {
     const MutationSpec specification = MutationSpecification(selected, args.smoke);
     add("workload_family", "mutable");
@@ -1363,7 +1399,8 @@ int Main(int argc, char** argv) {
   if (args.check_mutations) {
     Require(args.case_name.empty() && args.database.empty() && args.completion.empty() &&
                 args.diagnostic_report.empty() && !args.profile && !args.smoke && !args.list &&
-                !args.help && !args.reference_file_access_set && args.framework.size() == 1,
+                !args.help && !args.modern_file_access_set && !args.reference_file_access_set &&
+                args.framework.size() == 1,
             "--check-mutation-stream cannot combine with other options");
     CheckMutationStreams();
     return 0;
@@ -1375,6 +1412,7 @@ int Main(int argc, char** argv) {
   if (args.help) {
     std::cout << "Usage: modern_leveldb_performance --case ENGINE/WORKLOAD/RECORDS "
                  "--database NEW_PATH --completion-report NEW_FILE "
+                 "[--modern-file-access default|mmap] "
                  "[--reference-file-access default|pread] [benchmark flags]\n"
                  "Use --list-cases to list supported cases. --profile-markers requires macOS "
                  "Apple Clang. Mutable cases use fixed work and one repetition; --smoke "
@@ -1389,6 +1427,7 @@ int Main(int argc, char** argv) {
     return 0;
   }
   const Case selected = FindCase(args.case_name);
+  ConfigureModernFileAccess(selected, args);
   ConfigureReferenceFileAccess(selected, args);
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
   if (!args.diagnostic_report.empty()) {
@@ -1398,10 +1437,15 @@ int Main(int argc, char** argv) {
     Require(args.completion.empty() && !args.profile && !args.smoke && args.framework.size() == 1,
             "read diagnostics cannot combine with benchmark or completion options");
     Require(!args.database.empty(), "--database is required");
-    Fixture<Modern> fixture(selected, args.database);
-    fixture.RunDiagnostics();
-    fixture.Finish();
-    fixture.WriteDiagnostics(args.diagnostic_report);
+    read_diagnostics::SetupSnapshot setup;
+    std::unique_ptr<Fixture<Modern>> fixture;
+    {
+      read_diagnostics::SetupSession session(setup);
+      fixture = std::make_unique<Fixture<Modern>>(selected, args.database);
+    }
+    fixture->RunDiagnostics();
+    fixture->Finish();
+    fixture->WriteDiagnostics(args.diagnostic_report, setup);
     return 0;
   }
 #else

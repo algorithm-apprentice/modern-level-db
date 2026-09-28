@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted design. Merge this ADR before the separate local implementation and
-performance experiment.
+Accepted. Design PR #56 merged before the separately reviewed and measured
+implementation experiment.
 
 ## Context
 
@@ -400,6 +400,73 @@ different default or tuning the mapping budgets to rescue it.
 - A successful result would provide an explicit 64-bit POSIX mmap mode aligned
   with LevelDB's access strategy while deliberately retaining Modern's
   block-cache ownership and pread default.
+
+## Outcome
+
+The design merged at `ba151e5`. The candidate remained local and uncommitted
+through correctness checks, bounded GPT-5.6 Sol review, the fixed throughput
+experiment, and diagnostic comparison.
+
+| Artifact | SHA-256 |
+|---|---|
+| Candidate source patch | `524d1ac60d984e3db8cf815fc29b875bf590d7fac9ba6780b747cea0b1f5ecf4` |
+| Candidate throughput executable | `f85147af3c3b5059c261fedf24d64343d48f33190d3e35eb8852f7e0c0f23444` |
+| Candidate diagnostic executable | `b2191015b636a63fa64efe4747c6ec22f2b49e1d88a38a8af3c73e425ec72f14` |
+
+All 48 predetermined adaptive processes completed. The nine individual
+samples per variant/case gave:
+
+| Case | Baseline items/s | Candidate items/s | Adaptive gain |
+|---|---:|---:|---:|
+| `modern/readrandom/4096` | 2,008,908 | 1,999,666 | -0.46% |
+| `modern/readrandom/65536` | 686,714 | 804,335 | +17.13% |
+| `modern/readmissing/4096` | 2,110,547 | 2,109,161 | -0.07% |
+| `modern/readmissing/65536` | 705,391 | 838,903 | +18.93% |
+| `modern/scan/4096` | 21,917,920 | 21,538,232 | -1.73% |
+| `modern/scan/65536` | 7,601,620 | 9,428,217 | +24.03% |
+| `modern/seek_reuse/4096` | 346,119 | 342,566 | -1.03% |
+| `modern/seek_reuse/65536` | 206,407 | 231,917 | +12.36% |
+
+The primary round gains were +4.99%, +21.01%, and +21.90%. Its candidate
+round spread, `scan/4096` candidate spread, and both variants of
+`seek_reuse/65536` triggered the predeclared fixed-work confirmation. Each
+process used 262,144 iterations and five repetitions, with both execution
+orders:
+
+| Case | Pair 1 gain | Pair 2 gain | Pooled gain | Result |
+|---|---:|---:|---:|---|
+| `modern/readrandom/65536` | +20.57% | +20.83% | +21.02% | Pass |
+| `modern/scan/4096` | -2.57% | -15.84% | +6.09% | Control pass |
+| `modern/seek_reuse/65536` | +19.69% | +12.46% | +16.11% | Pass |
+
+The `scan/4096` confirmation remains noisy and does not establish a cache-fit
+scan gain. It passes only its predeclared control rule: pooled throughput did
+not regress, and fewer than both pairs regressed by more than 5%. No sample
+was discarded or replaced.
+
+Every candidate diagnostic file open mapped successfully: 8 files for the
+4,096-record cases and 12-13 files for the 65,536-record cases. Every stored
+block used a mapped view, copied-read blocks and `pread` calls were zero, and
+every stored block was decompressed. Against the frozen baseline, the
+65,536-record normalized work differed by only:
+
+| Case | Block misses/stored/decompressed/validation drift |
+|---|---:|
+| `readrandom/65536` | +0.17% |
+| `readmissing/65536` | +0.12% |
+
+The exact candidate passed 556 unit tests, targeted ASan/UBSan and TSan tests,
+the LevelDB compatibility model, the 1,000-input format fuzz smoke,
+AppleClang/GCC 16 warning-clean builds, local changed-code coverage checks, and
+bounded implementation review. The review added exception-safe mapping
+reservation RAII, strict compression-work comparison, a real POSIX truncation
+test, and proof that an owning cached block survives table unmap and unlink.
+
+The candidate is accepted. `allow_mmap_reads` remains false by default. When
+enabled on 64-bit POSIX, exact-size table files use the shared 1,000-map/4-GiB
+budget and fall back to `pread` on every unavailable-resource or size-mismatch
+condition. Raw patch, binary, adaptive, fixed-work, and diagnostic artifacts
+remain local under `build/mmap-experiment-ba151e5/`.
 
 ## Delivery boundary
 

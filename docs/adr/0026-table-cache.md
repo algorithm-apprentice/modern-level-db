@@ -3,9 +3,8 @@
 - Status: Accepted
 - Date: 2026-09-24
 
-[ADR-0050](0050-posix-mmap-table-reads.md) designs bounded POSIX mappings owned
-by cached tables and confirms the existing evict-before-unlink order. This ADR
-remains the current table ownership contract until that candidate is accepted.
+[ADR-0050](0050-posix-mmap-table-reads.md) adds bounded POSIX mappings owned by
+cached tables and retains this ADR's evict-before-unlink order.
 
 ## Context
 
@@ -116,6 +115,9 @@ class TableCache {
   handles. The file system, the comparator, and the options' block cache must
   outlive the table cache; the deleted overload rejects a temporary
   comparator at compile time.
+- With mmap enabled, the table's random-access file owns its mapping. A table
+  handle therefore also keeps the mapping alive. Blocks remain independently
+  owning, so block-cache entries outlive table eviction and unmapping.
 - `Evict` erases the cached table of the file number. It does not wait for
   handles or for a `Find` that is opening the file, so it is not by itself a
   barrier before deletion. As in LevelDB, the engine deletes a table file only

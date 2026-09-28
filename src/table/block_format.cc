@@ -23,9 +23,50 @@ namespace {
 
 constexpr std::size_t FooterHandlesSize = 2 * BlockHandleMaxEncodedSize;
 
+struct StoredBlock {
+  ByteView contents;
+  BlockCompression compression;
+};
+
 std::uint32_t BlockChecksum(ByteView contents, std::byte type) noexcept {
   return MaskCrc32c(ExtendCrc32c(Crc32c(contents), ByteView(&type, 1)));
 }
+
+Result<StoredBlock> ValidateStoredBlock(ByteView stored) {
+  if (stored.size() < BlockTrailerSize) {
+    return std::unexpected(Error::Corruption("stored block is shorter than its trailer"));
+  }
+  const std::size_t contents_size = stored.size() - BlockTrailerSize;
+  const std::byte type = stored[contents_size];
+  const std::uint32_t checksum = DecodeFixed32(stored.last<sizeof(std::uint32_t)>());
+  if (checksum != BlockChecksum(stored.first(contents_size), type)) {
+    return std::unexpected(Error::Corruption("block checksum mismatch"));
+  }
+  const auto compression = static_cast<BlockCompression>(type);
+  if (compression != BlockCompression::None && compression != BlockCompression::Snappy &&
+      compression != BlockCompression::Zstd) {
+    return std::unexpected(Error::Corruption("block has an unknown compression type"));
+  }
+  return StoredBlock{
+      .contents = stored.first(contents_size),
+      .compression = compression,
+  };
+}
+
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+void RecordStoredBlock(std::size_t bytes) noexcept {
+  read_diagnostics::Add(read_diagnostics::Counter::StoredBlocks);
+  read_diagnostics::Add(read_diagnostics::Counter::StoredBlockBytes, bytes);
+}
+
+void RecordDecodedBlock(std::size_t bytes, bool decompressed) noexcept {
+  read_diagnostics::Add(read_diagnostics::Counter::DecodedBlocks);
+  read_diagnostics::Add(read_diagnostics::Counter::DecodedBlockBytes, bytes);
+  if (decompressed) {
+    read_diagnostics::Add(read_diagnostics::Counter::DecompressedBlocks);
+  }
+}
+#endif
 
 }  // namespace
 
@@ -91,41 +132,53 @@ std::array<std::byte, BlockTrailerSize> EncodeBlockTrailer(ByteView contents,
 Result<std::vector<std::byte>> DecodeStoredBlock(std::vector<std::byte> stored) {
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
   read_diagnostics::StageScope decode(read_diagnostics::Stage::StoredBlockDecode);
-  read_diagnostics::Add(read_diagnostics::Counter::StoredBlocks);
-  read_diagnostics::Add(read_diagnostics::Counter::StoredBlockBytes, stored.size());
+  RecordStoredBlock(stored.size());
 #endif
-  if (stored.size() < BlockTrailerSize) {
-    return std::unexpected(Error::Corruption("stored block is shorter than its trailer"));
+  const Result<StoredBlock> decoded = ValidateStoredBlock(stored);
+  if (!decoded.has_value()) {
+    return std::unexpected(decoded.error());
   }
-  const std::size_t contents_size = stored.size() - BlockTrailerSize;
-  const ByteView view = stored;
-  const std::byte type = view[contents_size];
-  const std::uint32_t checksum = DecodeFixed32(view.last<sizeof(std::uint32_t)>());
-  if (checksum != BlockChecksum(view.first(contents_size), type)) {
-    return std::unexpected(Error::Corruption("block checksum mismatch"));
-  }
-  const auto compression = static_cast<BlockCompression>(type);
-  if (compression == BlockCompression::None) {
-    stored.resize(contents_size);
+  if (decoded->compression == BlockCompression::None) {
+    stored.resize(decoded->contents.size());
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
-    read_diagnostics::Add(read_diagnostics::Counter::DecodedBlocks);
-    read_diagnostics::Add(read_diagnostics::Counter::DecodedBlockBytes, stored.size());
+    RecordDecodedBlock(stored.size(), false);
 #endif
     return stored;
   }
-  if (compression == BlockCompression::Snappy || compression == BlockCompression::Zstd) {
-    Result<std::vector<std::byte>> decompressed =
-        DecompressBlock(view.first(contents_size), compression);
+  Result<std::vector<std::byte>> decompressed =
+      DecompressBlock(decoded->contents, decoded->compression);
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
-    if (decompressed.has_value()) {
-      read_diagnostics::Add(read_diagnostics::Counter::DecodedBlocks);
-      read_diagnostics::Add(read_diagnostics::Counter::DecodedBlockBytes, decompressed->size());
-      read_diagnostics::Add(read_diagnostics::Counter::DecompressedBlocks);
-    }
-#endif
-    return decompressed;
+  if (decompressed.has_value()) {
+    RecordDecodedBlock(decompressed->size(), true);
   }
-  return std::unexpected(Error::Corruption("block has an unknown compression type"));
+#endif
+  return decompressed;
+}
+
+Result<std::vector<std::byte>> DecodeStoredBlock(ByteView stored) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::StageScope decode(read_diagnostics::Stage::StoredBlockDecode);
+  RecordStoredBlock(stored.size());
+#endif
+  const Result<StoredBlock> decoded = ValidateStoredBlock(stored);
+  if (!decoded.has_value()) {
+    return std::unexpected(decoded.error());
+  }
+  if (decoded->compression == BlockCompression::None) {
+    std::vector<std::byte> owned(decoded->contents.begin(), decoded->contents.end());
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    RecordDecodedBlock(owned.size(), false);
+#endif
+    return owned;
+  }
+  Result<std::vector<std::byte>> decompressed =
+      DecompressBlock(decoded->contents, decoded->compression);
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  if (decompressed.has_value()) {
+    RecordDecodedBlock(decompressed->size(), true);
+  }
+#endif
+  return decompressed;
 }
 
 }  // namespace modern_leveldb

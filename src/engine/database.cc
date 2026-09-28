@@ -44,7 +44,7 @@ std::unique_ptr<FileSystem> OwnedFileSystem(const DatabaseEngineOptions& options
     return nullptr;
   }
 #if defined(MODERN_LEVELDB_HAVE_POSIX_FILE_SYSTEM)
-  return std::make_unique<PosixFileSystem>();
+  return std::make_unique<PosixFileSystem>(options.allow_mmap_reads);
 #else
   return nullptr;
 #endif

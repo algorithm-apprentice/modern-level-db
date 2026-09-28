@@ -52,7 +52,7 @@ Result<TableCache::Handle> TableCache::Find(std::uint64_t file_number, std::uint
 #endif
 
   Result<std::unique_ptr<RandomAccessFile>> file =
-      file_system_->OpenRandomAccess(TableFileName(directory_, file_number));
+      file_system_->OpenRandomAccess(TableFileName(directory_, file_number), file_size);
   if (!file.has_value()) {
     return std::unexpected(std::move(file).error());
   }

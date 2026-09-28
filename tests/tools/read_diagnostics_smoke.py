@@ -30,10 +30,15 @@ def main():
     )
     if rejected.returncode == 0 or (root / "rejected-db").exists():
         raise RuntimeError("diagnostic executable accepted a reference-engine case")
-    cases = ("modern/readrandom/4096", "modern/readmissing/65536")
-    for case in cases:
-        output = root / case.replace("/", "-")
-        result = run_read_diagnostics(args.binary, case, output)
+    cases = (
+        ("modern/readrandom/4096", "default"),
+        ("modern/readmissing/65536", "mmap"),
+    )
+    for case, file_access in cases:
+        output = root / f"{case.replace('/', '-')}-{file_access}"
+        result = run_read_diagnostics(
+            args.binary, case, output, modern_file_access=file_access
+        )
         print(
             f"{result['diagnostics']['operations']} diagnostic Gets completed for {case}; "
             f"artifacts: {output}"

@@ -11,10 +11,9 @@ controls and diagnostic evidence used to change data-block validation. Data
 blocks now retain complete structural validation while trusting the writer's
 key order; index and metaindex blocks retain full order validation.
 
-[ADR-0050](0050-posix-mmap-table-reads.md) designs direct decoding from an
-optional mapped file view while preserving the reader's owning block and cache
-contracts. This reader still uses copied random-access reads until that
-candidate passes admission.
+[ADR-0050](0050-posix-mmap-table-reads.md) adds direct stored-block decoding
+from an optional mapped file view while preserving the reader's owning block
+and cache contracts.
 - Date: 2026-09-24
 
 ## Context
@@ -179,6 +178,10 @@ class Table {
   prefix, entry boundary, and restart point is checked before the block can
   use its trusted decoder, but the load does not reconstruct and compare every
   key. Index and metaindex blocks continue to use full `Block::Create`.
+- Stored-block reads prefer an exact stable file view. Compressed bytes are
+  checksummed and decompressed directly from it; uncompressed bytes are copied
+  into the existing owning `Block`. When no view exists, `ReadExactly` retains
+  the previous copied-read and truncation behavior.
 - A block iterator borrows its block, so an iterator keeps the current block's
   cache handle, or its own `shared_ptr<const Block>` for a block that is not
   in the cache, while it is positioned in that block. `Get` keeps the block

@@ -158,34 +158,37 @@ TEST(PosixFileSystemTest, ReadsSequentiallyAndReportsEof) {
 
 TEST(PosixFileSystemTest, PerformsConcurrentPositionedReads) {
   TemporaryDirectory directory;
-  PosixFileSystem file_system;
   const auto path = directory.path() / "random";
   const std::vector<std::byte> expected = Pattern(8'192);
   WriteFixture(path, expected);
 
-  auto opened = file_system.OpenRandomAccess(path);
-  ASSERT_TRUE(opened.has_value());
-  RandomAccessFile* file = opened->get();
-  std::atomic<int> failures = 0;
-  std::vector<std::jthread> readers;
+  for (const bool mmap : {false, true}) {
+    SCOPED_TRACE(mmap);
+    PosixFileSystem file_system(mmap);
+    auto opened = file_system.OpenRandomAccess(path, expected.size());
+    ASSERT_TRUE(opened.has_value());
+    RandomAccessFile* file = opened->get();
+    std::atomic<int> failures = 0;
+    std::vector<std::jthread> readers;
 
-  for (std::size_t reader = 0; reader < 4; ++reader) {
-    readers.emplace_back([&, reader] {
-      for (std::size_t iteration = 0; iteration < 100; ++iteration) {
-        const std::size_t offset = (reader * 997U + iteration * 53U) % 8'000U;
-        std::array<std::byte, 65> storage{};
-        MutableByteView output = MutableByteView(storage).subspan(1, 64);
-        const auto size = file->Read(offset, output);
-        if (!size.has_value() || *size != output.size() ||
-            !std::ranges::equal(ByteView(output), ByteView(expected).subspan(offset, 64))) {
-          failures.fetch_add(1, std::memory_order_relaxed);
+    for (std::size_t reader = 0; reader < 4; ++reader) {
+      readers.emplace_back([&, reader] {
+        for (std::size_t iteration = 0; iteration < 100; ++iteration) {
+          const std::size_t offset = (reader * 997U + iteration * 53U) % 8'000U;
+          std::array<std::byte, 65> storage{};
+          MutableByteView output = MutableByteView(storage).subspan(1, 64);
+          const auto size = file->Read(offset, output);
+          if (!size.has_value() || *size != output.size() ||
+              !std::ranges::equal(ByteView(output), ByteView(expected).subspan(offset, 64))) {
+            failures.fetch_add(1, std::memory_order_relaxed);
+          }
         }
-      }
-    });
-  }
-  readers.clear();
+      });
+    }
+    readers.clear();
 
-  EXPECT_EQ(failures.load(std::memory_order_relaxed), 0);
+    EXPECT_EQ(failures.load(std::memory_order_relaxed), 0);
+  }
 }
 
 TEST(PosixFileSystemTest, RandomReadReturnsShortReadAndRejectsHugeOffset) {
@@ -209,6 +212,123 @@ TEST(PosixFileSystemTest, RandomReadReturnsShortReadAndRejectsHugeOffset) {
   const auto invalid = (*opened)->Read(std::numeric_limits<std::uint64_t>::max(), output);
   ASSERT_FALSE(invalid.has_value());
   EXPECT_EQ(invalid.error().code(), ErrorCode::InvalidArgument);
+}
+
+TEST(PosixFileSystemTest, MappedRandomReadsExposeStableExactViews) {
+  TemporaryDirectory directory;
+  const auto path = directory.path() / "mapped";
+  const std::vector<std::byte> expected = Pattern(8'192);
+  WriteFixture(path, expected);
+
+  PosixFileSystem copied;
+  auto copied_file = copied.OpenRandomAccess(path, expected.size());
+  ASSERT_TRUE(copied_file.has_value());
+  EXPECT_FALSE((*copied_file)->TryReadView(10, 64).has_value());
+
+  PosixFileSystem mapped(4, 1U << 20U);
+  auto mapped_file = mapped.OpenRandomAccess(path, expected.size());
+  ASSERT_TRUE(mapped_file.has_value());
+  const std::optional<ByteView> view = (*mapped_file)->TryReadView(10, 64);
+  ASSERT_TRUE(view.has_value());
+  EXPECT_TRUE(std::ranges::equal(*view, ByteView(expected).subspan(10, 64)));
+  EXPECT_FALSE((*mapped_file)->TryReadView(expected.size() - 10, 11).has_value());
+  EXPECT_FALSE((*mapped_file)->TryReadView(expected.size() + 1, 0).has_value());
+
+  std::array<std::byte, 32> output{};
+  const Result<std::size_t> read = (*mapped_file)->Read(20, output);
+  ASSERT_TRUE(read.has_value());
+  EXPECT_EQ(*read, output.size());
+  EXPECT_TRUE(std::ranges::equal(output, ByteView(expected).subspan(20, output.size())));
+  const Result<std::size_t> short_read = (*mapped_file)->Read(expected.size() - 1, output);
+  ASSERT_TRUE(short_read.has_value());
+  EXPECT_EQ(*short_read, 1U);
+  const Result<std::size_t> eof = (*mapped_file)->Read(expected.size(), output);
+  ASSERT_TRUE(eof.has_value());
+  EXPECT_EQ(*eof, 0U);
+  const Result<std::size_t> empty = (*mapped_file)->Read(0, {});
+  ASSERT_TRUE(empty.has_value());
+  EXPECT_EQ(*empty, 0U);
+  const Result<std::size_t> invalid =
+      (*mapped_file)->Read(std::numeric_limits<std::uint64_t>::max(), output);
+  ASSERT_FALSE(invalid.has_value());
+  EXPECT_EQ(invalid.error().code(), ErrorCode::InvalidArgument);
+
+  PosixFileSystem production_budget(true);
+  auto production_mapped = production_budget.OpenRandomAccess(path, expected.size());
+  ASSERT_TRUE(production_mapped.has_value());
+  EXPECT_TRUE((*production_mapped)->TryReadView(0, 1).has_value());
+}
+
+TEST(PosixFileSystemTest, MmapBudgetsAreSharedAndReleased) {
+  TemporaryDirectory directory;
+  const auto first_path = directory.path() / "first";
+  const auto second_path = directory.path() / "second";
+  WriteFixture(first_path, AsBytes("abc"));
+  WriteFixture(second_path, AsBytes("def"));
+
+  const auto count_budget = PosixFileSystem::NewMmapBudgetForTesting(1, 100);
+  PosixFileSystem first_file_system(count_budget);
+  PosixFileSystem second_file_system(count_budget);
+  auto first = first_file_system.OpenRandomAccess(first_path, 3);
+  ASSERT_TRUE(first.has_value());
+  EXPECT_TRUE((*first)->TryReadView(0, 3).has_value());
+  auto count_fallback = second_file_system.OpenRandomAccess(second_path, 3);
+  ASSERT_TRUE(count_fallback.has_value());
+  EXPECT_FALSE((*count_fallback)->TryReadView(0, 3).has_value());
+  first->reset();
+  auto after_count_release = second_file_system.OpenRandomAccess(second_path, 3);
+  ASSERT_TRUE(after_count_release.has_value());
+  EXPECT_TRUE((*after_count_release)->TryReadView(0, 3).has_value());
+
+  const auto byte_budget = PosixFileSystem::NewMmapBudgetForTesting(2, 4);
+  PosixFileSystem byte_first(byte_budget);
+  PosixFileSystem byte_second(byte_budget);
+  auto byte_mapped = byte_first.OpenRandomAccess(first_path, 3);
+  ASSERT_TRUE(byte_mapped.has_value());
+  auto byte_fallback = byte_second.OpenRandomAccess(second_path, 3);
+  ASSERT_TRUE(byte_fallback.has_value());
+  EXPECT_FALSE((*byte_fallback)->TryReadView(0, 3).has_value());
+  byte_mapped->reset();
+  auto after_byte_release = byte_second.OpenRandomAccess(second_path, 3);
+  ASSERT_TRUE(after_byte_release.has_value());
+  EXPECT_TRUE((*after_byte_release)->TryReadView(0, 3).has_value());
+}
+
+TEST(PosixFileSystemTest, MmapFallsBackForEmptyAndMismatchedFiles) {
+  TemporaryDirectory directory;
+  PosixFileSystem file_system(4, 1U << 20U);
+  const auto empty_path = directory.path() / "empty";
+  const auto changed_path = directory.path() / "changed";
+  WriteFixture(empty_path, {});
+  WriteFixture(changed_path, AsBytes("abcdef"));
+
+  auto empty = file_system.OpenRandomAccess(empty_path, 0);
+  ASSERT_TRUE(empty.has_value());
+  EXPECT_FALSE((*empty)->TryReadView(0, 0).has_value());
+
+  for (const std::uint64_t expected_size : {5U, 7U}) {
+    auto changed = file_system.OpenRandomAccess(changed_path, expected_size);
+    ASSERT_TRUE(changed.has_value());
+    EXPECT_FALSE((*changed)->TryReadView(0, 1).has_value());
+  }
+  auto missing_hint = file_system.OpenRandomAccess(changed_path);
+  ASSERT_TRUE(missing_hint.has_value());
+  EXPECT_FALSE((*missing_hint)->TryReadView(0, 1).has_value());
+}
+
+TEST(PosixFileSystemTest, MappedFileRemainsReadableAfterUnlink) {
+  TemporaryDirectory directory;
+  PosixFileSystem file_system(1, 100);
+  const auto path = directory.path() / "unlinked";
+  WriteFixture(path, AsBytes("mapped contents"));
+  auto opened = file_system.OpenRandomAccess(path, 15);
+  ASSERT_TRUE(opened.has_value());
+  ASSERT_TRUE((*opened)->TryReadView(0, 15).has_value());
+
+  ASSERT_TRUE(file_system.RemoveFile(path).has_value());
+  const std::optional<ByteView> view = (*opened)->TryReadView(0, 15);
+  ASSERT_TRUE(view.has_value());
+  EXPECT_EQ(AsStringView(*view), "mapped contents");
 }
 
 TEST(PosixFileSystemTest, BuffersFlushesSyncsAndAppendsWrites) {
@@ -339,6 +459,9 @@ TEST(PosixFileSystemTest, ReportsMissingPaths) {
   const auto sequential = file_system.OpenSequential(missing);
   ASSERT_FALSE(sequential.has_value());
   EXPECT_EQ(sequential.error().code(), ErrorCode::NotFound);
+  const auto random = file_system.OpenRandomAccess(missing, 1);
+  ASSERT_FALSE(random.has_value());
+  EXPECT_EQ(random.error().code(), ErrorCode::NotFound);
 
   const auto size = file_system.FileSize(missing);
   ASSERT_FALSE(size.has_value());

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "modern_leveldb/base/result.h"
@@ -11,12 +12,23 @@
 
 namespace modern_leveldb {
 
+class PosixMmapBudget;
+
 class PosixFileSystem final : public FileSystem {
  public:
+  PosixFileSystem() noexcept;
+  explicit PosixFileSystem(bool allow_mmap_reads) noexcept;
+  // Uses an isolated mmap budget for tests.
+  PosixFileSystem(std::size_t maximum_mappings, std::uint64_t maximum_mapped_bytes);
+  explicit PosixFileSystem(std::shared_ptr<PosixMmapBudget> mmap_budget) noexcept;
+  [[nodiscard]] static std::shared_ptr<PosixMmapBudget> NewMmapBudgetForTesting(
+      std::size_t maximum_mappings, std::uint64_t maximum_mapped_bytes);
+
   [[nodiscard]] Result<std::unique_ptr<SequentialFile>> OpenSequential(
       const std::filesystem::path& path) override;
   [[nodiscard]] Result<std::unique_ptr<RandomAccessFile>> OpenRandomAccess(
-      const std::filesystem::path& path) override;
+      const std::filesystem::path& path,
+      std::optional<std::uint64_t> expected_size = std::nullopt) override;
   [[nodiscard]] Result<std::unique_ptr<WritableFile>> OpenWritable(
       const std::filesystem::path& path) override;
   [[nodiscard]] Result<std::unique_ptr<WritableFile>> OpenAppendable(
@@ -35,6 +47,9 @@ class PosixFileSystem final : public FileSystem {
   [[nodiscard]] Status SyncDirectory(const std::filesystem::path& path) override;
   [[nodiscard]] Result<std::unique_ptr<FileLock>> LockFile(
       const std::filesystem::path& path) override;
+
+ private:
+  std::shared_ptr<PosixMmapBudget> mmap_budget_;
 };
 
 }  // namespace modern_leveldb

@@ -127,6 +127,7 @@ struct ReadableState {
   std::optional<int> fail_read_call;
   std::size_t maximum_chunk = std::numeric_limits<std::size_t>::max();
   bool return_oversized_count = false;
+  bool return_views = false;
 };
 
 class MemoryRandomAccessFile final : public RandomAccessFile {
@@ -150,6 +151,18 @@ class MemoryRandomAccessFile final : public RandomAccessFile {
                   state_->maximum_chunk});
     std::copy_n(state_->data.begin() + static_cast<std::ptrdiff_t>(offset), count, output.begin());
     return count;
+  }
+
+  std::optional<ByteView> TryReadView(std::uint64_t offset,
+                                      std::size_t size) const noexcept override {
+    if (!state_->return_views || offset > state_->data.size()) {
+      return std::nullopt;
+    }
+    const std::size_t start = static_cast<std::size_t>(offset);
+    if (size > state_->data.size() - start) {
+      return std::nullopt;
+    }
+    return ByteView(state_->data).subspan(start, size);
   }
 
  private:
@@ -763,6 +776,19 @@ TEST_F(TableTest, CompletesShortReadsAndReportsTruncatedFiles) {
   ExpectValue(Get(**table, "apple", MaxSequenceNumber), "a");
 
   ExpectError(TryOpen(data, {}, data.size() + 10), ErrorCode::Corruption);
+}
+
+TEST_F(TableTest, ReadsStoredBlocksThroughStableFileViews) {
+  state_ = std::make_shared<ReadableState>();
+  state_->data = VersionedTable();
+  state_->return_views = true;
+  state_->fail_read_call = 2;
+  auto table = Table::Open(std::make_unique<MemoryRandomAccessFile>(state_), state_->data.size(),
+                           comparator_, {});
+  ASSERT_TRUE(table.has_value()) << table.error().ToString();
+
+  ExpectValue(Get(**table, "k", 30), "v30");
+  EXPECT_EQ(state_->read_calls.load(), 1);
 }
 
 TEST_F(TableTest, ReportsReadFailuresWhileOpening) {

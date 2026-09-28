@@ -42,6 +42,8 @@ struct Footer {
 // Verifies a stored block and returns decoded contents. Uncompressed contents
 // reuse the input buffer.
 [[nodiscard]] Result<std::vector<std::byte>> DecodeStoredBlock(std::vector<std::byte> stored);
+// Verifies borrowed stored bytes and returns owned decoded contents.
+[[nodiscard]] Result<std::vector<std::byte>> DecodeStoredBlock(ByteView stored);
 
 }  // namespace modern_leveldb
 
