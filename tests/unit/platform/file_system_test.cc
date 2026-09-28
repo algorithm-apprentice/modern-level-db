@@ -34,6 +34,9 @@ static_assert(std::same_as<decltype(std::declval<SequentialFile&>().Read(Mutable
 static_assert(std::same_as<decltype(std::declval<const RandomAccessFile&>().Read(
                                std::uint64_t{}, MutableByteView{})),
                            Result<std::size_t>>);
+static_assert(std::same_as<decltype(std::declval<const RandomAccessFile&>().TryReadView(
+                               std::uint64_t{}, std::size_t{})),
+                           std::optional<ByteView>>);
 static_assert(std::same_as<decltype(std::declval<WritableFile&>().Append(ByteView{})), Status>);
 static_assert(std::same_as<decltype(std::declval<WritableFile&>().Flush()), Status>);
 static_assert(std::same_as<decltype(std::declval<WritableFile&>().Sync()), Status>);

@@ -26,6 +26,10 @@ enum class Counter : std::size_t {
   RandomReadCalls,
   RandomReadRequestedBytes,
   RandomReadReturnedBytes,
+  MappedViewBlocks,
+  MappedViewBytes,
+  CopiedReadBlocks,
+  CopiedReadBytes,
   StoredBlocks,
   StoredBlockBytes,
   DecodedBlocks,
@@ -78,6 +82,10 @@ inline constexpr std::array<std::string_view, static_cast<std::size_t>(Counter::
         "random_read_calls",
         "random_read_requested_bytes",
         "random_read_returned_bytes",
+        "mapped_view_blocks",
+        "mapped_view_bytes",
+        "copied_read_blocks",
+        "copied_read_bytes",
         "stored_blocks",
         "stored_block_bytes",
         "decoded_blocks",
@@ -102,12 +110,58 @@ struct StageTotal {
   std::uint64_t nanoseconds = 0;
 };
 
+enum class FileOpenReason : std::size_t {
+  Mapped,
+  Disabled,
+  MissingExpectedSize,
+  EmptyFile,
+  SizeMismatch,
+  SizeUnrepresentable,
+  CountBudgetExhausted,
+  ByteBudgetExhausted,
+  StatFailed,
+  MmapFailed,
+  Count,
+};
+
+inline constexpr std::array<std::string_view, static_cast<std::size_t>(FileOpenReason::Count)>
+    FileOpenReasonNames{
+        "mapped",
+        "disabled",
+        "missing_expected_size",
+        "empty_file",
+        "size_mismatch",
+        "size_unrepresentable",
+        "count_budget_exhausted",
+        "byte_budget_exhausted",
+        "stat_failed",
+        "mmap_failed",
+};
+
+struct FileOpenTotal {
+  std::uint64_t files = 0;
+  std::uint64_t bytes = 0;
+};
+
+struct SetupSnapshot {
+  std::array<FileOpenTotal, static_cast<std::size_t>(FileOpenReason::Count)> file_opens{};
+};
+
 struct Snapshot {
   std::array<std::uint64_t, static_cast<std::size_t>(Counter::Count)> counters{};
   std::array<StageTotal, static_cast<std::size_t>(Stage::Count)> stages{};
   std::uint64_t sample_seed = 0;
   std::uint64_t sample_denominator = 0;
   std::uint64_t sampled_gets = 0;
+};
+
+// Installs one foreground-thread setup collection epoch.
+class SetupSession final {
+ public:
+  explicit SetupSession(SetupSnapshot& snapshot) noexcept;
+  SetupSession(const SetupSession&) = delete;
+  SetupSession& operator=(const SetupSession&) = delete;
+  ~SetupSession();
 };
 
 // Installs one foreground-thread collection epoch. The snapshot must outlive
@@ -163,6 +217,7 @@ class BlockRoleScope final {
 
 void Add(Counter counter, std::uint64_t amount = 1) noexcept;
 void RecordDecodedEntry(bool restart = false) noexcept;
+void RecordFileOpen(FileOpenReason reason, std::uint64_t bytes) noexcept;
 
 }  // namespace modern_leveldb::read_diagnostics
 

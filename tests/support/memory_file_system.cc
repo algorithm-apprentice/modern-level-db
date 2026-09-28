@@ -188,7 +188,8 @@ Result<std::unique_ptr<SequentialFile>> MemoryFileSystem::OpenSequential(
 }
 
 Result<std::unique_ptr<RandomAccessFile>> MemoryFileSystem::OpenRandomAccess(
-    const std::filesystem::path& path) {
+    const std::filesystem::path& path, std::optional<std::uint64_t> expected_size) {
+  (void)expected_size;
   const Status recorded = Record("open_random_access " + Name(path));
   if (!recorded.has_value()) {
     return std::unexpected(recorded.error());

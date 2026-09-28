@@ -69,6 +69,7 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     PRIVATE
       unit/engine/database_posix_test.cc
       unit/platform/posix_file_system_test.cc
+      unit/table/table_posix_test.cc
       unit/wal/wal_io_posix_test.cc
   )
 else()

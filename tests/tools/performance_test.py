@@ -12,13 +12,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 from run_performance import (
     CASES,
     FINGERPRINTS,
+    READ_DIAGNOSTIC_COMPARISON_COUNTERS,
     READ_DIAGNOSTIC_COUNTERS,
     READ_DIAGNOSTIC_OPERATIONS,
+    READ_DIAGNOSTIC_OPEN_REASONS,
     READ_DIAGNOSTIC_SAMPLE_DENOMINATOR,
     READ_DIAGNOSTIC_SAMPLE_SCHEDULE,
     READ_DIAGNOSTIC_SAMPLE_SEED,
     READ_DIAGNOSTIC_SAMPLES,
     READ_DIAGNOSTIC_STAGES,
+    compare_read_diagnostics,
     read_json,
     record_diagnostics,
     run_case,
@@ -42,6 +45,7 @@ def report(case="modern/readrandom/4096", repetitions=3):
             "profile_case": case,
             "build_type": "Release",
             "timing": "wall_and_process_cpu",
+            "modern_file_access": "default" if engine == "modern" else "not_applicable",
             "reference_file_access": "default" if engine == "leveldb" else "not_applicable",
             "reference_pread_control_available": "true",
             "reference_control_patch_sha256": "a" * 64,
@@ -86,7 +90,7 @@ def completion(case="modern/readrandom/4096"):
     }
 
 
-def diagnostic_report(case="modern/readrandom/4096"):
+def diagnostic_report(case="modern/readrandom/4096", modern_file_access="default"):
     _, workload, records = case.split("/")
     counters = {
         name: {"total": 0, "per_get": 0.0}
@@ -123,7 +127,6 @@ def diagnostic_report(case="modern/readrandom/4096"):
         }
         for name, total in (
             ("block_cache_misses", misses),
-            ("random_read_calls", misses),
             ("stored_blocks", misses),
             ("decoded_blocks", misses),
             ("decompressed_blocks", misses),
@@ -132,13 +135,36 @@ def diagnostic_report(case="modern/readrandom/4096"):
                 "total": total,
                 "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
             }
-        for name in ("random_read_requested_bytes", "random_read_returned_bytes",
-                     "stored_block_bytes"):
+        for name in ("stored_block_bytes",):
             total = misses * 1024
             counters[name] = {
                 "total": total,
                 "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
             }
+        if modern_file_access == "mmap":
+            for name in ("mapped_view_blocks",):
+                counters[name] = {
+                    "total": misses,
+                    "per_get": misses / READ_DIAGNOSTIC_OPERATIONS,
+                }
+            total = misses * 1024
+            counters["mapped_view_bytes"] = {
+                "total": total,
+                "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
+            }
+        else:
+            for name in ("random_read_calls", "copied_read_blocks"):
+                counters[name] = {
+                    "total": misses,
+                    "per_get": misses / READ_DIAGNOSTIC_OPERATIONS,
+                }
+            total = misses * 1024
+            for name in ("random_read_requested_bytes", "random_read_returned_bytes",
+                         "copied_read_bytes"):
+                counters[name] = {
+                    "total": total,
+                    "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
+                }
         total = misses * 4096
         counters["decoded_block_bytes"] = {
             "total": total,
@@ -175,8 +201,10 @@ def diagnostic_report(case="modern/readrandom/4096"):
             "mean_ns": 10.0,
         }
     if int(records) == 65536:
-        for name in ("random_read", "stored_block_decode", "block_construction"):
+        for name in ("stored_block_decode", "block_construction"):
             stages[name] = {"events": 1, "total_ns": 10, "mean_ns": 10.0}
+        if modern_file_access == "default":
+            stages["random_read"] = {"events": 1, "total_ns": 10, "mean_ns": 10.0}
     build = {
         "source_directory": "/source",
         "build_directory": "/build",
@@ -191,6 +219,7 @@ def diagnostic_report(case="modern/readrandom/4096"):
         "reference_requested_revision": "7ee830d02b623e8ffe0b95d59a74db1e58da04c5",
         "reference_source_override": "",
         "reference_hardware_crc": "disabled",
+        "modern_file_access": modern_file_access,
         "reference_file_access": "not_applicable",
         "reference_pread_control_available": "true",
         "reference_control_patch_sha256": "a" * 64,
@@ -211,7 +240,7 @@ def diagnostic_report(case="modern/readrandom/4096"):
         "read_diagnostics_compiled": "true",
     }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "case": case,
         "operations": READ_DIAGNOSTIC_OPERATIONS,
         "sample_schedule": READ_DIAGNOSTIC_SAMPLE_SCHEDULE,
@@ -229,6 +258,16 @@ def diagnostic_report(case="modern/readrandom/4096"):
         "insertion_crc32c": FINGERPRINTS[int(records)][1],
         "present_crc32c": FINGERPRINTS[int(records)][2],
         "missing_crc32c": FINGERPRINTS[int(records)][3],
+        "setup_file_opens": {
+            name: {
+                "files": 8 if name == ("mapped" if modern_file_access == "mmap" else "disabled")
+                         else 0,
+                "bytes": 371673
+                         if name == ("mapped" if modern_file_access == "mmap" else "disabled")
+                         else 0,
+            }
+            for name in READ_DIAGNOSTIC_OPEN_REASONS
+        },
         "counters": counters,
         "stages": stages,
         "build": build,
@@ -281,6 +320,23 @@ class PerformanceReportTest(unittest.TestCase):
                 "leveldb/scan/4096",
                 3,
                 reference_file_access="pread",
+            )
+
+    def test_validates_modern_file_access_provenance(self):
+        data = report()
+        validate_benchmark(data, "modern/readrandom/4096", 3)
+        data["context"]["modern_file_access"] = "mmap"
+        validate_benchmark(
+            data, "modern/readrandom/4096", 3, modern_file_access="mmap"
+        )
+        with self.assertRaises(ValueError):
+            validate_benchmark(data, "modern/readrandom/4096", 3)
+        with self.assertRaises(ValueError):
+            validate_benchmark(
+                report("leveldb/readrandom/4096"),
+                "leveldb/readrandom/4096",
+                3,
+                modern_file_access="mmap",
             )
 
     def test_rejects_errors_skips_missing_runs_and_duplicate_repetitions(self):
@@ -384,6 +440,11 @@ class ReadDiagnosticsReportTest(unittest.TestCase):
         validate_read_diagnostics(
             diagnostic_report("modern/readmissing/65536"), "modern/readmissing/65536"
         )
+        validate_read_diagnostics(
+            diagnostic_report("modern/readmissing/65536", "mmap"),
+            "modern/readmissing/65536",
+            modern_file_access="mmap",
+        )
 
     def test_rejects_changed_epoch_outcomes_and_normalization(self):
         for field, value in (
@@ -426,6 +487,31 @@ class ReadDiagnosticsReportTest(unittest.TestCase):
             del changed[section][key]
             with self.subTest(section=section, key=key), self.assertRaises(ValueError):
                 validate_read_diagnostics(changed, "modern/readrandom/4096")
+
+    def test_rejects_changed_compression_work(self):
+        changed = diagnostic_report("modern/readmissing/65536", "mmap")
+        changed["counters"]["decompressed_blocks"] = {"total": 0, "per_get": 0.0}
+        with self.assertRaises(ValueError):
+            validate_read_diagnostics(
+                changed, "modern/readmissing/65536", modern_file_access="mmap"
+            )
+
+    def test_compares_frozen_storage_work_with_two_percent_limit(self):
+        baseline = diagnostic_report("modern/readmissing/65536")
+        candidate = diagnostic_report("modern/readmissing/65536", "mmap")
+        result = compare_read_diagnostics(
+            baseline, candidate, "modern/readmissing/65536"
+        )
+        self.assertEqual(set(result["counters"]), set(READ_DIAGNOSTIC_COMPARISON_COUNTERS))
+        for name in READ_DIAGNOSTIC_COMPARISON_COUNTERS:
+            changed = copy.deepcopy(candidate)
+            counter = changed["counters"][name]
+            counter["total"] = int(counter["total"] * 1.03) + 1
+            counter["per_get"] = counter["total"] / READ_DIAGNOSTIC_OPERATIONS
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                compare_read_diagnostics(
+                    baseline, changed, "modern/readmissing/65536"
+                )
 
     def test_accepts_completed_short_random_reads(self):
         changed = diagnostic_report("modern/readmissing/65536")
@@ -723,6 +809,32 @@ class PerformanceExecutableTest(unittest.TestCase):
         )
         self.assertNotEqual(rejected.returncode, 0)
         self.assertFalse((self.root / "scan-db").exists())
+
+    def test_modern_mmap_is_explicit_and_read_only(self):
+        result = self.invoke(
+            "--case", "modern/readmissing/4096",
+            "--modern-file-access", "mmap",
+            "--database", str(self.root / "db"),
+            "--completion-report", str(self.root / "completion.json"),
+            "--benchmark_min_time=1x", "--benchmark_repetitions=1",
+            f"--benchmark_out={self.root / 'benchmark.json'}",
+            "--benchmark_out_format=json",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        data = read_json(self.root / "benchmark.json")
+        validate_benchmark(
+            data, "modern/readmissing/4096", 1, modern_file_access="mmap"
+        )
+        self.assertEqual(data["context"]["modern_file_access"], "mmap")
+
+        rejected = self.invoke(
+            "--case", "modern/overwrite/65536",
+            "--modern-file-access", "mmap",
+            "--database", str(self.root / "write-db"),
+            "--completion-report", str(self.root / "write-completion.json"),
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertFalse((self.root / "write-db").exists())
 
     def test_normal_binary_rejects_read_diagnostics(self):
         rejected = self.invoke(

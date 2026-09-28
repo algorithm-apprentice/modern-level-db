@@ -27,6 +27,9 @@ struct Options {
   std::size_t write_buffer_size = std::size_t{4} << 20U;
   std::uint64_t max_file_size = std::uint64_t{2} << 20U;
   std::size_t max_open_files = 1000;
+  // Opts into POSIX mmap for immutable table reads. The default pread path
+  // preserves typed I/O failures; mapped page faults may terminate with SIGBUS.
+  bool allow_mmap_reads = false;
   std::size_t block_size = std::size_t{4} << 10U;
   std::uint32_t block_restart_interval = 16;
   std::optional<std::uint32_t> bloom_bits_per_key;

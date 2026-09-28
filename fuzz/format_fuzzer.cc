@@ -127,7 +127,11 @@ void FuzzFormat(ByteView input) {
         std::vector<std::byte> stored(input.begin(), input.end());
         const auto trailer = EncodeBlockTrailer(input, type);
         stored.insert(stored.end(), trailer.begin(), trailer.end());
-        static_cast<void>(DecodeStoredBlock(std::move(stored)));
+        if ((command & 0x20U) == 0U) {
+          static_cast<void>(DecodeStoredBlock(std::move(stored)));
+        } else {
+          static_cast<void>(DecodeStoredBlock(ByteView(stored)));
+        }
       }
       break;
     }

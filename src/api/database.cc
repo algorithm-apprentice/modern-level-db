@@ -66,6 +66,7 @@ DatabaseEngineOptions EngineOptions(const Options& options, BlockCompression com
   engine.write_buffer_size = options.write_buffer_size;
   engine.max_file_size = options.max_file_size;
   engine.max_open_files = options.max_open_files;
+  engine.allow_mmap_reads = options.allow_mmap_reads;
   engine.table_options.block_size = options.block_size;
   engine.table_options.restart_interval = options.block_restart_interval;
   engine.table_options.compression = compression;

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "modern_leveldb/base/bytes.h"
@@ -35,6 +36,12 @@ class RandomAccessFile {
 
   [[nodiscard]] virtual Result<std::size_t> Read(std::uint64_t offset,
                                                  MutableByteView output) const = 0;
+  // Returns an exact immutable view that remains valid until this file is
+  // destroyed, or nothing when stable borrowed reads are unavailable.
+  [[nodiscard]] virtual std::optional<ByteView> TryReadView(std::uint64_t,
+                                                            std::size_t) const noexcept {
+    return std::nullopt;
+  }
 };
 
 class WritableFile {
@@ -76,7 +83,8 @@ class FileSystem {
   [[nodiscard]] virtual Result<std::unique_ptr<SequentialFile>> OpenSequential(
       const std::filesystem::path& path) = 0;
   [[nodiscard]] virtual Result<std::unique_ptr<RandomAccessFile>> OpenRandomAccess(
-      const std::filesystem::path& path) = 0;
+      const std::filesystem::path& path,
+      std::optional<std::uint64_t> expected_size = std::nullopt) = 0;
   [[nodiscard]] virtual Result<std::unique_ptr<WritableFile>> OpenWritable(
       const std::filesystem::path& path) = 0;
   [[nodiscard]] virtual Result<std::unique_ptr<WritableFile>> OpenAppendable(

@@ -238,6 +238,29 @@ TEST(StoredBlockTest, DecompressesSnappyAndZstdAfterVerifyingTheChecksum) {
   EXPECT_EQ(*decoded_zstd, Bytes({'h', 'e', 'l', 'l', 'o'}));
 }
 
+TEST(StoredBlockTest, BorrowedAndOwningDecodePathsMatch) {
+  const std::vector<std::byte> contents = Bytes({'b', 'l', 'o', 'c', 'k'});
+  const std::vector<std::byte> snappy = Bytes({0x05, 0x10, 'h', 'e', 'l', 'l', 'o'});
+  const std::vector<std::byte> zstd = Bytes({0x28, 0xb5, 0x2f, 0xfd, 0x24, 0x05, 0x29, 0x00, 0x00,
+                                             'h', 'e', 'l', 'l', 'o', 0xa3, 0x6d, 0x9f, 0x88});
+  for (const std::vector<std::byte>& stored :
+       {StoredBlock(contents), StoredBlock(snappy, 1), StoredBlock(zstd, 2)}) {
+    const Result<std::vector<std::byte>> owning = DecodeStoredBlock(stored);
+    const Result<std::vector<std::byte>> borrowed = DecodeStoredBlock(ByteView(stored));
+    ASSERT_TRUE(owning.has_value()) << owning.error().ToString();
+    ASSERT_TRUE(borrowed.has_value()) << borrowed.error().ToString();
+    EXPECT_EQ(*borrowed, *owning);
+  }
+
+  std::vector<std::byte> corrupt = StoredBlock(contents);
+  corrupt.front() ^= std::byte{0x01};
+  ExpectError(DecodeStoredBlock(corrupt), ErrorCode::Corruption);
+  ExpectError(DecodeStoredBlock(ByteView(corrupt)), ErrorCode::Corruption);
+  const std::vector<std::byte> unknown = StoredBlock(contents, 3);
+  ExpectError(DecodeStoredBlock(unknown), ErrorCode::Corruption);
+  ExpectError(DecodeStoredBlock(ByteView(unknown)), ErrorCode::Corruption);
+}
+
 TEST(StoredBlockTest, RejectsUnknownTypes) {
   const std::vector<std::byte> contents = Bytes({'q'});
 

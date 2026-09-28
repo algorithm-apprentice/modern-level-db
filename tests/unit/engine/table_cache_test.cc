@@ -84,7 +84,9 @@ class MemoryFileSystem final : public FileSystem {
   [[nodiscard]] int reads() const { return reads_->load(); }
 
   Result<std::unique_ptr<RandomAccessFile>> OpenRandomAccess(
-      const std::filesystem::path& path) override {
+      const std::filesystem::path& path,
+      std::optional<std::uint64_t> expected_size = std::nullopt) override {
+    (void)expected_size;
     std::lock_guard lock(mutex_);
     ++opens_[path];
     if (open_error_.has_value()) {

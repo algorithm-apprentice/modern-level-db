@@ -66,7 +66,20 @@ Result<std::vector<std::byte>> ReadStoredBlock(const RandomAccessFile& file,
   if (!InBlockRegion(handle, blocks_end)) {
     return std::unexpected(Error::Corruption("table block lies outside the file"));
   }
-  std::vector<std::byte> stored(static_cast<std::size_t>(handle.size) + BlockTrailerSize);
+  const std::size_t stored_size = static_cast<std::size_t>(handle.size) + BlockTrailerSize;
+  if (const std::optional<ByteView> view = file.TryReadView(handle.offset, stored_size);
+      view.has_value()) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    read_diagnostics::Add(read_diagnostics::Counter::MappedViewBlocks);
+    read_diagnostics::Add(read_diagnostics::Counter::MappedViewBytes, view->size());
+#endif
+    return DecodeStoredBlock(*view);
+  }
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::Add(read_diagnostics::Counter::CopiedReadBlocks);
+  read_diagnostics::Add(read_diagnostics::Counter::CopiedReadBytes, stored_size);
+#endif
+  std::vector<std::byte> stored(stored_size);
   const Status read = ReadExactly(file, handle.offset, stored);
   if (!read.has_value()) {
     return std::unexpected(read.error());
@@ -86,9 +99,8 @@ Result<Block> ReadBlock(const RandomAccessFile& file, std::uint64_t blocks_end, 
   return Block::Create(std::move(*contents), comparator);
 }
 
-Result<Block> ReadBlockWithTrustedKeyOrder(const RandomAccessFile& file,
-                                           std::uint64_t blocks_end, BlockHandle handle,
-                                           const Comparator& comparator) {
+Result<Block> ReadBlockWithTrustedKeyOrder(const RandomAccessFile& file, std::uint64_t blocks_end,
+                                           BlockHandle handle, const Comparator& comparator) {
   Result<std::vector<std::byte>> contents = ReadStoredBlock(file, blocks_end, handle);
   if (!contents.has_value()) {
     return std::unexpected(std::move(contents).error());
@@ -306,8 +318,7 @@ Result<Table::BlockReference> Table::ReadDataBlock(BlockHandle handle,
 #endif
   }
 
-  Result<Block> block =
-      ReadBlockWithTrustedKeyOrder(*file_, blocks_end_, handle, *comparator_);
+  Result<Block> block = ReadBlockWithTrustedKeyOrder(*file_, blocks_end_, handle, *comparator_);
   if (!block.has_value()) {
     return std::unexpected(std::move(block).error());
   }

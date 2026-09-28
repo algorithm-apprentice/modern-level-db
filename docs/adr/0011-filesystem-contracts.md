@@ -5,10 +5,9 @@
   its only planned caller
 - Date: 2026-09-22
 
-[ADR-0050](0050-posix-mmap-table-reads.md) designs an optional borrowed
-random-access view and bounded POSIX mmap implementation. The copied-read
-contract below remains production behavior until that separate candidate
-passes admission.
+[ADR-0050](0050-posix-mmap-table-reads.md) adds an optional exact borrowed
+random-access view and a bounded, explicit-opt-in POSIX mmap implementation.
+Copied `Read` remains the default and fallback.
 
 ## Context
 
@@ -120,6 +119,8 @@ class RandomAccessFile {
 
   virtual Result<std::size_t> Read(
       std::uint64_t offset, MutableByteView output) const = 0;
+  virtual std::optional<ByteView> TryReadView(
+      std::uint64_t offset, std::size_t size) const noexcept;
 };
 
 class WritableFile {
@@ -166,7 +167,8 @@ class FileSystem {
   virtual Result<std::unique_ptr<SequentialFile>> OpenSequential(
       const std::filesystem::path& path) = 0;
   virtual Result<std::unique_ptr<RandomAccessFile>> OpenRandomAccess(
-      const std::filesystem::path& path) = 0;
+      const std::filesystem::path& path,
+      std::optional<std::uint64_t> expected_size = std::nullopt) = 0;
   virtual Result<std::unique_ptr<WritableFile>> OpenWritable(
       const std::filesystem::path& path) = 0;
   virtual Result<std::unique_ptr<WritableFile>> OpenAppendable(
@@ -218,6 +220,18 @@ byte sequences; this layer does not impose UTF-8 normalization.
   `InvalidArgument`.
 - System-call byte counts are capped at `SSIZE_MAX` even if a larger
   `MutableByteView` is representable.
+- `TryReadView` optionally returns exactly the requested immutable bytes,
+  valid until the random-access file is destroyed. The default returns
+  nothing. Callers then use the copied `Read` contract.
+- The default POSIX path remains `pread`. With public
+  `Options::allow_mmap_reads`, exact-size SSTables may use full-file read-only
+  mappings under the process-wide 1,000-map/4-GiB budget. Missing resources,
+  absent/mismatched sizes, empty files, and mmap failures fall back to
+  `pread`.
+- Concurrent external mutation or truncation of a live mapped SSTable is
+  outside the immutable-file protocol. A storage fault while touching a
+  mapped page may terminate the process with `SIGBUS` instead of returning
+  typed `Io`; this is why mmap is explicit opt-in.
 
 ### Write and close semantics
 

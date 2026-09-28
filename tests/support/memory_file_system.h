@@ -53,7 +53,8 @@ class MemoryFileSystem : public FileSystem {
   [[nodiscard]] Result<std::unique_ptr<SequentialFile>> OpenSequential(
       const std::filesystem::path& path) override;
   [[nodiscard]] Result<std::unique_ptr<RandomAccessFile>> OpenRandomAccess(
-      const std::filesystem::path& path) override;
+      const std::filesystem::path& path,
+      std::optional<std::uint64_t> expected_size = std::nullopt) override;
   [[nodiscard]] Result<std::unique_ptr<WritableFile>> OpenWritable(
       const std::filesystem::path& path) override;
   [[nodiscard]] Result<std::unique_ptr<WritableFile>> OpenAppendable(
