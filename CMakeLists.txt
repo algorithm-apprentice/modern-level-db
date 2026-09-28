@@ -42,6 +42,7 @@ set(
     src/base/comparator.cc
     src/base/crc32c.cc
     src/base/hash.cc
+    src/cache/intrusive_lru_cache.cc
     src/engine/build_table.cc
     src/engine/compaction.cc
     src/engine/compaction_picker.cc

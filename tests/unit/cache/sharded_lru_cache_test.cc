@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -146,6 +147,27 @@ TEST(ShardedLruCacheTest, GrowsItsHashTableWithinOneShard) {
   }
 }
 
+TEST(ShardedLruCacheTest, DistinguishesDifferentKeysWithTheSameHash) {
+  constexpr std::string_view First = "collision-3728";
+  constexpr std::string_view Second = "collision-161100";
+  static_assert(First != Second);
+  ASSERT_EQ(Hash32(AsBytes(First), 0U), Hash32(AsBytes(Second), 0U));
+  Cache cache(32);
+  ASSERT_TRUE(cache.Insert(AsBytes(First), std::make_shared<const int>(1), 1).has_value());
+  ASSERT_TRUE(cache.Insert(AsBytes(Second), std::make_shared<const int>(2), 1).has_value());
+
+  auto first = cache.Lookup(AsBytes(First));
+  auto second = cache.Lookup(AsBytes(Second));
+
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+  EXPECT_EQ(**first, 1);
+  EXPECT_EQ(**second, 2);
+  cache.Erase(AsBytes(First));
+  EXPECT_FALSE(cache.Lookup(AsBytes(First)).has_value());
+  EXPECT_TRUE(cache.Lookup(AsBytes(Second)).has_value());
+}
+
 TEST(ShardedLruCacheTest, MoveAssignmentReleasesThePreviousPin) {
   Cache cache(16);
   const auto keys = KeysForShard(0, 3);
@@ -153,6 +175,9 @@ TEST(ShardedLruCacheTest, MoveAssignmentReleasesThePreviousPin) {
   auto second = cache.Insert(AsBytes(keys[1]), std::make_shared<const int>(2), 1).value();
 
   first = std::move(second);
+  EXPECT_EQ(*first, 2);
+  Handle* alias = &first;
+  first = std::move(*alias);
   EXPECT_EQ(*first, 2);
   auto third = cache.Insert(AsBytes(keys[2]), std::make_shared<const int>(3), 1);
   ASSERT_TRUE(third.has_value());
