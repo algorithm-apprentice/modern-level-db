@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted design. Merge this ADR before the separate local implementation and
-performance experiment.
+Experiment completed; the candidate failed admission and was not committed.
+The defensive internal-key comparator remains in production.
 
 ## Context
 
@@ -264,6 +264,76 @@ the exact measured patch, and update ADR-0012, ADR-0022, ADR-0025, ADR-0031,
 and this ADR. If it fails, restore production and record the result without
 combining another optimization.
 
+## Outcome
+
+Design PR #59 merged at
+`ae317a33df81c97232bc704cfbdd6ca6df60728f`. The implementation remained
+local and uncommitted through review and measurement. It:
+
+- Added direct trusted comparison and a private adapter.
+- Limited trusted comparison to validated table index/data block seeks.
+- Parsed index keys at table open, required reconstructed data keys to contain
+  an eight-byte trailer, and parsed raw iterator targets before trusted seeks.
+- Removed comparator retention from cached blocks.
+- Returned `Corruption` for an encountered unsupported data value kind.
+- Added exact defensive/trusted-index/trusted-data comparison accounting.
+
+The bounded GPT-5.6 Sol implementation review found two contract regressions
+before the candidate was frozen. Direct `Table` callers without the adapter
+were incorrectly forced through internal-key target parsing, and the
+diagnostic comparison CLI allowed a legacy schema-2 candidate to bypass the
+new accounting invariants. Both were fixed and covered before measurement.
+
+The frozen artifacts were:
+
+| Artifact | SHA-256 |
+|---|---|
+| Baseline throughput executable | `065852c55dca2e5b6d773b62dd5b2c553f4f59d5e3f334f4641a8716a2566641` |
+| Baseline diagnostic executable | `ccd15a4d51508affb765261b771d9bed9f7b509357347d15e1bd807b3c3288d5` |
+| Candidate throughput executable | `a709d4d3a677e9857e5f8365f9f95e8a1a576981484cf6e5f97f0ffa36038c36` |
+| Candidate diagnostic executable | `87bdc9a9b9630faef2fb1ca4a3b61cf2d50ac42640ce8b4794f52ac4c553b38b` |
+| Candidate source patch | `b94939f332564a6ae1f5011a593a662960716a56511f753c26457fc4e7ee535a` |
+| Frozen runner | `6b0f1d62e6f50e6fb6baf935bcbbd4bea2be5a68fbac4a999b08a4f1895bd1bc` |
+
+The exact candidate built warning-clean, passed the targeted comparator,
+block, table-boundary, and diagnostic-tool contract tests, and satisfied every
+diagnostic mechanism gate. Across all four fixed point-read diagnostics:
+
+- Comparison categories summed exactly to the total.
+- Trusted index and data comparisons were both nonzero.
+- Trusted comparisons represented 91.25% through 94.87% of the total.
+- Total comparisons/Get differed from the frozen baseline by at most 0.029%.
+- Every table file mapped successfully without a fallback.
+
+The nine individual wall-time samples per variant and case produced:
+
+| Case | Baseline items/s | Candidate items/s | Wall gain | Process-CPU gain |
+|---|---:|---:|---:|---:|
+| `modern/readrandom/4096` | 1,912,280 | 1,931,673 | +1.01% | +0.79% |
+| `modern/readrandom/65536` | 766,812 | 773,582 | +0.88% | +0.89% |
+| `modern/readmissing/4096` | 2,051,744 | 2,048,954 | -0.14% | -0.19% |
+| `modern/readmissing/65536` | 835,867 | 849,548 | +1.64% | +1.64% |
+| `modern/scan/4096` | 21,641,995 | 21,936,039 | +1.36% | +1.50% |
+| `modern/scan/65536` | 9,369,657 | 9,352,112 | -0.19% | -0.09% |
+| `modern/seek_reuse/4096` | 343,618 | 354,717 | +3.23% | +3.42% |
+| `modern/seek_reuse/65536` | 227,887 | 224,826 | -1.34% | -1.59% |
+
+The primary `modern/readrandom/4096` round gains were -1.70%, -3.22%, and
++1.05%. Its aggregate +1.01% gain is below the required 3%, and two rounds
+were negative. The primary round spread stayed below the instability trigger,
+so the predeclared gate rejects the candidate without a fixed-work retry.
+Several controls had round spread above 10%, but confirming them could not
+rescue a stable primary failure; no extra favorable rounds were added.
+
+The +3.23% `seek_reuse/4096` result does not justify changing the objective
+after measurement. Trusted comparison may still be useful as part of a future
+scan/iterator-specific design, but this point-Get candidate did not earn its
+additional boundary and lifetime machinery.
+
+Production was restored exactly to `ae317a3`. The rejected patch, frozen
+binaries, all raw samples, diagnostic reports, and the final comparison remain
+local under `build/trusted-comparator-experiment-ae317a3/`.
+
 ## Deferred work
 
 - Inline/reusable key reconstruction, including revisiting ADR-0047 for scans.
@@ -276,15 +346,13 @@ combining another optimization.
 
 ## Consequences
 
-- Arbitrary byte comparison remains safe and deterministic.
-- Validated index/data block seeks can avoid repeated length/kind validation.
-- Data blocks gain a minimum-length safety boundary without restoring the
-  full key reconstruction removed by ADR-0049.
-- Index keys become explicitly validated once at table open.
-- Cached blocks no longer retain comparator pointers.
-- Unsupported data value kinds remain corruption when encountered, but the
-  reader no longer promises to discover every semantic violation in an
-  externally supplied writer-invalid table.
+- Production contracts and code remain unchanged.
+- Arbitrary byte comparison remains safe and deterministic in every caller.
+- The experiment demonstrated that table-only trusted comparison can be
+  bounded and attributed correctly, but the point-Get benefit was too small.
+- Minimum data-key length validation, one-time index parsing, explicit
+  iterator comparator borrowing, and the trusted adapter were all rejected
+  with the candidate rather than retained as unearned machinery.
 
 ## Delivery boundary
 
@@ -292,10 +360,10 @@ The bounded design review narrowed the candidate from all proven internal
 callers to table block seeks, added one-time target/index boundaries, and
 removed comparator retention from cached blocks.
 
-Obtain one bounded GPT-5.6 Sol design review and merge this design-only PR
-before implementation. Review the exact candidate before measurement and
-commit it only after admission. Keep key storage, cache, candidate traversal,
-and result ownership separate.
+The design-only PR and exact-candidate review completed before measurement.
+Because the candidate failed admission, there is no implementation PR.
+Continue to keep key storage, cache, candidate traversal, result ownership,
+and any future iterator-specific trusted comparison separate.
 
 ## References
 
