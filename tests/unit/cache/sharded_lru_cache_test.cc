@@ -129,6 +129,39 @@ TEST(ShardedLruCacheTest, ReplacementKeepsOldHandleAlive) {
   EXPECT_EQ(**new_handle, 2);
 }
 
+TEST(ShardedLruCacheTest, GrowsItsHashTableWithinOneShard) {
+  Cache cache(16 * 128);
+  const auto keys = KeysForShard(0, 64);
+
+  for (std::size_t index = 0; index < keys.size(); ++index) {
+    auto inserted =
+        cache.Insert(AsBytes(keys[index]), std::make_shared<const int>(static_cast<int>(index)), 1);
+    ASSERT_TRUE(inserted.has_value());
+  }
+
+  for (std::size_t index = 0; index < keys.size(); ++index) {
+    auto found = cache.Lookup(AsBytes(keys[index]));
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(**found, static_cast<int>(index));
+  }
+}
+
+TEST(ShardedLruCacheTest, MoveAssignmentReleasesThePreviousPin) {
+  Cache cache(16);
+  const auto keys = KeysForShard(0, 3);
+  auto first = cache.Insert(AsBytes(keys[0]), std::make_shared<const int>(1), 1).value();
+  auto second = cache.Insert(AsBytes(keys[1]), std::make_shared<const int>(2), 1).value();
+
+  first = std::move(second);
+  EXPECT_EQ(*first, 2);
+  auto third = cache.Insert(AsBytes(keys[2]), std::make_shared<const int>(3), 1);
+  ASSERT_TRUE(third.has_value());
+
+  EXPECT_FALSE(cache.Lookup(AsBytes(keys[0])).has_value());
+  EXPECT_TRUE(cache.Lookup(AsBytes(keys[1])).has_value());
+  EXPECT_TRUE(cache.Lookup(AsBytes(keys[2])).has_value());
+}
+
 TEST(ShardedLruCacheTest, DestroysValuesAfterCacheAndHandleOwnershipEnd) {
   Cache cache(16);
   auto value = std::make_shared<const int>(42);
@@ -143,6 +176,20 @@ TEST(ShardedLruCacheTest, DestroysValuesAfterCacheAndHandleOwnershipEnd) {
 
   pinned.reset();
   EXPECT_TRUE(weak_value.expired());
+}
+
+TEST(ShardedLruCacheTest, LookupPinsEntriesWithoutCopyingValueOwnership) {
+  Cache cache(16);
+  auto value = std::make_shared<const int>(42);
+  auto inserted = cache.Insert(AsBytes("key"), value, 1);
+  ASSERT_TRUE(inserted.has_value());
+  EXPECT_EQ(value.use_count(), 2);
+
+  auto found = cache.Lookup(AsBytes("key"));
+
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(value.use_count(), 2);
+  EXPECT_EQ(**found, 42);
 }
 
 TEST(ShardedLruCacheTest, EvictsLeastRecentlyUsedUnpinnedEntry) {
