@@ -3,6 +3,10 @@
 - Status: Accepted
 - Date: 2026-09-24
 
+[ADR-0051](0051-trusted-internal-key-comparison.md) designs an explicit valid
+internal-key precondition for internal `Seek` targets and trusted comparison
+between keys from proven memtable/table boundaries.
+
 ## Context
 
 Compaction reads the entries of its input tables in internal-key order, and a

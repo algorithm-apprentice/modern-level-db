@@ -11,6 +11,11 @@ type, and verified Snappy and Zstd blocks are decoded instead of returning
 follow-up that stops rechecking data-block key order while retaining the
 one-pass structural proof required by trusted decoding. Index, metaindex, and
 general-purpose blocks retain the complete validation described below.
+
+[ADR-0051](0051-trusted-internal-key-comparison.md) designs a minimum
+internal-key length boundary and separate post-validation comparator for
+index/data iteration. Current comparator behavior remains until that
+experiment passes admission.
 - Date: 2026-09-23
 
 ## Context
