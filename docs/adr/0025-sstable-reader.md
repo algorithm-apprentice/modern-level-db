@@ -14,6 +14,9 @@ key order; index and metaindex blocks retain full order validation.
 [ADR-0050](0050-posix-mmap-table-reads.md) adds direct stored-block decoding
 from an optional mapped file view while preserving the reader's owning block
 and cache contracts.
+
+[ADR-0051](0051-trusted-internal-key-comparison.md) designs one-time index-key
+parsing and a minimum data-key length boundary before trusted block seeks.
 - Date: 2026-09-24
 
 ## Context

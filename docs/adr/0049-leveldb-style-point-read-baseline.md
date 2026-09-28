@@ -331,7 +331,8 @@ follow-up must select one mechanism with its own admission gate.
 ## Deferred work
 
 - Fully lazy checked block decoding and iterator error propagation.
-- A trusted internal-key type or unchecked comparison operation.
+- A trusted internal-key comparison operation, designed separately in
+  [ADR-0051](0051-trusted-internal-key-comparison.md).
 - Lazy deeper-level file traversal and level-0 candidate storage.
 - Cache data structures and ownership.
 - A reusable-output or caller-buffer public read API.

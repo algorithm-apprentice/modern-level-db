@@ -3,6 +3,11 @@
 - Status: Accepted
 - Date: 2026-09-22
 
+[ADR-0051](0051-trusted-internal-key-comparison.md) designs a separate
+trusted comparison operation for callers with explicit validity boundaries.
+The defensive malformed-key ordering below remains the general byte-view
+contract until that candidate passes admission.
+
 ## Context
 
 An LSM tree stores multiple versions of a user key. Each stored entry needs a
