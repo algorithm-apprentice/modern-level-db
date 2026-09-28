@@ -335,7 +335,8 @@ follow-up must select one mechanism with its own admission gate.
 - Lazy deeper-level file traversal and level-0 candidate storage.
 - Cache data structures and ownership.
 - A reusable-output or caller-buffer public read API.
-- Modern mmap-backed random-access files.
+- Modern mmap-backed random-access files, designed separately in
+  [ADR-0050](0050-posix-mmap-table-reads.md).
 - Cold-device, concurrent, tail-latency, prefetch, and asynchronous-I/O
   workloads.
 - Bloom filters, row caches, `MultiGet`, and RocksDB-specific file-picking

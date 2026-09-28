@@ -5,6 +5,11 @@
   its only planned caller
 - Date: 2026-09-22
 
+[ADR-0050](0050-posix-mmap-table-reads.md) designs an optional borrowed
+random-access view and bounded POSIX mmap implementation. The copied-read
+contract below remains production behavior until that separate candidate
+passes admission.
+
 ## Context
 
 WAL, SSTable, MANIFEST, recovery, and file-lifecycle code require filesystem
