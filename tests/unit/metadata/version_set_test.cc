@@ -46,6 +46,8 @@ concept RecoverableWith = requires(FileSystem& file_system, T&& comparator) {
 
 static_assert(!std::is_copy_constructible_v<VersionSet>);
 static_assert(!std::is_move_constructible_v<VersionSet>);
+static_assert(!std::is_copy_constructible_v<VersionSet::ReadPin>);
+static_assert(std::is_nothrow_move_constructible_v<VersionSet::ReadPin>);
 static_assert(CreatableWith<const InternalKeyComparator&>);
 static_assert(!CreatableWith<InternalKeyComparator>);
 static_assert(RecoverableWith<const InternalKeyComparator&>);
@@ -718,6 +720,43 @@ TEST_F(VersionSetTest, ReportsTheFilesOfHeldVersions) {
   EXPECT_EQ(set->LiveFiles(), (std::set<std::uint64_t>{3, 4}));
   ASSERT_TRUE(set->LogAndApply(VersionEdit()).has_value());
   EXPECT_EQ(set->LiveFiles(), (std::set<std::uint64_t>{3, 4}));
+}
+
+TEST_F(VersionSetTest, ReadPinKeepsAnOldVersionLiveWithoutSharedOwnership) {
+  auto set = Create();
+  ASSERT_NE(set, nullptr);
+  const std::uint64_t old_number = set->NewFileNumber();
+  VersionEdit first;
+  ASSERT_TRUE(first.AddFile(1, File(old_number, "a", "b")).has_value());
+  ASSERT_TRUE(set->LogAndApply(first).has_value());
+
+  std::uint64_t new_number = 0;
+  {
+    const long owners = set->current_owner().use_count();
+    VersionSet::ReadPin pin = set->PinCurrent();
+    EXPECT_EQ(set->current_owner().use_count(), owners);
+    EXPECT_EQ(pin.value().files(1).front()->number, old_number);
+
+    new_number = set->NewFileNumber();
+    VersionEdit second;
+    ASSERT_TRUE(second.RemoveFile(1, old_number).has_value());
+    ASSERT_TRUE(second.AddFile(1, File(new_number, "c", "d")).has_value());
+    ASSERT_TRUE(set->LogAndApply(second).has_value());
+    EXPECT_EQ(set->LiveFiles(), (std::set<std::uint64_t>{old_number, new_number}));
+  }
+
+  EXPECT_EQ(set->LiveFiles(), (std::set<std::uint64_t>{new_number}));
+}
+
+TEST_F(VersionSetTest, ReadPinsReleaseIndependently) {
+  auto set = Create();
+  ASSERT_NE(set, nullptr);
+  VersionSet::ReadPin first = set->PinCurrent();
+  {
+    VersionSet::ReadPin second = set->PinCurrent();
+    EXPECT_EQ(&first.value(), &second.value());
+  }
+  EXPECT_EQ(&first.value(), set->current_raw());
 }
 
 TEST_F(VersionSetTest, AllocatesFileNumbersWithinTheLimit) {

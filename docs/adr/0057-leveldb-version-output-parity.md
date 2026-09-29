@@ -2,11 +2,14 @@
 
 ## Status
 
-Accepted design. Bounded GPT-5.6 Sol review completed the read-pin acquisition
-and current-version identity APIs, restored pinned unchanged-on-miss output,
+Implemented. The design review completed the read-pin acquisition and
+current-version identity APIs, restored pinned unchanged-on-miss output,
 defined result-ownership provenance for every workload, and added every
-superseded ADR surface. Merge this design-only ADR before ADR-0053 Milestone 4
-implementation.
+superseded ADR surface. The bounded GPT-5.6 Sol implementation review found
+three test gaps rather than production defects: distinguishing lazy selection
+from unopened eager selection, pinning an already-installed immutable
+memtable, and consuming a second-file error charge before returning it. The
+implementation adds direct regression coverage for all three.
 
 ## Context
 

@@ -2,7 +2,10 @@
 
 ## Status
 
-Proposed design. Merge this ADR before the first parity implementation PR.
+Accepted. Milestones 1-3 merged the intrusive cache, block-iterator, and
+table/mmap parity work. Milestone 4 completes lazy version visitation, typed
+read pins, exact seek charging, and reusable output. Integrated Milestone 5
+verification remains.
 
 ## Context
 

@@ -76,7 +76,7 @@ class SeekStatisticsTest : public testing::Test {
 
   static SeekCharge ChargeOf(const std::shared_ptr<const Version>& version, std::uint32_t level,
                              std::size_t index) {
-    return SeekCharge{.level = level, .file = version->files(level)[index]};
+    return SeekCharge{.level = level, .file = &version->files(level)[index]};
   }
 
   // Charges the file `times` times and returns how many charges recorded it.
@@ -84,14 +84,14 @@ class SeekStatisticsTest : public testing::Test {
              const std::shared_ptr<const Version>& current, const SeekCharge& charge, int times) {
     int recorded = 0;
     for (int time = 0; time < times; ++time) {
-      recorded += statistics_.Charge(version, current, charge) ? 1 : 0;
+      recorded += statistics_.Charge(*version, *current, current, charge) ? 1 : 0;
     }
     return recorded;
   }
 
   // "number@level" for the current version's file to compact, or "none".
   std::string Recorded(const std::shared_ptr<const Version>& current) const {
-    const std::optional<SeekCompaction> compaction = statistics_.FileToCompact(current);
+    const std::optional<SeekCompaction> compaction = statistics_.FileToCompact(*current);
     return compaction.has_value()
                ? std::to_string(compaction->file->number) + "@" + std::to_string(compaction->level)
                : "none";
@@ -108,13 +108,13 @@ TEST_F(SeekStatisticsTest, RecordsAFileOnceItsBudgetRunsOut) {
 
   EXPECT_EQ(Charge(version, version, charge, 149), 0);
   EXPECT_EQ(Recorded(version), "none");
-  EXPECT_TRUE(statistics_.Charge(version, version, charge));
+  EXPECT_TRUE(statistics_.Charge(*version, *version, version, charge));
   EXPECT_EQ(Recorded(version), "10@1");
-  const std::optional<SeekCompaction> compaction = statistics_.FileToCompact(version);
+  const std::optional<SeekCompaction> compaction = statistics_.FileToCompact(*version);
   ASSERT_TRUE(compaction.has_value());
-  EXPECT_EQ(compaction->file, charge.file);
+  EXPECT_EQ(compaction->file, *charge.file);
   // It is recorded once, and stays recorded while its version is current.
-  EXPECT_FALSE(statistics_.Charge(version, version, charge));
+  EXPECT_FALSE(statistics_.Charge(*version, *version, version, charge));
   statistics_.Retain(*version);
   EXPECT_EQ(Recorded(version), "10@1");
 }
@@ -123,7 +123,7 @@ TEST_F(SeekStatisticsTest, DividesTheFileSizeInto16KiBSeeks) {
   // One byte less than 150 times 16 KiB allows 149 seeks.
   const auto version = Make({{1, File(10, "a", "b", 150 * 16384 - 1)}});
   EXPECT_EQ(Charge(version, version, ChargeOf(version, 1, 0), 148), 0);
-  EXPECT_TRUE(statistics_.Charge(version, version, ChargeOf(version, 1, 0)));
+  EXPECT_TRUE(statistics_.Charge(*version, *version, version, ChargeOf(version, 1, 0)));
 }
 
 TEST_F(SeekStatisticsTest, AllowsEveryFileAHundredSeeks) {
@@ -131,7 +131,7 @@ TEST_F(SeekStatisticsTest, AllowsEveryFileAHundredSeeks) {
       Make({{1, File(10, "a", "b", 1000)}, {1, File(11, "c", "d", 101 * 16384 - 1)}});
 
   EXPECT_EQ(Charge(version, version, ChargeOf(version, 1, 0), 99), 0);
-  EXPECT_TRUE(statistics_.Charge(version, version, ChargeOf(version, 1, 0)));
+  EXPECT_TRUE(statistics_.Charge(*version, *version, version, ChargeOf(version, 1, 0)));
   // Once a file is recorded, another that runs out is not.
   EXPECT_EQ(Charge(version, version, ChargeOf(version, 1, 1), 100), 0);
   EXPECT_EQ(Recorded(version), "10@1");
@@ -147,7 +147,7 @@ TEST_F(SeekStatisticsTest, RecordsOnlyForTheCurrentVersion) {
   EXPECT_EQ(Recorded(current), "none");
   EXPECT_EQ(Recorded(old_version), "none");
   // The current version shares the file, whose next charge records it.
-  EXPECT_TRUE(statistics_.Charge(current, current, charge));
+  EXPECT_TRUE(statistics_.Charge(*current, *current, current, charge));
   EXPECT_EQ(Recorded(current), "10@1");
   // Another version's file to compact is ignored.
   EXPECT_EQ(Recorded(old_version), "none");
@@ -158,13 +158,13 @@ TEST_F(SeekStatisticsTest, KeepsABudgetPerMetadataObject) {
   // The second version shares file 10's metadata.
   const auto second = Next(*first, {}, {{3, File(20, "a", "z", 1000)}});
   EXPECT_EQ(Charge(first, first, ChargeOf(first, 1, 0), 99), 0);
-  EXPECT_TRUE(statistics_.Charge(second, second, ChargeOf(second, 1, 0)));
+  EXPECT_TRUE(statistics_.Charge(*second, *second, second, ChargeOf(second, 1, 0)));
 
   // A trivial move adds new metadata for the file, which starts a new budget.
   const auto third = Next(*second, {{.level = 1, .number = 10}}, {{2, File(10, "a", "b", 1000)}});
   statistics_.Retain(*third);
   EXPECT_EQ(Charge(third, third, ChargeOf(third, 2, 0), 99), 0);
-  EXPECT_TRUE(statistics_.Charge(third, third, ChargeOf(third, 2, 0)));
+  EXPECT_TRUE(statistics_.Charge(*third, *third, third, ChargeOf(third, 2, 0)));
   EXPECT_EQ(Recorded(third), "10@2");
 }
 
@@ -182,7 +182,7 @@ TEST_F(SeekStatisticsTest, RetainForgetsFilesAndRecordsOfOtherVersions) {
   EXPECT_EQ(Recorded(second), "none");
   // A version that holds file 10's metadata again finds a new budget.
   const auto third = Next(*first, {}, {{2, File(30, "a", "z", 1000)}});
-  EXPECT_FALSE(statistics_.Charge(third, third, ChargeOf(third, 1, 0)));
+  EXPECT_FALSE(statistics_.Charge(*third, *third, third, ChargeOf(third, 1, 0)));
   EXPECT_EQ(Recorded(third), "none");
 }
 
@@ -195,7 +195,7 @@ TEST_F(SeekStatisticsTest, RecordsAnExhaustedFileInTheNextVersionThatHoldsIt) {
   const auto second = Next(*first, {}, {{2, File(20, "a", "z", 1000)}});
   statistics_.Retain(*second);
   EXPECT_EQ(Recorded(second), "none");
-  EXPECT_TRUE(statistics_.Charge(second, second, ChargeOf(second, 1, 1)));
+  EXPECT_TRUE(statistics_.Charge(*second, *second, second, ChargeOf(second, 1, 1)));
   EXPECT_EQ(Recorded(second), "11@1");
 }
 

@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "engine/database.h"
 #include "format/write_batch.h"
@@ -32,9 +33,10 @@ TEST(DatabasePosixTest, OwnsAFileSystemExecutorAndBlockCacheWhenGivenNone) {
   {
     auto database = DatabaseEngine::Open(options, directory);
     ASSERT_TRUE(database.has_value()) << database.error().ToString();
-    const auto value = (*database)->Get(AsBytes("a"));
-    ASSERT_TRUE(value.has_value() && value->has_value());
-    EXPECT_EQ(std::string(AsStringView(**value)), "1");
+    std::vector<std::byte> value;
+    const auto found = (*database)->Get(AsBytes("a"), value);
+    ASSERT_TRUE(found.has_value() && *found);
+    EXPECT_EQ(std::string(AsStringView(value)), "1");
   }
   std::filesystem::remove_all(directory);
 }

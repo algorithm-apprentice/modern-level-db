@@ -3,6 +3,10 @@
 - Status: Accepted
 - Date: 2026-09-24
 
+[ADR-0057](0057-leveldb-version-output-parity.md) moves charging to the pinned
+second-file decision point, preserves a charge when that later search fails,
+and borrows the pinned version's file slot until the engine consumes it.
+
 ## Context
 
 A file that point reads keep searching without finding their keys costs a
@@ -70,8 +74,10 @@ Change:
   version, and only the current version's matters. Here `SeekStatistics`
   keeps one for the version that was current when a charge produced it, and
   ignores it once another version is current, as ADR-0034 requires.
-- **Failed reads charge nothing.** A read that fails returns only its error;
-  the first file it searched is not charged.
+- **Typed error plus charge.** A lookup returns its error and reports seek
+  charge through a separate output. A failure in the first file charges
+  nothing; a failure in a second or later file charges the first, as LevelDB
+  does.
 - **Samples are internal keys.** LevelDB samples a key before it parses it.
   Here the iterator samples only entries whose keys it parsed, since a key
   that is not an internal key fails the iterator.
@@ -94,15 +100,10 @@ Change `src/engine/lookup.{h,cc}` and `src/engine/db_iterator.{h,cc}`, and add
 ```cpp
 struct SeekCharge {
   std::uint32_t level;
-  Version::File file;
+  const Version::File* file;
 };
 
-struct PointRead {
-  std::optional<std::vector<std::byte>> value;
-  std::optional<SeekCharge> seek;
-};
-
-Result<PointRead> LookupValue(/* as before */);
+Result<bool> LookupValue(/* caller value and seek outputs */);
 
 std::optional<SeekCharge> SampleCharge(const Version& version,
                                        const InternalKeyComparator& comparator,
@@ -122,17 +123,17 @@ std::function<std::uint64_t()> ReadSamplingPeriods(std::uint32_t seed);
 
 class SeekStatistics final {
  public:
-  bool Charge(const std::shared_ptr<const Version>& version,
-              const std::shared_ptr<const Version>& current, const SeekCharge& charge);
-  std::optional<SeekCompaction> FileToCompact(
-      const std::shared_ptr<const Version>& current) const;
+  bool Charge(const Version& version, const Version& current,
+              const std::shared_ptr<const Version>& current_owner,
+              const SeekCharge& charge);
+  std::optional<SeekCompaction> FileToCompact(const Version& current) const;
   void Retain(const Version& current);
 };
 ```
 
-- `LookupValue` returns the value as before, and, if the read reached the
-  version and searched more than one file, the first file it searched and
-  its level. Errors are returned as before, without a charge.
+- `LookupValue` reports the first file and its level immediately before it
+  searches a second file. Errors are returned normally while the separate
+  charge output remains available.
 - `SampleCharge` returns the first file, with its level, that a point read
   at the valid internal key would search in the version, if it would search
   at least two.

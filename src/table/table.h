@@ -39,10 +39,10 @@ struct TableReadOptions {
   bool fill_cache = true;
 };
 
-// The version of a user key that a lookup found.
-struct TableLookup {
-  ValueKind kind;
-  std::vector<std::byte> value;
+enum class TableLookupKind {
+  Missing,
+  Value,
+  Deletion,
 };
 
 // An immutable SSTable of internal keys. Its const members are safe for
@@ -72,8 +72,8 @@ class Table final {
 
   // Returns the first entry not less than the lookup key if it has the
   // lookup's user key: the newest version visible at the lookup's sequence.
-  [[nodiscard]] Result<std::optional<TableLookup>> Get(const LookupKey& key,
-                                                       const TableReadOptions& options = {}) const;
+  [[nodiscard]] Result<TableLookupKind> Get(const LookupKey& key, std::vector<std::byte>& value,
+                                            const TableReadOptions& options = {}) const;
 
  private:
   Table(std::unique_ptr<RandomAccessFile> file, std::uint64_t blocks_end,

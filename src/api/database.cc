@@ -27,10 +27,27 @@ Error MovedFromDatabase(std::string_view operation) {
   return Error::InvalidArgument(std::string(operation) + " used a moved-from database");
 }
 
-Result<PreparedRead> PrepareRead(const std::shared_ptr<detail::DatabaseState>& state,
-                                 bool has_snapshot,
-                                 std::shared_ptr<detail::SnapshotRegistration> snapshot,
-                                 bool fill_cache) {
+Result<DatabaseEngineReadOptions> PrepareSynchronousRead(detail::DatabaseState& state,
+                                                         bool has_snapshot,
+                                                         detail::SnapshotRegistration* snapshot,
+                                                         bool fill_cache) {
+  DatabaseEngineReadOptions prepared;
+  prepared.fill_cache = fill_cache;
+  if (!has_snapshot) {
+    return prepared;
+  }
+  if (snapshot == nullptr || snapshot->state().get() != &state) {
+    return std::unexpected(
+        Error::InvalidArgument("the read snapshot is moved from or belongs to another database"));
+  }
+  prepared.snapshot = snapshot->sequence();
+  return prepared;
+}
+
+Result<PreparedRead> PrepareRetainedRead(const std::shared_ptr<detail::DatabaseState>& state,
+                                         bool has_snapshot,
+                                         std::shared_ptr<detail::SnapshotRegistration> snapshot,
+                                         bool fill_cache) {
   PreparedRead prepared;
   prepared.options.fill_cache = fill_cache;
   if (!has_snapshot) {
@@ -112,7 +129,7 @@ Database& Database::operator=(Database&& source) noexcept = default;
 Database::~Database() = default;
 
 Status Database::Put(ByteView key, ByteView value, const WriteOptions& options) {
-  const std::shared_ptr<detail::DatabaseState> state = state_;
+  detail::DatabaseState* const state = state_.get();
   if (state == nullptr) {
     return std::unexpected(MovedFromDatabase("Put"));
   }
@@ -125,7 +142,7 @@ Status Database::Put(ByteView key, ByteView value, const WriteOptions& options) 
 }
 
 Status Database::Delete(ByteView key, const WriteOptions& options) {
-  const std::shared_ptr<detail::DatabaseState> state = state_;
+  detail::DatabaseState* const state = state_.get();
   if (state == nullptr) {
     return std::unexpected(MovedFromDatabase("Delete"));
   }
@@ -138,7 +155,7 @@ Status Database::Delete(ByteView key, const WriteOptions& options) {
 }
 
 Status Database::Write(const WriteBatch& batch, const WriteOptions& options) {
-  const std::shared_ptr<detail::DatabaseState> state = state_;
+  detail::DatabaseState* const state = state_.get();
   if (state == nullptr) {
     return std::unexpected(MovedFromDatabase("Write"));
   }
@@ -148,23 +165,36 @@ Status Database::Write(const WriteBatch& batch, const WriteOptions& options) {
   return state->engine().Write(batch.impl_->batch(), options.sync);
 }
 
-Result<std::optional<std::vector<std::byte>>> Database::Get(ByteView key,
-                                                            const ReadOptions& options) {
+Result<bool> Database::Get(ByteView key, std::vector<std::byte>& value,
+                           const ReadOptions& options) {
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
   read_diagnostics::GetScope diagnostic_get;
 #endif
-  const std::shared_ptr<detail::DatabaseState> state = state_;
+  detail::DatabaseState* const state = state_.get();
   if (state == nullptr) {
     return std::unexpected(MovedFromDatabase("Get"));
   }
-  std::shared_ptr<detail::SnapshotRegistration> snapshot =
-      options.snapshot != nullptr ? options.snapshot->registration_ : nullptr;
-  Result<PreparedRead> prepared =
-      PrepareRead(state, options.snapshot != nullptr, std::move(snapshot), options.fill_cache);
+  detail::SnapshotRegistration* const snapshot =
+      options.snapshot != nullptr ? options.snapshot->registration_.get() : nullptr;
+  const Result<DatabaseEngineReadOptions> prepared =
+      PrepareSynchronousRead(*state, options.snapshot != nullptr, snapshot, options.fill_cache);
   if (!prepared.has_value()) {
-    return std::unexpected(std::move(prepared).error());
+    return std::unexpected(prepared.error());
   }
-  return state->engine().Get(key, prepared->options);
+  return state->engine().Get(key, value, *prepared);
+}
+
+Result<std::optional<std::vector<std::byte>>> Database::Get(ByteView key,
+                                                            const ReadOptions& options) {
+  std::vector<std::byte> value;
+  Result<bool> found = Get(key, value, options);
+  if (!found.has_value()) {
+    return std::unexpected(std::move(found).error());
+  }
+  if (!*found) {
+    return std::optional<std::vector<std::byte>>();
+  }
+  return std::optional<std::vector<std::byte>>(std::move(value));
 }
 
 Result<Iterator> Database::NewIterator(const ReadOptions& options) {
@@ -174,8 +204,8 @@ Result<Iterator> Database::NewIterator(const ReadOptions& options) {
   }
   std::shared_ptr<detail::SnapshotRegistration> snapshot =
       options.snapshot != nullptr ? options.snapshot->registration_ : nullptr;
-  Result<PreparedRead> prepared =
-      PrepareRead(state, options.snapshot != nullptr, std::move(snapshot), options.fill_cache);
+  Result<PreparedRead> prepared = PrepareRetainedRead(state, options.snapshot != nullptr,
+                                                      std::move(snapshot), options.fill_cache);
   if (!prepared.has_value()) {
     return std::unexpected(std::move(prepared).error());
   }

@@ -39,17 +39,24 @@ bool ShouldSample(std::uint64_t ordinal, const Snapshot& snapshot) noexcept {
   return Mix(ordinal + snapshot.sample_seed) % snapshot.sample_denominator == 0;
 }
 
-void AddStage(Stage stage, std::chrono::steady_clock::time_point started) noexcept {
+void AddStageDuration(Stage stage, std::uint64_t nanoseconds) noexcept {
   assert(active.snapshot != nullptr && active.get_active && active.sampled);
+  StageTotal& total = active.snapshot->stages[Index(stage)];
+  assert(total.events < std::numeric_limits<std::uint64_t>::max());
+  assert(nanoseconds <= std::numeric_limits<std::uint64_t>::max() - total.nanoseconds);
+  ++total.events;
+  total.nanoseconds += nanoseconds;
+}
+
+std::uint64_t ElapsedSince(std::chrono::steady_clock::time_point started) noexcept {
   const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
       std::chrono::steady_clock::now() - started);
   assert(elapsed.count() >= 0);
-  StageTotal& total = active.snapshot->stages[Index(stage)];
-  assert(total.events < std::numeric_limits<std::uint64_t>::max());
-  assert(static_cast<std::uint64_t>(elapsed.count()) <=
-         std::numeric_limits<std::uint64_t>::max() - total.nanoseconds);
-  ++total.events;
-  total.nanoseconds += static_cast<std::uint64_t>(elapsed.count());
+  return static_cast<std::uint64_t>(elapsed.count());
+}
+
+void AddStage(Stage stage, std::chrono::steady_clock::time_point started) noexcept {
+  AddStageDuration(stage, ElapsedSince(started));
 }
 
 }  // namespace
@@ -120,6 +127,40 @@ StageScope::~StageScope() {
   if (active_) {
     AddStage(stage_, started_);
   }
+}
+
+StageAccumulator::StageAccumulator(Stage stage) noexcept : stage_(stage) {
+  active_ = active.snapshot != nullptr && active.get_active && active.sampled;
+}
+
+StageAccumulator::~StageAccumulator() {
+  if (!active_) {
+    return;
+  }
+  if (running_) {
+    Pause();
+  }
+  AddStageDuration(stage_, nanoseconds_);
+}
+
+void StageAccumulator::Resume() noexcept {
+  if (!active_) {
+    return;
+  }
+  assert(!running_);
+  running_ = true;
+  started_ = std::chrono::steady_clock::now();
+}
+
+void StageAccumulator::Pause() noexcept {
+  if (!active_) {
+    return;
+  }
+  assert(running_);
+  const std::uint64_t elapsed = ElapsedSince(started_);
+  assert(elapsed <= std::numeric_limits<std::uint64_t>::max() - nanoseconds_);
+  nanoseconds_ += elapsed;
+  running_ = false;
 }
 
 BlockRoleScope::BlockRoleScope(BlockRole role) noexcept {

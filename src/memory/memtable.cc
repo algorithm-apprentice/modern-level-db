@@ -65,11 +65,9 @@ EntryView DecodeEntry(const std::byte* entry) noexcept {
 }
 
 ValueKind DecodeValueKind(ByteView internal_key) noexcept {
-  const ByteView trailer =
-      internal_key.last<InternalKeyTrailerSize>();
-  return static_cast<ValueKind>(DecodeFixed64(
-                                    std::span<const std::byte, InternalKeyTrailerSize>(
-                                        trailer.data(), InternalKeyTrailerSize)) &
+  const ByteView trailer = internal_key.last<InternalKeyTrailerSize>();
+  return static_cast<ValueKind>(DecodeFixed64(std::span<const std::byte, InternalKeyTrailerSize>(
+                                    trailer.data(), InternalKeyTrailerSize)) &
                                 0xffU);
 }
 
@@ -83,14 +81,35 @@ bool TryAddSize(std::size_t& total, std::size_t value) noexcept {
 
 }  // namespace
 
+// GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
+MemTable::ReadPin::ReadPin(const MemTable& table) noexcept : table_(&table) {
+  ++table_->read_pins_;
+}
+
+MemTable::ReadPin::ReadPin(ReadPin&& source) noexcept : table_(source.table_) {
+  source.table_ = nullptr;
+}
+
+MemTable::ReadPin::~ReadPin() {
+  if (table_ != nullptr) {
+    assert(table_->read_pins_ > 0);
+    --table_->read_pins_;
+  }
+}
+// GCOVR_EXCL_STOP
+
+const MemTable& MemTable::ReadPin::value() const noexcept {
+  assert(table_ != nullptr);
+  return *table_;
+}
+
 MemTable::MemTable(const Comparator& user_comparator)
     : user_comparator_(user_comparator),
       internal_comparator_(user_comparator),
       entry_comparator_{internal_comparator_},
       table_(entry_comparator_, arena_) {}
 
-Status MemTable::Add(SequenceNumber sequence, ValueKind kind, ByteView key,
-                     ByteView value) {
+Status MemTable::Add(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value) {
   if (sequence > MaxSequenceNumber) {
     return std::unexpected(Error::InvalidArgument("memtable sequence exceeds 56 bits"));
   }
@@ -124,8 +143,7 @@ Status MemTable::Add(SequenceNumber sequence, ValueKind kind, ByteView key,
 
   std::ranges::copy(key, output.begin());
   output = output.subspan(key.size());
-  EncodeFixed64(std::span<std::byte, InternalKeyTrailerSize>(
-                    output.data(), InternalKeyTrailerSize),
+  EncodeFixed64(std::span<std::byte, InternalKeyTrailerSize>(output.data(), InternalKeyTrailerSize),
                 PackTrailer(sequence, kind));
   output = output.subspan(InternalKeyTrailerSize);
 
@@ -176,13 +194,9 @@ int MemTable::EntryComparator::operator()(const std::byte* left,
 
 MemTable::Iterator::Iterator(const MemTable& table) noexcept : iterator_(table.table_) {}
 
-ByteView MemTable::Iterator::key() const {
-  return DecodeEntry(iterator_.key()).internal_key;
-}
+ByteView MemTable::Iterator::key() const { return DecodeEntry(iterator_.key()).internal_key; }
 
-ByteView MemTable::Iterator::value() const {
-  return DecodeEntry(iterator_.key()).value;
-}
+ByteView MemTable::Iterator::value() const { return DecodeEntry(iterator_.key()).value; }
 
 Status MemTable::Iterator::Seek(ByteView internal_key) {
   constexpr std::size_t MaximumLength =

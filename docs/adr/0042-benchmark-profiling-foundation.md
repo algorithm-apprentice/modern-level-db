@@ -100,11 +100,11 @@ Reuse LevelDB's workload concepts, not its whole driver or unsupported APIs.
 diagnostic workload and is not advertised as an identical implementation of
 upstream `seekrandom`.
 
-Use each public API naturally. In particular, the LevelDB adapter may reuse
-its output string, while Modern LevelDB returns its owning result. Do not add
-an extra copy to either adapter to make their allocation counts look equal.
-Consequently these measurements are a **new baseline**, not a continuation
-of the legacy benchmark's exact ratios.
+Use each public API naturally. ADR-0057 makes Modern's parity adapter reuse one
+caller-owned vector, matching LevelDB's reused output string. An explicit
+Modern owning-result control measures the convenience overload tax; do not add
+an extra copy to either adapter. Consequently these measurements are a **new
+baseline**, not a continuation of the legacy benchmark's exact ratios.
 
 ### Fixture lifecycle and timing
 

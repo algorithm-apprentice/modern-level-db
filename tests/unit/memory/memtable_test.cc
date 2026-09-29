@@ -57,8 +57,7 @@ class CaseInsensitiveComparator final : public Comparator {
  private:
   static unsigned int Fold(std::byte value) noexcept {
     unsigned int byte = std::to_integer<unsigned int>(value);
-    if (byte >= static_cast<unsigned int>('A') &&
-        byte <= static_cast<unsigned int>('Z')) {
+    if (byte >= static_cast<unsigned int>('A') && byte <= static_cast<unsigned int>('Z')) {
       byte += static_cast<unsigned int>('a' - 'A');
     }
     return byte;
@@ -71,6 +70,8 @@ static_assert(!std::is_move_constructible_v<MemTable>);
 static_assert(!std::is_move_assignable_v<MemTable>);
 static_assert(!std::is_constructible_v<MemTable, CaseInsensitiveComparator&&>);
 static_assert(!std::is_constructible_v<MemTable, const CaseInsensitiveComparator&&>);
+static_assert(!std::is_copy_constructible_v<MemTable::ReadPin>);
+static_assert(std::is_nothrow_move_constructible_v<MemTable::ReadPin>);
 static_assert(!std::is_copy_constructible_v<MemTable::Iterator>);
 static_assert(!std::is_move_constructible_v<MemTable::Iterator>);
 
@@ -84,14 +85,24 @@ LookupKey MakeLookup(std::string_view user_key, SequenceNumber sequence) {
   return MakeLookup(AsBytes(user_key), sequence);
 }
 
+TEST(MemTableTest, ReadPinSurvivesMovesAndReadsThePinnedTable) {
+  MemTable table(BytewiseComparator());
+  ASSERT_TRUE(table.Add(1, ValueKind::Value, AsBytes("key"), AsBytes("value")).has_value());
+  MemTable::ReadPin source = table.PinRead();
+  MemTable::ReadPin pin(std::move(source));
+
+  const MemTableLookup found = pin.value().Lookup(MakeLookup("key", 1));
+  ASSERT_EQ(found.kind, MemTableLookupKind::Value);
+  EXPECT_EQ(AsStringView(found.value), "value");
+}
+
 InternalKey MakeInternalKey(ByteView user_key, SequenceNumber sequence, ValueKind kind) {
   auto key = InternalKey::Create(user_key, sequence, kind);
   EXPECT_TRUE(key.has_value());
   return std::move(key).value();
 }
 
-InternalKey MakeInternalKey(std::string_view user_key, SequenceNumber sequence,
-                            ValueKind kind) {
+InternalKey MakeInternalKey(std::string_view user_key, SequenceNumber sequence, ValueKind kind) {
   return MakeInternalKey(AsBytes(user_key), sequence, kind);
 }
 
@@ -195,8 +206,7 @@ TEST(MemTableTest, SupportsBinaryKeysValuesAndComparatorEquality) {
   const std::array binary_key{std::byte{0x00}, std::byte{0xff}, std::byte{0x10}};
   const std::array binary_value{std::byte{0x80}, std::byte{0x00}, std::byte{0x7f}};
   MemTable binary_table{BytewiseComparator()};
-  ASSERT_TRUE(
-      binary_table.Add(4, ValueKind::Value, binary_key, binary_value).has_value());
+  ASSERT_TRUE(binary_table.Add(4, ValueKind::Value, binary_key, binary_value).has_value());
 
   const MemTableLookup binary = binary_table.Lookup(MakeLookup(binary_key, 4));
   EXPECT_EQ(binary.kind, MemTableLookupKind::Value);
@@ -204,8 +214,7 @@ TEST(MemTableTest, SupportsBinaryKeysValuesAndComparatorEquality) {
 
   CaseInsensitiveComparator comparator;
   MemTable folded_table(comparator);
-  ASSERT_TRUE(
-      folded_table.Add(7, ValueKind::Value, AsBytes("Key"), AsBytes("value")).has_value());
+  ASSERT_TRUE(folded_table.Add(7, ValueKind::Value, AsBytes("Key"), AsBytes("value")).has_value());
 
   const MemTableLookup folded = folded_table.Lookup(MakeLookup("kEy", 7));
   EXPECT_EQ(folded.kind, MemTableLookupKind::Value);
@@ -291,15 +300,13 @@ TEST(MemTableTest, RejectsInvalidAndDuplicateInternalKeys) {
   EXPECT_EQ(bad_sequence.error().code(), ErrorCode::InvalidArgument);
   EXPECT_EQ(table.memory_usage(), empty_usage);
 
-  const Status bad_kind =
-      table.Add(1, static_cast<ValueKind>(2), AsBytes("key"), AsBytes("value"));
+  const Status bad_kind = table.Add(1, static_cast<ValueKind>(2), AsBytes("key"), AsBytes("value"));
   ASSERT_FALSE(bad_kind.has_value());
   EXPECT_EQ(bad_kind.error().code(), ErrorCode::InvalidArgument);
   EXPECT_EQ(table.memory_usage(), empty_usage);
 
   ASSERT_TRUE(table.Add(1, ValueKind::Value, AsBytes("key"), AsBytes("value")).has_value());
-  const Status duplicate =
-      table.Add(1, ValueKind::Value, AsBytes("key"), AsBytes("replacement"));
+  const Status duplicate = table.Add(1, ValueKind::Value, AsBytes("key"), AsBytes("replacement"));
   ASSERT_FALSE(duplicate.has_value());
   EXPECT_EQ(duplicate.error().code(), ErrorCode::InvalidArgument);
 
@@ -316,8 +323,7 @@ TEST(MemTableTest, ReportsArenaReservedMemoryGrowth) {
   const std::size_t empty_usage = table.memory_usage();
   const std::vector<std::byte> large_value(5'000, std::byte{0x5a});
 
-  ASSERT_TRUE(
-      table.Add(1, ValueKind::Value, AsBytes("large"), large_value).has_value());
+  ASSERT_TRUE(table.Add(1, ValueKind::Value, AsBytes("large"), large_value).has_value());
 
   EXPECT_GT(table.memory_usage(), empty_usage);
 }
@@ -338,10 +344,8 @@ TEST(MemTableTest, MatchesRandomizedSnapshotModel) {
   for (SequenceNumber sequence = 1; sequence <= EntryCount; ++sequence) {
     random = random * 1664525U + 1013904223U;
     const std::string key = "key-" + std::to_string(random % KeyCount);
-    const ValueKind kind =
-        random % 5U == 0U ? ValueKind::Deletion : ValueKind::Value;
-    const std::string value =
-        kind == ValueKind::Value ? "value-" + std::to_string(sequence) : "";
+    const ValueKind kind = random % 5U == 0U ? ValueKind::Deletion : ValueKind::Value;
+    const std::string value = kind == ValueKind::Value ? "value-" + std::to_string(sequence) : "";
     ASSERT_TRUE(table.Add(sequence, kind, AsBytes(key), AsBytes(value)).has_value());
     model[key].push_back({sequence, kind, value});
   }
@@ -438,10 +442,8 @@ TEST(MemTableTest, ConcurrentReadersObservePublishedEntries) {
         while (iterator.valid()) {
           const auto parsed = ParseInternalKey(iterator.key());
           std::uint64_t observed_index = 0;
-          if (!parsed.has_value() ||
-              !DecodeOrderedKey(parsed->user_key, observed_index) ||
-              parsed->sequence != observed_index + 1U ||
-              parsed->kind != ValueKind::Value ||
+          if (!parsed.has_value() || !DecodeOrderedKey(parsed->user_key, observed_index) ||
+              parsed->sequence != observed_index + 1U || parsed->kind != ValueKind::Value ||
               !std::ranges::equal(iterator.value(), CheckedValue(observed_index)) ||
               (!previous_user_key.empty() &&
                BytewiseComparator().Compare(previous_user_key, parsed->user_key) >= 0)) {

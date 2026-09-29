@@ -87,6 +87,37 @@ TableReadOptions ReadOptionsFor(const DatabaseEngineReadOptions& options) {
 
 }  // namespace
 
+// GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
+DatabaseEngine::ReadSources::ReadSources(DatabaseEngine& engine,
+                                         std::unique_lock<std::mutex>& lock) noexcept
+    : engine_(&engine), lock_(&lock) {
+  assert(lock_->owns_lock());
+  memtable_.emplace(engine.memtable_->PinRead());
+  if (engine.immutable_ != nullptr) {
+    immutable_.emplace(engine.immutable_->PinRead());
+  }
+  version_.emplace(engine.versions_->PinCurrent());
+}
+
+DatabaseEngine::ReadSources::~ReadSources() {
+  assert(lock_->owns_lock());
+  version_.reset();
+  immutable_.reset();
+  memtable_.reset();
+  engine_->ReleaseReadPinnedMemtables();
+}
+// GCOVR_EXCL_STOP
+
+const MemTable& DatabaseEngine::ReadSources::memtable() const noexcept {
+  return memtable_->value();
+}
+
+const MemTable* DatabaseEngine::ReadSources::immutable() const noexcept {
+  return immutable_.has_value() ? &immutable_->value() : nullptr;
+}
+
+const Version& DatabaseEngine::ReadSources::version() const noexcept { return version_->value(); }
+
 DatabaseEngineOptions SanitizeOptions(DatabaseEngineOptions options) {
   options.max_open_files =
       std::clamp<std::size_t>(options.max_open_files, 64 + NonTableFiles, 50000);
@@ -275,33 +306,38 @@ Status DatabaseEngine::CommitWrite(std::unique_lock<std::mutex>& lock, EncodedWr
   return {};
 }
 
-Result<std::optional<std::vector<std::byte>>> DatabaseEngine::Get(
-    ByteView key, const DatabaseEngineReadOptions& options) {
+Result<bool> DatabaseEngine::Get(ByteView key, std::vector<std::byte>& value,
+                                 const DatabaseEngineReadOptions& options) {
   std::unique_lock lock(mutex_);
   const SequenceNumber sequence =
       options.snapshot.has_value() ? *options.snapshot : versions_->last_sequence();
-  const std::shared_ptr<const MemTable> memtable = memtable_;
-  const std::shared_ptr<const MemTable> immutable = immutable_;
-  const std::shared_ptr<const Version> version = versions_->current();
-  lock.unlock();
-
-  Result<LookupKey> lookup_key = LookupKey::Create(key, sequence);
-  if (!lookup_key.has_value()) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs a key over 4 GiB
-    return std::unexpected(std::move(lookup_key).error());  // GCOVR_EXCL_LINE: needs over 4 GiB
-  }
-  Result<PointRead> read = LookupValue(*memtable, immutable.get(), *version, table_cache_,
-                                       comparator_, *lookup_key, ReadOptionsFor(options));
-  if (!read.has_value()) {
-    return std::unexpected(std::move(read).error());
-  }
-  if (read->seek.has_value()) {
+  Result<bool> read;
+  {
+    ReadSources sources(*this, lock);
+    std::optional<SeekCharge> seek;
+    lock.unlock();
+    try {
+      Result<LookupKey> lookup_key = LookupKey::Create(key, sequence);
+      if (!lookup_key.has_value()) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs a key over 4 GiB
+        lock.lock();                  // GCOVR_EXCL_LINE: needs a key over 4 GiB
+        return std::unexpected(std::move(lookup_key).error());  // GCOVR_EXCL_LINE: needs over 4 GiB
+      }
+      read = LookupValue(sources.memtable(), sources.immutable(), sources.version(), table_cache_,
+                         comparator_, *lookup_key, value, seek, ReadOptionsFor(options));
+    } catch (...) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 GCC misses the covered exception edge
+      lock.lock();
+      throw;
+    }
     lock.lock();
-    const std::shared_ptr<const Version> current = versions_->current();
-    if (seek_statistics_.Charge(version, current, *read->seek)) {
+    if (seek.has_value() && seek_statistics_.Charge(sources.version(), *versions_->current_raw(),
+                                                    versions_->current_owner(), *seek)) {
       MaybeScheduleBackgroundWork();
     }
   }
-  return std::move(read->value);
+  if (!read.has_value()) {
+    return std::unexpected(std::move(read).error());
+  }
+  return read;
 }
 
 std::unique_ptr<DbIterator> DatabaseEngine::NewIterator(const DatabaseEngineReadOptions& options) {
@@ -321,9 +357,10 @@ std::unique_ptr<DbIterator> DatabaseEngine::NewIterator(const DatabaseEngineRead
 
 void DatabaseEngine::RecordReadSample(ByteView internal_key) {
   const std::lock_guard lock(mutex_);
-  const std::shared_ptr<const Version> current = versions_->current();
-  const std::optional<SeekCharge> charge = SampleCharge(*current, comparator_, internal_key);
-  if (charge.has_value() && seek_statistics_.Charge(current, current, *charge)) {
+  const Version& current = *versions_->current_raw();
+  const std::optional<SeekCharge> charge = SampleCharge(current, comparator_, internal_key);
+  if (charge.has_value() &&
+      seek_statistics_.Charge(current, current, versions_->current_owner(), *charge)) {
     MaybeScheduleBackgroundWork();
   }
 }
@@ -368,8 +405,8 @@ Status DatabaseEngine::WaitForBackgroundWork() {
 }
 
 bool DatabaseEngine::NeedsCompaction() const {
-  const std::shared_ptr<const Version> current = versions_->current();
-  if (ScoreCompaction(*current).score >= 1) {
+  const Version& current = *versions_->current_raw();
+  if (ScoreCompaction(current).score >= 1) {
     return true;
   }
   return seek_statistics_.FileToCompact(current).has_value();
@@ -416,6 +453,21 @@ void DatabaseEngine::BackgroundCall() {
   background_finished_.notify_all();
 }
 
+void DatabaseEngine::ClearImmutable() {
+  assert(immutable_ != nullptr);
+  if (immutable_->read_pins_ != 0) {
+    read_pinned_memtables_.push_back(std::move(immutable_));
+  } else {
+    immutable_.reset();
+  }
+}
+
+void DatabaseEngine::ReleaseReadPinnedMemtables() {
+  std::erase_if(read_pinned_memtables_, [](const std::shared_ptr<const MemTable>& table) {
+    return table->read_pins_ == 0;
+  });
+}
+
 void DatabaseEngine::FlushImmutable(std::unique_lock<std::mutex>& lock) {
   const std::shared_ptr<const Version> base = versions_->current();
   const std::uint64_t number = versions_->NewFileNumber();
@@ -444,7 +496,7 @@ void DatabaseEngine::FlushImmutable(std::unique_lock<std::mutex>& lock) {
     return;
   }
   pending_outputs_.erase(number);
-  immutable_.reset();
+  ClearImmutable();
   has_immutable_.store(false, std::memory_order_relaxed);
   seek_statistics_.Retain(*versions_->current());
   background_finished_.notify_all();
@@ -467,7 +519,7 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
   const std::shared_ptr<const Version> current = versions_->current();
   const std::optional<Compaction> compaction =
       PickCompaction(current, comparator_, versions_->compact_pointers(),
-                     seek_statistics_.FileToCompact(current), max_file_size_);
+                     seek_statistics_.FileToCompact(*current), max_file_size_);
   // The need that scheduled this task remains, since only background work
   // installs versions or drops the file to compact.
   assert(compaction.has_value());

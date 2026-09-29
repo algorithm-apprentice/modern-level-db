@@ -20,6 +20,8 @@ reader; borrowed data blocks never enter the block cache.
 parsing and a minimum data-key length boundary before trusted block seeks.
 [ADR-0055](0055-leveldb-block-iterator-parity.md) replaces eager block scans
 with lazy checked decoding and completes that trusted boundary.
+[ADR-0057](0057-leveldb-version-output-parity.md) replaces the owning point
+lookup result with caller-buffer output and an explicit lookup kind.
 - Date: 2026-09-24
 
 ## Context
@@ -117,9 +119,10 @@ struct TableReadOptions {
   bool fill_cache = true;
 };
 
-struct TableLookup {
-  ValueKind kind;
-  std::vector<std::byte> value;
+enum class TableLookupKind {
+  Missing,
+  Value,
+  Deletion,
 };
 
 class Table {
@@ -133,8 +136,9 @@ class Table {
                                              const InternalKeyComparator&& comparator,
                                              const TableOptions& options) = delete;
 
-  Result<std::optional<TableLookup>> Get(const LookupKey& key,
-                                         const TableReadOptions& options = {}) const;
+  Result<TableLookupKind> Get(const LookupKey& key,
+                              std::vector<std::byte>& value,
+                              const TableReadOptions& options = {}) const;
 
   class Iterator {
    public:
@@ -169,10 +173,12 @@ class Table {
   requirement. The writer's and reader's options state it as a precondition,
   and the public API must enforce it when it accepts comparators and
   filters.
-- `Get` returns the kind and value of the first entry not less than the lookup
-  key if it has the lookup's user key, and nothing otherwise. The internal-key
-  comparator orders keys that are not valid internal keys before every valid
-  key, so a lookup, whose key is valid, never lands on one.
+- `Get` returns the kind of the first entry not less than the lookup key if it
+  has the lookup's user key, and `Missing` otherwise. A value is copied
+  directly into the caller's reusable vector; missing and deletion leave that
+  vector unchanged. The internal-key comparator orders keys that are not valid
+  internal keys before every valid key, so a lookup, whose key is valid, never
+  lands on one.
 - An iterator reads a table that must outlive it; it is neither copyable nor
   movable. A new iterator is not positioned. `key` and `value` require a valid
   position and remain valid until the iterator moves. A failed positioning

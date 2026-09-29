@@ -30,6 +30,25 @@ inline constexpr std::uint64_t FileNumberLimit = std::uint64_t{1} << 63U;
 // system and the comparator must outlive the version set.
 class VersionSet final {
  public:
+  class ReadPin final {
+   public:
+    ReadPin(const ReadPin&) = delete;
+    ReadPin& operator=(const ReadPin&) = delete;
+    ReadPin(ReadPin&& source) noexcept;
+    ReadPin& operator=(ReadPin&&) = delete;
+    ~ReadPin();
+
+    [[nodiscard]] const Version& value() const noexcept;
+
+   private:
+    friend class VersionSet;
+
+    ReadPin(VersionSet& owner, const Version& version) noexcept;
+
+    VersionSet* owner_ = nullptr;
+    const Version* version_ = nullptr;
+  };
+
   // Writes MANIFEST-000001 for a new, empty database and points CURRENT at it.
   // The directory must exist and must not contain a database.
   [[nodiscard]] static Result<std::unique_ptr<VersionSet>> Create(
@@ -55,6 +74,13 @@ class VersionSet final {
   ~VersionSet() = default;
 
   [[nodiscard]] std::shared_ptr<const Version> current() const noexcept { return current_; }
+  [[nodiscard]] const Version* current_raw() const noexcept { return current_.get(); }
+  [[nodiscard]] const std::shared_ptr<const Version>& current_owner() const noexcept {
+    return current_;
+  }
+  // Requires the same external synchronization as current-version changes;
+  // the pin must be destroyed under it too.
+  [[nodiscard]] ReadPin PinCurrent() noexcept;
   [[nodiscard]] std::span<const std::optional<InternalKey>, NumLevels> compact_pointers()
       const noexcept {
     return compact_pointers_;
@@ -95,12 +121,14 @@ class VersionSet final {
   [[nodiscard]] Status Validate(const VersionEdit& edit) const;
   [[nodiscard]] Status Write(const VersionEdit& edit);
   [[nodiscard]] Status InstallCurrent() const;
+  void ReleaseRead(const Version& version) noexcept;
   void Install(std::shared_ptr<const Version> version);
 
   FileSystem* file_system_;
   std::filesystem::path directory_;
   const InternalKeyComparator* comparator_;
   std::shared_ptr<const Version> current_;
+  std::vector<std::shared_ptr<const Version>> read_pinned_versions_;
   std::vector<std::weak_ptr<const Version>> versions_;
   std::array<std::optional<InternalKey>, NumLevels> compact_pointers_;
   std::uint64_t manifest_file_number_ = 1;

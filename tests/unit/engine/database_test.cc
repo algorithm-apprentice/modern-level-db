@@ -97,6 +97,50 @@ class Gate {
   bool reached_ = false;
 };
 
+class BlockingComparator final : public Comparator {
+ public:
+  int Compare(ByteView left, ByteView right) const noexcept override {
+    {
+      std::unique_lock lock(mutex_);
+      if (!open_ && !reached_ &&
+          (AsStringView(left) == target_ || AsStringView(right) == target_)) {
+        reached_ = true;
+        changed_.notify_all();
+        changed_.wait(lock, [this] { return open_; });
+      }
+    }
+    return BytewiseComparator().Compare(left, right);
+  }
+  std::string_view Name() const noexcept override { return "test.Blocking"; }
+  void FindShortestSeparator(std::vector<std::byte>&, ByteView) const override {}
+  void FindShortSuccessor(std::vector<std::byte>&) const override {}
+
+  void Close(std::string target) {
+    const std::lock_guard lock(mutex_);
+    target_ = std::move(target);
+    open_ = false;
+    reached_ = false;
+  }
+
+  void Open() {
+    const std::lock_guard lock(mutex_);
+    open_ = true;
+    changed_.notify_all();
+  }
+
+  void WaitUntilReached() {
+    std::unique_lock lock(mutex_);
+    changed_.wait(lock, [this] { return reached_; });
+  }
+
+ private:
+  mutable std::mutex mutex_;
+  mutable std::condition_variable changed_;
+  mutable std::string target_;
+  mutable bool open_ = true;
+  mutable bool reached_ = false;
+};
+
 bool OpensATable(std::string_view operation) {
   return operation.starts_with("open_writable ") && operation.ends_with(".ldb");
 }
@@ -140,11 +184,12 @@ class DatabaseTest : public testing::Test {
                          std::optional<SequenceNumber> snapshot = std::nullopt) {
     DatabaseEngineReadOptions options;
     options.snapshot = snapshot;
-    const auto value = database.Get(AsBytes(key), options);
-    if (!value.has_value()) {
+    std::vector<std::byte> value;
+    const auto found = database.Get(AsBytes(key), value, options);
+    if (!found.has_value()) {
       return "<error>";
     }
-    return value->has_value() ? Text(**value) : "<none>";
+    return *found ? Text(value) : "<none>";
   }
 
   static std::vector<std::string> Scan(DatabaseEngine& database,
@@ -631,6 +676,72 @@ TEST_F(DatabaseTest, FlushesTheMemtableIntoATable) {
   EXPECT_EQ(Numbers(FileType::Table).size(), 1U);
 }
 
+TEST_F(DatabaseTest, ReadPinsSurviveMemtableFlushAndVersionInstall) {
+  auto database = Open();
+  ASSERT_TRUE(Put(*database, "a", "1").has_value());
+  ASSERT_TRUE(Flush(*database).has_value());
+  const std::uint64_t table = Numbers(FileType::Table).front();
+  database.reset();
+  database = Open();
+
+  Gate read;
+  const std::string blocked_read = "read " + Numbered(table, ".ldb");
+  read.Close([&](std::string_view operation) { return operation == blocked_read; });
+  file_system_.SetOperationHook(std::ref(read));
+  std::future<std::string> value =
+      std::async(std::launch::async, [&] { return Get(*database, "a"); });
+  read.WaitUntilReached();
+
+  Fill(*database, "b");
+  ASSERT_TRUE(Flush(*database).has_value());
+  read.Open();
+  ASSERT_EQ(value.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+  const std::string result = value.get();
+  file_system_.SetOperationHook({});
+
+  EXPECT_EQ(result, "1");
+}
+
+TEST_F(DatabaseTest, ReadPinKeepsAnExistingImmutableAliveWhileItsFlushCompletes) {
+  BlockingComparator comparator;
+  options_.comparator = &comparator;
+  auto database = Open();
+  Fill(*database, "immutable");
+  ASSERT_TRUE(Put(*database, "current", "1").has_value());
+  ASSERT_EQ(executor_.queued(), 1U);
+
+  comparator.Close("immutable");
+  std::future<std::string> value =
+      std::async(std::launch::async, [&] { return Get(*database, "immutable"); });
+  comparator.WaitUntilReached();
+
+  const bool flushed = executor_.RunOne();
+  comparator.Open();
+  ASSERT_TRUE(flushed);
+  ASSERT_EQ(value.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+  EXPECT_EQ(value.get(), Large());
+}
+
+TEST_F(DatabaseTest, ReadPinsReleaseWhenATableReadThrows) {
+  auto database = Open();
+  ASSERT_TRUE(Put(*database, "a", "1").has_value());
+  ASSERT_TRUE(Flush(*database).has_value());
+  database.reset();
+  database = Open();
+
+  file_system_.SetOperationHook([](std::string_view operation) -> Status {
+    if (operation.starts_with("read ") && operation.ends_with(".ldb")) {
+      throw std::runtime_error("thrown");
+    }
+    return {};
+  });
+  std::vector<std::byte> value;
+  EXPECT_THROW(static_cast<void>(database->Get(AsBytes("a"), value)), std::runtime_error);
+  file_system_.SetOperationHook({});
+
+  EXPECT_EQ(Get(*database, "a"), "1");
+}
+
 TEST_F(DatabaseTest, IteratesAcrossTheTablesAndBothMemtables) {
   const auto database = Open();
   ASSERT_TRUE(Put(*database, "a", "table").has_value());
@@ -686,7 +797,8 @@ TEST_F(DatabaseTest, PassesReadOptionsToTables) {
 
   DatabaseEngineReadOptions uncached;
   uncached.fill_cache = false;
-  ASSERT_TRUE(database->Get(AsBytes("a"), uncached).has_value());
+  std::vector<std::byte> value;
+  ASSERT_TRUE(database->Get(AsBytes("a"), value, uncached).has_value());
   const std::unique_ptr<DbIterator> iterator = database->NewIterator(uncached);
   ASSERT_TRUE(iterator->SeekToFirst().has_value());
   EXPECT_EQ(blocks.total_charge(), 0U);
@@ -1083,7 +1195,8 @@ TEST_F(DatabaseTest, ReturnsTheErrorsOfTableReads) {
     return {};
   });
 
-  const auto value = database->Get(AsBytes("a"));
+  std::vector<std::byte> output;
+  const auto value = database->Get(AsBytes("a"), output);
   file_system_.SetOperationHook({});
 
   ASSERT_FALSE(value.has_value());
@@ -1340,6 +1453,38 @@ TEST_F(DatabaseSeekTest, CompactsAFileThatReadsSeekPastTooOften) {
   EXPECT_EQ(executor_.queued(), 0U);
   EXPECT_EQ(Get(*database, "a"), Large());
   EXPECT_EQ(Get(*database, "z"), "2");
+}
+
+TEST_F(DatabaseSeekTest, ChargesTheFirstFileWhenTheSecondFileReadFails) {
+  const auto database = Open();
+  FillLevels1And2(*database);
+  DatabaseEngineReadOptions uncached;
+  uncached.fill_cache = false;
+  std::vector<std::byte> output;
+  for (int i = 0; i < 99; ++i) {
+    const Result<bool> missing = database->Get(AsBytes("m"), output, uncached);
+    ASSERT_TRUE(missing.has_value());
+    EXPECT_FALSE(*missing);
+  }
+  ASSERT_EQ(executor_.queued(), 0U);
+
+  const std::vector<std::vector<std::uint64_t>> files = Files();
+  ASSERT_EQ(files[2].size(), 1U);
+  const std::string second_read = "read " + Numbered(files[2].front(), ".ldb");
+  file_system_.SetOperationHook([&](std::string_view operation) -> Status {
+    if (operation == second_read) {
+      return std::unexpected(Error::Io("second file failed"));
+    }
+    return {};
+  });
+  const Result<bool> failed = database->Get(AsBytes("m"), output, uncached);
+  file_system_.SetOperationHook({});
+
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().message(), "second file failed");
+  ASSERT_EQ(executor_.queued(), 1U);
+  ASSERT_TRUE(executor_.RunOne());
+  EXPECT_EQ(Levels(), "0 0 1 0 0 0 0");
 }
 
 TEST_F(DatabaseSeekTest, CompactsAFileThatIteratorSamplesSeekPastTooOften) {

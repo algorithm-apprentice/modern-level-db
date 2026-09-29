@@ -115,6 +115,19 @@ if (!written.has_value()) {
 auto value = database.Get(modern_leveldb::AsBytes("key"));
 ```
 
+For repeated point reads, reuse one caller-owned buffer:
+
+```cpp
+std::vector<std::byte> value_buffer;
+auto found = database.Get(modern_leveldb::AsBytes("key"), value_buffer);
+if (!found.has_value()) {
+  return found.error();
+}
+if (*found) {
+  // value_buffer contains the value. Missing/deleted keys leave it unchanged.
+}
+```
+
 `Database`, `Snapshot`, and `Iterator` are move-only handles. Snapshots and
 iterators retain the underlying engine, so their storage remains valid even
 if the original `Database` handle is destroyed first. See
@@ -267,6 +280,10 @@ python3 tools/run_performance.py \
   --modern-file-access pread \
   --output build/performance/modern-pread-readrandom-64k
 ```
+
+Modern point-read cases reuse caller-owned output by default. Add
+`--modern-result-ownership owning` to a Modern `readrandom` or `readmissing`
+case to measure the convenience overload separately.
 
 Mutable cases use fixed operation counts and one repetition, with a fresh
 database per process. Use new output paths and independent invocations for

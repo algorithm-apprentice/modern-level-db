@@ -8,6 +8,7 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -21,14 +22,16 @@
 namespace modern_leveldb {
 namespace {
 
-using Value = std::optional<std::vector<std::byte>>;
-
 // The decision of one source: the value or the deletion of its newest visible
 // entry, or nothing if it has none.
-using Decision = std::optional<Value>;
+enum class Decision {
+  Missing,
+  Value,
+  Deletion,
+};
 
 Result<Decision> SearchFile(TableCache& table_cache, const FileMetadata& file, const LookupKey& key,
-                            const TableReadOptions& options) {
+                            std::vector<std::byte>& value, const TableReadOptions& options) {
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
   read_diagnostics::Add(read_diagnostics::Counter::FilesSearched);
 #endif
@@ -36,17 +39,21 @@ Result<Decision> SearchFile(TableCache& table_cache, const FileMetadata& file, c
   if (!table.has_value()) {
     return std::unexpected(table.error());
   }
-  Result<std::optional<TableLookup>> found = (*table)->Get(key, options);
+  const Result<TableLookupKind> found = (*table)->Get(key, value, options);
   if (!found.has_value()) {
     return std::unexpected(std::move(found).error());
   }
-  if (!found->has_value()) {
-    return Decision();
+  switch (*found) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/4 implicit default of an exhaustive enum
+    case TableLookupKind::Missing:
+      return Decision::Missing;
+    case TableLookupKind::Value:
+      return Decision::Value;
+    case TableLookupKind::Deletion:
+      return Decision::Deletion;
   }
-  if ((*found)->kind == ValueKind::Deletion) {
-    return Decision(Value());
-  }
-  return Decision(Value(std::move((*found)->value)));
+  // GCOVR_EXCL_START: validated internal enum is exhaustive
+  return std::unexpected(Error::Corruption("unknown table lookup result"));
+  // GCOVR_EXCL_STOP
 }
 
 // A file of the version that a point read searches, at its level.
@@ -56,29 +63,36 @@ struct Candidate {
 };
 
 SeekCharge ChargeOf(const Candidate& candidate) {
-  SeekCharge charge{.level = candidate.level, .file = *candidate.file};
+  SeekCharge charge{.level = candidate.level, .file = candidate.file};
   return charge;
 }
 
-// Returns the level-0 files whose user-key range holds the user key, newest
-// first.
-std::vector<Candidate> Level0Candidates(const Version& version, const Comparator& user_comparator,
-                                        ByteView user_key) {
-  std::vector<Candidate> candidates;
-  for (const Version::File& file : version.files(0)) {
-    if (user_comparator.Compare(user_key, file->smallest.user_key()) >= 0 &&
-        user_comparator.Compare(user_key, file->largest.user_key()) <= 0) {
-      candidates.push_back(Candidate{.level = 0, .file = &file});
-    }
-  }
-  // Level-0 files are numbered in the order they were written.
-  std::ranges::sort(candidates, std::ranges::greater{},
-                    [](const Candidate& candidate) { return (*candidate.file)->number; });
+class SelectionTimer final {
+ public:
+  SelectionTimer() noexcept
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
-  read_diagnostics::Add(read_diagnostics::Counter::Level0Candidates, candidates.size());
+      : timer_(read_diagnostics::Stage::CandidateSelection)
 #endif
-  return candidates;
-}
+  {
+  }
+
+  void Resume() noexcept {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    timer_.Resume();
+#endif
+  }
+
+  void Pause() noexcept {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    timer_.Pause();
+#endif
+  }
+
+ private:
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::StageAccumulator timer_;
+#endif
+};
 
 // Returns the only file of a deeper level that may hold the key: the first one
 // whose largest key is not before it, if its smallest user key is not after the
@@ -96,31 +110,82 @@ const Version::File* LevelCandidate(std::span<const Version::File> files,
   return &*found;
 }
 
-// Returns the level-0 candidates followed by each deeper level's candidate.
-std::vector<Candidate> Candidates(const Version& version, const InternalKeyComparator& comparator,
-                                  ByteView user_key, ByteView internal_key) {
-  std::vector<Candidate> candidates =
-      Level0Candidates(version, comparator.user_comparator(), user_key);
+template <typename Visitor>
+Status ForEachOverlapping(const Version& version, const InternalKeyComparator& comparator,
+                          ByteView user_key, ByteView internal_key, SelectionTimer& timer,
+                          Visitor&& visitor) {
+  using VisitorResult = std::remove_cvref_t<std::invoke_result_t<Visitor&, const Candidate&>>;
+  static_assert(std::is_same_v<VisitorResult, bool> || std::is_same_v<VisitorResult, Result<bool>>);
+  timer.Resume();
+  std::vector<Candidate> level0;
+  for (const Version::File& file : version.files(0)) {
+    if (comparator.user_comparator().Compare(user_key, file->smallest.user_key()) >= 0 &&
+        comparator.user_comparator().Compare(user_key, file->largest.user_key()) <= 0) {
+      level0.push_back(Candidate{.level = 0, .file = &file});
+    }
+  }
+  // Level-0 files are numbered in the order they were written.
+  std::ranges::sort(level0, std::ranges::greater{},
+                    [](const Candidate& candidate) { return (*candidate.file)->number; });
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::Add(read_diagnostics::Counter::Level0Candidates, level0.size());
+#endif
+  timer.Pause();
+
+  for (const Candidate& candidate : level0) {
+    if constexpr (std::is_same_v<VisitorResult, bool>) {
+      if (!visitor(candidate)) {
+        return {};
+      }
+    } else {
+      Result<bool> keep_going = visitor(candidate);
+      if (!keep_going.has_value()) {
+        return std::unexpected(std::move(keep_going).error());
+      }
+      if (!*keep_going) {
+        return {};
+      }
+    }
+  }
+
   for (std::uint32_t level = 1; level < NumLevels; ++level) {
+    timer.Resume();
     const Version::File* file =
         LevelCandidate(version.files(level), comparator, user_key, internal_key);
     if (file != nullptr) {
-      candidates.push_back(Candidate{.level = level, .file = file});
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
       read_diagnostics::Add(read_diagnostics::Counter::DeeperCandidates);
 #endif
     }
+    timer.Pause();
+    if (file == nullptr) {
+      continue;
+    }
+    if constexpr (std::is_same_v<VisitorResult, bool>) {
+      if (!visitor(Candidate{.level = level, .file = file})) {
+        return {};
+      }
+    } else {
+      Result<bool> keep_going = visitor(Candidate{.level = level, .file = file});
+      if (!keep_going.has_value()) {
+        return std::unexpected(std::move(keep_going).error());
+      }
+      if (!*keep_going) {
+        return {};
+      }
+    }
   }
-  return candidates;
+  return {};
 }
 
 }  // namespace
 
-Result<PointRead> LookupValue(const MemTable& memtable, const MemTable* immutable,
-                              const Version& version, TableCache& table_cache,
-                              const InternalKeyComparator& comparator, const LookupKey& key,
-                              const TableReadOptions& options) {
-  PointRead read;
+Result<bool> LookupValue(const MemTable& memtable, const MemTable* immutable,
+                         const Version& version, TableCache& table_cache,
+                         const InternalKeyComparator& comparator, const LookupKey& key,
+                         std::vector<std::byte>& value, std::optional<SeekCharge>& seek,
+                         const TableReadOptions& options) {
+  seek.reset();
   for (const MemTable* source : {&memtable, immutable}) {
     if (source == nullptr) {
       continue;
@@ -133,12 +198,14 @@ Result<PointRead> LookupValue(const MemTable& memtable, const MemTable* immutabl
       {
         read_diagnostics::StageScope copy(read_diagnostics::Stage::ResultCopy);
         read_diagnostics::Add(read_diagnostics::Counter::ResultBytes, found.value.size());
-        read.value.emplace(found.value.begin(), found.value.end());
+        value.resize(found.value.size());
+        std::ranges::copy(found.value, value.begin());
       }
 #else
-      read.value.emplace(found.value.begin(), found.value.end());
+      value.resize(found.value.size());
+      std::ranges::copy(found.value, value.begin());
 #endif
-      return read;
+      return true;
     }
     if (found.kind == MemTableLookupKind::Deletion) {
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
@@ -146,46 +213,49 @@ Result<PointRead> LookupValue(const MemTable& memtable, const MemTable* immutabl
                                                 : read_diagnostics::Counter::ImmutableHits);
       read_diagnostics::Add(read_diagnostics::Counter::Deletions);
 #endif
-      return read;
+      return false;
     }
   }
 
+  SelectionTimer selection;
+  std::optional<Candidate> previous;
+  bool decided = false;
+  bool found_value = false;
+  const Status visited = ForEachOverlapping(
+      version, comparator, key.user_key(), key.internal_key(), selection,
+      [&](const Candidate& candidate) -> Result<bool> {
+        if (!seek.has_value() && previous.has_value()) {
+          seek = ChargeOf(*previous);
+        }
+        previous = candidate;
+
+        Result<Decision> decision = SearchFile(table_cache, **candidate.file, key, value, options);
+        if (!decision.has_value()) {
+          return std::unexpected(std::move(decision).error());
+        }
+        if (*decision == Decision::Missing) {
+          return true;
+        }
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
-  std::vector<Candidate> candidates;
-  {
-    read_diagnostics::StageScope selection(read_diagnostics::Stage::CandidateSelection);
-    candidates = Candidates(version, comparator, key.user_key(), key.internal_key());
-  }
-#else
-  const std::vector<Candidate> candidates =
-      Candidates(version, comparator, key.user_key(), key.internal_key());
+        read_diagnostics::Add(read_diagnostics::Counter::SstableHits);
+        if (*decision == Decision::Deletion) {
+          read_diagnostics::Add(read_diagnostics::Counter::Deletions);
+        }
 #endif
-  for (std::size_t index = 0; index < candidates.size(); ++index) {
-    Result<Decision> decision = SearchFile(table_cache, **candidates[index].file, key, options);
-    if (!decision.has_value()) {
-      return std::unexpected(std::move(decision).error());
-    }
-    if (decision->has_value()) {
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-      read_diagnostics::Add(read_diagnostics::Counter::SstableHits);
-      if (!(**decision).has_value()) {
-        read_diagnostics::Add(read_diagnostics::Counter::Deletions);
-      }
-#endif
-      read.value = std::move(**decision);
-      if (index > 0) {
-        read.seek = ChargeOf(candidates.front());
-      }
-      return read;
-    }
+        found_value = *decision == Decision::Value;
+        decided = true;
+        return false;
+      });
+  if (!visited.has_value()) {
+    return std::unexpected(visited.error());
   }
-  if (candidates.size() > 1) {
-    read.seek = ChargeOf(candidates.front());
+  if (decided) {
+    return found_value;
   }
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
   read_diagnostics::Add(read_diagnostics::Counter::Misses);
 #endif
-  return read;
+  return false;
 }
 
 std::optional<SeekCharge> SampleCharge(const Version& version,
@@ -193,12 +263,24 @@ std::optional<SeekCharge> SampleCharge(const Version& version,
                                        ByteView internal_key) {
   const Result<ParsedInternalKey> parsed = ParseInternalKey(internal_key);
   assert(parsed.has_value());
-  const std::vector<Candidate> candidates =
-      Candidates(version, comparator, parsed->user_key, internal_key);
-  if (candidates.size() < 2) {
+  SelectionTimer selection;
+  std::optional<Candidate> first;
+  std::size_t matches = 0;
+  const Status visited =
+      ForEachOverlapping(version, comparator, parsed->user_key, internal_key, selection,
+                         [&](const Candidate& candidate) {  // GCOVR_EXCL_LINE: GCC lambda clone
+                           ++matches;
+                           if (!first.has_value()) {
+                             first = candidate;
+                           }
+                           return matches < 2;
+                         });
+  assert(visited.has_value());
+  (void)visited;
+  if (matches < 2) {
     return std::nullopt;
   }
-  return ChargeOf(candidates.front());
+  return ChargeOf(*first);
 }
 
 }  // namespace modern_leveldb

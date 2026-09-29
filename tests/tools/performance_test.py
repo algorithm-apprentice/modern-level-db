@@ -13,6 +13,7 @@ from run_performance import (
     CASES,
     FINGERPRINTS,
     MODERN_FILE_ACCESS_SEMANTICS,
+    MODERN_RESULT_OWNERSHIP_SEMANTICS,
     READ_DIAGNOSTIC_COUNTERS,
     READ_DIAGNOSTIC_OPERATIONS,
     READ_DIAGNOSTIC_OPEN_REASONS,
@@ -28,6 +29,7 @@ from run_performance import (
     validate_benchmark,
     validate_completion,
     validate_read_diagnostics,
+    expected_modern_result_ownership,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -36,7 +38,8 @@ REFERENCE_PREAD_CONTROL = None
 
 
 def report(case="modern/readrandom/4096", repetitions=3):
-    engine = case.split("/", 1)[0]
+    engine, workload, _ = case.split("/")
+    result_ownership = expected_modern_result_ownership(engine, workload, "reusable")
     return {
         "context": {
             "library_version": "v1.9.5",
@@ -47,6 +50,11 @@ def report(case="modern/readrandom/4096", repetitions=3):
             "modern_file_access": "default" if engine == "modern" else "not_applicable",
             "modern_file_access_semantics": (
                 MODERN_FILE_ACCESS_SEMANTICS if engine == "modern" else "not_applicable"
+            ),
+            "modern_result_ownership": result_ownership,
+            "modern_result_ownership_semantics": (
+                MODERN_RESULT_OWNERSHIP_SEMANTICS
+                if engine == "modern" else "not_applicable"
             ),
             "reference_file_access": "default" if engine == "leveldb" else "not_applicable",
             "reference_pread_control_available": "true",
@@ -217,6 +225,8 @@ def diagnostic_report(case="modern/readrandom/4096", modern_file_access="default
         "reference_source_override": "",
         "reference_hardware_crc": "disabled",
         "modern_file_access": modern_file_access,
+        "modern_result_ownership": "reusable",
+        "modern_result_ownership_semantics": MODERN_RESULT_OWNERSHIP_SEMANTICS,
         "reference_file_access": "not_applicable",
         "reference_pread_control_available": "true",
         "reference_control_patch_sha256": "a" * 64,
@@ -237,7 +247,7 @@ def diagnostic_report(case="modern/readrandom/4096", modern_file_access="default
         "read_diagnostics_compiled": "true",
     }
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "case": case,
         "operations": READ_DIAGNOSTIC_OPERATIONS,
         "sample_schedule": READ_DIAGNOSTIC_SAMPLE_SCHEDULE,
@@ -342,6 +352,35 @@ class PerformanceReportTest(unittest.TestCase):
                 "leveldb/readrandom/4096",
                 3,
                 modern_file_access="pread",
+            )
+
+    def test_validates_modern_result_ownership_provenance(self):
+        data = report()
+        data["context"]["modern_result_ownership"] = "owning"
+        validate_benchmark(
+            data, "modern/readrandom/4096", 3, modern_result_ownership="owning"
+        )
+        with self.assertRaises(ValueError):
+            validate_benchmark(data, "modern/readrandom/4096", 3)
+
+        legacy = report()
+        del legacy["context"]["modern_result_ownership_semantics"]
+        with self.assertRaises(ValueError):
+            validate_benchmark(legacy, "modern/readrandom/4096", 3)
+
+        with self.assertRaises(ValueError):
+            validate_benchmark(
+                report("modern/scan/4096"),
+                "modern/scan/4096",
+                3,
+                modern_result_ownership="owning",
+            )
+        with self.assertRaises(ValueError):
+            validate_benchmark(
+                report("leveldb/readrandom/4096"),
+                "leveldb/readrandom/4096",
+                3,
+                modern_result_ownership="owning",
             )
 
     def test_rejects_errors_skips_missing_runs_and_duplicate_repetitions(self):
@@ -831,6 +870,35 @@ class PerformanceExecutableTest(unittest.TestCase):
         )
         self.assertNotEqual(rejected.returncode, 0)
         self.assertFalse((self.root / "write-db").exists())
+
+    def test_modern_owning_result_is_an_explicit_point_read_control(self):
+        result = self.invoke(
+            "--case", "modern/readmissing/4096",
+            "--modern-result-ownership", "owning",
+            "--database", str(self.root / "db"),
+            "--completion-report", str(self.root / "completion.json"),
+            "--benchmark_min_time=1x", "--benchmark_repetitions=1",
+            f"--benchmark_out={self.root / 'benchmark.json'}",
+            "--benchmark_out_format=json",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        data = read_json(self.root / "benchmark.json")
+        validate_benchmark(
+            data,
+            "modern/readmissing/4096",
+            1,
+            modern_result_ownership="owning",
+        )
+        self.assertEqual(data["context"]["modern_result_ownership"], "owning")
+
+        rejected = self.invoke(
+            "--case", "modern/scan/4096",
+            "--modern-result-ownership", "owning",
+            "--database", str(self.root / "scan-db"),
+            "--completion-report", str(self.root / "scan-completion.json"),
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertFalse((self.root / "scan-db").exists())
 
     def test_normal_binary_rejects_read_diagnostics(self):
         rejected = self.invoke(
