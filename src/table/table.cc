@@ -111,24 +111,25 @@ BlockHandle IndexHandle(ByteView value) {
 // in the block cache.
 Status ValidateIndex(const Block& index, std::uint64_t blocks_end, bool trusted_internal_keys) {
   std::uint64_t next_offset = 0;
-  return index.ValidateEntries([&](ByteView key, ByteView encoded_value) -> Status {
-    if (trusted_internal_keys) {
-      const Result<ParsedInternalKey> parsed = ParseInternalKey(key);
-      if (!parsed.has_value()) {
-        return std::unexpected(parsed.error());
-      }
-    }
-    ByteView value = encoded_value;
-    const Result<BlockHandle> handle = ConsumeBlockHandle(value);
-    if (!handle.has_value() || !value.empty() || !InBlockRegion(*handle, blocks_end)) {
-      return std::unexpected(Error::Corruption("table index value is not a block handle"));
-    }
-    if (handle->offset < next_offset) {
-      return std::unexpected(Error::Corruption("table index blocks overlap"));
-    }
-    next_offset = handle->offset + handle->size + BlockTrailerSize;
-    return {};
-  });
+  return index.ValidateEntries(  // GCOVR_EXCL_BR_LINE: GCC 13 closure cleanup
+      [&](ByteView key, ByteView encoded_value) -> Status {
+        if (trusted_internal_keys) {
+          const Result<ParsedInternalKey> parsed = ParseInternalKey(key);
+          if (!parsed.has_value()) {
+            return std::unexpected(parsed.error());
+          }
+        }
+        ByteView value = encoded_value;
+        const Result<BlockHandle> handle = ConsumeBlockHandle(value);
+        if (!handle.has_value() || !value.empty() || !InBlockRegion(*handle, blocks_end)) {
+          return std::unexpected(Error::Corruption("table index value is not a block handle"));
+        }
+        if (handle->offset < next_offset) {
+          return std::unexpected(Error::Corruption("table index blocks overlap"));
+        }
+        next_offset = handle->offset + handle->size + BlockTrailerSize;
+        return {};
+      });
 }
 
 // Reads the filter block that the metaindex maps to the policy, if any.
