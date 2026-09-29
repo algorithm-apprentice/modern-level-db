@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/comparator.h"
@@ -34,28 +35,9 @@ class ReverseComparator final : public Comparator {
   void FindShortSuccessor(std::vector<std::byte>&) const override {}
 };
 
-class CountingComparator final : public Comparator {
- public:
-  int Compare(ByteView left, ByteView right) const noexcept override {
-    ++comparisons;
-    return BytewiseComparator().Compare(left, right);
-  }
-  std::string_view Name() const noexcept override { return "test.CountingComparator"; }
-  void FindShortestSeparator(std::vector<std::byte>&, ByteView) const override {}
-  void FindShortSuccessor(std::vector<std::byte>&) const override {}
-
-  mutable std::size_t comparisons = 0;
-};
-
-template <typename T>
-concept CreatableWith = requires(std::vector<std::byte> contents, T&& comparator) {
-  Block::Create(std::move(contents), std::forward<T>(comparator));
-};
-
-template <typename T>
-concept TrustedOrderCreatableWith = requires(std::vector<std::byte> contents, T&& comparator) {
-  Block::CreateWithTrustedKeyOrder(std::move(contents), std::forward<T>(comparator));
-};
+template <typename... Args>
+concept BlockCreatableWith =
+    requires(Args&&... args) { Block::Create(std::forward<Args>(args)...); };
 
 static_assert(!std::is_copy_constructible_v<Block>);
 static_assert(!std::is_copy_assignable_v<Block>);
@@ -63,12 +45,11 @@ static_assert(std::is_nothrow_move_constructible_v<Block>);
 static_assert(!std::is_move_assignable_v<Block>);
 static_assert(!std::is_move_constructible_v<BlockBuilder>);
 static_assert(!std::is_move_assignable_v<BlockBuilder>);
-static_assert(CreatableWith<const ReverseComparator&>);
-static_assert(!CreatableWith<ReverseComparator>);
-static_assert(TrustedOrderCreatableWith<const ReverseComparator&>);
-static_assert(!TrustedOrderCreatableWith<ReverseComparator>);
-static_assert(!std::is_constructible_v<Block::Iterator, Block&&>);
-static_assert(!std::is_constructible_v<Block::Iterator, const Block&&>);
+static_assert(BlockCreatableWith<std::vector<std::byte>>);
+static_assert(!BlockCreatableWith<std::vector<std::byte>, const ReverseComparator&>);
+static_assert(!std::is_constructible_v<Block::Iterator, Block&&, const ReverseComparator&>);
+static_assert(!std::is_constructible_v<Block::Iterator, const Block&&, const ReverseComparator&>);
+static_assert(!std::is_constructible_v<Block::Iterator, const Block&, ReverseComparator&&>);
 
 std::vector<std::byte> Bytes(std::initializer_list<unsigned int> values) {
   std::vector<std::byte> result;
@@ -149,28 +130,33 @@ std::vector<std::byte> BuildGoldenBlock() {
   return Materialize(builder.Finish());
 }
 
-Block MakeBlock(std::vector<std::byte> contents,
-                const Comparator& comparator = BytewiseComparator()) {
-  auto block = Block::Create(std::move(contents), comparator);
+Block MakeBlock(std::vector<std::byte> contents) {
+  auto block = Block::Create(std::move(contents));
   EXPECT_TRUE(block.has_value()) << block.error().ToString();
   return std::move(block).value();
 }
 
-void ExpectCorruptBlock(std::vector<std::byte> contents,
-                        const Comparator& comparator = BytewiseComparator()) {
-  const Result<Block> block = Block::Create(std::move(contents), comparator);
+void ExpectCorruptBlock(std::vector<std::byte> contents) {
+  const Result<Block> block = Block::Create(std::move(contents));
   ASSERT_FALSE(block.has_value());
   EXPECT_EQ(block.error().code(), ErrorCode::Corruption);
 }
 
-void ExpectStructurallyCorruptBlock(std::vector<std::byte> contents) {
-  const Result<Block> ordered = Block::Create(contents, BytewiseComparator());
-  ASSERT_FALSE(ordered.has_value());
-  EXPECT_EQ(ordered.error().code(), ErrorCode::Corruption);
-  const Result<Block> trusted =
-      Block::CreateWithTrustedKeyOrder(std::move(contents), BytewiseComparator());
-  ASSERT_FALSE(trusted.has_value());
-  EXPECT_EQ(trusted.error().code(), ErrorCode::Corruption);
+void ExpectInvalidEntries(std::vector<std::byte> contents) {
+  const Result<Block> block = Block::Create(std::move(contents));
+  ASSERT_TRUE(block.has_value()) << block.error().ToString();
+  const Status valid = block->ValidateEntries([](ByteView, ByteView) -> Status { return {}; });
+  ASSERT_FALSE(valid.has_value());
+  EXPECT_EQ(valid.error().code(), ErrorCode::Corruption);
+}
+
+void ExpectOk(const Status& status) {
+  ASSERT_TRUE(status.has_value()) << status.error().ToString();
+}
+
+void ExpectCorruption(const Status& status) {
+  ASSERT_FALSE(status.has_value());
+  EXPECT_EQ(status.error().code(), ErrorCode::Corruption);
 }
 
 void ExpectAt(const Block::Iterator& iterator, std::string_view key, std::string_view value) {
@@ -230,8 +216,8 @@ TEST(BlockBuilderTest, ResetStartsANewBlock) {
 TEST(BlockTest, AcceptsBuilderBlocks) {
   BlockBuilder builder(16);
 
-  EXPECT_TRUE(Block::Create(Materialize(builder.Finish()), BytewiseComparator()).has_value());
-  EXPECT_TRUE(Block::Create(BuildGoldenBlock(), BytewiseComparator()).has_value());
+  EXPECT_TRUE(Block::Create(Materialize(builder.Finish())).has_value());
+  EXPECT_TRUE(Block::Create(BuildGoldenBlock()).has_value());
 }
 
 TEST(BlockTest, ReportsWhetherItHasEntries) {
@@ -242,140 +228,123 @@ TEST(BlockTest, ReportsWhetherItHasEntries) {
 }
 
 TEST(BlockTest, RejectsBlocksWithoutAValidRestartCount) {
-  ExpectStructurallyCorruptBlock({});
-  ExpectStructurallyCorruptBlock(Bytes({0x00, 0x00, 0x00}));
-  ExpectStructurallyCorruptBlock(WithRestarts({}, {}));
-  ExpectStructurallyCorruptBlock(
-      Bytes({0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00}));
+  ExpectCorruptBlock({});
+  ExpectCorruptBlock(Bytes({0x00, 0x00, 0x00}));
+  ExpectCorruptBlock(Bytes({0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00}));
 }
 
-TEST(BlockTest, RejectsInvalidRestartPoints) {
-  ExpectStructurallyCorruptBlock(WithRestarts({}, {4}));
-  ExpectStructurallyCorruptBlock(WithRestarts({}, {0, 0}));
-  ExpectStructurallyCorruptBlock(WithRestarts(GoldenEntries(), {9, 18}));
-  ExpectStructurallyCorruptBlock(WithRestarts(GoldenEntries(), {0, 19}));
-  ExpectStructurallyCorruptBlock(WithRestarts(GoldenEntries(), {0, 0}));
-  ExpectStructurallyCorruptBlock(WithRestarts(GoldenEntries(), {0, 18, 9}));
-  ExpectStructurallyCorruptBlock(WithRestarts(GoldenEntries(), {0, 18, 28}));
-  ExpectStructurallyCorruptBlock(WithRestarts(GoldenEntries(), {0, 9}));
+TEST(BlockTest, PhysicalValidationRejectsInvalidRestartPoints) {
+  ExpectInvalidEntries(WithRestarts({}, {}));
+  ExpectInvalidEntries(WithRestarts({}, {4}));
+  ExpectInvalidEntries(WithRestarts({}, {0, 0}));
+  ExpectInvalidEntries(WithRestarts(GoldenEntries(), {9, 18}));
+  ExpectInvalidEntries(WithRestarts(GoldenEntries(), {0, 19}));
+  ExpectInvalidEntries(WithRestarts(GoldenEntries(), {0, 0}));
+  ExpectInvalidEntries(WithRestarts(GoldenEntries(), {0, 18, 9}));
+  ExpectInvalidEntries(WithRestarts(GoldenEntries(), {0, 18, 28}));
+  ExpectInvalidEntries(WithRestarts(GoldenEntries(), {0, 9}));
 }
 
-TEST(BlockTest, RejectsMalformedEntries) {
-  ExpectStructurallyCorruptBlock(WithRestarts(Bytes({0x80}), {0}));
-  ExpectStructurallyCorruptBlock(WithRestarts(Bytes({0x00}), {0}));
-  ExpectStructurallyCorruptBlock(WithRestarts(Bytes({0x00, 0x05}), {0}));
-  ExpectStructurallyCorruptBlock(
-      WithRestarts(Bytes({0x00, 0x05, 0x01, 'a', 'p'}), {0}));
-  ExpectStructurallyCorruptBlock(WithRestarts(Bytes({0x00, 0x01, 0x80, 'a'}), {0}));
-  ExpectStructurallyCorruptBlock(
-      WithRestarts(Bytes({0xff, 0xff, 0xff, 0xff, 0x7f, 0x00, 0x00}), {0}));
-  ExpectStructurallyCorruptBlock(
-      WithRestarts(Concat({EntryBytes(0, "a", ""), EntryBytes(2, "", "")}), {0}));
+TEST(BlockTest, PhysicalValidationRejectsMalformedEntries) {
+  ExpectInvalidEntries(WithRestarts(Bytes({0x80}), {0}));
+  ExpectInvalidEntries(WithRestarts(Bytes({0x00}), {0}));
+  ExpectInvalidEntries(WithRestarts(Bytes({0x00, 0x05}), {0}));
+  ExpectInvalidEntries(WithRestarts(Bytes({0x00, 0x05, 0x01, 'a', 'p'}), {0}));
+  ExpectInvalidEntries(WithRestarts(Bytes({0x00, 0x01, 0x80, 'a'}), {0}));
+  ExpectInvalidEntries(WithRestarts(Bytes({0xff, 0xff, 0xff, 0xff, 0x7f, 0x00, 0x00}), {0}));
+  ExpectInvalidEntries(WithRestarts(Concat({EntryBytes(0, "a", ""), EntryBytes(2, "", "")}), {0}));
 }
 
-TEST(BlockTest, RejectsUnterminatedExtendedLengthsAtCreation) {
+TEST(BlockTest, PhysicalValidationRejectsUnterminatedExtendedLengths) {
   for (std::size_t field = 0; field < 3; ++field) {
     std::vector<std::byte> entries(field, std::byte{0});
     entries.insert(entries.end(), 5, std::byte{0x80});
     entries.push_back(std::byte{0});
-    ExpectStructurallyCorruptBlock(WithRestarts(std::move(entries), {0}));
+    ExpectInvalidEntries(WithRestarts(std::move(entries), {0}));
   }
 }
 
-TEST(BlockTest, RejectsKeysThatDoNotStrictlyIncrease) {
-  const std::vector<std::byte> ascending =
-      WithRestarts(Concat({EntryBytes(0, "a", ""), EntryBytes(0, "b", "")}), {0});
-
-  ExpectCorruptBlock(WithRestarts(Concat({EntryBytes(0, "b", ""), EntryBytes(0, "a", "")}), {0}));
-  ExpectCorruptBlock(WithRestarts(Concat({EntryBytes(0, "a", ""), EntryBytes(1, "", "")}), {0}));
-  ExpectCorruptBlock(ascending, ReverseComparator());
-  EXPECT_TRUE(Block::Create(ascending, BytewiseComparator()).has_value());
-}
-
-TEST(BlockTest, TrustedOrderCreationSkipsOnlyKeyOrderValidation) {
+TEST(BlockTest, PhysicalValidationDoesNotCompareKeyOrder) {
   const std::vector<std::byte> descending =
       WithRestarts(Concat({EntryBytes(0, "b", ""), EntryBytes(0, "a", "")}), {0});
   const std::vector<std::byte> duplicate =
       WithRestarts(Concat({EntryBytes(0, "a", ""), EntryBytes(1, "", "")}), {0});
 
-  EXPECT_TRUE(
-      Block::CreateWithTrustedKeyOrder(descending, BytewiseComparator()).has_value());
-  EXPECT_TRUE(Block::CreateWithTrustedKeyOrder(duplicate, BytewiseComparator()).has_value());
-
-}
-
-TEST(BlockTest, TrustedOrderCreationDoesNotCallTheComparator) {
-  const std::vector<std::byte> contents = BuildGoldenBlock();
-  CountingComparator comparator;
-
-  EXPECT_TRUE(Block::CreateWithTrustedKeyOrder(contents, comparator).has_value());
-  EXPECT_EQ(comparator.comparisons, 0U);
-  EXPECT_TRUE(Block::Create(contents, comparator).has_value());
-  EXPECT_GT(comparator.comparisons, 0U);
+  for (const auto& contents : {descending, duplicate}) {
+    const Result<Block> block = Block::Create(contents);
+    ASSERT_TRUE(block.has_value()) << block.error().ToString();
+    std::size_t entries = 0;
+    const Status valid = block->ValidateEntries([&](ByteView, ByteView) -> Status {
+      ++entries;
+      return {};
+    });
+    EXPECT_TRUE(valid.has_value()) << valid.error().ToString();
+    EXPECT_EQ(entries, 2U);
+  }
 }
 
 TEST(BlockIteratorTest, StartsUnpositioned) {
   const Block block = MakeBlock(BuildGoldenBlock());
 
-  const Block::Iterator iterator(block);
+  const Block::Iterator iterator(block, BytewiseComparator());
 
   EXPECT_FALSE(iterator.valid());
 }
 
 TEST(BlockIteratorTest, IteratesForwardAndBackward) {
   const Block block = MakeBlock(BuildGoldenBlock());
-  Block::Iterator iterator(block);
+  Block::Iterator iterator(block, BytewiseComparator());
 
-  iterator.SeekToFirst();
+  ExpectOk(iterator.SeekToFirst());
   ExpectAt(iterator, "apple", "1");
-  iterator.Next();
+  ExpectOk(iterator.Next());
   ExpectAt(iterator, "applesauce", "2");
-  iterator.Next();
+  ExpectOk(iterator.Next());
   ExpectAt(iterator, "banana", "3");
-  iterator.Next();
+  ExpectOk(iterator.Next());
   EXPECT_FALSE(iterator.valid());
 
-  iterator.SeekToLast();
+  ExpectOk(iterator.SeekToLast());
   ExpectAt(iterator, "banana", "3");
-  iterator.Prev();
+  ExpectOk(iterator.Prev());
   ExpectAt(iterator, "applesauce", "2");
-  iterator.Prev();
+  ExpectOk(iterator.Prev());
   ExpectAt(iterator, "apple", "1");
-  iterator.Prev();
+  ExpectOk(iterator.Prev());
   EXPECT_FALSE(iterator.valid());
 }
 
 TEST(BlockIteratorTest, SeeksToTheFirstKeyNotLessThanTheTarget) {
   const Block block = MakeBlock(BuildGoldenBlock());
-  Block::Iterator iterator(block);
+  Block::Iterator iterator(block, BytewiseComparator());
 
-  iterator.Seek(AsBytes(""));
+  ExpectOk(iterator.Seek(AsBytes("")));
   ExpectAt(iterator, "apple", "1");
-  iterator.Seek(AsBytes("apple"));
+  ExpectOk(iterator.Seek(AsBytes("apple")));
   ExpectAt(iterator, "apple", "1");
-  iterator.Seek(AsBytes("applea"));
+  ExpectOk(iterator.Seek(AsBytes("applea")));
   ExpectAt(iterator, "applesauce", "2");
-  iterator.Seek(AsBytes("b"));
+  ExpectOk(iterator.Seek(AsBytes("b")));
   ExpectAt(iterator, "banana", "3");
-  iterator.Seek(AsBytes("banana"));
+  ExpectOk(iterator.Seek(AsBytes("banana")));
   ExpectAt(iterator, "banana", "3");
-  iterator.Seek(AsBytes("bananas"));
+  ExpectOk(iterator.Seek(AsBytes("bananas")));
   EXPECT_FALSE(iterator.valid());
 }
 
 TEST(BlockIteratorTest, ChangesDirectionAcrossRestartPoints) {
   const Block block = MakeBlock(BuildGoldenBlock());
-  Block::Iterator iterator(block);
+  Block::Iterator iterator(block, BytewiseComparator());
 
-  iterator.Seek(AsBytes("banana"));
-  iterator.Prev();
+  ExpectOk(iterator.Seek(AsBytes("banana")));
+  ExpectOk(iterator.Prev());
   ExpectAt(iterator, "applesauce", "2");
-  iterator.Next();
+  ExpectOk(iterator.Next());
   ExpectAt(iterator, "banana", "3");
-  iterator.Prev();
-  iterator.Prev();
+  ExpectOk(iterator.Prev());
+  ExpectOk(iterator.Prev());
   ExpectAt(iterator, "apple", "1");
-  iterator.Next();
+  ExpectOk(iterator.Next());
   ExpectAt(iterator, "applesauce", "2");
 }
 
@@ -390,21 +359,21 @@ TEST(BlockIteratorTest, HandlesGrowingAndShrinkingKeysAcrossRestarts) {
       ASSERT_TRUE(builder.Add(AsBytes(key), AsBytes("value")).has_value());
     }
     const Block block = MakeBlock(Materialize(builder.Finish()));
-    Block::Iterator iterator(block);
-    iterator.SeekToFirst();
+    Block::Iterator iterator(block, BytewiseComparator());
+    ExpectOk(iterator.SeekToFirst());
     for (const auto& key : keys) {
       ExpectAt(iterator, key, "value");
-      iterator.Next();
+      ExpectOk(iterator.Next());
     }
     EXPECT_FALSE(iterator.valid());
     for (const auto& key : keys) {
-      iterator.Seek(AsBytes(key));
+      ExpectOk(iterator.Seek(AsBytes(key)));
       ExpectAt(iterator, key, "value");
     }
-    iterator.SeekToLast();
+    ExpectOk(iterator.SeekToLast());
     for (std::size_t remaining = keys.size(); remaining > 0; --remaining) {
       ExpectAt(iterator, keys[remaining - 1], "value");
-      iterator.Prev();
+      ExpectOk(iterator.Prev());
     }
     EXPECT_FALSE(iterator.valid());
   }
@@ -420,14 +389,14 @@ TEST(BlockIteratorTest, ReconstructsBinaryRestartKeys) {
   ASSERT_TRUE(builder.Add(AsBytes(short_key), AsBytes(BinaryValue)).has_value());
   ASSERT_TRUE(builder.Add(AsBytes(long_key), AsBytes("last")).has_value());
   const Block block = MakeBlock(Materialize(builder.Finish()));
-  Block::Iterator iterator(block);
-  iterator.SeekToLast();
+  Block::Iterator iterator(block, BytewiseComparator());
+  ExpectOk(iterator.SeekToLast());
   ExpectAt(iterator, long_key, "last");
-  iterator.Prev();
+  ExpectOk(iterator.Prev());
   ExpectAt(iterator, short_key, BinaryValue);
-  iterator.Next();
+  ExpectOk(iterator.Next());
   ExpectAt(iterator, long_key, "last");
-  iterator.Seek(AsBytes(short_key));
+  ExpectOk(iterator.Seek(AsBytes(short_key)));
   ExpectAt(iterator, short_key, BinaryValue);
 }
 
@@ -443,60 +412,206 @@ TEST(BlockIteratorTest, DecodesEveryAcceptedExtendedLengthEncoding) {
     const Block block = MakeBlock(WithRestarts(
         Concat({first, second, ExtendedEntryBytes(0, "c", "last", width, terminal_bits)}),
         {0, restart}));
-    Block::Iterator iterator(block);
+    Block::Iterator iterator(block, BytewiseComparator());
 
-    iterator.SeekToFirst();
+    ExpectOk(iterator.SeekToFirst());
     ExpectAt(iterator, "a", BinaryValue);
-    iterator.Next();
+    ExpectOk(iterator.Next());
     ExpectAt(iterator, "ab", "");
-    iterator.Next();
+    ExpectOk(iterator.Next());
     ExpectAt(iterator, "c", "last");
-    iterator.Next();
+    ExpectOk(iterator.Next());
     EXPECT_FALSE(iterator.valid());
 
-    iterator.Seek(AsBytes("ab"));
+    ExpectOk(iterator.Seek(AsBytes("ab")));
     ExpectAt(iterator, "ab", "");
-    iterator.Seek(AsBytes("b"));
+    ExpectOk(iterator.Seek(AsBytes("b")));
     ExpectAt(iterator, "c", "last");
-    iterator.Prev();
+    ExpectOk(iterator.Prev());
     ExpectAt(iterator, "ab", "");
-    iterator.Next();
+    ExpectOk(iterator.Next());
     ExpectAt(iterator, "c", "last");
-    iterator.SeekToLast();
+    ExpectOk(iterator.SeekToLast());
     ExpectAt(iterator, "c", "last");
-    iterator.Prev();
-    iterator.Prev();
+    ExpectOk(iterator.Prev());
+    ExpectOk(iterator.Prev());
     ExpectAt(iterator, "a", BinaryValue);
-    iterator.Prev();
+    ExpectOk(iterator.Prev());
     EXPECT_FALSE(iterator.valid());
   }
 }
 
 TEST(BlockIteratorTest, RemainsValidWhenTheBlockMoves) {
   Block block = MakeBlock(BuildGoldenBlock());
-  Block::Iterator iterator(block);
-  iterator.SeekToFirst();
+  Block::Iterator iterator(block, BytewiseComparator());
+  ExpectOk(iterator.SeekToFirst());
 
   const Block moved(std::move(block));
 
   ExpectAt(iterator, "apple", "1");
-  iterator.Next();
+  ExpectOk(iterator.Next());
   ExpectAt(iterator, "applesauce", "2");
-  iterator.SeekToLast();
+  ExpectOk(iterator.SeekToLast());
   ExpectAt(iterator, "banana", "3");
 }
 
 TEST(BlockIteratorTest, EmptyBlockHasNoPositions) {
   BlockBuilder builder(16);
   const Block block = MakeBlock(Materialize(builder.Finish()));
-  Block::Iterator iterator(block);
+  Block::Iterator iterator(block, BytewiseComparator());
 
-  iterator.SeekToFirst();
+  ExpectOk(iterator.SeekToFirst());
   EXPECT_FALSE(iterator.valid());
-  iterator.SeekToLast();
+  ExpectOk(iterator.SeekToLast());
   EXPECT_FALSE(iterator.valid());
-  iterator.Seek(AsBytes("a"));
+  ExpectOk(iterator.Seek(AsBytes("a")));
   EXPECT_FALSE(iterator.valid());
+}
+
+TEST(BlockIteratorTest, ZeroRestartsHaveNoPositionsWithoutDecodingEntryBytes) {
+  const Block block = MakeBlock(WithRestarts(Bytes({0x80, 0x80, 0x80}), {}));
+  Block::Iterator iterator(block, BytewiseComparator());
+
+  ExpectOk(iterator.SeekToFirst());
+  EXPECT_FALSE(iterator.valid());
+  ExpectOk(iterator.SeekToLast());
+  EXPECT_FALSE(iterator.valid());
+  ExpectOk(iterator.Seek(AsBytes("target")));
+  EXPECT_FALSE(iterator.valid());
+}
+
+TEST(BlockIteratorTest, ReportsReachedCorruptionAndPositioningRecovers) {
+  const auto first = EntryBytes(0, "a", "1");
+  const Block block = MakeBlock(WithRestarts(Concat({first, Bytes({0x80})}), {0}));
+  Block::Iterator iterator(block, BytewiseComparator());
+
+  ExpectOk(iterator.SeekToFirst());
+  ExpectAt(iterator, "a", "1");
+  ExpectCorruption(iterator.Next());
+  EXPECT_FALSE(iterator.valid());
+
+  ExpectOk(iterator.SeekToFirst());
+  ExpectAt(iterator, "a", "1");
+  ExpectCorruption(iterator.SeekToLast());
+  EXPECT_FALSE(iterator.valid());
+
+  ExpectOk(iterator.Seek(AsBytes("a")));
+  ExpectAt(iterator, "a", "1");
+}
+
+TEST(BlockIteratorTest, RejectsOutOfRangeRestartOffsetsOnEveryPositioningPath) {
+  const auto entry = EntryBytes(0, "a", "");
+  const std::uint32_t outside = static_cast<std::uint32_t>(entry.size() + 1);
+  const Block block = MakeBlock(WithRestarts(entry, {outside}));
+  Block::Iterator iterator(block, BytewiseComparator());
+
+  ExpectCorruption(iterator.SeekToFirst());
+  ExpectCorruption(iterator.SeekToLast());
+  ExpectCorruption(iterator.Seek(AsBytes("a")));
+}
+
+TEST(BlockIteratorTest, SeekRejectsRestartAtTheEntryBoundary) {
+  const auto entry = EntryBytes(0, "a", "");
+  const std::uint32_t end = static_cast<std::uint32_t>(entry.size());
+  const Block block = MakeBlock(WithRestarts(entry, {0, end}));
+  Block::Iterator iterator(block, BytewiseComparator());
+
+  ExpectCorruption(iterator.Seek(AsBytes("z")));
+}
+
+TEST(BlockIteratorTest, SeekRejectsRestartBeyondTheEntryBoundary) {
+  const auto entry = EntryBytes(0, "a", "");
+  const std::uint32_t outside = static_cast<std::uint32_t>(entry.size() + 1);
+  const Block block = MakeBlock(WithRestarts(entry, {0, outside}));
+  Block::Iterator iterator(block, BytewiseComparator());
+
+  ExpectCorruption(iterator.Seek(AsBytes("z")));
+}
+
+TEST(BlockIteratorTest, SeekRejectsATruncatedRestartHeader) {
+  const auto first = EntryBytes(0, "a", "");
+  std::vector<std::byte> entries = first;
+  entries.insert(entries.end(), 3, std::byte{0x80});
+  const Block block =
+      MakeBlock(WithRestarts(std::move(entries), {0, static_cast<std::uint32_t>(first.size())}));
+  Block::Iterator iterator(block, BytewiseComparator());
+
+  ExpectCorruption(iterator.Seek(AsBytes("z")));
+}
+
+TEST(BlockIteratorTest, SeekRejectsAMalformedRestartEntryAndRecovers) {
+  const auto first = EntryBytes(0, "a", "");
+  const auto malformed_restart = EntryBytes(1, "z", "");
+  const Block block = MakeBlock(WithRestarts(Concat({first, malformed_restart}),
+                                             {0, static_cast<std::uint32_t>(first.size())}));
+  Block::Iterator iterator(block, BytewiseComparator());
+
+  ExpectCorruption(iterator.Seek(AsBytes("z")));
+  EXPECT_FALSE(iterator.valid());
+  ExpectOk(iterator.SeekToFirst());
+  ExpectAt(iterator, "a", "");
+}
+
+TEST(BlockIteratorTest, PrevReportsCorruptionBeforeThePreviousEntryAndRecovers) {
+  const auto first = EntryBytes(0, "a", "");
+  const auto malformed = EntryBytes(2, "", "");
+  const auto last = EntryBytes(0, "c", "");
+  const std::uint32_t last_offset = static_cast<std::uint32_t>(first.size() + malformed.size());
+  const Block block = MakeBlock(WithRestarts(Concat({first, malformed, last}), {0, last_offset}));
+  Block::Iterator iterator(block, BytewiseComparator());
+
+  ExpectOk(iterator.SeekToLast());
+  ExpectAt(iterator, "c", "");
+  ExpectCorruption(iterator.Prev());
+  EXPECT_FALSE(iterator.valid());
+  ExpectOk(iterator.SeekToLast());
+  ExpectAt(iterator, "c", "");
+}
+
+TEST(BlockIteratorTest, PrevRejectsAnEarlierOutOfRangeRestart) {
+  const auto entry = EntryBytes(0, "a", "");
+  const std::uint32_t outside = static_cast<std::uint32_t>(entry.size() + 1);
+  const Block block = MakeBlock(WithRestarts(entry, {outside, 0}));
+  Block::Iterator iterator(block, BytewiseComparator());
+
+  ExpectOk(iterator.SeekToLast());
+  ExpectAt(iterator, "a", "");
+  ExpectCorruption(iterator.Prev());
+}
+
+TEST(BlockIteratorTest, ForwardDecodeRejectsALaterOutOfRangeRestart) {
+  const auto entry = EntryBytes(0, "a", "");
+  const std::uint32_t outside = static_cast<std::uint32_t>(entry.size() + 1);
+  const Block block = MakeBlock(WithRestarts(entry, {0, outside}));
+  Block::Iterator iterator(block, BytewiseComparator());
+
+  ExpectCorruption(iterator.SeekToFirst());
+}
+
+TEST(BlockIteratorTest, InternalKeyModeRejectsShortTargetsAndEntries) {
+  const InternalKeyComparator defensive(BytewiseComparator());
+  const TrustedInternalKeyComparator trusted(defensive);
+  const Block block = MakeBlock(WithRestarts(EntryBytes(0, "short", ""), {0}));
+  Block::Iterator iterator(block, trusted, BlockKeyFormat::Internal);
+
+  ExpectCorruption(iterator.Seek(AsBytes("short")));
+  EXPECT_FALSE(iterator.valid());
+  ExpectCorruption(iterator.SeekToFirst());
+  EXPECT_FALSE(iterator.valid());
+}
+
+TEST(BlockIteratorTest, InternalKeySeekRejectsAShortRestartKey) {
+  const InternalKeyComparator defensive(BytewiseComparator());
+  const TrustedInternalKeyComparator trusted(defensive);
+  const InternalKey valid = InternalKey::Create(AsBytes("a"), 1, ValueKind::Value).value();
+  const auto first = EntryBytes(0, AsStringView(valid.encoded()), "");
+  const auto short_restart = EntryBytes(0, "short", "");
+  const Block block = MakeBlock(
+      WithRestarts(Concat({first, short_restart}), {0, static_cast<std::uint32_t>(first.size())}));
+  Block::Iterator iterator(block, trusted, BlockKeyFormat::Internal);
+  const InternalKey target = InternalKey::Create(AsBytes("z"), 1, ValueKind::Value).value();
+
+  ExpectCorruption(iterator.Seek(target.encoded()));
 }
 
 TEST(BlockIteratorTest, UsesTheBlockComparator) {
@@ -505,14 +620,14 @@ TEST(BlockIteratorTest, UsesTheBlockComparator) {
   ASSERT_TRUE(builder.Add(AsBytes("c"), AsBytes("3")).has_value());
   ASSERT_TRUE(builder.Add(AsBytes("b"), AsBytes("2")).has_value());
   ASSERT_TRUE(builder.Add(AsBytes("a"), AsBytes("1")).has_value());
-  const Block block = MakeBlock(Materialize(builder.Finish()), reverse);
-  Block::Iterator iterator(block);
+  const Block block = MakeBlock(Materialize(builder.Finish()));
+  Block::Iterator iterator(block, reverse);
 
-  iterator.Seek(AsBytes("bb"));
+  ExpectOk(iterator.Seek(AsBytes("bb")));
   ExpectAt(iterator, "b", "2");
-  iterator.Seek(AsBytes("d"));
+  ExpectOk(iterator.Seek(AsBytes("d")));
   ExpectAt(iterator, "c", "3");
-  iterator.Seek(AsBytes(""));
+  ExpectOk(iterator.Seek(AsBytes("")));
   EXPECT_FALSE(iterator.valid());
 }
 
@@ -589,21 +704,21 @@ class BlockModelTest : public testing::Test {
     const std::size_t estimate = builder.CurrentSizeEstimate();
     const std::vector<std::byte> contents = Materialize(builder.Finish());
     ASSERT_EQ(contents.size(), estimate);
-    const Block block = MakeBlock(contents, comparator);
-    Block::Iterator iterator(block);
+    const Block block = MakeBlock(contents);
+    Block::Iterator iterator(block, comparator);
 
-    iterator.SeekToFirst();
+    ExpectOk(iterator.SeekToFirst());
     for (std::size_t index = 0; index <= entries.size(); ++index) {
       ExpectAtEntry(iterator, entries, index);
       if (iterator.valid()) {
-        iterator.Next();
+        ExpectOk(iterator.Next());
       }
     }
 
-    iterator.SeekToLast();
+    ExpectOk(iterator.SeekToLast());
     for (std::size_t remaining = entries.size(); remaining > 0; --remaining) {
       ExpectAtEntry(iterator, entries, remaining - 1);
-      iterator.Prev();
+      ExpectOk(iterator.Prev());
     }
     EXPECT_FALSE(iterator.valid());
 
@@ -615,18 +730,18 @@ class BlockModelTest : public testing::Test {
           [&](ByteView left, ByteView right) { return comparator.Compare(left, right) < 0; },
           [](const ModelEntry& entry) { return ByteView(entry.key); });
       std::size_t index = static_cast<std::size_t>(lower - entries.begin());
-      iterator.Seek(target);
+      ExpectOk(iterator.Seek(target));
       ExpectAtEntry(iterator, entries, index);
 
       for (int step = 0; step < 8 && index < entries.size(); ++step) {
         if (Below(2) == 0) {
-          iterator.Next();
+          ExpectOk(iterator.Next());
           ++index;
         } else if (index == 0) {
-          iterator.Prev();
+          ExpectOk(iterator.Prev());
           index = entries.size();
         } else {
-          iterator.Prev();
+          ExpectOk(iterator.Prev());
           --index;
         }
         ExpectAtEntry(iterator, entries, index);

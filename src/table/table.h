@@ -29,6 +29,9 @@ struct TableOptions {
   std::optional<BloomFilterPolicy> filter_policy;
   // Not owned; must outlive every table that uses it.
   BlockCache* block_cache = nullptr;
+  // Production tables contain internal keys. Direct test/tool callers may
+  // leave this false to read arbitrary-key LevelDB tables defensively.
+  bool use_trusted_internal_key_comparison = false;
 };
 
 struct TableReadOptions {
@@ -74,7 +77,7 @@ class Table final {
 
  private:
   Table(std::unique_ptr<RandomAccessFile> file, std::uint64_t blocks_end,
-        const InternalKeyComparator& comparator, Block index,
+        const InternalKeyComparator& comparator, bool trusted_internal_keys, Block index,
         std::optional<FilterBlockReader> filter, BlockCache* block_cache,
         std::uint64_t cache_id) noexcept;
 
@@ -85,6 +88,9 @@ class Table final {
   // Offset of the footer, which follows every block.
   std::uint64_t blocks_end_;
   const InternalKeyComparator* comparator_;
+  TrustedInternalKeyComparator trusted_comparator_;
+  const Comparator* block_comparator_;
+  BlockKeyFormat block_key_format_;
   Block index_;
   std::optional<FilterBlockReader> filter_;
   BlockCache* block_cache_;
@@ -147,6 +153,8 @@ class Table::Iterator final {
   [[nodiscard]] Status LoadBlock();
   // Loads the block at the index position and positions at one of its edges.
   [[nodiscard]] Status EnterBlock(Edge edge);
+  [[nodiscard]] Status ValidatePosition();
+  [[nodiscard]] Status Fail(Error error);
 
   const Table* table_;
   TableReadOptions options_;

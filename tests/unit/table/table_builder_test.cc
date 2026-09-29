@@ -175,10 +175,11 @@ void ReadTable(ByteView file, const Comparator& comparator, TableContents& table
   const auto footer = DecodeFooter(file.last<FooterSize>());
   ASSERT_TRUE(footer.has_value());
 
-  auto metaindex = Block::Create(StoredContents(file, footer->metaindex), BytewiseComparator());
+  auto metaindex = Block::Create(StoredContents(file, footer->metaindex));
   ASSERT_TRUE(metaindex.has_value());
-  Block::Iterator meta(*metaindex);
-  for (meta.SeekToFirst(); meta.valid(); meta.Next()) {
+  Block::Iterator meta(*metaindex, BytewiseComparator());
+  ASSERT_TRUE(meta.SeekToFirst().has_value());
+  while (meta.valid()) {
     ASSERT_EQ(AsStringView(meta.key()), "filter.leveldb.BuiltinBloomFilter2");
     ByteView value = meta.value();
     const auto handle = ConsumeBlockHandle(value);
@@ -187,12 +188,14 @@ void ReadTable(ByteView file, const Comparator& comparator, TableContents& table
     auto filter = FilterBlockReader::Create(StoredContents(file, *handle), BloomFilterPolicy(10));
     ASSERT_TRUE(filter.has_value());
     table.filter.emplace(std::move(*filter));
+    ASSERT_TRUE(meta.Next().has_value());
   }
 
-  auto index = Block::Create(StoredContents(file, footer->index), comparator);
+  auto index = Block::Create(StoredContents(file, footer->index));
   ASSERT_TRUE(index.has_value());
-  Block::Iterator index_iterator(*index);
-  for (index_iterator.SeekToFirst(); index_iterator.valid(); index_iterator.Next()) {
+  Block::Iterator index_iterator(*index, comparator);
+  ASSERT_TRUE(index_iterator.SeekToFirst().has_value());
+  while (index_iterator.valid()) {
     table.index_keys.push_back(Materialize(index_iterator.key()));
     ByteView value = index_iterator.value();
     const auto handle = ConsumeBlockHandle(value);
@@ -200,13 +203,16 @@ void ReadTable(ByteView file, const Comparator& comparator, TableContents& table
     ASSERT_TRUE(value.empty());
     table.data_handles.push_back(*handle);
 
-    auto data = Block::Create(StoredContents(file, *handle), comparator);
+    auto data = Block::Create(StoredContents(file, *handle));
     ASSERT_TRUE(data.has_value());
-    Block::Iterator entry(*data);
-    for (entry.SeekToFirst(); entry.valid(); entry.Next()) {
+    Block::Iterator entry(*data, comparator);
+    ASSERT_TRUE(entry.SeekToFirst().has_value());
+    while (entry.valid()) {
       table.entries.emplace_back(Materialize(entry.key()), Materialize(entry.value()));
       table.entry_block_offsets.push_back(handle->offset);
+      ASSERT_TRUE(entry.Next().has_value());
     }
+    ASSERT_TRUE(index_iterator.Next().has_value());
   }
 }
 

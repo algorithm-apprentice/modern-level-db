@@ -94,10 +94,10 @@ BuiltTable BuildUncompressedTable(const std::filesystem::path& path,
   const ByteView stored_index(bytes.data() + index_handle.offset, stored_index_size);
   const Result<std::vector<std::byte>> index_contents = DecodeStoredBlock(stored_index);
   EXPECT_TRUE(index_contents.has_value()) << index_contents.error().ToString();
-  const Result<Block> index = Block::Create(*index_contents, comparator);
+  const Result<Block> index = Block::Create(*index_contents);
   EXPECT_TRUE(index.has_value()) << index.error().ToString();
-  Block::Iterator entry(*index);
-  entry.SeekToFirst();
+  Block::Iterator entry(*index, comparator);
+  EXPECT_TRUE(entry.SeekToFirst().has_value());
   EXPECT_TRUE(entry.valid());
   ByteView encoded_handle = entry.value();
   const Result<BlockHandle> data = ConsumeBlockHandle(encoded_handle);
@@ -136,6 +136,7 @@ TEST(TablePosixTest, CachedUncompressedBlockOutlivesMappedTable) {
   ASSERT_TRUE(file.has_value()) << file.error().ToString();
   TableOptions options;
   options.block_cache = &cache;
+  options.use_trusted_internal_key_comparison = true;
   Result<std::unique_ptr<Table>> table =
       Table::Open(std::move(*file), built.size, comparator, options);
   ASSERT_TRUE(table.has_value()) << table.error().ToString();
@@ -153,8 +154,8 @@ TEST(TablePosixTest, CachedUncompressedBlockOutlivesMappedTable) {
 
   table->reset();
   ASSERT_TRUE(file_system.RemoveFile(path).has_value());
-  Block::Iterator entry(cached->value());
-  entry.SeekToFirst();
+  Block::Iterator entry(cached->value(), comparator);
+  ASSERT_TRUE(entry.SeekToFirst().has_value());
   ASSERT_TRUE(entry.valid());
   EXPECT_EQ(AsStringView(entry.value()), "value");
 }

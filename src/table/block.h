@@ -2,6 +2,9 @@
 #define MODERN_LEVELDB_TABLE_BLOCK_H_
 
 #include <cstddef>
+#include <functional>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "modern_leveldb/base/bytes.h"
@@ -10,38 +13,28 @@
 
 namespace modern_leveldb {
 
-// An immutable block whose structure was validated when it was created, so
-// iteration cannot fail. Its key order is either validated or a caller
-// invariant selected explicitly at creation.
+enum class BlockKeyFormat {
+  Arbitrary,
+  Internal,
+};
+
+// An immutable encoded block. Construction validates only the restart-array
+// region; iterators validate entries lazily as they reach them.
 class Block final {
  private:
-  // The validated structure of the contents. It views the contents buffer,
-  // which moving the owning block does not relocate.
   struct Layout {
     ByteView contents;
-    const Comparator* comparator;
-    // Offset of the restart array, which follows the entries.
     std::size_t entries_end;
     std::size_t restart_count;
 
     [[nodiscard]] std::size_t RestartPoint(std::size_t index) const noexcept;
-    [[nodiscard]] ByteView RestartKey(std::size_t index) const;
   };
 
  public:
   class Iterator;
+  using EntryVisitor = std::function<Status(ByteView key, ByteView value)>;
 
-  // The comparator must outlive the block.
-  [[nodiscard]] static Result<Block> Create(std::vector<std::byte> contents,
-                                            const Comparator& comparator);
-  static Result<Block> Create(std::vector<std::byte> contents,
-                              const Comparator&& comparator) = delete;
-  // The caller guarantees strict key order. Structure is still fully
-  // validated before the trusted iterator decoder can use the block.
-  [[nodiscard]] static Result<Block> CreateWithTrustedKeyOrder(
-      std::vector<std::byte> contents, const Comparator& comparator);
-  static Result<Block> CreateWithTrustedKeyOrder(std::vector<std::byte> contents,
-                                                 const Comparator&& comparator) = delete;
+  [[nodiscard]] static Result<Block> Create(std::vector<std::byte> contents);
 
   Block(const Block&) = delete;
   Block& operator=(const Block&) = delete;
@@ -50,31 +43,35 @@ class Block final {
   Block& operator=(Block&&) = delete;
   ~Block() = default;
 
-  [[nodiscard]] bool empty() const noexcept { return layout_.entries_end == 0; }
+  [[nodiscard]] bool empty() const noexcept;
   [[nodiscard]] std::size_t size() const noexcept { return contents_.size(); }
 
- private:
-  Block(std::vector<std::byte> contents, const Comparator& comparator, std::size_t entries_end,
-        std::size_t restart_count) noexcept;
+  // Table-open validation for index/metaindex blocks. It walks physical entries
+  // from byte zero and validates complete restart topology without comparing
+  // key order.
+  [[nodiscard]] Status ValidateEntries(const EntryVisitor& visitor) const;
 
-  [[nodiscard]] static Result<Block> CreateImpl(std::vector<std::byte> contents,
-                                                const Comparator& comparator,
-                                                bool validate_key_order);
-  [[nodiscard]] Status Validate() const;
-  [[nodiscard]] Status ValidateStructure() const;
+ private:
+  Block(std::vector<std::byte> contents, std::size_t entries_end,
+        std::size_t restart_count) noexcept;
 
   std::vector<std::byte> contents_;
   Layout layout_;
 };
 
-// Reads a block, which must outlive the iterator. A new iterator is not
-// positioned. Keys and values remain valid until the iterator moves. If an
-// operation throws, the iterator remains consistent at an unspecified position.
+// Reads a block, which and whose comparator must outlive the iterator. A new
+// iterator is not positioned. Keys and values remain valid until it moves.
+// Positioning calls recover from an earlier corruption and start over.
 class Block::Iterator final {
  public:
-  explicit Iterator(const Block& block) noexcept;
-  explicit Iterator(Block&&) = delete;
-  explicit Iterator(const Block&&) = delete;
+  Iterator(const Block& block, const Comparator& comparator,
+           BlockKeyFormat format = BlockKeyFormat::Arbitrary) noexcept;
+  Iterator(const Block& block, const Comparator&& comparator,
+           BlockKeyFormat format = BlockKeyFormat::Arbitrary) = delete;
+  Iterator(Block&& block, const Comparator& comparator,
+           BlockKeyFormat format = BlockKeyFormat::Arbitrary) = delete;
+  Iterator(const Block&& block, const Comparator& comparator,
+           BlockKeyFormat format = BlockKeyFormat::Arbitrary) = delete;
 
   Iterator(const Iterator&) = delete;
   Iterator& operator=(const Iterator&) = delete;
@@ -82,35 +79,38 @@ class Block::Iterator final {
   Iterator& operator=(Iterator&&) = delete;
   ~Iterator() = default;
 
-  [[nodiscard]] bool valid() const noexcept { return current_ < layout_.entries_end; }
+  [[nodiscard]] bool valid() const noexcept {
+    return !error_.has_value() && current_ < layout_.entries_end;
+  }
   [[nodiscard]] ByteView key() const noexcept;
   [[nodiscard]] ByteView value() const noexcept;
 
-  void SeekToFirst();
-  void SeekToLast();
-  // Positions at the first key that is not less than the target.
-  void Seek(ByteView target);
-  void Next();
-  void Prev();
+  [[nodiscard]] Status SeekToFirst();
+  [[nodiscard]] Status SeekToLast();
+  [[nodiscard]] Status Seek(ByteView target);
+  [[nodiscard]] Status Next();
+  [[nodiscard]] Status Prev();
 
  private:
-  // Leaves the iterator invalid until the next entry is parsed.
-  void SeekToRestartPoint(std::size_t index) noexcept;
-  // Parses the entry at next_, which must precede the restart array.
-  void ParseEntry();
-  // Parses the entry at next_, or invalidates the iterator at the end.
-  bool ParseNextEntry();
+  void BeginPositioning() noexcept;
+  [[nodiscard]] bool RestartPoint(std::size_t index, std::size_t& offset) const noexcept;
+  [[nodiscard]] Status RestartKey(std::size_t index, ByteView& key);
+  [[nodiscard]] Status SeekToRestartPoint(std::size_t index);
+  [[nodiscard]] Status ParseNextEntry();
+  [[nodiscard]] Status Corruption();
+  [[nodiscard]] bool AcceptsKeySize(std::size_t size) const noexcept;
+  [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept;
   void Invalidate() noexcept;
 
   Layout layout_;
-  // Offset of the current entry; the end of the entries when invalid.
+  const Comparator* comparator_;
+  BlockKeyFormat format_;
   std::size_t current_;
-  // Offset just past the current entry.
   std::size_t next_;
-  // Index of the restart point at or before the current entry.
   std::size_t restart_index_;
-  std::vector<std::byte> key_;
+  std::string key_;
   ByteView value_;
+  std::optional<Error> error_;
 };
 
 }  // namespace modern_leveldb

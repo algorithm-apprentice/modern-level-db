@@ -79,25 +79,46 @@ void FuzzFormat(ByteView input) {
     }
     case 3: {
       std::vector<std::byte> contents(input.begin(), input.end());
-      auto block = (command & 8U) == 0U
-                       ? Block::Create(std::move(contents), BytewiseComparator())
-                       : Block::CreateWithTrustedKeyOrder(std::move(contents),
-                                                          BytewiseComparator());
+      auto block = Block::Create(std::move(contents));
       if (block.has_value()) {
-        Block::Iterator iterator(*block);
+        const bool physically_valid =
+            block->ValidateEntries([](ByteView, ByteView) -> Status { return {}; }).has_value();
+        const InternalKeyComparator internal(BytewiseComparator());
+        const TrustedInternalKeyComparator trusted(internal);
+        const bool internal_keys = (command & 8U) != 0U;
+        const Comparator& comparator =
+            internal_keys ? static_cast<const Comparator&>(trusted) : BytewiseComparator();
+        Block::Iterator iterator(
+            *block, comparator,
+            internal_keys ? BlockKeyFormat::Internal : BlockKeyFormat::Arbitrary);
         std::vector<std::pair<std::string, std::string>> forward;
-        for (iterator.SeekToFirst(); iterator.valid(); iterator.Next()) {
+        Status moved = iterator.SeekToFirst();
+        while (moved.has_value() && iterator.valid()) {
           Require(forward.size() <= input.size());
           forward.emplace_back(AsStringView(iterator.key()), AsStringView(iterator.value()));
+          moved = iterator.Next();
         }
-        std::size_t count = forward.size();
-        for (iterator.SeekToLast(); iterator.valid(); iterator.Prev()) {
-          Require(count != 0);
-          --count;
-          Require(AsStringView(iterator.key()) == forward[count].first);
-          Require(AsStringView(iterator.value()) == forward[count].second);
+        if (physically_valid && moved.has_value()) {
+          moved = iterator.SeekToLast();
+          std::size_t count = forward.size();
+          while (moved.has_value() && iterator.valid()) {
+            Require(count != 0);
+            --count;
+            Require(AsStringView(iterator.key()) == forward[count].first);
+            Require(AsStringView(iterator.value()) == forward[count].second);
+            moved = iterator.Prev();
+          }
+          if (moved.has_value()) {
+            Require(count == 0);
+          }
+        } else {
+          moved = iterator.SeekToLast();
+          std::size_t steps = 0;
+          while (moved.has_value() && iterator.valid()) {
+            Require(steps++ <= input.size());
+            moved = iterator.Prev();
+          }
         }
-        Require(count == 0);
       }
       break;
     }
