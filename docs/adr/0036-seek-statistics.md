@@ -6,6 +6,9 @@
 [ADR-0057](0057-leveldb-version-output-parity.md) moves charging to the pinned
 second-file decision point, preserves a charge when that later search fails,
 and borrows the pinned version's file slot until the engine consumes it.
+[ADR-0053](0053-leveldb-read-path-parity.md)'s Milestone 5 audit correction
+moves budgets onto shared file metadata and removes map/shared/weak ownership
+work from charged Gets.
 
 ## Context
 
@@ -64,16 +67,15 @@ and `DBIter::ParseKey`'s sampling:
 
 Change:
 
-- **Budgets outside the metadata.** LevelDB decrements a counter in the file
-  metadata that versions share. Here file metadata is immutable
-  ([ADR-0027](0027-version-set.md)), so `SeekStatistics` keeps a budget per
-  shared metadata object, which versions share while they share the file.
-  An edit's new file is a new object, so it starts a new budget as in
-  LevelDB.
-- **One file to compact, tied to its version.** LevelDB keeps one in every
-  version, and only the current version's matters. Here `SeekStatistics`
-  keeps one for the version that was current when a charge produced it, and
-  ignores it once another version is current, as ADR-0034 requires.
+- **Runtime budget in shared metadata.** `FileMetadata::allowed_seeks` is
+  mutable only under the DB mutex and is not encoded in the MANIFEST. Versions
+  that share a metadata object share its remaining budget; every metadata
+  object created from an edit receives a fresh budget.
+- **Borrowed file to compact, tied to its version.** `SeekStatistics` retains
+  raw current-version identity and the exact borrowed file slot. The current
+  version owns that slot until version installation calls `Retain`. Owning
+  `SeekCompaction` materialization occurs only when background compaction
+  starts.
 - **Typed error plus charge.** A lookup returns its error and reports seek
   charge through a separate output. A failure in the first file charges
   nothing; a failure in a second or later file charges the first, as LevelDB
@@ -124,8 +126,8 @@ std::function<std::uint64_t()> ReadSamplingPeriods(std::uint32_t seed);
 class SeekStatistics final {
  public:
   bool Charge(const Version& version, const Version& current,
-              const std::shared_ptr<const Version>& current_owner,
               const SeekCharge& charge);
+  bool HasFileToCompact(const Version& current) const noexcept;
   std::optional<SeekCompaction> FileToCompact(const Version& current) const;
   void Retain(const Version& current);
 };
@@ -154,14 +156,13 @@ class SeekStatistics final {
   falling below zero as LevelDB's does. If the budget is then at most zero,
   `version` is `current`, and no file to compact is recorded for `current`,
   it records the file for `current` and returns true; otherwise it returns
-  false. `version` must hold the file at the charge's level.
-- Budgets are keyed by the `Version::File` itself, so a budget owns its
-  metadata object and no other object can take its place; neither addresses
-  nor file numbers identify a budget.
-- `FileToCompact` returns the recorded file if it was recorded for
-  `current`.
-- `Retain` forgets the budgets of files that `current` does not hold and a
-  file to compact recorded for another version.
+  false. The charge must borrow the exact file slot from `version` at the
+  charge's level.
+- `HasFileToCompact` checks only raw recorded identity for synchronous
+  scheduling. `FileToCompact` creates the shared file owner for background
+  compaction.
+- `Retain` forgets a file to compact recorded for another version. Budgets
+  stay with their shared metadata without a separate statistics map.
 - `SeekStatistics` is not thread-safe; the engine calls it with the database
   mutex held.
 
@@ -184,7 +185,8 @@ Unit tests cover:
 - `LookupValue`'s charge: none when a memtable decides, none when one file
   decides, the first file when a read searches two or more, across level 0
   and deeper levels, including a read that searches every file and finds
-  nothing; and none after an error.
+  nothing; none after a first-file error; and the first file after a later
+  error.
 - `SampleCharge` for keys that no file, one file, and several files hold,
   including level-0 files newest first and a deeper level's candidate, and
   samples on both sides of, and at, the boundary between two deeper-level
@@ -198,9 +200,9 @@ Unit tests cover:
 - `SeekStatistics`: the budget from the file size and its minimum, a file
   to compact once it runs out, only for the current version and only once,
   a budget shared by versions that share the file, a new budget for a new
-  metadata object, `Retain`, and an exhausted file charged again while
-  another file is recorded, which a new version that shares it records at
-  its next charge.
+  metadata object, raw-slot provenance, no charge-time shared ownership,
+  `Retain`, and an exhausted file charged again while another file is
+  recorded, which a new version that shares it records at its next charge.
 - Every line and branch of the new code, as required by
   [ADR-0019](0019-test-coverage-policy.md).
 

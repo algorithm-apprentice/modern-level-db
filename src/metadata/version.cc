@@ -5,12 +5,25 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace modern_leveldb {
+namespace {
+
+constexpr std::uint64_t BytesPerSeek = 16384;
+constexpr std::uint64_t MinimumSeeks = 100;
+
+std::int64_t InitialAllowedSeeks(std::uint64_t file_size) noexcept {
+  const std::uint64_t seeks = std::max(file_size / BytesPerSeek, MinimumSeeks);
+  return static_cast<std::int64_t>(
+      std::min(seeks, static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())));
+}
+
+}  // namespace
 
 std::span<const Version::File> Version::files(std::uint32_t level) const noexcept {
   assert(level < NumLevels);
@@ -43,8 +56,10 @@ Status VersionBuilder::Apply(const VersionEdit& edit) {
       return std::unexpected(Error::InvalidArgument("file " + std::to_string(added.file.number) +
                                                     " has its smallest key after its largest"));
     }
-    levels_[added.level].emplace(added.file.number,
-                                 std::make_shared<const FileMetadata>(added.file));
+    FileMetadata file = added.file;
+    file.allowed_seeks = InitialAllowedSeeks(file.file_size);
+    levels_[added.level].emplace(file.number,
+                                 std::make_shared<const FileMetadata>(std::move(file)));
   }
   return {};
 }

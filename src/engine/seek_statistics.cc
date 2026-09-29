@@ -1,29 +1,13 @@
 #include "engine/seek_statistics.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <functional>
-#include <map>
-#include <memory>
 #include <optional>
 #include <random>
-#include <set>
-#include <utility>
-
-#include "metadata/version_edit.h"
 
 namespace modern_leveldb {
-namespace {
-
-// LevelDB allows a file one seek per 16 KiB, and at least 100.
-constexpr std::uint64_t BytesPerSeek = 16384;
-constexpr std::int64_t MinimumSeeks = 100;
-
-std::int64_t InitialBudget(const FileMetadata& file) {
-  return std::max(static_cast<std::int64_t>(file.file_size / BytesPerSeek), MinimumSeeks);
-}
-
-}  // namespace
 
 std::function<std::uint64_t()> ReadSamplingPeriods(std::uint32_t seed) {
   // LevelDB's Random is the Park-Miller generator of std::minstd_rand0, and it
@@ -34,49 +18,45 @@ std::function<std::uint64_t()> ReadSamplingPeriods(std::uint32_t seed) {
 }
 
 bool SeekStatistics::Charge(const Version& version, const Version& current,
-                            const std::shared_ptr<const Version>& current_owner,
                             const SeekCharge& charge) {
-  std::int64_t& budget =
-      budgets_.try_emplace(*charge.file, InitialBudget(**charge.file)).first->second;
-  --budget;
-  if (budget > 0 || &version != &current || IsRecordedFor(current)) {
+  assert(charge.level < NumLevels);
+  assert(std::ranges::any_of(version.files(charge.level),
+                             [&](const Version::File& file) { return &file == charge.file; }));
+  const FileMetadata& file = **charge.file;
+  --file.allowed_seeks;
+  if (file.allowed_seeks > 0 || &version != &current || IsRecordedFor(current)) {
     return false;
   }
-  SeekCompaction compaction{.level = charge.level, .file = *charge.file};
-  recorded_ = std::move(compaction);
-  recorded_version_ = current_owner;
-  recorded_version_address_ = &current;
+  recorded_ = Recorded{
+      .version = &current,
+      .level = charge.level,
+      .file = charge.file,
+  };
   return true;
+}
+
+bool SeekStatistics::HasFileToCompact(const Version& current) const noexcept {
+  return IsRecordedFor(current);
 }
 
 std::optional<SeekCompaction> SeekStatistics::FileToCompact(const Version& current) const {
   if (!IsRecordedFor(current)) {
     return std::nullopt;
   }
-  return recorded_;
+  return SeekCompaction{
+      .level = recorded_->level,
+      .file = *recorded_->file,
+  };
 }
 
 void SeekStatistics::Retain(const Version& current) {
-  std::set<const FileMetadata*> held;
-  for (std::uint32_t level = 0; level < NumLevels; ++level) {
-    for (const Version::File& file : current.files(level)) {
-      held.insert(file.get());
-    }
-  }
-  std::erase_if(budgets_, [&](const auto& entry) { return !held.contains(entry.first.get()); });
-  if (recorded_version_address_ != &current) {
+  if (!IsRecordedFor(current)) {
     recorded_.reset();
-    recorded_version_.reset();
-    recorded_version_address_ = nullptr;
   }
 }
 
-bool SeekStatistics::IsRecordedFor(const Version& version) const {
-  if (!recorded_.has_value() || recorded_version_address_ != &version) {
-    return false;
-  }
-  const std::shared_ptr<const Version> recorded = recorded_version_.lock();
-  return recorded.get() == &version;
+bool SeekStatistics::IsRecordedFor(const Version& version) const noexcept {
+  return recorded_.has_value() && recorded_->version == &version;
 }
 
 }  // namespace modern_leveldb

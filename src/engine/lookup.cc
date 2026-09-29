@@ -117,22 +117,24 @@ Status ForEachOverlapping(const Version& version, const InternalKeyComparator& c
   using VisitorResult = std::remove_cvref_t<std::invoke_result_t<Visitor&, const Candidate&>>;
   static_assert(std::is_same_v<VisitorResult, bool> || std::is_same_v<VisitorResult, Result<bool>>);
   timer.Resume();
-  std::vector<Candidate> level0;
+  std::vector<const Version::File*> level0;
+  level0.reserve(version.files(0).size());
   for (const Version::File& file : version.files(0)) {
     if (comparator.user_comparator().Compare(user_key, file->smallest.user_key()) >= 0 &&
         comparator.user_comparator().Compare(user_key, file->largest.user_key()) <= 0) {
-      level0.push_back(Candidate{.level = 0, .file = &file});
+      level0.push_back(&file);
     }
   }
   // Level-0 files are numbered in the order they were written.
   std::ranges::sort(level0, std::ranges::greater{},
-                    [](const Candidate& candidate) { return (*candidate.file)->number; });
+                    [](const Version::File* file) { return (**file).number; });
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
   read_diagnostics::Add(read_diagnostics::Counter::Level0Candidates, level0.size());
 #endif
   timer.Pause();
 
-  for (const Candidate& candidate : level0) {
+  for (const Version::File* file : level0) {
+    const Candidate candidate{.level = 0, .file = file};
     if constexpr (std::is_same_v<VisitorResult, bool>) {
       if (!visitor(candidate)) {
         return {};

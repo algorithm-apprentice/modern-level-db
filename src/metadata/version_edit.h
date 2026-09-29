@@ -24,6 +24,8 @@ struct FileMetadata {
   std::uint64_t file_size;
   InternalKey smallest;
   InternalKey largest;
+  // Runtime seek budget; not encoded in the MANIFEST.
+  mutable std::int64_t allowed_seeks = 0;
 };
 
 struct CompactPointer {

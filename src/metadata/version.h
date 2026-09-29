@@ -17,7 +17,8 @@ namespace modern_leveldb {
 
 // The live table files of every level. Each level lists its files by smallest
 // internal key, with the file number breaking ties, and files in levels above 0
-// do not overlap. Versions are immutable and share file metadata.
+// do not overlap. Version topology is immutable. Versions share file metadata,
+// whose seek budget changes only under the database mutex.
 class Version final {
  public:
   using File = std::shared_ptr<const FileMetadata>;
