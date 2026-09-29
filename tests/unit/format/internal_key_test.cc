@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <random>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -36,9 +38,23 @@ class TestComparator final : public Comparator {
   }
 };
 
+class ReverseComparator final : public Comparator {
+ public:
+  int Compare(ByteView left, ByteView right) const noexcept override {
+    return BytewiseComparator().Compare(right, left);
+  }
+
+  std::string_view Name() const noexcept override { return "test.ReverseComparator"; }
+
+  void FindShortestSeparator(std::vector<std::byte>&, ByteView) const override {}
+  void FindShortSuccessor(std::vector<std::byte>&) const override {}
+};
+
 static_assert(std::is_constructible_v<InternalKeyComparator, TestComparator&>);
 static_assert(!std::is_constructible_v<InternalKeyComparator, TestComparator&&>);
 static_assert(!std::is_constructible_v<InternalKeyComparator, const TestComparator&&>);
+static_assert(std::is_constructible_v<TrustedInternalKeyComparator, const InternalKeyComparator&>);
+static_assert(!std::is_constructible_v<TrustedInternalKeyComparator, InternalKeyComparator&&>);
 static_assert(!std::is_copy_constructible_v<LookupKey>);
 static_assert(!std::is_copy_assignable_v<LookupKey>);
 static_assert(std::is_move_constructible_v<LookupKey>);
@@ -72,6 +88,8 @@ std::vector<std::byte> Encoded(std::string_view user_key, SequenceNumber sequenc
   return Encoded(AsBytes(user_key), sequence, kind);
 }
 
+int Sign(int value) noexcept { return (value > 0) - (value < 0); }
+
 TEST(InternalKeyTest, PersistentConstantsMatchLevelDb) {
   EXPECT_EQ(static_cast<std::uint8_t>(ValueKind::Deletion), 0U);
   EXPECT_EQ(static_cast<std::uint8_t>(ValueKind::Value), 1U);
@@ -87,8 +105,17 @@ TEST(LookupKeyTest, MatchesLevelDbGoldenEncodingAndViews) {
   EXPECT_EQ(std::vector<std::byte>(key->memtable_key().begin(), key->memtable_key().end()),
             Bytes({
                 0x0b,
-                0x66, 0x6f, 0x6f,
-                0x01, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00,
+                0x66,
+                0x6f,
+                0x6f,
+                0x01,
+                0x06,
+                0x05,
+                0x04,
+                0x03,
+                0x02,
+                0x01,
+                0x00,
             }));
   EXPECT_EQ(AsStringView(key->user_key()), "foo");
   EXPECT_EQ(key->internal_key().data(), key->memtable_key().data() + 1);
@@ -301,6 +328,21 @@ TEST(InternalKeyComparatorTest, ExposesItsUserComparator) {
   EXPECT_EQ(&comparator.user_comparator(), &BytewiseComparator());
 }
 
+TEST(InternalKeyComparatorTest, TrustedAdapterForwardsNonComparisonOperations) {
+  const InternalKeyComparator comparator(BytewiseComparator());
+  const TrustedInternalKeyComparator trusted(comparator);
+  EXPECT_EQ(trusted.Name(), comparator.Name());
+
+  std::vector<std::byte> separator = Encoded("foo", 100, ValueKind::Value);
+  const std::vector<std::byte> limit = Encoded("hello", 200, ValueKind::Value);
+  trusted.FindShortestSeparator(separator, limit);
+  EXPECT_EQ(separator, Encoded("g", MaxSequenceNumber, SeekValueKind));
+
+  std::vector<std::byte> successor = Encoded("foo", 100, ValueKind::Value);
+  trusted.FindShortSuccessor(successor);
+  EXPECT_EQ(successor, Encoded("g", MaxSequenceNumber, SeekValueKind));
+}
+
 TEST(InternalKeyComparatorTest, OrdersUserKeyAscendingAndTrailerDescending) {
   InternalKeyComparator comparator(BytewiseComparator());
   const InternalKey a_new = MakeKey("a", 100, ValueKind::Value);
@@ -314,6 +356,50 @@ TEST(InternalKeyComparatorTest, OrdersUserKeyAscendingAndTrailerDescending) {
   EXPECT_GT(comparator.Compare(b, a_new), 0);
   EXPECT_EQ(comparator.Compare(a_new, a_new), 0);
 }
+
+TEST(InternalKeyComparatorTest, TrustedComparisonMatchesDefensiveComparisonForValidKeys) {
+  std::mt19937_64 random(20260924);
+  std::uniform_int_distribution<std::size_t> length(0, 64);
+  std::uniform_int_distribution<unsigned int> byte(0, 255);
+  std::uniform_int_distribution<SequenceNumber> sequence(0, MaxSequenceNumber);
+  std::uniform_int_distribution<unsigned int> kind(0, 1);
+  const ReverseComparator reverse;
+
+  for (const Comparator* user_comparator :
+       {&BytewiseComparator(), static_cast<const Comparator*>(&reverse)}) {
+    const InternalKeyComparator comparator(*user_comparator);
+    const TrustedInternalKeyComparator trusted(comparator);
+    for (int iteration = 0; iteration < 5000; ++iteration) {
+      std::vector<std::byte> left_user(length(random));
+      std::vector<std::byte> right_user(length(random));
+      for (std::byte& value : left_user) {
+        value = static_cast<std::byte>(byte(random));
+      }
+      for (std::byte& value : right_user) {
+        value = static_cast<std::byte>(byte(random));
+      }
+      const std::vector<std::byte> left =
+          Encoded(left_user, sequence(random), static_cast<ValueKind>(kind(random)));
+      const std::vector<std::byte> right =
+          Encoded(right_user, sequence(random), static_cast<ValueKind>(kind(random)));
+
+      EXPECT_EQ(Sign(trusted.Compare(left, right)), Sign(comparator.Compare(left, right)));
+      EXPECT_EQ(Sign(comparator.CompareTrusted(left, right)),
+                Sign(comparator.Compare(left, right)));
+    }
+  }
+}
+
+#ifndef NDEBUG
+TEST(InternalKeyComparatorDeathTest, TrustedComparisonRejectsShortOperands) {
+  const InternalKeyComparator comparator(BytewiseComparator());
+  const std::vector<std::byte> short_key(InternalKeyTrailerSize - 1);
+  const std::vector<std::byte> valid = Encoded("valid", 1, ValueKind::Value);
+
+  EXPECT_DEATH(static_cast<void>(comparator.CompareTrusted(short_key, valid)), "");
+  EXPECT_DEATH(static_cast<void>(comparator.CompareTrusted(valid, short_key)), "");
+}
+#endif
 
 TEST(InternalKeyComparatorTest, GivesMalformedKeysDeterministicTotalOrder) {
   InternalKeyComparator comparator(BytewiseComparator());

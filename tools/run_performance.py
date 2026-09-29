@@ -298,7 +298,8 @@ def validate_mutation_completion(report, case, specification, smoke):
     return report
 
 
-def validate_read_diagnostics(report, case, modern_file_access="default"):
+def validate_read_diagnostics(
+        report, case, modern_file_access="default", historical_schema2=False):
     if case not in READ_DIAGNOSTIC_CASES:
         raise ValueError("unsupported read diagnostic case")
     if modern_file_access not in ("default", "mmap"):
@@ -315,7 +316,7 @@ def validate_read_diagnostics(report, case, modern_file_access="default"):
     if not isinstance(report, dict) or set(report) != fields:
         raise ValueError("invalid read diagnostic schema")
     expected = {
-        "schema_version": 2,
+        "schema_version": 2 if historical_schema2 else 3,
         "case": case,
         "operations": READ_DIAGNOSTIC_OPERATIONS,
         "sample_schedule": READ_DIAGNOSTIC_SAMPLE_SCHEDULE,
@@ -418,8 +419,11 @@ def validate_read_diagnostics(report, case, modern_file_access="default"):
             raise ValueError("mmap copied blocks have no persisted fallback reason")
     elif totals["mapped_view_blocks"] != 0:
         raise ValueError("default diagnostics unexpectedly used mapped block views")
-    if totals["validation_entries"] < totals["decoded_blocks"]:
-        raise ValueError("decoded blocks have no validated entries")
+    if historical_schema2:
+        if totals["validation_entries"] < totals["decoded_blocks"]:
+            raise ValueError("decoded blocks have no validated entries")
+    elif totals["validation_entries"] != 0:
+        raise ValueError("lazy block diagnostics performed eager entry validation")
     if totals["files_searched"] < totals["sstable_hits"]:
         raise ValueError("SSTable hits exceed searched files")
     if totals["index_entries_decoded"] < totals["files_searched"]:
@@ -499,7 +503,9 @@ def validate_read_diagnostics(report, case, modern_file_access="default"):
     return report
 
 
-def compare_read_diagnostics(baseline, candidate, case, tolerance_percent=2.0):
+def compare_read_diagnostics(
+        baseline, candidate, case, tolerance_percent=2.0,
+        historical_schema2_baseline=False):
     _, _, records = case_parts(case)
     if records != 65536:
         raise ValueError("storage-work comparison requires a 65,536-record case")
@@ -507,7 +513,16 @@ def compare_read_diagnostics(baseline, candidate, case, tolerance_percent=2.0):
             or baseline.get("operations") != READ_DIAGNOSTIC_OPERATIONS
             or candidate.get("operations") != READ_DIAGNOSTIC_OPERATIONS):
         raise ValueError("read diagnostic comparison uses different work")
+    if candidate.get("schema_version") != 3:
+        raise ValueError("read diagnostic candidate must use schema 3")
+    baseline_schema = baseline.get("schema_version")
+    if baseline_schema == 2:
+        if not historical_schema2_baseline:
+            raise ValueError("schema-2 baseline requires explicit historical selection")
+    elif baseline_schema != 3:
+        raise ValueError("read diagnostic baseline must use schema 3")
     result = {}
+    incomparable = {}
     for name in READ_DIAGNOSTIC_COMPARISON_COUNTERS:
         try:
             before = baseline["counters"][name]["per_get"]
@@ -516,6 +531,13 @@ def compare_read_diagnostics(baseline, candidate, case, tolerance_percent=2.0):
             raise ValueError(f"missing read diagnostic comparison counter: {name}") from None
         if not number(before) or not number(after):
             raise ValueError(f"invalid read diagnostic comparison counter: {name}")
+        if baseline_schema == 2 and name == "validation_entries":
+            incomparable[name] = {
+                "baseline_per_get": before,
+                "candidate_per_get": after,
+                "reason": "eager and lazy block-validation schemas are not comparable",
+            }
+            continue
         if before == 0:
             if after != 0:
                 raise ValueError(f"read diagnostic counter changed from zero: {name}")
@@ -532,10 +554,11 @@ def compare_read_diagnostics(baseline, candidate, case, tolerance_percent=2.0):
             "delta_percent": delta_percent,
         }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "case": case,
         "tolerance_percent": tolerance_percent,
         "counters": result,
+        "incomparable_counters": incomparable,
     }
 
 

@@ -90,7 +90,8 @@ def completion(case="modern/readrandom/4096"):
     }
 
 
-def diagnostic_report(case="modern/readrandom/4096", modern_file_access="default"):
+def diagnostic_report(
+        case="modern/readrandom/4096", modern_file_access="default", schema_version=3):
     _, workload, records = case.split("/")
     counters = {
         name: {"total": 0, "per_get": 0.0}
@@ -170,11 +171,12 @@ def diagnostic_report(case="modern/readrandom/4096", modern_file_access="default
             "total": total,
             "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
         }
-        total = misses * 16
-        counters["validation_entries"] = {
-            "total": total,
-            "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
-        }
+        if schema_version == 2:
+            total = misses * 16
+            counters["validation_entries"] = {
+                "total": total,
+                "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
+            }
     if workload == "readrandom":
         total = READ_DIAGNOSTIC_OPERATIONS * 256
         counters["result_bytes"] = {"total": total, "per_get": 256.0}
@@ -240,7 +242,7 @@ def diagnostic_report(case="modern/readrandom/4096", modern_file_access="default
         "read_diagnostics_compiled": "true",
     }
     return {
-        "schema_version": 2,
+        "schema_version": schema_version,
         "case": case,
         "operations": READ_DIAGNOSTIC_OPERATIONS,
         "sample_schedule": READ_DIAGNOSTIC_SAMPLE_SCHEDULE,
@@ -477,6 +479,39 @@ class ReadDiagnosticsReportTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_read_diagnostics(changed, "modern/readrandom/4096")
 
+        changed = diagnostic_report()
+        changed["counters"]["validation_entries"] = {
+            "total": 1,
+            "per_get": 1 / READ_DIAGNOSTIC_OPERATIONS,
+        }
+        with self.assertRaises(ValueError):
+            validate_read_diagnostics(changed, "modern/readrandom/4096")
+
+    def test_accepts_schema2_only_as_an_explicit_historical_report(self):
+        historical = diagnostic_report(
+            "modern/readmissing/65536", schema_version=2
+        )
+        with self.assertRaises(ValueError):
+            validate_read_diagnostics(
+                historical, "modern/readmissing/65536"
+            )
+        validate_read_diagnostics(
+            historical,
+            "modern/readmissing/65536",
+            historical_schema2=True,
+        )
+
+        historical["counters"]["validation_entries"] = {
+            "total": 0,
+            "per_get": 0.0,
+        }
+        with self.assertRaises(ValueError):
+            validate_read_diagnostics(
+                historical,
+                "modern/readmissing/65536",
+                historical_schema2=True,
+            )
+
     def test_rejects_incomplete_counter_stage_and_build_provenance(self):
         for section, key in (
             ("counters", "files_searched"),
@@ -512,6 +547,99 @@ class ReadDiagnosticsReportTest(unittest.TestCase):
                 compare_read_diagnostics(
                     baseline, changed, "modern/readmissing/65536"
                 )
+
+    def test_compares_historical_schema2_without_validation_entry_drift(self):
+        baseline = diagnostic_report(
+            "modern/readmissing/65536", schema_version=2
+        )
+        candidate = diagnostic_report(
+            "modern/readmissing/65536", "mmap"
+        )
+        with self.assertRaises(ValueError):
+            compare_read_diagnostics(
+                baseline, candidate, "modern/readmissing/65536"
+            )
+        result = compare_read_diagnostics(
+            baseline,
+            candidate,
+            "modern/readmissing/65536",
+            historical_schema2_baseline=True,
+        )
+        self.assertNotIn("validation_entries", result["counters"])
+        self.assertEqual(
+            set(result["incomparable_counters"]), {"validation_entries"}
+        )
+        self.assertGreater(
+            result["incomparable_counters"]["validation_entries"][
+                "baseline_per_get"
+            ],
+            0,
+        )
+        self.assertEqual(
+            result["incomparable_counters"]["validation_entries"][
+                "candidate_per_get"
+            ],
+            0,
+        )
+
+        schema2_candidate = diagnostic_report(
+            "modern/readmissing/65536", "mmap", schema_version=2
+        )
+        with self.assertRaises(ValueError):
+            compare_read_diagnostics(
+                baseline,
+                schema2_candidate,
+                "modern/readmissing/65536",
+                historical_schema2_baseline=True,
+            )
+
+    def test_comparison_cli_requires_the_historical_schema2_flag(self):
+        case = "modern/readmissing/65536"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            baseline = root / "baseline.json"
+            candidate = root / "candidate.json"
+            baseline.write_text(json.dumps(
+                diagnostic_report(case, schema_version=2)
+            ))
+            candidate.write_text(json.dumps(
+                diagnostic_report(case, "mmap")
+            ))
+            command = [
+                sys.executable,
+                str(ROOT / "tools" / "compare_read_diagnostics.py"),
+                "--baseline", str(baseline),
+                "--candidate", str(candidate),
+                "--case", case,
+            ]
+
+            rejected = subprocess.run(
+                command, capture_output=True, text=True, check=False
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            accepted = subprocess.run(
+                command + ["--historical-schema2-baseline"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            comparison = json.loads(accepted.stdout)
+            self.assertEqual(
+                set(comparison["incomparable_counters"]),
+                {"validation_entries"},
+            )
+
+            candidate.write_text(json.dumps(
+                diagnostic_report(case, "mmap", schema_version=2)
+            ))
+            rejected_candidate = subprocess.run(
+                command + ["--historical-schema2-baseline"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(rejected_candidate.returncode, 0)
 
     def test_accepts_completed_short_random_reads(self):
         changed = diagnostic_report("modern/readmissing/65536")

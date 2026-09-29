@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--case", required=True)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--historical-schema2-baseline", action="store_true")
     args = parser.parse_args()
     try:
         baseline = read_json(args.baseline)
@@ -27,10 +28,26 @@ def main():
             read_json(args.candidate), args.case, modern_file_access="mmap"
         )
         if baseline.get("schema_version") == 2:
+            if not args.historical_schema2_baseline:
+                raise ValueError(
+                    "schema-2 baseline requires --historical-schema2-baseline"
+                )
+            baseline = validate_read_diagnostics(
+                baseline,
+                args.case,
+                modern_file_access="default",
+                historical_schema2=True,
+            )
+        else:
             baseline = validate_read_diagnostics(
                 baseline, args.case, modern_file_access="default"
             )
-        comparison = compare_read_diagnostics(baseline, candidate, args.case)
+        comparison = compare_read_diagnostics(
+            baseline,
+            candidate,
+            args.case,
+            historical_schema2_baseline=args.historical_schema2_baseline,
+        )
         if args.output is not None:
             if args.output.exists():
                 raise FileExistsError(args.output)

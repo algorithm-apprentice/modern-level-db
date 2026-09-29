@@ -649,7 +649,7 @@ class Fixture final {
     std::ofstream output(path);
     output.imbue(std::locale::classic());
     output << std::setprecision(17);
-    output << "{\"schema_version\":2,\"case\":";
+    output << "{\"schema_version\":3,\"case\":";
     WriteJsonString(output, selected_.name);
     output << ",\"operations\":" << DiagnosticOperations << ",\"sample_schedule\":\"splitmix64-v1\""
            << ",\"sample_seed\":" << diagnostics_.sample_seed

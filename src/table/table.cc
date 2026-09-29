@@ -87,8 +87,8 @@ Result<std::vector<std::byte>> ReadStoredBlock(const RandomAccessFile& file,
   return DecodeStoredBlock(std::move(stored));
 }
 
-Result<Block> ReadBlock(const RandomAccessFile& file, std::uint64_t blocks_end, BlockHandle handle,
-                        const Comparator& comparator) {
+Result<Block> ReadBlock(const RandomAccessFile& file, std::uint64_t blocks_end,
+                        BlockHandle handle) {
   Result<std::vector<std::byte>> contents = ReadStoredBlock(file, blocks_end, handle);
   if (!contents.has_value()) {
     return std::unexpected(std::move(contents).error());
@@ -96,19 +96,7 @@ Result<Block> ReadBlock(const RandomAccessFile& file, std::uint64_t blocks_end, 
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
   read_diagnostics::StageScope construction(read_diagnostics::Stage::BlockConstruction);
 #endif
-  return Block::Create(std::move(*contents), comparator);
-}
-
-Result<Block> ReadBlockWithTrustedKeyOrder(const RandomAccessFile& file, std::uint64_t blocks_end,
-                                           BlockHandle handle, const Comparator& comparator) {
-  Result<std::vector<std::byte>> contents = ReadStoredBlock(file, blocks_end, handle);
-  if (!contents.has_value()) {
-    return std::unexpected(std::move(contents).error());
-  }
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-  read_diagnostics::StageScope construction(read_diagnostics::Stage::BlockConstruction);
-#endif
-  return Block::CreateWithTrustedKeyOrder(std::move(*contents), comparator);
+  return Block::Create(std::move(*contents));
 }
 
 // Decodes an index value, which Open validated.
@@ -121,34 +109,49 @@ BlockHandle IndexHandle(ByteView value) {
 // Checks that the index values are handles of blocks before the footer that
 // follow one another without overlapping, so that an offset identifies a block
 // in the block cache.
-Status ValidateIndex(const Block& index, std::uint64_t blocks_end) {
+Status ValidateIndex(const Block& index, std::uint64_t blocks_end, bool trusted_internal_keys) {
   std::uint64_t next_offset = 0;
-  Block::Iterator entry(index);
-  for (entry.SeekToFirst(); entry.valid(); entry.Next()) {
-    ByteView value = entry.value();
-    const Result<BlockHandle> handle = ConsumeBlockHandle(value);
-    if (!handle.has_value() || !value.empty() || !InBlockRegion(*handle, blocks_end)) {
-      return std::unexpected(Error::Corruption("table index value is not a block handle"));
-    }
-    if (handle->offset < next_offset) {
-      return std::unexpected(Error::Corruption("table index blocks overlap"));
-    }
-    next_offset = handle->offset + handle->size + BlockTrailerSize;
-  }
-  return {};
+  return index.ValidateEntries(  // GCOVR_EXCL_BR_LINE: GCC 13 closure cleanup
+      [&](ByteView key, ByteView encoded_value) -> Status {  // GCOVR_EXCL_LINE: GCC 13 misses invocation
+        if (trusted_internal_keys) {
+          const Result<ParsedInternalKey> parsed = ParseInternalKey(key);
+          if (!parsed.has_value()) {
+            return std::unexpected(parsed.error());
+          }
+        }
+        ByteView value = encoded_value;
+        const Result<BlockHandle> handle = ConsumeBlockHandle(value);
+        if (!handle.has_value() || !value.empty() || !InBlockRegion(*handle, blocks_end)) {
+          return std::unexpected(Error::Corruption("table index value is not a block handle"));
+        }
+        if (handle->offset < next_offset) {
+          return std::unexpected(Error::Corruption("table index blocks overlap"));
+        }
+        next_offset = handle->offset + handle->size + BlockTrailerSize;
+        return {};
+      });
 }
 
 // Reads the filter block that the metaindex maps to the policy, if any.
 Status ReadFilter(const RandomAccessFile& file, std::uint64_t blocks_end, BlockHandle metaindex,
                   BloomFilterPolicy policy, std::optional<FilterBlockReader>& filter) {
-  const Result<Block> meta = ReadBlock(file, blocks_end, metaindex, BytewiseComparator());
+  const Result<Block> meta = ReadBlock(file, blocks_end, metaindex);
   if (!meta.has_value()) {
     return std::unexpected(meta.error());
   }
+  const Status valid = meta->ValidateEntries([](ByteView, ByteView) -> Status { return {}; });
+  if (!valid.has_value()) {
+    return valid;
+  }
   std::string key = "filter.";
   key.append(policy.Name());
-  Block::Iterator entry(*meta);
-  entry.Seek(AsBytes(key));
+  Block::Iterator entry(*meta, BytewiseComparator());
+  const Status sought = entry.Seek(AsBytes(key));
+  // GCOVR_EXCL_START: full physical validation makes metaindex seek infallible
+  if (!sought.has_value()) {
+    return sought;
+  }
+  // GCOVR_EXCL_STOP
   if (!entry.valid() || AsStringView(entry.key()) != key) {
     return {};
   }
@@ -193,11 +196,12 @@ Result<std::unique_ptr<Table>> Table::Open(std::unique_ptr<RandomAccessFile> fil
     return std::unexpected(footer.error());
   }
 
-  Result<Block> index = ReadBlock(*file, blocks_end, footer->index, comparator);
+  Result<Block> index = ReadBlock(*file, blocks_end, footer->index);
   if (!index.has_value()) {
     return std::unexpected(std::move(index).error());
   }
-  const Status valid = ValidateIndex(*index, blocks_end);
+  const Status valid =
+      ValidateIndex(*index, blocks_end, options.use_trusted_internal_key_comparison);
   if (!valid.has_value()) {
     return std::unexpected(valid.error());
   }
@@ -212,35 +216,51 @@ Result<std::unique_ptr<Table>> Table::Open(std::unique_ptr<RandomAccessFile> fil
   }
 
   const std::uint64_t cache_id = options.block_cache != nullptr ? options.block_cache->NewId() : 0;
-  return std::unique_ptr<Table>(new Table(std::move(file), blocks_end, comparator,
-                                          std::move(*index), std::move(filter), options.block_cache,
-                                          cache_id));
+  // GCOVR_EXCL_START: allocation failure propagates as an exception
+  auto table = std::unique_ptr<Table>(new Table(
+      std::move(file), blocks_end, comparator, options.use_trusted_internal_key_comparison,
+      std::move(*index), std::move(filter), options.block_cache, cache_id));
+  // GCOVR_EXCL_STOP
+  return table;
 }
 
+// GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
 Table::Table(std::unique_ptr<RandomAccessFile> file, std::uint64_t blocks_end,
-             const InternalKeyComparator& comparator, Block index,
+             const InternalKeyComparator& comparator, bool trusted_internal_keys, Block index,
              std::optional<FilterBlockReader> filter, BlockCache* block_cache,
              std::uint64_t cache_id) noexcept
     : file_(std::move(file)),
       blocks_end_(blocks_end),
       comparator_(&comparator),
+      trusted_comparator_(comparator),
+      block_comparator_(trusted_internal_keys ? static_cast<const Comparator*>(&trusted_comparator_)
+                                              : static_cast<const Comparator*>(comparator_)),
+      block_key_format_(trusted_internal_keys ? BlockKeyFormat::Internal
+                                              : BlockKeyFormat::Arbitrary),
       index_(std::move(index)),
       filter_(std::move(filter)),
       block_cache_(block_cache),
       cache_id_(cache_id) {}
+// GCOVR_EXCL_STOP
 
 Result<std::optional<TableLookup>> Table::Get(const LookupKey& key,
                                               const TableReadOptions& options) const {
-  Block::Iterator index(index_);
+  Block::Iterator index(index_, *block_comparator_, block_key_format_);
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
+  Status index_sought;
   {
     read_diagnostics::BlockRoleScope role(read_diagnostics::BlockRole::Index);
     read_diagnostics::StageScope seek(read_diagnostics::Stage::IndexSeek);
-    index.Seek(key.internal_key());
+    index_sought = index.Seek(key.internal_key());
   }
 #else
-  index.Seek(key.internal_key());
+  const Status index_sought = index.Seek(key.internal_key());
 #endif
+  // GCOVR_EXCL_START: full physical index validation makes this seek infallible
+  if (!index_sought.has_value()) {
+    return std::unexpected(index_sought.error());
+  }
+  // GCOVR_EXCL_STOP
   if (!index.valid()) {
     return std::optional<TableLookup>();
   }
@@ -253,28 +273,33 @@ Result<std::optional<TableLookup>> Table::Get(const LookupKey& key,
   if (!block.has_value()) {
     return std::unexpected(block.error());
   }
-  Block::Iterator entry(block->block());
+  Block::Iterator entry(block->block(), *block_comparator_, block_key_format_);
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
+  Status data_sought;
   {
     read_diagnostics::BlockRoleScope role(read_diagnostics::BlockRole::Data);
     read_diagnostics::StageScope seek(read_diagnostics::Stage::DataSeek);
-    entry.Seek(key.internal_key());
+    data_sought = entry.Seek(key.internal_key());
   }
 #else
-  entry.Seek(key.internal_key());
+  const Status data_sought = entry.Seek(key.internal_key());
 #endif
+  if (!data_sought.has_value()) {
+    return std::unexpected(data_sought.error());
+  }
   if (!entry.valid()) {
     return std::optional<TableLookup>();
   }
-  // The comparator orders invalid internal keys before every valid one, such
-  // as the lookup key, so the entry is valid.
-  const ParsedInternalKey parsed = ParseInternalKey(entry.key()).value();
-  if (comparator_->user_comparator().Compare(parsed.user_key, key.user_key()) != 0) {
+  const Result<ParsedInternalKey> parsed = ParseInternalKey(entry.key());
+  if (!parsed.has_value()) {
+    return std::unexpected(parsed.error());
+  }
+  if (comparator_->user_comparator().Compare(parsed->user_key, key.user_key()) != 0) {
     return std::optional<TableLookup>();
   }
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
   TableLookup lookup;
-  lookup.kind = parsed.kind;
+  lookup.kind = parsed->kind;
   {
     read_diagnostics::StageScope copy(read_diagnostics::Stage::ResultCopy);
     read_diagnostics::Add(read_diagnostics::Counter::ResultBytes, entry.value().size());
@@ -282,7 +307,7 @@ Result<std::optional<TableLookup>> Table::Get(const LookupKey& key,
   }
 #else
   TableLookup lookup{
-      .kind = parsed.kind,
+      .kind = parsed->kind,
       .value = std::vector<std::byte>(entry.value().begin(), entry.value().end()),
   };
 #endif
@@ -318,7 +343,7 @@ Result<Table::BlockReference> Table::ReadDataBlock(BlockHandle handle,
 #endif
   }
 
-  Result<Block> block = ReadBlockWithTrustedKeyOrder(*file_, blocks_end_, handle, *comparator_);
+  Result<Block> block = ReadBlock(*file_, blocks_end_, handle);
   if (!block.has_value()) {
     return std::unexpected(std::move(block).error());
   }
@@ -335,8 +360,12 @@ Result<Table::BlockReference> Table::ReadDataBlock(BlockHandle handle,
   return BlockReference(std::move(owned));
 }
 
+// GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
 Table::Iterator::Iterator(const Table& table, const TableReadOptions& options) noexcept
-    : table_(&table), options_(options), index_(table.index_) {}
+    : table_(&table),
+      options_(options),
+      index_(table.index_, *table.block_comparator_, table.block_key_format_) {}
+// GCOVR_EXCL_STOP
 
 ByteView Table::Iterator::key() const noexcept {
   assert(valid());
@@ -349,51 +378,96 @@ ByteView Table::Iterator::value() const noexcept {
 }
 
 Status Table::Iterator::SeekToFirst() {
-  index_.SeekToFirst();
+  const Status sought = index_.SeekToFirst();
+  // GCOVR_EXCL_START: full physical index validation makes this move infallible
+  if (!sought.has_value()) {
+    return Fail(sought.error());
+  }
+  // GCOVR_EXCL_STOP
   return EnterBlock(Edge::First);
 }
 
 Status Table::Iterator::SeekToLast() {
-  index_.SeekToLast();
+  const Status sought = index_.SeekToLast();
+  // GCOVR_EXCL_START: full physical index validation makes this move infallible
+  if (!sought.has_value()) {
+    return Fail(sought.error());
+  }
+  // GCOVR_EXCL_STOP
   return EnterBlock(Edge::Last);
 }
 
 Status Table::Iterator::Seek(ByteView target) {
-  index_.Seek(target);
+  if (table_->block_key_format_ == BlockKeyFormat::Internal) {
+    const Result<ParsedInternalKey> parsed = ParseInternalKey(target);
+    if (!parsed.has_value()) {
+      return Fail(parsed.error());
+    }
+  }
+  const Status index_sought = index_.Seek(target);
+  // GCOVR_EXCL_START: validated index bytes and target make this seek infallible
+  if (!index_sought.has_value()) {
+    return Fail(index_sought.error());
+  }
+  // GCOVR_EXCL_STOP
   const Status loaded = LoadBlock();
   if (!loaded.has_value()) {
-    return loaded;
+    return Fail(loaded.error());
   }
   if (!data_.has_value()) {
     return {};
   }
-  data_->Seek(target);
+  const Status data_sought = data_->Seek(target);
+  if (!data_sought.has_value()) {
+    return Fail(data_sought.error());
+  }
   if (data_->valid()) {
-    return {};
+    return ValidatePosition();
   }
   // The target follows the block's last key, and the next block starts after
   // the target.
-  index_.Next();
+  const Status advanced = index_.Next();
+  // GCOVR_EXCL_START: full physical index validation makes this move infallible
+  if (!advanced.has_value()) {
+    return Fail(advanced.error());
+  }
+  // GCOVR_EXCL_STOP
   return EnterBlock(Edge::First);
 }
 
 Status Table::Iterator::Next() {
   assert(valid());
-  data_->Next();
-  if (data_->valid()) {
-    return {};
+  const Status advanced_data = data_->Next();
+  if (!advanced_data.has_value()) {
+    return Fail(advanced_data.error());
   }
-  index_.Next();
+  if (data_->valid()) {
+    return ValidatePosition();
+  }
+  const Status advanced_index = index_.Next();
+  // GCOVR_EXCL_START: full physical index validation makes this move infallible
+  if (!advanced_index.has_value()) {
+    return Fail(advanced_index.error());
+  }
+  // GCOVR_EXCL_STOP
   return EnterBlock(Edge::First);
 }
 
 Status Table::Iterator::Prev() {
   assert(valid());
-  data_->Prev();
-  if (data_->valid()) {
-    return {};
+  const Status retreated_data = data_->Prev();
+  if (!retreated_data.has_value()) {
+    return Fail(retreated_data.error());
   }
-  index_.Prev();
+  if (data_->valid()) {
+    return ValidatePosition();
+  }
+  const Status retreated_index = index_.Prev();
+  // GCOVR_EXCL_START: full physical index validation makes this move infallible
+  if (!retreated_index.has_value()) {
+    return Fail(retreated_index.error());
+  }
+  // GCOVR_EXCL_STOP
   return EnterBlock(Edge::Last);
 }
 
@@ -408,23 +482,49 @@ Status Table::Iterator::LoadBlock() {
     return std::unexpected(std::move(block).error());
   }
   block_.emplace(std::move(*block));
-  data_.emplace(block_->block());
+  data_.emplace(block_->block(), *table_->block_comparator_, table_->block_key_format_);
   return {};
 }
 
 Status Table::Iterator::EnterBlock(Edge edge) {
   const Status loaded = LoadBlock();
   if (!loaded.has_value()) {
-    return loaded;
+    return Fail(loaded.error());
   }
   if (data_.has_value()) {
+    Status positioned;
     if (edge == Edge::First) {
-      data_->SeekToFirst();
+      positioned = data_->SeekToFirst();
     } else {
-      data_->SeekToLast();
+      positioned = data_->SeekToLast();
     }
+    if (!positioned.has_value()) {
+      return Fail(positioned.error());
+    }
+    if (!data_->valid()) {
+      return Fail(Error::Corruption("table data block has no reachable entry"));
+    }
+    return ValidatePosition();
   }
   return {};
+}
+
+Status Table::Iterator::ValidatePosition() {
+  assert(data_.has_value() && data_->valid());
+  if (table_->block_key_format_ != BlockKeyFormat::Internal) {
+    return {};
+  }
+  const Result<ParsedInternalKey> parsed = ParseInternalKey(data_->key());
+  if (!parsed.has_value()) {
+    return Fail(parsed.error());
+  }
+  return {};
+}
+
+Status Table::Iterator::Fail(Error error) {
+  data_.reset();
+  block_.reset();
+  return std::unexpected(std::move(error));
 }
 
 }  // namespace modern_leveldb

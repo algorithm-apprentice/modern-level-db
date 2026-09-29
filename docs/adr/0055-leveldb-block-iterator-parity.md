@@ -2,8 +2,8 @@
 
 ## Status
 
-Proposed design. Complete a bounded GPT-5.6 Sol review and merge this
-design-only ADR before ADR-0053 Milestone 2 implementation.
+Accepted design. Design PR #67 completed bounded GPT-5.6 Sol review and
+merged before this ADR-0053 Milestone 2 implementation began.
 
 ## Context
 

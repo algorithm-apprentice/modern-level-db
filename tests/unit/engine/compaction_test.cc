@@ -23,6 +23,7 @@
 #include "engine/table_cache.h"
 #include "format/internal_key.h"
 #include "memory/memtable.h"
+#include "metadata/filenames.h"
 #include "metadata/version.h"
 #include "metadata/version_edit.h"
 #include "modern_leveldb/base/bytes.h"
@@ -30,6 +31,7 @@
 #include "modern_leveldb/base/result.h"
 #include "support/memory_file_system.h"
 #include "support/scripted_iterator.h"
+#include "support/table_file.h"
 #include "table/table.h"
 
 namespace modern_leveldb {
@@ -98,6 +100,18 @@ class Harness {
                             memtable, number);
     EXPECT_TRUE(built.has_value() && built->has_value());
     return std::move(built).value().value();
+  }
+
+  FileMetadata WriteRawTable(std::uint64_t number, std::vector<std::byte> contents,
+                             std::string_view smallest, std::string_view largest) {
+    const std::uint64_t file_size = contents.size();
+    file_system.Write(TableFileName(directory, number), std::move(contents));
+    return FileMetadata{
+        .number = number,
+        .file_size = file_size,
+        .smallest = Key(smallest, 1),
+        .largest = Key(largest, 1),
+    };
   }
 
   std::shared_ptr<const Version> MakeVersion(
@@ -201,7 +215,9 @@ class Harness {
   const std::filesystem::path directory = std::filesystem::path("db");
   InternalKeyComparator comparator{BytewiseComparator()};
   BlockCache blocks{std::size_t{1} << 20U};
-  TableOptions table_options{.filter_policy = std::nullopt, .block_cache = &blocks};
+  TableOptions table_options{.filter_policy = std::nullopt,
+                             .block_cache = &blocks,
+                             .use_trusted_internal_key_comparison = true};
   TableCache cache{file_system, directory, comparator, table_options, 100};
   CompactionOptions options;
   std::vector<std::uint64_t> numbers;
@@ -470,6 +486,26 @@ TEST(CompactionTest, RejectsAKeyThatIsNotAnInternalKey) {
   EXPECT_EQ(edit.error().code(), ErrorCode::Corruption);
   // The output that the compaction began stays for obsolete-file cleanup.
   EXPECT_TRUE(harness.file_system.Contents(harness.directory / "000100.ldb").has_value());
+}
+
+TEST(CompactionTest, StopsBeforeWritingARealCorruptTableEntry) {
+  Harness harness;
+  std::vector<std::byte> entries;
+  const std::vector<std::byte> first_key = Encoded(Key("a", 1));
+  test_support::AppendBlockEntry(entries, 0, first_key, AsBytes("first"));
+  entries.push_back(std::byte{0x80});
+  const std::vector<std::byte> data = test_support::AddRestarts(std::move(entries), {0});
+  const FileMetadata corrupt = harness.WriteRawTable(
+      10, test_support::AssembleSingleDataBlockTable(data, Encoded(Key("z", 1))), "a", "z");
+  const Compaction compaction =
+      Harness::MakeCompaction(harness.MakeVersion({{1, corrupt}}), 1, {10}, {});
+
+  const Result<VersionEdit> edit = harness.RunOverTables(compaction);
+
+  ASSERT_FALSE(edit.has_value());
+  EXPECT_EQ(edit.error().code(), ErrorCode::Corruption) << edit.error().ToString();
+  EXPECT_EQ(harness.entries_seen, 1);
+  EXPECT_EQ(harness.numbers, (std::vector<std::uint64_t>{100}));
 }
 
 TEST(CompactionTest, ReturnsTheErrorOfEveryFailedInputMove) {

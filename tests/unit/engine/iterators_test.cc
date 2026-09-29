@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "engine/build_table.h"
+#include "engine/db_iterator.h"
 #include "engine/internal_iterator.h"
 #include "engine/table_cache.h"
 #include "format/internal_key.h"
@@ -30,6 +31,7 @@
 #include "modern_leveldb/base/result.h"
 #include "support/memory_file_system.h"
 #include "support/scripted_iterator.h"
+#include "support/table_file.h"
 #include "table/table.h"
 #include "table/table_builder.h"
 
@@ -78,6 +80,12 @@ std::vector<std::byte> Key(std::string_view user_key, SequenceNumber sequence,
   auto key = InternalKey::Create(AsBytes(user_key), sequence, kind);
   EXPECT_TRUE(key.has_value());
   return std::vector<std::byte>(key->encoded().begin(), key->encoded().end());
+}
+
+TableOptions InternalTableOptions() {
+  TableOptions options;
+  options.use_trusted_internal_key_comparison = true;
+  return options;
 }
 
 // "user@sequence=value" for the iterator's position, or "<end>".
@@ -322,13 +330,25 @@ class TablesTest : public testing::Test {
     for (const auto& [user_key, sequence] : keys) {
       EXPECT_TRUE(memtable.Add(sequence, kind, AsBytes(user_key), AsBytes(user_key)).has_value());
     }
-    TableCache cache(file_system_, directory_, comparator_, {}, 0);
+    TableCache cache(file_system_, directory_, comparator_, InternalTableOptions(), 0);
     TableBuilderOptions options;
     options.block_size = 1;
     auto built =
         BuildTable(file_system_, directory_, comparator_, options, cache, memtable, number);
     EXPECT_TRUE(built.has_value() && built->has_value());
     return std::move(built).value().value();
+  }
+
+  FileMetadata WriteRawTable(std::uint64_t number, std::vector<std::byte> contents,
+                             std::string_view smallest, std::string_view largest) {
+    const std::uint64_t file_size = contents.size();
+    file_system_.Write(TableFileName(directory_, number), std::move(contents));
+    return FileMetadata{
+        .number = number,
+        .file_size = file_size,
+        .smallest = InternalKey::Create(AsBytes(smallest), 1, ValueKind::Value).value(),
+        .largest = InternalKey::Create(AsBytes(largest), 1, ValueKind::Value).value(),
+    };
   }
 
   std::shared_ptr<const Version> MakeVersion(
@@ -365,7 +385,7 @@ class TablesTest : public testing::Test {
   MemoryFileSystem file_system_;
   const std::filesystem::path directory_ = std::filesystem::path("db");
   InternalKeyComparator comparator_{BytewiseComparator()};
-  TableCache cache_{file_system_, directory_, comparator_, {}, 0};
+  TableCache cache_{file_system_, directory_, comparator_, InternalTableOptions(), 0};
 };
 
 using LevelIteratorTest = TablesTest;
@@ -489,6 +509,48 @@ TEST_F(LevelIteratorTest, RejectsEmptyTables) {
   };
   expect_only_corruption(only->SeekToFirst());
   expect_only_corruption(only->SeekToLast());
+}
+
+TEST_F(LevelIteratorTest, PropagatesLazyTableCorruptionThroughEveryIteratorLayer) {
+  std::vector<std::byte> entries;
+  const std::vector<std::byte> corrupt_key = Key("b", 1);
+  test_support::AppendBlockEntry(entries, 0, corrupt_key, AsBytes("b"));
+  entries.push_back(std::byte{0x80});
+  const std::vector<std::byte> data = test_support::AddRestarts(std::move(entries), {0});
+  const FileMetadata corrupt =
+      WriteRawTable(11, test_support::AssembleSingleDataBlockTable(data, Key("c", 1)), "b", "c");
+  const auto version =
+      MakeVersion({{1, WriteTable(10, {{"a", 1}})}, {1, corrupt}, {1, WriteTable(12, {{"d", 1}})}});
+  const auto expect_corruption = [](const Status& status, const auto& iterator) {
+    ASSERT_FALSE(status.has_value());
+    EXPECT_EQ(status.error().code(), ErrorCode::Corruption) << status.error().ToString();
+    EXPECT_FALSE(iterator.valid());
+  };
+
+  const auto level = Level(version, 1);
+  EXPECT_EQ(After(level->Seek(Key("b", MaxSequenceNumber)), *level), "b@1=b");
+  expect_corruption(level->Next(), *level);
+  EXPECT_EQ(After(level->SeekToFirst(), *level), "a@1=a");
+  expect_corruption(level->Seek(Key("c", 1)), *level);
+  EXPECT_EQ(After(level->Seek(Key("d", MaxSequenceNumber)), *level), "d@1=d");
+
+  std::vector<std::unique_ptr<InternalIterator>> children;
+  children.push_back(Level(version, 1));
+  children.push_back(
+      std::make_unique<ScriptedIterator>(comparator_, std::vector{Entry("x", 1, "x")}));
+  const auto merged = NewMergingIterator(comparator_, std::move(children));
+  EXPECT_EQ(After(merged->Seek(Key("b", MaxSequenceNumber)), *merged), "b@1=b");
+  expect_corruption(merged->Next(), *merged);
+  EXPECT_EQ(After(merged->SeekToFirst(), *merged), "a@1=a");
+
+  DbIterator database(Level(version, 1), BytewiseComparator(), MaxSequenceNumber);
+  EXPECT_TRUE(database.Seek(AsBytes("b")).has_value());
+  ASSERT_TRUE(database.valid());
+  EXPECT_EQ(AsStringView(database.key()), "b");
+  expect_corruption(database.Next(), database);
+  EXPECT_TRUE(database.Seek(AsBytes("d")).has_value());
+  ASSERT_TRUE(database.valid());
+  EXPECT_EQ(AsStringView(database.key()), "d");
 }
 
 TEST_F(LevelIteratorTest, ReportsTableErrors) {

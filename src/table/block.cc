@@ -4,15 +4,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
 #include "engine/read_diagnostics.h"
 #endif
+#include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
-#include "modern_leveldb/base/comparator.h"
 #include "modern_leveldb/base/result.h"
 
 namespace modern_leveldb {
@@ -20,63 +22,122 @@ namespace {
 
 constexpr std::size_t Fixed32Size = sizeof(std::uint32_t);
 
-struct Entry {
-  std::size_t shared;
+struct DecodedEntry {
+  std::uint32_t shared;
   ByteView key_delta;
   ByteView value;
-  // Offset just past the entry.
-  std::size_t end;
 };
 
-// Decodes the entry at offset, which must precede limit. Returns false if the
-// entry is malformed or extends past limit.
-[[nodiscard]] bool DecodeEntry(ByteView contents, std::size_t offset, std::size_t limit,
-                               Entry& entry) {
-  ByteView input = contents.subspan(offset, limit - offset);
-  const Result<std::uint32_t> shared = ConsumeVarint32(input);
-  if (!shared.has_value()) {
-    return false;
+const std::byte* DecodeVarint32(const std::byte* input, const std::byte* limit,
+                                std::uint32_t& value) noexcept {
+  value = 0;
+  for (unsigned int index = 0; index < 5; ++index) {
+    if (input == limit) {
+      return nullptr;
+    }
+    const unsigned int byte = std::to_integer<unsigned int>(*input++);
+    value |= static_cast<std::uint32_t>(byte & 0x7fU) << (index * 7U);
+    if ((byte & 0x80U) == 0U) {
+      return input;
+    }
   }
-  const Result<std::uint32_t> non_shared = ConsumeVarint32(input);
-  if (!non_shared.has_value()) {
-    return false;
-  }
-  const Result<std::uint32_t> value_size = ConsumeVarint32(input);
-  if (!value_size.has_value()) {
-    return false;
-  }
-  if (std::uint64_t{*non_shared} + *value_size > input.size()) {
-    return false;
-  }
-  entry.shared = *shared;
-  entry.key_delta = input.first(*non_shared);
-  entry.value = input.subspan(*non_shared, *value_size);
-  entry.end = limit - input.size() + *non_shared + *value_size;
-  return true;
+  return nullptr;
 }
 
-template <typename Visitor>
-Status ValidateEntries(ByteView contents, std::size_t entries_end, std::size_t restart_count,
-                       Visitor visit) {
-  const auto restart_point = [&](std::size_t index) {
-    return DecodeFixed32(contents.subspan(entries_end + Fixed32Size * index).first<Fixed32Size>());
+const std::byte* DecodeEntry(const std::byte* input, const std::byte* limit,
+                             DecodedEntry& entry) noexcept {
+  if (static_cast<std::size_t>(limit - input) < 3) {
+    return nullptr;
+  }
+
+  std::uint32_t shared = std::to_integer<unsigned int>(input[0]);
+  std::uint32_t non_shared = std::to_integer<unsigned int>(input[1]);
+  std::uint32_t value_size = std::to_integer<unsigned int>(input[2]);
+  if ((shared | non_shared | value_size) < 128U) {
+    input += 3;
+  } else {
+    if ((input = DecodeVarint32(input, limit, shared)) == nullptr ||
+        (input = DecodeVarint32(input, limit, non_shared)) == nullptr ||
+        (input = DecodeVarint32(input, limit, value_size)) == nullptr) {
+      return nullptr;
+    }
+  }
+
+  const std::size_t remaining = static_cast<std::size_t>(limit - input);
+  if (std::uint64_t{non_shared} + value_size > remaining) {
+    return nullptr;
+  }
+  entry = {
+      .shared = shared,
+      .key_delta = ByteView(input, non_shared),
+      .value = ByteView(input + non_shared, value_size),
   };
-  if (restart_point(0) != 0) {
+  return input;
+}
+
+ByteView StringBytes(const std::string& value) noexcept {
+  return ByteView(reinterpret_cast<const std::byte*>(value.data()), value.size());
+}
+
+}  // namespace
+
+std::size_t Block::Layout::RestartPoint(std::size_t index) const noexcept {
+  assert(index < restart_count);
+  return DecodeFixed32(contents.subspan(entries_end + Fixed32Size * index).first<Fixed32Size>());
+}
+
+Result<Block> Block::Create(std::vector<std::byte> contents) {
+  if (contents.size() < Fixed32Size) {
+    return std::unexpected(Error::Corruption("block is too short"));
+  }
+  const std::size_t restart_count = DecodeFixed32(ByteView(contents).last<Fixed32Size>());
+  if (restart_count > (contents.size() - Fixed32Size) / Fixed32Size) {
+    return std::unexpected(Error::Corruption("block restart count is invalid"));
+  }
+  const std::size_t entries_end = contents.size() - Fixed32Size * (restart_count + 1);
+  return Block(std::move(contents), entries_end, restart_count);
+}
+
+// GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
+Block::Block(std::vector<std::byte> contents, std::size_t entries_end,
+             std::size_t restart_count) noexcept
+    : contents_(std::move(contents)),
+      layout_{
+          .contents = contents_,
+          .entries_end = entries_end,
+          .restart_count = restart_count,
+      } {}
+// GCOVR_EXCL_STOP
+
+bool Block::empty() const noexcept {
+  return layout_.restart_count == 0 || layout_.entries_end == 0 ||
+         layout_.RestartPoint(0) >= layout_.entries_end;
+}
+
+Status Block::ValidateEntries(const EntryVisitor& visitor) const {
+  const Layout& layout = layout_;
+  if (layout.restart_count == 0 || layout.RestartPoint(0) != 0) {
     return std::unexpected(Error::Corruption("block restart points are invalid"));
   }
 
-  std::size_t previous_key_size = 0;
+  std::string key;
   std::size_t restart_index = 0;
-  for (std::size_t offset = 0; offset < entries_end;) {
+  for (std::size_t offset = 0; offset < layout.entries_end;) {
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
     read_diagnostics::Add(read_diagnostics::Counter::ValidationEntries);
 #endif
-    Entry entry{};
-    if (!DecodeEntry(contents, offset, entries_end, entry) || entry.shared > previous_key_size) {
+    DecodedEntry entry{};
+    const std::byte* begin = layout.contents.data() + offset;
+    const std::byte* limit = layout.contents.data() + layout.entries_end;
+    const std::byte* key_delta = DecodeEntry(begin, limit, entry);
+    if (key_delta == nullptr || entry.shared > key.size()) {
       return std::unexpected(Error::Corruption("block entry is malformed"));
     }
-    if (restart_index < restart_count) {
-      const std::size_t restart = restart_point(restart_index);
+    const std::size_t entry_end = offset + static_cast<std::size_t>(key_delta - begin) +
+                                  entry.key_delta.size() + entry.value.size();
+
+    if (restart_index < layout.restart_count) {
+      const std::size_t restart = layout.RestartPoint(restart_index);
       if (restart < offset || (restart == offset && entry.shared != 0)) {
         return std::unexpected(Error::Corruption("block restart points are invalid"));
       }
@@ -84,140 +145,37 @@ Status ValidateEntries(ByteView contents, std::size_t entries_end, std::size_t r
         ++restart_index;
       }
     }
-    // GCOVR_EXCL_START: the trusted-order visitor cannot fail
-    if (!visit(offset, entry)) {
-      return std::unexpected(Error::Corruption("block keys are not in increasing order"));
+
+    key.resize(entry.shared);
+    key.append(reinterpret_cast<const char*>(entry.key_delta.data()), entry.key_delta.size());
+    const Status visited = visitor(StringBytes(key), entry.value);
+    if (!visited.has_value()) {
+      return visited;
     }
-    // GCOVR_EXCL_STOP
-    previous_key_size = entry.shared + entry.key_delta.size();
-    offset = entry.end;
+    offset = entry_end;
   }
 
-  // A block without entries has only the restart point at zero. Otherwise,
-  // every restart point must be the offset of an entry.
-  const std::size_t matched_restarts = entries_end == 0 ? 1 : restart_index;
-  if (matched_restarts != restart_count) {
+  const std::size_t matched_restarts = layout.entries_end == 0 ? 1 : restart_index;
+  if (matched_restarts != layout.restart_count) {
     return std::unexpected(Error::Corruption("block restart points are invalid"));
   }
   return {};
 }
 
-std::uint32_t ConsumeValidatedVarint32(const std::byte*& input) noexcept {
-  std::uint32_t value = 0;
-  unsigned int shift = 0;
-  while (true) {
-    assert(shift < 32);
-    const auto byte = std::to_integer<std::uint32_t>(*input++);
-    value |= (byte & 0x7fU) << shift;
-    if ((byte & 0x80U) == 0U) {
-      return value;
-    }
-    shift += 7;
-  }
-}
-
-// Only entry boundaries in immutable blocks accepted by Block::Create reach here.
-Entry DecodeValidatedEntry(ByteView entries, std::size_t offset) noexcept {
-  assert(offset < entries.size());
-  const std::byte* input = entries.data() + offset;
-  const std::uint32_t shared = ConsumeValidatedVarint32(input);
-  const std::uint32_t non_shared = ConsumeValidatedVarint32(input);
-  const std::uint32_t value_size = ConsumeValidatedVarint32(input);
-  const auto header_end = static_cast<std::size_t>(input - entries.data());
-  assert(header_end <= entries.size());
-  assert(std::uint64_t{non_shared} + value_size <= entries.size() - header_end);
-  return Entry{
-      .shared = shared,
-      .key_delta = ByteView(input, non_shared),
-      .value = ByteView(input + non_shared, value_size),
-      .end = header_end + non_shared + value_size,
-  };
-}
-
-}  // namespace
-
-std::size_t Block::Layout::RestartPoint(std::size_t index) const noexcept {
-  return DecodeFixed32(contents.subspan(entries_end + Fixed32Size * index).first<Fixed32Size>());
-}
-
-ByteView Block::Layout::RestartKey(std::size_t index) const {
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-  read_diagnostics::RecordDecodedEntry(true);
-#endif
-  const Entry entry = DecodeValidatedEntry(contents.first(entries_end), RestartPoint(index));
-  assert(entry.shared == 0);
-  return entry.key_delta;
-}
-
-Result<Block> Block::Create(std::vector<std::byte> contents, const Comparator& comparator) {
-  return CreateImpl(std::move(contents), comparator, true);
-}
-
-Result<Block> Block::CreateWithTrustedKeyOrder(std::vector<std::byte> contents,
-                                               const Comparator& comparator) {
-  return CreateImpl(std::move(contents), comparator, false);
-}
-
-Result<Block> Block::CreateImpl(std::vector<std::byte> contents, const Comparator& comparator,
-                                bool validate_key_order) {
-  if (contents.size() < Fixed32Size) {
-    return std::unexpected(Error::Corruption("block is too short"));
-  }
-  const std::size_t restart_count = DecodeFixed32(ByteView(contents).last<Fixed32Size>());
-  if (restart_count == 0 || restart_count > (contents.size() - Fixed32Size) / Fixed32Size) {
-    return std::unexpected(Error::Corruption("block restart count is invalid"));
-  }
-  const std::size_t entries_end = contents.size() - Fixed32Size * (restart_count + 1);
-  Block block(std::move(contents), comparator, entries_end, restart_count);
-  Status valid = validate_key_order ? block.Validate() : block.ValidateStructure();
-  if (!valid.has_value()) {
-    return std::unexpected(std::move(valid).error());
-  }
-  return block;
-}
-
-Block::Block(std::vector<std::byte> contents, const Comparator& comparator, std::size_t entries_end,
-             std::size_t restart_count) noexcept
-    : contents_(std::move(contents)),
-      layout_{
-          .contents = contents_,
-          .comparator = &comparator,
-          .entries_end = entries_end,
-          .restart_count = restart_count,
-      } {}
-
-Status Block::Validate() const {
-  const Layout& layout = layout_;
-  std::vector<std::byte> previous_key;
-  std::vector<std::byte> key;
-  return ValidateEntries(layout.contents, layout.entries_end, layout.restart_count,
-                         [&](std::size_t offset, const Entry& entry) {
-    const ByteView prefix = ByteView(previous_key).first(entry.shared);
-    key.assign(prefix.begin(), prefix.end());
-    key.insert(key.end(), entry.key_delta.begin(), entry.key_delta.end());
-    if (offset != 0 && layout.comparator->Compare(previous_key, key) >= 0) {
-      return false;
-    }
-    previous_key.swap(key);
-    return true;
-  });
-}
-
-Status Block::ValidateStructure() const {
-  const Layout& layout = layout_;
-  return ValidateEntries(layout.contents, layout.entries_end, layout.restart_count,
-                         [](std::size_t, const Entry&) { return true; });
-}
-
-Block::Iterator::Iterator(const Block& block) noexcept
+// GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
+Block::Iterator::Iterator(const Block& block, const Comparator& comparator,
+                          BlockKeyFormat format) noexcept
     : layout_(block.layout_),
+      comparator_(&comparator),
+      format_(format),
       current_(layout_.entries_end),
       next_(layout_.entries_end),
       restart_index_(layout_.restart_count) {}
+// GCOVR_EXCL_STOP
 
 ByteView Block::Iterator::key() const noexcept {
   assert(valid());
-  return key_;
+  return StringBytes(key_);
 }
 
 ByteView Block::Iterator::value() const noexcept {
@@ -225,87 +183,223 @@ ByteView Block::Iterator::value() const noexcept {
   return value_;
 }
 
-void Block::Iterator::SeekToFirst() {
-  SeekToRestartPoint(0);
-  ParseNextEntry();
-}
-
-void Block::Iterator::SeekToLast() {
-  SeekToRestartPoint(layout_.restart_count - 1);
-  while (ParseNextEntry() && next_ < layout_.entries_end) {
+Status Block::Iterator::SeekToFirst() {
+  BeginPositioning();
+  if (layout_.restart_count == 0) {
+    Invalidate();
+    return {};
   }
+  const Status sought = SeekToRestartPoint(0);
+  if (!sought.has_value()) {
+    return sought;
+  }
+  return ParseNextEntry();
 }
 
-void Block::Iterator::Seek(ByteView target) {
-  // Find the last restart point whose key is less than the target.
+Status Block::Iterator::SeekToLast() {
+  BeginPositioning();
+  if (layout_.restart_count == 0) {
+    Invalidate();
+    return {};
+  }
+  const Status sought = SeekToRestartPoint(layout_.restart_count - 1);
+  if (!sought.has_value()) {
+    return sought;
+  }
+  do {
+    const Status parsed = ParseNextEntry();
+    if (!parsed.has_value()) {
+      return parsed;
+    }
+  } while (valid() && next_ < layout_.entries_end);
+  return {};
+}
+
+Status Block::Iterator::Seek(ByteView target) {
+  BeginPositioning();
+  if (!AcceptsKeySize(target.size())) {
+    return Corruption();
+  }
+  if (layout_.restart_count == 0) {
+    Invalidate();
+    return {};
+  }
+
   std::size_t left = 0;
   std::size_t right = layout_.restart_count - 1;
+  int current_key_compare = 0;
+  if (valid()) {
+    current_key_compare = Compare(key(), target);
+    if (current_key_compare < 0) {
+      left = restart_index_;
+    } else if (current_key_compare > 0) {
+      right = restart_index_;
+    } else {
+      return {};
+    }
+  }
+
   while (left < right) {
     const std::size_t middle = left + (right - left + 1) / 2;
-    if (layout_.comparator->Compare(layout_.RestartKey(middle), target) < 0) {
+    ByteView middle_key;
+    const Status decoded = RestartKey(middle, middle_key);
+    if (!decoded.has_value()) {
+      return decoded;
+    }
+    if (Compare(middle_key, target) < 0) {
       left = middle;
     } else {
       right = middle - 1;
     }
   }
-  SeekToRestartPoint(left);
-  while (ParseNextEntry() && layout_.comparator->Compare(key_, target) < 0) {
+
+  assert(current_key_compare == 0 || valid());
+  if (!(left == restart_index_ && current_key_compare < 0)) {
+    const Status sought = SeekToRestartPoint(left);
+    if (!sought.has_value()) {
+      return sought;
+    }
+  }
+  while (true) {
+    const Status parsed = ParseNextEntry();
+    if (!parsed.has_value() || !valid() || Compare(key(), target) >= 0) {
+      return parsed;
+    }
   }
 }
 
-void Block::Iterator::Next() {
+Status Block::Iterator::Next() {
   assert(valid());
-  ParseNextEntry();
+  return ParseNextEntry();
 }
 
-void Block::Iterator::Prev() {
+Status Block::Iterator::Prev() {
   assert(valid());
   const std::size_t original = current_;
-  while (layout_.RestartPoint(restart_index_) >= original) {
+  while (true) {
+    std::size_t restart = 0;
+    if (!RestartPoint(restart_index_, restart)) {
+      return Corruption();
+    }
+    if (restart < original) {
+      break;
+    }
     if (restart_index_ == 0) {
       Invalidate();
-      return;
+      return {};
     }
     --restart_index_;
   }
-  SeekToRestartPoint(restart_index_);
+
+  const Status sought = SeekToRestartPoint(restart_index_);
+  // GCOVR_EXCL_START: restart < original proves that this bounded seek succeeds
+  if (!sought.has_value()) {
+    return sought;
+  }
+  // GCOVR_EXCL_STOP
   do {
-    ParseEntry();
-  } while (next_ < original);
+    const Status parsed = ParseNextEntry();
+    if (!parsed.has_value()) {
+      return parsed;
+    }
+  } while (valid() && next_ < original);  // GCOVR_EXCL_BR_LINE: a successful parse stays valid
+  return {};
 }
 
-void Block::Iterator::SeekToRestartPoint(std::size_t index) noexcept {
+void Block::Iterator::BeginPositioning() noexcept { error_.reset(); }
+
+bool Block::Iterator::RestartPoint(std::size_t index, std::size_t& offset) const noexcept {
+  assert(index < layout_.restart_count);
+  offset = layout_.RestartPoint(index);
+  return offset <= layout_.entries_end;
+}
+
+Status Block::Iterator::RestartKey(std::size_t index, ByteView& key) {
+  std::size_t offset = 0;
+  if (!RestartPoint(index, offset) || offset >= layout_.entries_end) {
+    return Corruption();
+  }
+  DecodedEntry entry{};
+  const std::byte* begin = layout_.contents.data() + offset;
+  const std::byte* limit = layout_.contents.data() + layout_.entries_end;
+  if (DecodeEntry(begin, limit, entry) == nullptr || entry.shared != 0 ||
+      !AcceptsKeySize(entry.key_delta.size())) {
+    return Corruption();
+  }
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::RecordDecodedEntry(true);
+#endif
+  key = entry.key_delta;
+  return {};
+}
+
+Status Block::Iterator::SeekToRestartPoint(std::size_t index) {
+  std::size_t offset = 0;
+  if (!RestartPoint(index, offset)) {
+    return Corruption();
+  }
   current_ = layout_.entries_end;
   restart_index_ = index;
-  next_ = layout_.RestartPoint(index);
+  next_ = offset;
   key_.clear();
+  value_ = {};
+  return {};
 }
 
-void Block::Iterator::ParseEntry() {
+Status Block::Iterator::ParseNextEntry() {
+  if (next_ >= layout_.entries_end) {
+    Invalidate();
+    return {};
+  }
+
+  DecodedEntry entry{};
+  const std::byte* begin = layout_.contents.data() + next_;
+  const std::byte* limit = layout_.contents.data() + layout_.entries_end;
+  const std::byte* key_delta = DecodeEntry(begin, limit, entry);
+  if (key_delta == nullptr || entry.shared > key_.size()) {
+    return Corruption();
+  }
+  const std::size_t key_size = entry.shared + entry.key_delta.size();
+  if (!AcceptsKeySize(key_size)) {
+    return Corruption();
+  }
+  const std::size_t entry_end = next_ + static_cast<std::size_t>(key_delta - begin) +
+                                entry.key_delta.size() + entry.value.size();
+
+  key_.reserve(key_size);
+  current_ = next_;
+  key_.resize(entry.shared);
+  key_.append(reinterpret_cast<const char*>(entry.key_delta.data()), entry.key_delta.size());
+  value_ = entry.value;
+  next_ = entry_end;
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
   read_diagnostics::RecordDecodedEntry();
 #endif
-  const Entry entry = DecodeValidatedEntry(layout_.contents.first(layout_.entries_end), next_);
-  // Reserve first, so that an allocation failure leaves the iterator unchanged.
-  key_.reserve(entry.shared + entry.key_delta.size());
-  current_ = next_;
-  key_.resize(entry.shared);
-  key_.insert(key_.end(), entry.key_delta.begin(), entry.key_delta.end());
-  value_ = entry.value;
-  next_ = entry.end;
-  while (restart_index_ + 1 < layout_.restart_count &&
-         layout_.RestartPoint(restart_index_ + 1) <= current_) {
+  while (restart_index_ + 1 < layout_.restart_count) {
+    std::size_t restart = 0;
+    if (!RestartPoint(restart_index_ + 1, restart)) {
+      return Corruption();
+    }
+    if (restart >= current_) {
+      break;
+    }
     ++restart_index_;
   }
+  return {};
 }
 
-bool Block::Iterator::ParseNextEntry() {
-  if (next_ >= layout_.entries_end) {
-    Invalidate();
-    return false;
-  }
-  ParseEntry();
-  return true;
+Status Block::Iterator::Corruption() {
+  Invalidate();
+  error_.emplace(Error::Corruption("bad entry in block"));
+  return std::unexpected(*error_);
+}
+
+bool Block::Iterator::AcceptsKeySize(std::size_t size) const noexcept {
+  return format_ != BlockKeyFormat::Internal || size >= InternalKeyTrailerSize;
+}
+
+int Block::Iterator::Compare(ByteView left, ByteView right) const noexcept {
+  return comparator_->Compare(left, right);
 }
 
 void Block::Iterator::Invalidate() noexcept {

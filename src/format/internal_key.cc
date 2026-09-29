@@ -236,6 +236,29 @@ int InternalKeyComparator::Compare(ByteView left, ByteView right) const noexcept
   return 0;
 }
 
+int InternalKeyComparator::CompareTrusted(ByteView left, ByteView right) const noexcept {
+  assert(left.size() >= InternalKeyTrailerSize);
+  assert(right.size() >= InternalKeyTrailerSize);
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  read_diagnostics::Add(read_diagnostics::Counter::InternalKeyComparisons);
+#endif
+  const ByteView left_user_key = left.first(left.size() - InternalKeyTrailerSize);
+  const ByteView right_user_key = right.first(right.size() - InternalKeyTrailerSize);
+  const int user_order = user_comparator_.Compare(left_user_key, right_user_key);
+  if (user_order != 0) {
+    return user_order;
+  }
+  const std::uint64_t left_trailer = DecodeFixed64(left.last<InternalKeyTrailerSize>());
+  const std::uint64_t right_trailer = DecodeFixed64(right.last<InternalKeyTrailerSize>());
+  if (left_trailer > right_trailer) {
+    return -1;
+  }
+  if (left_trailer < right_trailer) {
+    return 1;
+  }
+  return 0;
+}
+
 std::string_view InternalKeyComparator::Name() const noexcept {
   return "leveldb.InternalKeyComparator";
 }

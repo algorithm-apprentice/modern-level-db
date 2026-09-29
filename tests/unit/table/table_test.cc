@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -234,6 +235,24 @@ std::vector<std::byte> BlockOf(std::initializer_list<std::pair<ByteView, ByteVie
   return Materialize(builder.Finish());
 }
 
+void AppendEntry(std::vector<std::byte>& entries, std::uint32_t shared, ByteView key_delta,
+                 ByteView value) {
+  AppendVarint32(entries, shared);
+  AppendVarint32(entries, static_cast<std::uint32_t>(key_delta.size()));
+  AppendVarint32(entries, static_cast<std::uint32_t>(value.size()));
+  entries.insert(entries.end(), key_delta.begin(), key_delta.end());
+  entries.insert(entries.end(), value.begin(), value.end());
+}
+
+std::vector<std::byte> RawBlock(std::vector<std::byte> entries,
+                                std::initializer_list<std::uint32_t> restarts) {
+  for (const std::uint32_t restart : restarts) {
+    AppendFixed32(entries, restart);
+  }
+  AppendFixed32(entries, static_cast<std::uint32_t>(restarts.size()));
+  return entries;
+}
+
 std::vector<std::byte> HandleOf(BlockHandle handle) {
   std::vector<std::byte> encoded;
   AppendBlockHandle(encoded, handle);
@@ -259,6 +278,11 @@ class TableTest : public testing::Test {
 
   static TableOptions WithFilter(TableOptions options = {}) {
     options.filter_policy = BloomFilterPolicy(10);
+    return options;
+  }
+
+  static TableOptions Trusted(TableOptions options = {}) {
+    options.use_trusted_internal_key_comparison = true;
     return options;
   }
 
@@ -504,10 +528,10 @@ TEST_F(TableTest, ChargesCompressedBlocksByTheirDecodedSize) {
       ByteView(data).subspan(footer->index.offset, footer->index.size + BlockTrailerSize);
   Result<std::vector<std::byte>> index_contents = DecodeStoredBlock(Materialize(stored_index));
   ASSERT_TRUE(index_contents.has_value()) << index_contents.error().ToString();
-  Result<Block> index = Block::Create(std::move(*index_contents), comparator_);
+  Result<Block> index = Block::Create(std::move(*index_contents));
   ASSERT_TRUE(index.has_value()) << index.error().ToString();
-  Block::Iterator entry(*index);
-  entry.SeekToFirst();
+  Block::Iterator entry(*index, comparator_);
+  ASSERT_TRUE(entry.SeekToFirst().has_value());
   ASSERT_TRUE(entry.valid());
   ByteView encoded_handle = entry.value();
   const Result<BlockHandle> handle = ConsumeBlockHandle(encoded_handle);
@@ -571,7 +595,7 @@ TEST_F(TableTest, ReadsBlocksWhoseChargeTheCacheCannotAccount) {
   std::vector<BlockCache::Handle> pins;
   for (int candidate = 0; candidate < 256; ++candidate) {
     const std::string key = "pin-" + std::to_string(candidate);
-    auto placeholder = Block::Create(BlockOf({}), BytewiseComparator());
+    auto placeholder = Block::Create(BlockOf({}));
     ASSERT_TRUE(placeholder.has_value());
     auto pin = cache.Insert(AsBytes(key), std::make_unique<const Block>(std::move(*placeholder)),
                             std::numeric_limits<std::size_t>::max());
@@ -655,6 +679,78 @@ TEST_F(TableTest, RejectsDamagedIndexBlocks) {
   const BlockHandle meta = compressed.AddBlock(BlockOf({}));
   ExpectError(TryOpen(compressed.Finish(meta, compressed.AddBlock(BlockOf({}), 1))),
               ErrorCode::Corruption);
+}
+
+TEST_F(TableTest, RejectsEveryMalformedIndexEntryAndRestartTopology) {
+  const auto assemble = [&](auto make_index) {
+    TableAssembler table;
+    const BlockHandle first = table.AddBlock(BlockOf({{Key("a", 1), AsBytes("first")}}));
+    const BlockHandle second = table.AddBlock(BlockOf({{Key("b", 1), AsBytes("second")}}));
+    const BlockHandle index = table.AddBlock(make_index(first, second));
+    return table.Finish(table.AddBlock(BlockOf({})), index);
+  };
+  const auto entries = [](BlockHandle first, BlockHandle second) {
+    std::vector<std::byte> encoded;
+    const std::vector<std::byte> first_key = Key("m", 1);
+    const std::vector<std::byte> second_key = Key("z", 1);
+    const std::vector<std::byte> first_handle = HandleOf(first);
+    const std::vector<std::byte> second_handle = HandleOf(second);
+    AppendEntry(encoded, 0, first_key, first_handle);
+    const std::uint32_t second_offset = static_cast<std::uint32_t>(encoded.size());
+    AppendEntry(encoded, 0, second_key, second_handle);
+    return std::pair(std::move(encoded), second_offset);
+  };
+
+  ExpectError(TryOpen(assemble([&](BlockHandle first, BlockHandle second) {
+                auto [encoded, second_offset] = entries(first, second);
+                return RawBlock(std::move(encoded), {1, second_offset});
+              })),
+              ErrorCode::Corruption);
+  ExpectError(TryOpen(assemble([&](BlockHandle first, BlockHandle second) {
+                auto [encoded, second_offset] = entries(first, second);
+                return RawBlock(std::move(encoded), {0, 0, second_offset});
+              })),
+              ErrorCode::Corruption);
+  ExpectError(TryOpen(assemble([&](BlockHandle first, BlockHandle second) {
+                auto [encoded, second_offset] = entries(first, second);
+                return RawBlock(std::move(encoded), {0, 1, second_offset});
+              })),
+              ErrorCode::Corruption);
+  ExpectError(TryOpen(assemble([&](BlockHandle first, BlockHandle second) {
+                std::vector<std::byte> encoded;
+                const std::vector<std::byte> first_key = Key("m", 1);
+                const std::vector<std::byte> second_key = Key("z", 1);
+                const std::vector<std::byte> first_handle = HandleOf(first);
+                const std::vector<std::byte> second_handle = HandleOf(second);
+                AppendEntry(encoded, 0, first_key, first_handle);
+                const std::uint32_t second_offset = static_cast<std::uint32_t>(encoded.size());
+                AppendEntry(encoded, 1, ByteView(second_key).subspan(1), second_handle);
+                return RawBlock(std::move(encoded), {0, second_offset});
+              })),
+              ErrorCode::Corruption);
+  ExpectError(TryOpen(assemble([&](BlockHandle first, BlockHandle) {
+                std::vector<std::byte> encoded;
+                const std::vector<std::byte> key = Key("m", 1);
+                const std::vector<std::byte> handle = HandleOf(first);
+                AppendEntry(encoded, 0, key, handle);
+                encoded.push_back(std::byte{0x80});
+                return RawBlock(std::move(encoded), {0});
+              })),
+              ErrorCode::Corruption);
+}
+
+TEST_F(TableTest, TrustedOpenRejectsMalformedIndexKeys) {
+  const auto assemble = [&](ByteView index_key) {
+    TableAssembler table;
+    const BlockHandle data = table.AddBlock(BlockOf({{Key("a", 1), AsBytes("value")}}));
+    const BlockHandle index = table.AddBlock(BlockOf({{index_key, HandleOf(data)}}));
+    return table.Finish(table.AddBlock(BlockOf({})), index);
+  };
+
+  ExpectError(TryOpen(assemble(AsBytes("short")), Trusted()), ErrorCode::Corruption);
+  std::vector<std::byte> unknown = Key("z", 1);
+  unknown[unknown.size() - InternalKeyTrailerSize] = std::byte{2};
+  ExpectError(TryOpen(assemble(unknown), Trusted()), ErrorCode::Corruption);
 }
 
 TEST_F(TableTest, RejectsIndexValuesThatAreNotBlockHandles) {
@@ -755,6 +851,71 @@ TEST_F(TableTest, RejectsDamagedMetaindexAndFilterBlocksWhenFiltering) {
       ErrorCode::Corruption);
 }
 
+TEST_F(TableTest, RejectsEveryMalformedMetaindexEntryAndRestartTopology) {
+  const auto assemble = [&](std::vector<std::byte> meta_contents) {
+    TableAssembler table;
+    const BlockHandle meta = table.AddBlock(meta_contents);
+    return table.Finish(meta, table.AddBlock(BlockOf({})));
+  };
+  const auto three_entries = [] {
+    std::vector<std::byte> encoded;
+    AppendEntry(encoded, 0, AsBytes("a"), {});
+    const std::uint32_t second = static_cast<std::uint32_t>(encoded.size());
+    AppendEntry(encoded, 0, AsBytes("b"), {});
+    const std::uint32_t third = static_cast<std::uint32_t>(encoded.size());
+    AppendEntry(encoded, 0, AsBytes("c"), {});
+    return std::tuple(std::move(encoded), second, third);
+  };
+
+  ExpectError(TryOpen(assemble(RawBlock(
+                          [] {
+                            std::vector<std::byte> encoded;
+                            AppendEntry(encoded, 0, AsBytes("a"), {});
+                            return encoded;
+                          }(),
+                          {1})),
+                      WithFilter()),
+              ErrorCode::Corruption);
+  ExpectError(TryOpen(assemble(RawBlock(
+                          [] {
+                            std::vector<std::byte> encoded;
+                            AppendEntry(encoded, 0, AsBytes("a"), {});
+                            return encoded;
+                          }(),
+                          {0, 0})),
+                      WithFilter()),
+              ErrorCode::Corruption);
+  {
+    auto [encoded, second, third] = three_entries();
+    ExpectError(TryOpen(assemble(RawBlock(std::move(encoded), {0, third, second})), WithFilter()),
+                ErrorCode::Corruption);
+  }
+  {
+    auto [encoded, second, third] = three_entries();
+    ExpectError(
+        TryOpen(assemble(RawBlock(std::move(encoded), {0, 1, second, third})), WithFilter()),
+        ErrorCode::Corruption);
+  }
+  {
+    std::vector<std::byte> encoded;
+    AppendEntry(encoded, 0, AsBytes("a"), {});
+    const std::uint32_t second = static_cast<std::uint32_t>(encoded.size());
+    AppendEntry(encoded, 1, AsBytes("b"), {});
+    ExpectError(TryOpen(assemble(RawBlock(std::move(encoded), {0, second})), WithFilter()),
+                ErrorCode::Corruption);
+  }
+  ExpectError(TryOpen(assemble(RawBlock(
+                          [] {
+                            std::vector<std::byte> encoded;
+                            AppendEntry(encoded, 0, AsBytes("a"), {});
+                            encoded.push_back(std::byte{0x80});
+                            return encoded;
+                          }(),
+                          {0})),
+                      WithFilter()),
+              ErrorCode::Corruption);
+}
+
 TEST_F(TableTest, IgnoresFiltersOfOtherPolicies) {
   TableAssembler assembler;
   const BlockHandle data = assembler.AddBlock(BlockOf({{Key("a", 1), AsBytes("x")}}));
@@ -831,6 +992,128 @@ TEST_F(TableTest, ReportsDamagedDataBlocks) {
   ExpectError(TryGet(*empty, "a", 1), ErrorCode::Corruption);
   Table::Iterator empty_iterator(*empty);
   ExpectError(empty_iterator.SeekToLast(), ErrorCode::Corruption);
+
+  for (const bool zero_restarts : {true, false}) {
+    SCOPED_TRACE(zero_restarts);
+    TableAssembler unreachable;
+    std::vector<std::byte> unreachable_entries;
+    AppendEntry(unreachable_entries, 0, Key("a", 1), AsBytes("value"));
+    const std::uint32_t end = static_cast<std::uint32_t>(unreachable_entries.size());
+    const BlockHandle unreachable_data =
+        unreachable.AddBlock(zero_restarts ? RawBlock(std::move(unreachable_entries), {})
+                                           : RawBlock(std::move(unreachable_entries), {end}));
+    const BlockHandle unreachable_index =
+        unreachable.AddBlock(BlockOf({{Key("z", 1), HandleOf(unreachable_data)}}));
+    const auto no_positions_table =
+        Open(unreachable.Finish(unreachable.AddBlock(BlockOf({})), unreachable_index));
+    ASSERT_NE(no_positions_table, nullptr);
+    ExpectError(TryGet(*no_positions_table, "a", 1), ErrorCode::Corruption);
+  }
+
+  TableAssembler unreachable_last;
+  std::vector<std::byte> entries;
+  AppendEntry(entries, 0, Key("a", 1), AsBytes("value"));
+  const std::uint32_t entries_end = static_cast<std::uint32_t>(entries.size());
+  const BlockHandle unreachable_data =
+      unreachable_last.AddBlock(RawBlock(std::move(entries), {0, entries_end}));
+  const BlockHandle unreachable_index =
+      unreachable_last.AddBlock(BlockOf({{Key("z", 1), HandleOf(unreachable_data)}}));
+  const auto unreachable =
+      Open(unreachable_last.Finish(unreachable_last.AddBlock(BlockOf({})), unreachable_index));
+  ASSERT_NE(unreachable, nullptr);
+  Table::Iterator unreachable_iterator(*unreachable);
+  ExpectError(unreachable_iterator.SeekToLast(), ErrorCode::Corruption);
+  EXPECT_FALSE(unreachable_iterator.valid());
+}
+
+TEST_F(TableTest, TrustedIteratorsRejectInvalidSeekTargetsAndRecover) {
+  const auto table =
+      Open(BuildTable({{Key("a", 1), Materialize(AsBytes("value"))}}, {}, comparator_), Trusted());
+  ASSERT_NE(table, nullptr);
+  Table::Iterator iterator(*table);
+
+  ExpectError(iterator.Seek(AsBytes("short")), ErrorCode::Corruption);
+  EXPECT_FALSE(iterator.valid());
+  std::vector<std::byte> unknown = Key("a", 1);
+  unknown[unknown.size() - InternalKeyTrailerSize] = std::byte{2};
+  ExpectError(iterator.Seek(unknown), ErrorCode::Corruption);
+  EXPECT_FALSE(iterator.valid());
+
+  ASSERT_TRUE(iterator.Seek(Key("a", MaxSequenceNumber)).has_value());
+  ASSERT_TRUE(iterator.valid());
+  EXPECT_EQ(Materialize(iterator.key()), Key("a", 1));
+}
+
+TEST_F(TableTest, TrustedReadsRejectShortAndUnknownDataKeys) {
+  const auto assemble = [&](ByteView data_key) {
+    TableAssembler table;
+    const BlockHandle data = table.AddBlock(BlockOf({{data_key, AsBytes("value")}}));
+    const BlockHandle index = table.AddBlock(BlockOf({{Key("z", 1), HandleOf(data)}}));
+    return table.Finish(table.AddBlock(BlockOf({})), index);
+  };
+
+  const auto short_table = Open(assemble(AsBytes("short")), Trusted());
+  ASSERT_NE(short_table, nullptr);
+  ExpectError(TryGet(*short_table, "short", MaxSequenceNumber), ErrorCode::Corruption);
+  Table::Iterator short_iterator(*short_table);
+  ExpectError(short_iterator.SeekToFirst(), ErrorCode::Corruption);
+  EXPECT_FALSE(short_iterator.valid());
+
+  std::vector<std::byte> unknown = Key("a", 1);
+  unknown[unknown.size() - InternalKeyTrailerSize] = std::byte{2};
+  const auto unknown_table = Open(assemble(unknown), Trusted());
+  ASSERT_NE(unknown_table, nullptr);
+  ExpectError(TryGet(*unknown_table, "a", MaxSequenceNumber), ErrorCode::Corruption);
+  Table::Iterator unknown_iterator(*unknown_table);
+  ExpectError(unknown_iterator.SeekToLast(), ErrorCode::Corruption);
+  EXPECT_FALSE(unknown_iterator.valid());
+}
+
+TEST_F(TableTest, LazyDataCorruptionPropagatesAndPositioningRecovers) {
+  const auto assemble = [&](std::vector<std::byte> data_contents) {
+    TableAssembler table;
+    const BlockHandle data = table.AddBlock(data_contents);
+    const BlockHandle index = table.AddBlock(BlockOf({{Key("z", 1), HandleOf(data)}}));
+    return table.Finish(table.AddBlock(BlockOf({})), index);
+  };
+
+  std::vector<std::byte> forward_entries;
+  const std::vector<std::byte> first_key = Key("a", 1);
+  AppendEntry(forward_entries, 0, first_key, AsBytes("first"));
+  forward_entries.push_back(std::byte{0x80});
+  const auto forward_table = Open(assemble(RawBlock(std::move(forward_entries), {0})), Trusted());
+  ASSERT_NE(forward_table, nullptr);
+
+  ExpectError(TryGet(*forward_table, "b", MaxSequenceNumber), ErrorCode::Corruption);
+  Table::Iterator forward(*forward_table);
+  ASSERT_TRUE(forward.SeekToFirst().has_value());
+  ASSERT_TRUE(forward.valid());
+  EXPECT_EQ(Materialize(forward.key()), first_key);
+  ExpectError(forward.Next(), ErrorCode::Corruption);
+  EXPECT_FALSE(forward.valid());
+  ASSERT_TRUE(forward.SeekToFirst().has_value());
+  EXPECT_EQ(Materialize(forward.key()), first_key);
+  ExpectError(forward.SeekToLast(), ErrorCode::Corruption);
+  EXPECT_FALSE(forward.valid());
+
+  std::vector<std::byte> backward_entries;
+  const std::vector<std::byte> last_key = Key("c", 1);
+  AppendEntry(backward_entries, 0, first_key, AsBytes("first"));
+  AppendEntry(backward_entries, 100, {}, {});
+  const std::uint32_t last_offset = static_cast<std::uint32_t>(backward_entries.size());
+  AppendEntry(backward_entries, 0, last_key, AsBytes("last"));
+  const auto backward_table =
+      Open(assemble(RawBlock(std::move(backward_entries), {0, last_offset})), Trusted());
+  ASSERT_NE(backward_table, nullptr);
+
+  Table::Iterator backward(*backward_table);
+  ASSERT_TRUE(backward.SeekToLast().has_value());
+  ASSERT_TRUE(backward.valid());
+  EXPECT_EQ(Materialize(backward.key()), last_key);
+  ExpectError(backward.Prev(), ErrorCode::Corruption);
+  EXPECT_FALSE(backward.valid());
+  ASSERT_TRUE(backward.SeekToLast().has_value());
+  EXPECT_EQ(Materialize(backward.key()), last_key);
 }
 
 TEST_F(TableTest, ReportsReadFailuresWhileIterating) {

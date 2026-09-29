@@ -99,6 +99,8 @@ class InternalKeyComparator final : public Comparator {
   InternalKeyComparator(const Comparator&&) = delete;
 
   [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override;
+  // Both operands must contain an internal-key trailer.
+  [[nodiscard]] int CompareTrusted(ByteView left, ByteView right) const noexcept;
   [[nodiscard]] int Compare(const InternalKey& left, const InternalKey& right) const noexcept {
     return Compare(left.encoded(), right.encoded());
   }
@@ -111,6 +113,28 @@ class InternalKeyComparator final : public Comparator {
 
  private:
   const Comparator& user_comparator_;
+};
+
+class TrustedInternalKeyComparator final : public Comparator {
+ public:
+  explicit TrustedInternalKeyComparator(const InternalKeyComparator& comparator) noexcept
+      : comparator_(&comparator) {}
+  TrustedInternalKeyComparator(InternalKeyComparator&&) = delete;
+  TrustedInternalKeyComparator(const InternalKeyComparator&&) = delete;
+
+  [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override {
+    return comparator_->CompareTrusted(left, right);
+  }
+  [[nodiscard]] std::string_view Name() const noexcept override { return comparator_->Name(); }
+  void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const override {
+    comparator_->FindShortestSeparator(start, limit);
+  }
+  void FindShortSuccessor(std::vector<std::byte>& key) const override {
+    comparator_->FindShortSuccessor(key);
+  }
+
+ private:
+  const InternalKeyComparator* comparator_;
 };
 
 }  // namespace modern_leveldb
