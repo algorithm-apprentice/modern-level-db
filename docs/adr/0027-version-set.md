@@ -149,7 +149,6 @@ class VersionSet final {
 
   std::shared_ptr<const Version> current() const noexcept;
   const Version* current_raw() const noexcept;
-  const std::shared_ptr<const Version>& current_owner() const noexcept;
   ReadPin PinCurrent() noexcept;
   std::span<const std::optional<InternalKey>, NumLevels> compact_pointers() const noexcept;
   std::set<std::uint64_t> LiveFiles() const;
@@ -170,9 +169,13 @@ inline constexpr std::uint64_t FileNumberLimit = std::uint64_t{1} << 63U;
 
 ### Versions and the builder
 
-- A `Version` is immutable. A default-constructed version has no files.
-  `files(level)` requires a level below `NumLevels`.
+- A `Version` has immutable file topology. A default-constructed version has
+  no files. `files(level)` requires a level below `NumLevels`. Shared file
+  metadata contains a mutable runtime-only seek budget protected by the
+  database mutex; that field is not encoded in the MANIFEST.
 - `Apply` removes the edit's deleted files, then adds its new files. It
+  initializes every new metadata object's seek budget from its file size;
+  files retained from the base version keep their shared remaining budget. It
   returns `InvalidArgument` for a deleted file that is not live in that level,
   a new file whose number is live in any level, or a new file whose smallest
   key follows its largest. After an error, the builder may only be destroyed.

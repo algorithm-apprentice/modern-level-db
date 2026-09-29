@@ -75,9 +75,6 @@ class VersionSet final {
 
   [[nodiscard]] std::shared_ptr<const Version> current() const noexcept { return current_; }
   [[nodiscard]] const Version* current_raw() const noexcept { return current_.get(); }
-  [[nodiscard]] const std::shared_ptr<const Version>& current_owner() const noexcept {
-    return current_;
-  }
   // Requires the same external synchronization as current-version changes;
   // the pin must be destroyed under it too.
   [[nodiscard]] ReadPin PinCurrent() noexcept;

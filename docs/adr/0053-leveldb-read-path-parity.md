@@ -7,8 +7,8 @@ table/mmap parity work. Milestone 4 completes lazy version visitation, typed
 read pins, exact seek charging, and reusable output. The first integrated
 Milestone 5 audit found two residual cost-model gaps: the L0 overlap vector
 does not reserve pinned capacity and seek budgets still allocate/retain
-ownership on charged Gets. The correction design below must merge before the
-final implementation and measurement.
+ownership on charged Gets. The reviewed correction implementation now closes
+both gaps; the final frozen-binary performance matrix remains.
 
 ## Context
 
@@ -175,6 +175,13 @@ Add tests proving:
 
 Do not run the final performance matrix until this correction implementation
 passes the complete hardening gates and a bounded implementation review.
+
+The implementation passed Debug/Release, ASan/UBSan, TSan,
+compatibility/model/crash, LLVM fuzz, GCC, profiling contracts, and 100%
+changed-code coverage. Optimized inspection shows that `Charge` contains no
+calls or allocations and that synchronous Get contains no shared-control-block
+operations. The bounded GPT-5.6 Sol implementation review found no actionable
+issue.
 
 ## Decision
 

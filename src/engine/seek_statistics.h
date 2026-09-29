@@ -3,8 +3,6 @@
 
 #include <cstdint>
 #include <functional>
-#include <map>
-#include <memory>
 #include <optional>
 
 #include "engine/compaction_picker.h"
@@ -21,36 +19,37 @@ inline constexpr std::uint64_t ReadBytesPeriod = std::uint64_t{1} << 20U;
 // uniform below twice ReadBytesPeriod, from LevelDB's Random.
 [[nodiscard]] std::function<std::uint64_t()> ReadSamplingPeriods(std::uint32_t seed);
 
-// The seek budgets of the files that reads charge, and the file that the
-// current version should compact because its budget ran out. It is not
-// thread-safe; the engine uses it with the database mutex held.
+// The file that the current version should compact because its metadata seek
+// budget ran out. It is not thread-safe; the engine uses it with the database
+// mutex held.
 class SeekStatistics final {
  public:
-  // Charges a seek to the file, which `version` holds at the charge's level.
-  // The file's budget starts at its size divided by 16 KiB, and at least 100,
-  // and keeps falling below zero. If the budget is then at most zero, `version`
-  // is `current`, and no file is recorded for `current`, records the file for
-  // `current` and returns true.
+  // Charges a seek to the exact file slot in `version` at the charge's level.
+  // Its metadata budget keeps falling below zero. If the budget is then at
+  // most zero, `version` is `current`, and no file is recorded for `current`,
+  // borrows that slot and returns true.
   [[nodiscard]] bool Charge(const Version& version, const Version& current,
-                            const std::shared_ptr<const Version>& current_owner,
                             const SeekCharge& charge);
 
-  // Returns the file recorded for `current`.
+  // Reports a recorded file without materializing its shared owner.
+  [[nodiscard]] bool HasFileToCompact(const Version& current) const noexcept;
+
+  // Returns an owning file for background compaction.
   [[nodiscard]] std::optional<SeekCompaction> FileToCompact(const Version& current) const;
 
-  // Forgets the budgets of the files that `current` does not hold, and a file
-  // recorded for another version.
+  // Forgets a file recorded for another version.
   void Retain(const Version& current);
 
  private:
-  [[nodiscard]] bool IsRecordedFor(const Version& version) const;
+  struct Recorded {
+    const Version* version;
+    std::uint32_t level;
+    const Version::File* file;
+  };
 
-  // Keyed by each file's metadata, which a budget keeps alive, so that no other
-  // metadata can take its place.
-  std::map<Version::File, std::int64_t> budgets_;
-  std::weak_ptr<const Version> recorded_version_;
-  const Version* recorded_version_address_ = nullptr;
-  std::optional<SeekCompaction> recorded_;
+  [[nodiscard]] bool IsRecordedFor(const Version& version) const noexcept;
+
+  std::optional<Recorded> recorded_;
 };
 
 }  // namespace modern_leveldb

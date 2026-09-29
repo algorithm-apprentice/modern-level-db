@@ -732,9 +732,10 @@ TEST_F(VersionSetTest, ReadPinKeepsAnOldVersionLiveWithoutSharedOwnership) {
 
   std::uint64_t new_number = 0;
   {
-    const long owners = set->current_owner().use_count();
+    const std::shared_ptr<const Version> current = set->current();
+    const long owners = current.use_count();
     VersionSet::ReadPin pin = set->PinCurrent();
-    EXPECT_EQ(set->current_owner().use_count(), owners);
+    EXPECT_EQ(current.use_count(), owners);
     EXPECT_EQ(pin.value().files(1).front()->number, old_number);
 
     new_number = set->NewFileNumber();

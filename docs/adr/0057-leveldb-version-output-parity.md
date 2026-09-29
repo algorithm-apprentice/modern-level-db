@@ -287,24 +287,20 @@ The existing weak installed-version list remains responsible for
 read-pinned version is visible through the same weak entry, so obsolete-file
 cleanup cannot remove its files.
 
-Add borrowed synchronized accessors:
+Add a borrowed synchronized accessor:
 
 ```cpp
 [[nodiscard]] const Version* current_raw() const noexcept;
-[[nodiscard]] const std::shared_ptr<const Version>& current_owner() const noexcept;
 ```
 
 `current_raw()` is the ordinary identity/value accessor and performs no
-control-block operation. `current_owner()` is used only when seek statistics
-actually records a compaction and must create its existing weak version
-owner; it is not copied during ordinary charge checks.
+control-block operation.
 
 `SeekStatistics::Charge` compares the read-pinned version with
-`current_raw()`. Its existing `weak_ptr` recorded-version representation is
-constructed from the borrowed `current_owner()` only when a budget reaches
-the recording point. `FileToCompact` and `Retain` likewise use raw current
-identity for ordinary checks and lock the weak owner only where ownership
-validation requires it.
+`current_raw()`. ADR-0053's Milestone 5 audit correction supersedes the
+original weak-owner design: budgets live in shared file metadata, the recorded
+version and file slot remain borrowed, and only background
+`FileToCompact` materializes the owning file.
 
 ### Capture all three sources in one scope
 

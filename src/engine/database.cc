@@ -329,8 +329,8 @@ Result<bool> DatabaseEngine::Get(ByteView key, std::vector<std::byte>& value,
       throw;
     }
     lock.lock();
-    if (seek.has_value() && seek_statistics_.Charge(sources.version(), *versions_->current_raw(),
-                                                    versions_->current_owner(), *seek)) {
+    if (seek.has_value() &&
+        seek_statistics_.Charge(sources.version(), *versions_->current_raw(), *seek)) {
       MaybeScheduleBackgroundWork();
     }
   }
@@ -359,8 +359,7 @@ void DatabaseEngine::RecordReadSample(ByteView internal_key) {
   const std::lock_guard lock(mutex_);
   const Version& current = *versions_->current_raw();
   const std::optional<SeekCharge> charge = SampleCharge(current, comparator_, internal_key);
-  if (charge.has_value() &&
-      seek_statistics_.Charge(current, current, versions_->current_owner(), *charge)) {
+  if (charge.has_value() && seek_statistics_.Charge(current, current, *charge)) {
     MaybeScheduleBackgroundWork();
   }
 }
@@ -409,7 +408,7 @@ bool DatabaseEngine::NeedsCompaction() const {
   if (ScoreCompaction(current).score >= 1) {
     return true;
   }
-  return seek_statistics_.FileToCompact(current).has_value();
+  return seek_statistics_.HasFileToCompact(current);
 }
 
 void DatabaseEngine::MaybeScheduleBackgroundWork() {
