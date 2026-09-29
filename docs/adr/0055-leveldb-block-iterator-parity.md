@@ -371,6 +371,10 @@ Bump the read-diagnostic report schema from 2 to 3 and update validators/tests:
 - Schema-3 versus schema-3 comparison may include `validation_entries`; both
   sides must report zero.
 
+ADR-0056 supersedes this diagnostic compatibility policy for the alpha
+codebase: new tooling emits and validates schema 4 only, and the obsolete
+schema-2/3 comparison utility is removed.
+
 `BlockConstruction` timing remains the allocation/layout construction stage
 and may still have cache-pressure events, but it no longer includes an entry
 scan.

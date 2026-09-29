@@ -4,7 +4,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "modern_leveldb/base/bytes.h"
@@ -33,6 +35,30 @@ struct Footer {
   BlockHandle index;
 };
 
+// Decoded block bytes are either owned and independently cacheable or borrowed
+// from an immutable random-access file that must outlive them.
+class BlockContents final {
+ public:
+  [[nodiscard]] static BlockContents Owned(std::vector<std::byte> contents) noexcept;
+  [[nodiscard]] static BlockContents Borrowed(ByteView contents) noexcept;
+
+  BlockContents(const BlockContents&) = delete;
+  BlockContents& operator=(const BlockContents&) = delete;
+  BlockContents(BlockContents&&) noexcept = default;
+  BlockContents& operator=(BlockContents&&) = delete;
+  ~BlockContents() = default;
+
+  [[nodiscard]] ByteView data() const noexcept;
+  [[nodiscard]] bool cacheable() const noexcept { return !borrowed_.has_value(); }
+
+ private:
+  explicit BlockContents(std::vector<std::byte> contents) noexcept : owned_(std::move(contents)) {}
+  explicit BlockContents(ByteView contents) noexcept : borrowed_(contents) {}
+
+  std::vector<std::byte> owned_;
+  std::optional<ByteView> borrowed_;
+};
+
 [[nodiscard]] std::array<std::byte, FooterSize> EncodeFooter(const Footer& footer);
 [[nodiscard]] Result<Footer> DecodeFooter(std::span<const std::byte, FooterSize> encoded);
 
@@ -41,9 +67,10 @@ struct Footer {
     ByteView contents, BlockCompression type) noexcept;
 // Verifies a stored block and returns decoded contents. Uncompressed contents
 // reuse the input buffer.
-[[nodiscard]] Result<std::vector<std::byte>> DecodeStoredBlock(std::vector<std::byte> stored);
-// Verifies borrowed stored bytes and returns owned decoded contents.
-[[nodiscard]] Result<std::vector<std::byte>> DecodeStoredBlock(ByteView stored);
+[[nodiscard]] Result<BlockContents> DecodeStoredBlock(std::vector<std::byte> stored);
+// Verifies borrowed stored bytes. Uncompressed contents remain borrowed;
+// compressed contents are returned in owned decompressed storage.
+[[nodiscard]] Result<BlockContents> DecodeStoredBlock(ByteView stored);
 
 }  // namespace modern_leveldb
 

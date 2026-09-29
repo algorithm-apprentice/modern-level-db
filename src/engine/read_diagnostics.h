@@ -118,7 +118,6 @@ enum class FileOpenReason : std::size_t {
   SizeMismatch,
   SizeUnrepresentable,
   CountBudgetExhausted,
-  ByteBudgetExhausted,
   StatFailed,
   MmapFailed,
   Count,
@@ -133,7 +132,6 @@ inline constexpr std::array<std::string_view, static_cast<std::size_t>(FileOpenR
         "size_mismatch",
         "size_unrepresentable",
         "count_budget_exhausted",
-        "byte_budget_exhausted",
         "stat_failed",
         "mmap_failed",
 };

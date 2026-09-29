@@ -69,17 +69,18 @@ struct BuiltTable {
   BlockHandle data;
 };
 
-BuiltTable BuildUncompressedTable(const std::filesystem::path& path,
-                                  const InternalKeyComparator& comparator) {
+BuiltTable BuildTableFile(const std::filesystem::path& path,
+                          const InternalKeyComparator& comparator, BlockCompression compression,
+                          ByteView value) {
   PosixFileSystem file_system;
   auto file = file_system.OpenWritable(path);
   EXPECT_TRUE(file.has_value()) << file.error().ToString();
   TableBuilderOptions options;
-  options.compression = BlockCompression::None;
+  options.compression = compression;
   TableBuilder builder(std::move(*file), comparator, options);
   const auto key = InternalKey::Create(AsBytes("key"), 1, ValueKind::Value);
   EXPECT_TRUE(key.has_value());
-  EXPECT_TRUE(builder.Add(key->encoded(), AsBytes("value")).has_value());
+  EXPECT_TRUE(builder.Add(key->encoded(), value).has_value());
   EXPECT_TRUE(builder.Finish().has_value());
 
   const std::vector<std::byte> bytes = ReadFile(path);
@@ -92,9 +93,9 @@ BuiltTable BuildUncompressedTable(const std::filesystem::path& path,
   const std::size_t stored_index_size =
       static_cast<std::size_t>(index_handle.size) + BlockTrailerSize;
   const ByteView stored_index(bytes.data() + index_handle.offset, stored_index_size);
-  const Result<std::vector<std::byte>> index_contents = DecodeStoredBlock(stored_index);
+  Result<BlockContents> index_contents = DecodeStoredBlock(stored_index);
   EXPECT_TRUE(index_contents.has_value()) << index_contents.error().ToString();
-  const Result<Block> index = Block::Create(*index_contents);
+  const Result<Block> index = Block::Create(std::move(*index_contents));
   EXPECT_TRUE(index.has_value()) << index.error().ToString();
   Block::Iterator entry(*index, comparator);
   EXPECT_TRUE(entry.SeekToFirst().has_value());
@@ -110,7 +111,8 @@ TEST(TablePosixTest, TruncatedFileFallsBackToTypedCorruption) {
   TemporaryDirectory directory;
   const auto path = directory.path() / "table.ldb";
   const InternalKeyComparator comparator(BytewiseComparator());
-  const BuiltTable built = BuildUncompressedTable(path, comparator);
+  const BuiltTable built =
+      BuildTableFile(path, comparator, BlockCompression::None, AsBytes("value"));
   ASSERT_GT(built.size, 0U);
   ASSERT_EQ(::truncate(path.c_str(), static_cast<off_t>(built.size - 1)), 0);
 
@@ -124,12 +126,50 @@ TEST(TablePosixTest, TruncatedFileFallsBackToTypedCorruption) {
   EXPECT_EQ(table.error().code(), ErrorCode::Corruption);
 }
 
-TEST(TablePosixTest, CachedUncompressedBlockOutlivesMappedTable) {
+TEST(TablePosixTest, MappedUncompressedBlockBypassesTheBlockCache) {
   TemporaryDirectory directory;
   const auto path = directory.path() / "table.ldb";
   const InternalKeyComparator comparator(BytewiseComparator());
-  const BuiltTable built = BuildUncompressedTable(path, comparator);
+  const BuiltTable built =
+      BuildTableFile(path, comparator, BlockCompression::None, AsBytes("value"));
   PosixFileSystem file_system(true);
+  BlockCache cache(1U << 20U);
+  const std::uint64_t expected_cache_id = cache.NewId() + 1;
+  auto file = file_system.OpenRandomAccess(path, built.size);
+  ASSERT_TRUE(file.has_value()) << file.error().ToString();
+  TableOptions options;
+  options.block_cache = &cache;
+  options.use_trusted_internal_key_comparison = true;
+  Result<std::unique_ptr<Table>> table =
+      Table::Open(std::move(*file), built.size, comparator, options);
+  ASSERT_TRUE(table.has_value()) << table.error().ToString();
+  const auto lookup = LookupKey::Create(AsBytes("key"), MaxSequenceNumber);
+  ASSERT_TRUE(lookup.has_value());
+  const auto value = (*table)->Get(*lookup);
+  ASSERT_TRUE(value.has_value() && value->has_value());
+  EXPECT_EQ(AsStringView((*value)->value), "value");
+
+  std::array<std::byte, 2 * sizeof(std::uint64_t)> cache_key{};
+  EncodeFixed64(std::span(cache_key).first<sizeof(std::uint64_t)>(), expected_cache_id);
+  EncodeFixed64(std::span(cache_key).last<sizeof(std::uint64_t)>(), built.data.offset);
+  EXPECT_FALSE(cache.Lookup(cache_key).has_value());
+  EXPECT_EQ(cache.total_charge(), 0U);
+  const auto repeated = (*table)->Get(*lookup);
+  ASSERT_TRUE(repeated.has_value() && repeated->has_value());
+  EXPECT_EQ(AsStringView((*repeated)->value), "value");
+  EXPECT_FALSE(cache.Lookup(cache_key).has_value());
+
+  table->reset();
+  ASSERT_TRUE(file_system.RemoveFile(path).has_value());
+}
+
+TEST(TablePosixTest, CachedCopiedUncompressedBlockOutlivesTable) {
+  TemporaryDirectory directory;
+  const auto path = directory.path() / "table.ldb";
+  const InternalKeyComparator comparator(BytewiseComparator());
+  const BuiltTable built =
+      BuildTableFile(path, comparator, BlockCompression::None, AsBytes("value"));
+  PosixFileSystem file_system(false);
   BlockCache cache(1U << 20U);
   const std::uint64_t expected_cache_id = cache.NewId() + 1;
   auto file = file_system.OpenRandomAccess(path, built.size);
@@ -158,6 +198,48 @@ TEST(TablePosixTest, CachedUncompressedBlockOutlivesMappedTable) {
   ASSERT_TRUE(entry.SeekToFirst().has_value());
   ASSERT_TRUE(entry.valid());
   EXPECT_EQ(AsStringView(entry.value()), "value");
+}
+
+TEST(TablePosixTest, CachedMappedCompressedBlockOutlivesTable) {
+  TemporaryDirectory directory;
+  const auto path = directory.path() / "table.ldb";
+  const InternalKeyComparator comparator(BytewiseComparator());
+  const std::vector<std::byte> expected(4096, std::byte{'x'});
+  const BuiltTable built = BuildTableFile(path, comparator, BlockCompression::Snappy, expected);
+  const std::vector<std::byte> file_bytes = ReadFile(path);
+  ASSERT_LT(built.data.offset + built.data.size, file_bytes.size());
+  ASSERT_EQ(static_cast<BlockCompression>(file_bytes[built.data.offset + built.data.size]),
+            BlockCompression::Snappy);
+
+  PosixFileSystem file_system(true);
+  BlockCache cache(1U << 20U);
+  const std::uint64_t expected_cache_id = cache.NewId() + 1;
+  auto file = file_system.OpenRandomAccess(path, built.size);
+  ASSERT_TRUE(file.has_value()) << file.error().ToString();
+  TableOptions options;
+  options.block_cache = &cache;
+  options.use_trusted_internal_key_comparison = true;
+  Result<std::unique_ptr<Table>> table =
+      Table::Open(std::move(*file), built.size, comparator, options);
+  ASSERT_TRUE(table.has_value()) << table.error().ToString();
+  const auto lookup = LookupKey::Create(AsBytes("key"), MaxSequenceNumber);
+  ASSERT_TRUE(lookup.has_value());
+  const auto value = (*table)->Get(*lookup);
+  ASSERT_TRUE(value.has_value() && value->has_value());
+  EXPECT_EQ((*value)->value, expected);
+
+  std::array<std::byte, 2 * sizeof(std::uint64_t)> cache_key{};
+  EncodeFixed64(std::span(cache_key).first<sizeof(std::uint64_t)>(), expected_cache_id);
+  EncodeFixed64(std::span(cache_key).last<sizeof(std::uint64_t)>(), built.data.offset);
+  std::optional<BlockCache::Handle> cached = cache.Lookup(cache_key);
+  ASSERT_TRUE(cached.has_value());
+
+  table->reset();
+  ASSERT_TRUE(file_system.RemoveFile(path).has_value());
+  Block::Iterator entry(cached->value(), comparator);
+  ASSERT_TRUE(entry.SeekToFirst().has_value());
+  ASSERT_TRUE(entry.valid());
+  EXPECT_EQ(std::vector<std::byte>(entry.value().begin(), entry.value().end()), expected);
 }
 
 }  // namespace

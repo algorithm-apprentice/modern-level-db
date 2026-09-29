@@ -12,11 +12,14 @@ blocks now retain complete structural validation while trusting the writer's
 key order; index and metaindex blocks retain full order validation.
 
 [ADR-0050](0050-posix-mmap-table-reads.md) adds direct stored-block decoding
-from an optional mapped file view while preserving the reader's owning block
-and cache contracts.
+from an optional mapped file view. [ADR-0056](0056-leveldb-table-mmap-parity.md)
+preserves borrowed mapped-uncompressed contents through `Block` and the filter
+reader; borrowed data blocks never enter the block cache.
 
 [ADR-0051](0051-trusted-internal-key-comparison.md) designs one-time index-key
 parsing and a minimum data-key length boundary before trusted block seeks.
+[ADR-0055](0055-leveldb-block-iterator-parity.md) replaces eager block scans
+with lazy checked decoding and completes that trusted boundary.
 - Date: 2026-09-24
 
 ## Context
@@ -177,19 +180,21 @@ class Table {
 - Data blocks are read through the block cache when one is configured.
   `fill_cache = false` still uses cached blocks but does not insert new ones.
   A block whose charge the cache cannot account is used without caching it.
-- Data blocks use `Block::CreateWithTrustedKeyOrder`: every encoded length,
-  prefix, entry boundary, and restart point is checked before the block can
-  use its trusted decoder, but the load does not reconstruct and compare every
-  key. Index and metaindex blocks continue to use full `Block::Create`.
+- Every block uses minimal restart-region construction. Data entries are
+  checked lazily as iterator moves reach them. Index and metaindex blocks
+  receive one complete physical entry/restart-topology validation at table
+  open, and production table seeks use the checked trusted internal-key
+  comparator boundary.
 - Stored-block reads prefer an exact stable file view. Compressed bytes are
-  checksummed and decompressed directly from it; uncompressed bytes are copied
-  into the existing owning `Block`. When no view exists, `ReadExactly` retains
-  the previous copied-read and truncation behavior.
+  checksummed and decompressed directly from it into owned cacheable storage;
+  uncompressed mapped bytes remain borrowed and noncacheable. Copied
+  uncompressed bytes reuse their owning allocation and remain cacheable. When
+  no view exists, `ReadExactly` retains complete-read and truncation behavior.
 - A block iterator borrows its block, so an iterator keeps the current block's
-  cache handle, or its own `shared_ptr<const Block>` for a block that is not
-  in the cache, while it is positioned in that block. `Get` keeps the block
-  the same way until it has parsed the key and copied the value. Eviction and
-  a cache without capacity therefore cannot free a block in use.
+  intrusive cache handle or an uncached owned `Block` object while positioned.
+  An uncached mapped block owns only metadata and borrows bytes from the table,
+  which outlives it. `Get` keeps the reference through key parsing and value
+  copying.
 
 ## Explicitly deferred behavior
 

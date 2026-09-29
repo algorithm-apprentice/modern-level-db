@@ -50,7 +50,7 @@ struct DatabaseEngineOptions {
   std::uint64_t max_file_size = std::uint64_t{2} << 20U;
   // Ten are kept for files other than tables.
   std::size_t max_open_files = 1000;
-  bool allow_mmap_reads = false;
+  bool allow_mmap_reads = true;
   TableBuilderOptions table_options{};
   // Without one, the database owns an 8 MiB block cache.
   BlockCache* block_cache = nullptr;

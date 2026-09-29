@@ -32,7 +32,7 @@ def main():
         raise RuntimeError("diagnostic executable accepted a reference-engine case")
     cases = (
         ("modern/readrandom/4096", "default"),
-        ("modern/readmissing/65536", "mmap"),
+        ("modern/readmissing/65536", "pread"),
     )
     for case, file_access in cases:
         output = root / f"{case.replace('/', '-')}-{file_access}"

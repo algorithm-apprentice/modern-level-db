@@ -4,8 +4,13 @@
 
 Accepted design. Bounded GPT-5.6 Sol review added the independent mapped-page
 storage-fault warning, completed the `BlockContents` construction contract,
-and corrected the uninjectable POSIX fallback validation claims. Merge this
-design-only ADR before ADR-0053 Milestone 3 implementation.
+and corrected the uninjectable POSIX fallback validation claims. Design PR
+#69 merged before ADR-0053 Milestone 3 implementation began.
+
+Bounded implementation review removed `noexcept` from constructors that may
+initialize the process limiter and added mandatory
+`modern_file_access_semantics=mmap-default-v1` throughput provenance so old
+pread-default binaries cannot be accepted as current default-mmap runs.
 
 ## Context
 
@@ -405,6 +410,10 @@ Change Modern benchmark/runner access modes to:
 
 Remove the new-run `mmap` selector. Historical artifacts retain their recorded
 mode and schema as raw evidence, but new tooling does not accept them as input.
+Throughput reports emit
+`modern_file_access_semantics=mmap-default-v1`; validators require it so an
+older binary whose `default` meant `pread` cannot be mislabeled as a current
+default-mmap run.
 
 Pinned LevelDB keeps its existing `default|pread` control, so the final
 ADR-0053 measurement can compare:

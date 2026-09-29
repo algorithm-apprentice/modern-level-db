@@ -61,8 +61,8 @@ bool InBlockRegion(BlockHandle handle, std::uint64_t blocks_end) noexcept {
   return available >= BlockTrailerSize && handle.size <= available - BlockTrailerSize;
 }
 
-Result<std::vector<std::byte>> ReadStoredBlock(const RandomAccessFile& file,
-                                               std::uint64_t blocks_end, BlockHandle handle) {
+Result<BlockContents> ReadStoredBlock(const RandomAccessFile& file, std::uint64_t blocks_end,
+                                      BlockHandle handle) {
   if (!InBlockRegion(handle, blocks_end)) {
     return std::unexpected(Error::Corruption("table block lies outside the file"));
   }
@@ -89,7 +89,7 @@ Result<std::vector<std::byte>> ReadStoredBlock(const RandomAccessFile& file,
 
 Result<Block> ReadBlock(const RandomAccessFile& file, std::uint64_t blocks_end,
                         BlockHandle handle) {
-  Result<std::vector<std::byte>> contents = ReadStoredBlock(file, blocks_end, handle);
+  Result<BlockContents> contents = ReadStoredBlock(file, blocks_end, handle);
   if (!contents.has_value()) {
     return std::unexpected(std::move(contents).error());
   }
@@ -112,7 +112,8 @@ BlockHandle IndexHandle(ByteView value) {
 Status ValidateIndex(const Block& index, std::uint64_t blocks_end, bool trusted_internal_keys) {
   std::uint64_t next_offset = 0;
   return index.ValidateEntries(  // GCOVR_EXCL_BR_LINE: GCC 13 closure cleanup
-      [&](ByteView key, ByteView encoded_value) -> Status {  // GCOVR_EXCL_LINE: GCC 13 misses invocation
+      [&](ByteView key,
+          ByteView encoded_value) -> Status {  // GCOVR_EXCL_LINE: GCC 13 misses invocation
         if (trusted_internal_keys) {
           const Result<ParsedInternalKey> parsed = ParseInternalKey(key);
           if (!parsed.has_value()) {
@@ -161,7 +162,7 @@ Status ReadFilter(const RandomAccessFile& file, std::uint64_t blocks_end, BlockH
   if (!handle.has_value() || !value.empty()) {
     return std::unexpected(Error::Corruption("table filter handle is malformed"));
   }
-  Result<std::vector<std::byte>> contents = ReadStoredBlock(file, blocks_end, *handle);
+  Result<BlockContents> contents = ReadStoredBlock(file, blocks_end, *handle);
   if (!contents.has_value()) {
     return std::unexpected(std::move(contents).error());
   }
@@ -351,7 +352,7 @@ Result<Table::BlockReference> Table::ReadDataBlock(BlockHandle handle,
     return std::unexpected(Error::Corruption("table data block is empty"));
   }
   auto owned = std::make_unique<const Block>(std::move(*block));
-  if (block_cache_ != nullptr && options.fill_cache) {
+  if (block_cache_ != nullptr && options.fill_cache && owned->cacheable()) {
     const std::size_t charge = owned->size();
     Result<BlockCache::Handle> inserted = block_cache_->Insert(cache_key, std::move(owned), charge);
     assert(inserted.has_value());

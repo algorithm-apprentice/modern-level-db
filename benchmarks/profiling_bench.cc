@@ -247,19 +247,19 @@ void WriteJsonString(std::ostream& output, std::string_view value) {
 }
 #endif
 
-bool UseModernMmapReads = false;
+bool UseModernMmapReads = true;
 
 void ConfigureModernFileAccess(const Case& selected, const Arguments& args) {
-  Require(args.modern_file_access == "default" || args.modern_file_access == "mmap",
-          "--modern-file-access must be default or mmap");
+  Require(args.modern_file_access == "default" || args.modern_file_access == "pread",
+          "--modern-file-access must be default or pread");
   if (selected.engine != "modern") {
     Require(!args.modern_file_access_set,
             "--modern-file-access is valid only for Modern LevelDB cases");
     return;
   }
-  if (args.modern_file_access == "mmap") {
-    Require(!IsMutable(selected), "Modern mmap control requires a read-family case");
-    UseModernMmapReads = true;
+  if (args.modern_file_access == "pread") {
+    Require(!IsMutable(selected), "Modern pread control requires a read-family case");
+    UseModernMmapReads = false;
   }
 }
 
@@ -649,7 +649,7 @@ class Fixture final {
     std::ofstream output(path);
     output.imbue(std::locale::classic());
     output << std::setprecision(17);
-    output << "{\"schema_version\":3,\"case\":";
+    output << "{\"schema_version\":4,\"case\":";
     WriteJsonString(output, selected_.name);
     output << ",\"operations\":" << DiagnosticOperations << ",\"sample_schedule\":\"splitmix64-v1\""
            << ",\"sample_seed\":" << diagnostics_.sample_seed
@@ -717,7 +717,7 @@ class Fixture final {
                   std::string_view{"7ee830d02b623e8ffe0b95d59a74db1e58da04c5"}},
         std::pair{"reference_source_override", ReferenceOverride},
         std::pair{"reference_hardware_crc", std::string_view{"disabled"}},
-        std::pair{"modern_file_access", std::string_view{UseModernMmapReads ? "mmap" : "default"}},
+        std::pair{"modern_file_access", std::string_view{UseModernMmapReads ? "default" : "pread"}},
         std::pair{"reference_file_access", std::string_view{"not_applicable"}},
         std::pair{"reference_pread_control_available",
                   std::string_view{MODERN_LEVELDB_REFERENCE_PREAD_CONTROL ? "true" : "false"}},
@@ -1293,6 +1293,8 @@ void AddContext(const Case& selected, const Arguments& args) {
   add("background_quiescence_forced", "false");
   add("modern_file_access",
       selected.engine == "modern" ? args.modern_file_access : "not_applicable");
+  add("modern_file_access_semantics",
+      selected.engine == "modern" ? "mmap-default-v1" : "not_applicable");
   if (IsMutable(selected)) {
     const MutationSpec specification = MutationSpecification(selected, args.smoke);
     add("workload_family", "mutable");
@@ -1412,7 +1414,7 @@ int Main(int argc, char** argv) {
   if (args.help) {
     std::cout << "Usage: modern_leveldb_performance --case ENGINE/WORKLOAD/RECORDS "
                  "--database NEW_PATH --completion-report NEW_FILE "
-                 "[--modern-file-access default|mmap] "
+                 "[--modern-file-access default|pread] "
                  "[--reference-file-access default|pread] [benchmark flags]\n"
                  "Use --list-cases to list supported cases. --profile-markers requires macOS "
                  "Apple Clang. Mutable cases use fixed work and one repetition; --smoke "

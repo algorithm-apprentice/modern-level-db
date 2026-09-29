@@ -70,6 +70,18 @@ void RecordDecodedBlock(std::size_t bytes, bool decompressed) noexcept {
 
 }  // namespace
 
+BlockContents BlockContents::Owned(std::vector<std::byte> contents) noexcept {
+  return BlockContents(std::move(contents));
+}
+
+BlockContents BlockContents::Borrowed(ByteView contents) noexcept {
+  return BlockContents(contents);
+}
+
+ByteView BlockContents::data() const noexcept {
+  return borrowed_.has_value() ? *borrowed_ : ByteView(owned_);
+}
+
 void AppendBlockHandle(std::vector<std::byte>& output, BlockHandle handle) {
   AppendVarint64(output, handle.offset);
   AppendVarint64(output, handle.size);
@@ -129,7 +141,7 @@ std::array<std::byte, BlockTrailerSize> EncodeBlockTrailer(ByteView contents,
   return trailer;
 }
 
-Result<std::vector<std::byte>> DecodeStoredBlock(std::vector<std::byte> stored) {
+Result<BlockContents> DecodeStoredBlock(std::vector<std::byte> stored) {
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
   read_diagnostics::StageScope decode(read_diagnostics::Stage::StoredBlockDecode);
   RecordStoredBlock(stored.size());
@@ -143,7 +155,7 @@ Result<std::vector<std::byte>> DecodeStoredBlock(std::vector<std::byte> stored) 
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
     RecordDecodedBlock(stored.size(), false);
 #endif
-    return stored;
+    return BlockContents::Owned(std::move(stored));
   }
   Result<std::vector<std::byte>> decompressed =
       DecompressBlock(decoded->contents, decoded->compression);
@@ -152,10 +164,13 @@ Result<std::vector<std::byte>> DecodeStoredBlock(std::vector<std::byte> stored) 
     RecordDecodedBlock(decompressed->size(), true);
   }
 #endif
-  return decompressed;
+  if (!decompressed.has_value()) {
+    return std::unexpected(std::move(decompressed).error());
+  }
+  return BlockContents::Owned(std::move(*decompressed));
 }
 
-Result<std::vector<std::byte>> DecodeStoredBlock(ByteView stored) {
+Result<BlockContents> DecodeStoredBlock(ByteView stored) {
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
   read_diagnostics::StageScope decode(read_diagnostics::Stage::StoredBlockDecode);
   RecordStoredBlock(stored.size());
@@ -165,11 +180,10 @@ Result<std::vector<std::byte>> DecodeStoredBlock(ByteView stored) {
     return std::unexpected(decoded.error());
   }
   if (decoded->compression == BlockCompression::None) {
-    std::vector<std::byte> owned(decoded->contents.begin(), decoded->contents.end());
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
-    RecordDecodedBlock(owned.size(), false);
+    RecordDecodedBlock(decoded->contents.size(), false);
 #endif
-    return owned;
+    return BlockContents::Borrowed(decoded->contents);
   }
   Result<std::vector<std::byte>> decompressed =
       DecompressBlock(decoded->contents, decoded->compression);
@@ -178,7 +192,10 @@ Result<std::vector<std::byte>> DecodeStoredBlock(ByteView stored) {
     RecordDecodedBlock(decompressed->size(), true);
   }
 #endif
-  return decompressed;
+  if (!decompressed.has_value()) {
+    return std::unexpected(std::move(decompressed).error());
+  }
+  return BlockContents::Owned(std::move(*decompressed));
 }
 
 }  // namespace modern_leveldb

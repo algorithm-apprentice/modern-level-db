@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -21,6 +22,11 @@ namespace modern_leveldb {
 namespace {
 
 constexpr std::uint64_t MaxNumber = std::numeric_limits<std::uint64_t>::max();
+
+static_assert(!std::is_copy_constructible_v<BlockContents>);
+static_assert(!std::is_copy_assignable_v<BlockContents>);
+static_assert(std::is_nothrow_move_constructible_v<BlockContents>);
+static_assert(!std::is_move_assignable_v<BlockContents>);
 
 std::vector<std::byte> Bytes(std::initializer_list<unsigned int> values) {
   std::vector<std::byte> result;
@@ -196,18 +202,30 @@ TEST(StoredBlockTest, ReturnsVerifiedContentsInTheSameBuffer) {
   std::vector<std::byte> stored = StoredBlock(contents);
   const std::byte* const data = stored.data();
 
-  const Result<std::vector<std::byte>> decoded = DecodeStoredBlock(std::move(stored));
+  Result<BlockContents> decoded = DecodeStoredBlock(std::move(stored));
 
   ASSERT_TRUE(decoded.has_value());
-  EXPECT_EQ(*decoded, contents);
-  EXPECT_EQ(decoded->data(), data);
+  EXPECT_EQ(Materialize(decoded->data()), contents);
+  EXPECT_EQ(decoded->data().data(), data);
+  EXPECT_TRUE(decoded->cacheable());
+
+  BlockContents moved(std::move(*decoded));
+  EXPECT_EQ(Materialize(moved.data()), contents);
+  EXPECT_EQ(moved.data().data(), data);
+  EXPECT_TRUE(moved.cacheable());
 }
 
-TEST(StoredBlockTest, AcceptsEmptyContents) {
-  const Result<std::vector<std::byte>> decoded = DecodeStoredBlock(StoredBlock({}));
+TEST(StoredBlockTest, DistinguishesOwnedAndBorrowedEmptyContents) {
+  const std::vector<std::byte> stored = StoredBlock({});
+  const Result<BlockContents> owned = DecodeStoredBlock(stored);
+  const Result<BlockContents> borrowed = DecodeStoredBlock(ByteView(stored));
 
-  ASSERT_TRUE(decoded.has_value());
-  EXPECT_TRUE(decoded->empty());
+  ASSERT_TRUE(owned.has_value());
+  ASSERT_TRUE(borrowed.has_value());
+  EXPECT_TRUE(owned->data().empty());
+  EXPECT_TRUE(owned->cacheable());
+  EXPECT_TRUE(borrowed->data().empty());
+  EXPECT_FALSE(borrowed->cacheable());
 }
 
 TEST(StoredBlockTest, RejectsInputShorterThanATrailer) {
@@ -229,13 +247,15 @@ TEST(StoredBlockTest, DecompressesSnappyAndZstdAfterVerifyingTheChecksum) {
   const std::vector<std::byte> zstd = Bytes({0x28, 0xb5, 0x2f, 0xfd, 0x24, 0x05, 0x29, 0x00, 0x00,
                                              'h', 'e', 'l', 'l', 'o', 0xa3, 0x6d, 0x9f, 0x88});
 
-  const Result<std::vector<std::byte>> decoded_snappy = DecodeStoredBlock(StoredBlock(snappy, 1));
+  const Result<BlockContents> decoded_snappy = DecodeStoredBlock(StoredBlock(snappy, 1));
   ASSERT_TRUE(decoded_snappy.has_value()) << decoded_snappy.error().ToString();
-  EXPECT_EQ(*decoded_snappy, Bytes({'h', 'e', 'l', 'l', 'o'}));
+  EXPECT_EQ(Materialize(decoded_snappy->data()), Bytes({'h', 'e', 'l', 'l', 'o'}));
+  EXPECT_TRUE(decoded_snappy->cacheable());
 
-  const Result<std::vector<std::byte>> decoded_zstd = DecodeStoredBlock(StoredBlock(zstd, 2));
+  const Result<BlockContents> decoded_zstd = DecodeStoredBlock(StoredBlock(zstd, 2));
   ASSERT_TRUE(decoded_zstd.has_value()) << decoded_zstd.error().ToString();
-  EXPECT_EQ(*decoded_zstd, Bytes({'h', 'e', 'l', 'l', 'o'}));
+  EXPECT_EQ(Materialize(decoded_zstd->data()), Bytes({'h', 'e', 'l', 'l', 'o'}));
+  EXPECT_TRUE(decoded_zstd->cacheable());
 }
 
 TEST(StoredBlockTest, BorrowedAndOwningDecodePathsMatch) {
@@ -245,11 +265,16 @@ TEST(StoredBlockTest, BorrowedAndOwningDecodePathsMatch) {
                                              'h', 'e', 'l', 'l', 'o', 0xa3, 0x6d, 0x9f, 0x88});
   for (const std::vector<std::byte>& stored :
        {StoredBlock(contents), StoredBlock(snappy, 1), StoredBlock(zstd, 2)}) {
-    const Result<std::vector<std::byte>> owning = DecodeStoredBlock(stored);
-    const Result<std::vector<std::byte>> borrowed = DecodeStoredBlock(ByteView(stored));
+    const Result<BlockContents> owning = DecodeStoredBlock(stored);
+    const Result<BlockContents> borrowed = DecodeStoredBlock(ByteView(stored));
     ASSERT_TRUE(owning.has_value()) << owning.error().ToString();
     ASSERT_TRUE(borrowed.has_value()) << borrowed.error().ToString();
-    EXPECT_EQ(*borrowed, *owning);
+    EXPECT_EQ(Materialize(borrowed->data()), Materialize(owning->data()));
+    EXPECT_TRUE(owning->cacheable());
+    EXPECT_EQ(borrowed->cacheable(), stored[stored.size() - BlockTrailerSize] != std::byte{0});
+    if (!borrowed->cacheable()) {
+      EXPECT_EQ(borrowed->data().data(), stored.data());
+    }
   }
 
   std::vector<std::byte> corrupt = StoredBlock(contents);
@@ -259,6 +284,9 @@ TEST(StoredBlockTest, BorrowedAndOwningDecodePathsMatch) {
   const std::vector<std::byte> unknown = StoredBlock(contents, 3);
   ExpectError(DecodeStoredBlock(unknown), ErrorCode::Corruption);
   ExpectError(DecodeStoredBlock(ByteView(unknown)), ErrorCode::Corruption);
+  const std::vector<std::byte> malformed_snappy = StoredBlock(Bytes({0xff}), 1);
+  ExpectError(DecodeStoredBlock(malformed_snappy), ErrorCode::Corruption);
+  ExpectError(DecodeStoredBlock(ByteView(malformed_snappy)), ErrorCode::Corruption);
 }
 
 TEST(StoredBlockTest, RejectsUnknownTypes) {

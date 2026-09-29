@@ -29,9 +29,9 @@ static_assert(static_cast<int>(Compression::None) == 0);
 static_assert(static_cast<int>(Compression::Snappy) == 1);
 static_assert(static_cast<int>(Compression::Zstd) == 2);
 
-TEST(PublicOptionsTest, DefaultsToSnappyCompression) {
+TEST(PublicOptionsTest, DefaultsToMmapReadsAndSnappyCompression) {
   const Options options;
-  EXPECT_FALSE(options.allow_mmap_reads);
+  EXPECT_TRUE(options.allow_mmap_reads);
   EXPECT_EQ(options.compression, Compression::Snappy);
   EXPECT_EQ(options.zstd_compression_level, 1);
 }

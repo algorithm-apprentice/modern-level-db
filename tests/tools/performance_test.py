@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 from run_performance import (
     CASES,
     FINGERPRINTS,
-    READ_DIAGNOSTIC_COMPARISON_COUNTERS,
+    MODERN_FILE_ACCESS_SEMANTICS,
     READ_DIAGNOSTIC_COUNTERS,
     READ_DIAGNOSTIC_OPERATIONS,
     READ_DIAGNOSTIC_OPEN_REASONS,
@@ -21,7 +21,6 @@ from run_performance import (
     READ_DIAGNOSTIC_SAMPLE_SEED,
     READ_DIAGNOSTIC_SAMPLES,
     READ_DIAGNOSTIC_STAGES,
-    compare_read_diagnostics,
     read_json,
     record_diagnostics,
     run_case,
@@ -46,6 +45,9 @@ def report(case="modern/readrandom/4096", repetitions=3):
             "build_type": "Release",
             "timing": "wall_and_process_cpu",
             "modern_file_access": "default" if engine == "modern" else "not_applicable",
+            "modern_file_access_semantics": (
+                MODERN_FILE_ACCESS_SEMANTICS if engine == "modern" else "not_applicable"
+            ),
             "reference_file_access": "default" if engine == "leveldb" else "not_applicable",
             "reference_pread_control_available": "true",
             "reference_control_patch_sha256": "a" * 64,
@@ -90,8 +92,7 @@ def completion(case="modern/readrandom/4096"):
     }
 
 
-def diagnostic_report(
-        case="modern/readrandom/4096", modern_file_access="default", schema_version=3):
+def diagnostic_report(case="modern/readrandom/4096", modern_file_access="default"):
     _, workload, records = case.split("/")
     counters = {
         name: {"total": 0, "per_get": 0.0}
@@ -142,7 +143,7 @@ def diagnostic_report(
                 "total": total,
                 "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
             }
-        if modern_file_access == "mmap":
+        if modern_file_access == "default":
             for name in ("mapped_view_blocks",):
                 counters[name] = {
                     "total": misses,
@@ -171,12 +172,6 @@ def diagnostic_report(
             "total": total,
             "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
         }
-        if schema_version == 2:
-            total = misses * 16
-            counters["validation_entries"] = {
-                "total": total,
-                "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
-            }
     if workload == "readrandom":
         total = READ_DIAGNOSTIC_OPERATIONS * 256
         counters["result_bytes"] = {"total": total, "per_get": 256.0}
@@ -205,7 +200,7 @@ def diagnostic_report(
     if int(records) == 65536:
         for name in ("stored_block_decode", "block_construction"):
             stages[name] = {"events": 1, "total_ns": 10, "mean_ns": 10.0}
-        if modern_file_access == "default":
+        if modern_file_access == "pread":
             stages["random_read"] = {"events": 1, "total_ns": 10, "mean_ns": 10.0}
     build = {
         "source_directory": "/source",
@@ -242,7 +237,7 @@ def diagnostic_report(
         "read_diagnostics_compiled": "true",
     }
     return {
-        "schema_version": schema_version,
+        "schema_version": 4,
         "case": case,
         "operations": READ_DIAGNOSTIC_OPERATIONS,
         "sample_schedule": READ_DIAGNOSTIC_SAMPLE_SCHEDULE,
@@ -262,10 +257,10 @@ def diagnostic_report(
         "missing_crc32c": FINGERPRINTS[int(records)][3],
         "setup_file_opens": {
             name: {
-                "files": 8 if name == ("mapped" if modern_file_access == "mmap" else "disabled")
+                "files": 8 if name == ("mapped" if modern_file_access == "default" else "disabled")
                          else 0,
                 "bytes": 371673
-                         if name == ("mapped" if modern_file_access == "mmap" else "disabled")
+                         if name == ("mapped" if modern_file_access == "default" else "disabled")
                          else 0,
             }
             for name in READ_DIAGNOSTIC_OPEN_REASONS
@@ -327,18 +322,26 @@ class PerformanceReportTest(unittest.TestCase):
     def test_validates_modern_file_access_provenance(self):
         data = report()
         validate_benchmark(data, "modern/readrandom/4096", 3)
-        data["context"]["modern_file_access"] = "mmap"
+        data["context"]["modern_file_access"] = "pread"
         validate_benchmark(
-            data, "modern/readrandom/4096", 3, modern_file_access="mmap"
+            data, "modern/readrandom/4096", 3, modern_file_access="pread"
         )
         with self.assertRaises(ValueError):
             validate_benchmark(data, "modern/readrandom/4096", 3)
+        legacy = report()
+        del legacy["context"]["modern_file_access_semantics"]
+        with self.assertRaises(ValueError):
+            validate_benchmark(legacy, "modern/readrandom/4096", 3)
+        legacy = report()
+        legacy["context"]["modern_file_access_semantics"] = "pread-default-v0"
+        with self.assertRaises(ValueError):
+            validate_benchmark(legacy, "modern/readrandom/4096", 3)
         with self.assertRaises(ValueError):
             validate_benchmark(
                 report("leveldb/readrandom/4096"),
                 "leveldb/readrandom/4096",
                 3,
-                modern_file_access="mmap",
+                modern_file_access="pread",
             )
 
     def test_rejects_errors_skips_missing_runs_and_duplicate_repetitions(self):
@@ -443,9 +446,9 @@ class ReadDiagnosticsReportTest(unittest.TestCase):
             diagnostic_report("modern/readmissing/65536"), "modern/readmissing/65536"
         )
         validate_read_diagnostics(
-            diagnostic_report("modern/readmissing/65536", "mmap"),
+            diagnostic_report("modern/readmissing/65536", "pread"),
             "modern/readmissing/65536",
-            modern_file_access="mmap",
+            modern_file_access="pread",
         )
 
     def test_rejects_changed_epoch_outcomes_and_normalization(self):
@@ -487,31 +490,6 @@ class ReadDiagnosticsReportTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_read_diagnostics(changed, "modern/readrandom/4096")
 
-    def test_accepts_schema2_only_as_an_explicit_historical_report(self):
-        historical = diagnostic_report(
-            "modern/readmissing/65536", schema_version=2
-        )
-        with self.assertRaises(ValueError):
-            validate_read_diagnostics(
-                historical, "modern/readmissing/65536"
-            )
-        validate_read_diagnostics(
-            historical,
-            "modern/readmissing/65536",
-            historical_schema2=True,
-        )
-
-        historical["counters"]["validation_entries"] = {
-            "total": 0,
-            "per_get": 0.0,
-        }
-        with self.assertRaises(ValueError):
-            validate_read_diagnostics(
-                historical,
-                "modern/readmissing/65536",
-                historical_schema2=True,
-            )
-
     def test_rejects_incomplete_counter_stage_and_build_provenance(self):
         for section, key in (
             ("counters", "files_searched"),
@@ -524,131 +502,21 @@ class ReadDiagnosticsReportTest(unittest.TestCase):
                 validate_read_diagnostics(changed, "modern/readrandom/4096")
 
     def test_rejects_changed_compression_work(self):
-        changed = diagnostic_report("modern/readmissing/65536", "mmap")
+        changed = diagnostic_report("modern/readmissing/65536")
         changed["counters"]["decompressed_blocks"] = {"total": 0, "per_get": 0.0}
         with self.assertRaises(ValueError):
-            validate_read_diagnostics(
-                changed, "modern/readmissing/65536", modern_file_access="mmap"
-            )
-
-    def test_compares_frozen_storage_work_with_two_percent_limit(self):
-        baseline = diagnostic_report("modern/readmissing/65536")
-        candidate = diagnostic_report("modern/readmissing/65536", "mmap")
-        result = compare_read_diagnostics(
-            baseline, candidate, "modern/readmissing/65536"
-        )
-        self.assertEqual(set(result["counters"]), set(READ_DIAGNOSTIC_COMPARISON_COUNTERS))
-        for name in READ_DIAGNOSTIC_COMPARISON_COUNTERS:
-            changed = copy.deepcopy(candidate)
-            counter = changed["counters"][name]
-            counter["total"] = int(counter["total"] * 1.03) + 1
-            counter["per_get"] = counter["total"] / READ_DIAGNOSTIC_OPERATIONS
-            with self.subTest(name=name), self.assertRaises(ValueError):
-                compare_read_diagnostics(
-                    baseline, changed, "modern/readmissing/65536"
-                )
-
-    def test_compares_historical_schema2_without_validation_entry_drift(self):
-        baseline = diagnostic_report(
-            "modern/readmissing/65536", schema_version=2
-        )
-        candidate = diagnostic_report(
-            "modern/readmissing/65536", "mmap"
-        )
-        with self.assertRaises(ValueError):
-            compare_read_diagnostics(
-                baseline, candidate, "modern/readmissing/65536"
-            )
-        result = compare_read_diagnostics(
-            baseline,
-            candidate,
-            "modern/readmissing/65536",
-            historical_schema2_baseline=True,
-        )
-        self.assertNotIn("validation_entries", result["counters"])
-        self.assertEqual(
-            set(result["incomparable_counters"]), {"validation_entries"}
-        )
-        self.assertGreater(
-            result["incomparable_counters"]["validation_entries"][
-                "baseline_per_get"
-            ],
-            0,
-        )
-        self.assertEqual(
-            result["incomparable_counters"]["validation_entries"][
-                "candidate_per_get"
-            ],
-            0,
-        )
-
-        schema2_candidate = diagnostic_report(
-            "modern/readmissing/65536", "mmap", schema_version=2
-        )
-        with self.assertRaises(ValueError):
-            compare_read_diagnostics(
-                baseline,
-                schema2_candidate,
-                "modern/readmissing/65536",
-                historical_schema2_baseline=True,
-            )
-
-    def test_comparison_cli_requires_the_historical_schema2_flag(self):
-        case = "modern/readmissing/65536"
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            baseline = root / "baseline.json"
-            candidate = root / "candidate.json"
-            baseline.write_text(json.dumps(
-                diagnostic_report(case, schema_version=2)
-            ))
-            candidate.write_text(json.dumps(
-                diagnostic_report(case, "mmap")
-            ))
-            command = [
-                sys.executable,
-                str(ROOT / "tools" / "compare_read_diagnostics.py"),
-                "--baseline", str(baseline),
-                "--candidate", str(candidate),
-                "--case", case,
-            ]
-
-            rejected = subprocess.run(
-                command, capture_output=True, text=True, check=False
-            )
-            self.assertNotEqual(rejected.returncode, 0)
-            accepted = subprocess.run(
-                command + ["--historical-schema2-baseline"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(accepted.returncode, 0, accepted.stderr)
-            comparison = json.loads(accepted.stdout)
-            self.assertEqual(
-                set(comparison["incomparable_counters"]),
-                {"validation_entries"},
-            )
-
-            candidate.write_text(json.dumps(
-                diagnostic_report(case, "mmap", schema_version=2)
-            ))
-            rejected_candidate = subprocess.run(
-                command + ["--historical-schema2-baseline"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertNotEqual(rejected_candidate.returncode, 0)
+            validate_read_diagnostics(changed, "modern/readmissing/65536")
 
     def test_accepts_completed_short_random_reads(self):
-        changed = diagnostic_report("modern/readmissing/65536")
+        changed = diagnostic_report("modern/readmissing/65536", "pread")
         requested = changed["counters"]["random_read_requested_bytes"]["total"] * 2
         changed["counters"]["random_read_requested_bytes"] = {
             "total": requested,
             "per_get": requested / READ_DIAGNOSTIC_OPERATIONS,
         }
-        validate_read_diagnostics(changed, "modern/readmissing/65536")
+        validate_read_diagnostics(
+            changed, "modern/readmissing/65536", modern_file_access="pread"
+        )
 
     def test_runner_preserves_failure_artifacts_and_rejects_existing_output(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -938,10 +806,10 @@ class PerformanceExecutableTest(unittest.TestCase):
         self.assertNotEqual(rejected.returncode, 0)
         self.assertFalse((self.root / "scan-db").exists())
 
-    def test_modern_mmap_is_explicit_and_read_only(self):
+    def test_modern_pread_is_explicit_and_read_only(self):
         result = self.invoke(
             "--case", "modern/readmissing/4096",
-            "--modern-file-access", "mmap",
+            "--modern-file-access", "pread",
             "--database", str(self.root / "db"),
             "--completion-report", str(self.root / "completion.json"),
             "--benchmark_min_time=1x", "--benchmark_repetitions=1",
@@ -951,13 +819,13 @@ class PerformanceExecutableTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         data = read_json(self.root / "benchmark.json")
         validate_benchmark(
-            data, "modern/readmissing/4096", 1, modern_file_access="mmap"
+            data, "modern/readmissing/4096", 1, modern_file_access="pread"
         )
-        self.assertEqual(data["context"]["modern_file_access"], "mmap")
+        self.assertEqual(data["context"]["modern_file_access"], "pread")
 
         rejected = self.invoke(
             "--case", "modern/overwrite/65536",
-            "--modern-file-access", "mmap",
+            "--modern-file-access", "pread",
             "--database", str(self.root / "write-db"),
             "--completion-report", str(self.root / "write-completion.json"),
         )
