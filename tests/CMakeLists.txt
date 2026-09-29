@@ -100,6 +100,26 @@ gtest_discover_tests(
 )
 
 add_executable(
+  modern_leveldb_cache_allocation_tests
+  unit/cache/cache_allocation_test.cc
+)
+target_include_directories(
+  modern_leveldb_cache_allocation_tests
+  PRIVATE "${PROJECT_SOURCE_DIR}/src"
+)
+target_link_libraries(
+  modern_leveldb_cache_allocation_tests
+  PRIVATE modern_leveldb::modern_leveldb GTest::gtest_main
+)
+modern_leveldb_set_project_warnings(modern_leveldb_cache_allocation_tests PRIVATE)
+gtest_discover_tests(
+  modern_leveldb_cache_allocation_tests
+  PROPERTIES
+    LABELS unit
+    TIMEOUT 10
+)
+
+add_executable(
   modern_leveldb_public_api_tests
   unit/api/public_api_test.cc
 )

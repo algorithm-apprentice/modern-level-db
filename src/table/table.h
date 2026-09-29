@@ -95,7 +95,7 @@ class Table final {
 class Table::BlockReference final {
  public:
   explicit BlockReference(BlockCache::Handle handle) noexcept : handle_(std::move(handle)) {}
-  explicit BlockReference(std::shared_ptr<const Block> block) noexcept : owned_(std::move(block)) {}
+  explicit BlockReference(std::unique_ptr<const Block> block) noexcept : owned_(std::move(block)) {}
 
   [[nodiscard]] const Block& block() const noexcept {
     return handle_.has_value() ? handle_->value() : *owned_;
@@ -103,7 +103,7 @@ class Table::BlockReference final {
 
  private:
   std::optional<BlockCache::Handle> handle_;
-  std::shared_ptr<const Block> owned_;
+  std::unique_ptr<const Block> owned_;
 };
 
 // Reads a table, which must outlive the iterator. A new iterator is not
