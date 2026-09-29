@@ -2,8 +2,10 @@
 
 ## Status
 
-Proposed design. Complete a bounded GPT-5.6 Sol review, merge this design-only
-ADR, and only then restart ADR-0053 Milestone 1.
+Accepted design. The 2026-09-29 amendment below resolves implementation-review
+findings about variable-size deallocation, unapproved entry metadata, and
+double-probe insertion. Merge and review the amendment before restarting
+ADR-0053 Milestone 1.
 
 ## Context
 
@@ -45,8 +47,8 @@ contains the only shards, hash tables, lists, and policy state.
 
 | Pinned field | Modern field | Decision |
 |---|---|---|
-| `void* value` | `std::unique_ptr<const Value> value` in `TypedEntry<Value>` | Typed exclusive ownership; no shared control block |
-| deleter function pointer | `TypedEntry<Value>` virtual destruction | One vptr replaces the deleter pointer |
+| `void* value` | `const void* value` in the private core entry | The typed façade is the only creator/accessor |
+| deleter function pointer | typed static deleter installed by `ShardedLruCache<Value>` | Same type-erased destruction mechanism behind a typed API |
 | `next_hash` | `Entry* next_hash` | Identical hash-chain role |
 | `next` / `prev` | `Entry* next` / `previous` | Identical circular-list role |
 | `charge` | `std::size_t charge` | Identical accounting unit |
@@ -54,21 +56,34 @@ contains the only shards, hash tables, lists, and policy state.
 | `in_cache` | `bool in_cache` | Identical cache-reference state |
 | `refs` | `std::uint32_t refs` | Identical cache plus handle reference count |
 | `hash` | `std::uint32_t hash` | Same `Hash32(key, 0)` value |
-| trailing `key_data` | trailing bytes after `TypedEntry<Value>` | Same single-allocation key locality |
+| trailing `key_data` | trailing bytes after the fixed core `Entry` | Same single-allocation key locality |
 
-`TypedEntry<Value>::Create` performs one allocation of:
+The core performs one allocation of:
 
 ```text
-sizeof(TypedEntry<Value>) + key.size()
+sizeof(Entry) + key.size()
 ```
 
-It placement-constructs the typed entry and copies the key into trailing
-storage. The value object itself already exists before insertion, as it does in
-LevelDB; the cache adds no separate key allocation or shared-reference control
-block.
+It placement-constructs the fixed entry and copies the key immediately after
+it. The entry stores no key pointer or offset. The value object already exists
+before insertion, as it does in LevelDB; the cache adds no separate key
+allocation or shared-reference control block.
 
-The entry exposes its key as a borrowed `ByteView` over trailing storage.
-Sentinel list heads use a dedicated non-value entry and never expose a key.
+`ShardedLruCache<Value>::Insert` accepts `unique_ptr<const Value>`, validates
+it, releases its raw pointer to the core, and supplies a static deleter that
+casts back to `const Value*`. `Handle::value()` performs the corresponding
+typed cast. The private core owns the pointer exclusively in success, error,
+uncached, replacement, erase, eviction, and destruction paths.
+
+The entry exposes its key as a borrowed `ByteView` beginning at
+`reinterpret_cast<const byte*>(entry) + sizeof(Entry)`. Sentinel list heads
+use a non-value entry and never expose a key.
+
+Entries are not deleted with a C++ `delete` expression. The core invokes the
+typed value deleter, explicitly destroys the fixed `Entry`, and releases the
+variable-size storage with unsized `::operator delete(void*)`. This exactly
+pairs with the original allocation and cannot select sized deallocation using
+only `sizeof(Entry)`.
 
 ## `HandleTable` mapping
 
@@ -80,8 +95,12 @@ Implement the pinned algorithm directly:
   hash-vector tests against the pinned implementation.
 - `FindPointer` walks `next_hash` while either the full hash or key differs.
 - `Lookup` returns `*FindPointer`.
-- `Insert` replaces an equal entry in place. For a new key, increment the
-  element count and resize only after `elements > bucket_count`.
+- `PrepareInsert` calls `FindPointer` exactly once and records the slot,
+  existing entry, and whether a new key would cross the bucket-count
+  threshold.
+- `CommitInsert` replaces an equal entry in place. For a new key, it links the
+  entry, increments the element count, and produces the same final resize and
+  hash-chain order as resizing only after `elements > bucket_count`.
 - `Remove` unlinks one hash-chain entry and decrements the element count.
 - `Resize` chooses the smallest power of two at least as large as the element
   count and rehashes existing entries without allocating entries.
@@ -90,8 +109,12 @@ Use a raw bucket array owned by `std::unique_ptr<Entry*[]>`. Do not use
 `std::unordered_map` or a bucket `std::vector`; their policy, node allocation,
 and iterator behavior are not the chosen baseline.
 
-The only allocation in `Resize` is the new bucket array. It happens before any
-table mutation, so allocation failure leaves the old table intact.
+If a prepared new-key insertion needs growth, `CommitInsert` allocates the new
+bucket array before mutation. After allocation succeeds, it links the entry
+through the prepared old-table slot and rehashes exactly as the pinned
+post-insert `Resize`. No operation after mutation begins can throw. Allocation
+failure leaves the old table, mappings, count, and charge intact. Replacement
+and non-growing insertion allocate nothing and use the prepared slot directly.
 
 ## One-shard `LRUCache` mapping
 
@@ -134,17 +157,22 @@ second cache lookup.
 
 Before locking:
 
-1. Allocate the typed variable-size entry.
+1. Allocate the fixed core variable-size entry with the typed value pointer
+   and deleter supplied by the façade.
 2. Copy its inline key.
 3. Set `refs = 1` for the returned handle.
 
 Under the shard mutex:
 
-1. If capacity is nonzero and charge accounting can represent the insertion,
-   add the cache reference, mark `in_cache`, append to `in_use`, add charge,
-   install in `HandleTable`, and finish erasing any replaced entry.
-2. Evict oldest `lru` entries while usage exceeds capacity.
-3. If capacity is zero or charge accounting would overflow, leave the new
+1. Call `HandleTable::PrepareInsert` once.
+2. Compute post-replacement charge from the prepared existing entry.
+3. If capacity is nonzero and charge accounting can represent the insertion,
+   call `CommitInsert`. It may allocate growth buckets before mutation, but
+   never probes the key chain again.
+4. After commit succeeds, add the cache reference, mark `in_cache`, append to
+   `in_use`, finish erasing any replaced entry, and update charge.
+5. Evict oldest `lru` entries while usage exceeds capacity.
+6. If capacity is zero or charge accounting would overflow, leave the new
    entry uncached with its returned-handle reference only.
 
 Return a handle in every valid insertion case. Null values and zero charge
@@ -175,9 +203,11 @@ relative to LevelDB.
 ### Destructor
 
 External exclusion and zero live handles are preconditions. Assert `in_use` is
-empty, drop the cache reference from every LRU entry, and destroy values
-outside locks. The cache does not promise that handles survive cache
-destruction.
+empty. For every LRU entry, save its next list link, clear `in_cache`, and drop
+the cache reference through `Unref`; the zero-reference path therefore retains
+its required `!in_cache` invariant. Link each resulting entry into the retired
+chain and destroy that chain after the traversal. The cache does not promise
+that handles survive cache destruction.
 
 ## `ShardedLRUCache` mapping
 
@@ -202,9 +232,12 @@ and reviewing this ADR.
 
 | Pinned behavior | Approved Modern behavior | Reason |
 |---|---|---|
-| `void*` value plus deleter callback | `unique_ptr<const Value>` in a typed entry | Type safety with the same exclusive ownership |
+| Public `void*` value/deleter API | Private core `const void*`/typed static deleter behind a `unique_ptr` façade | Same exclusive layout and destruction with type-safe callers |
 | Public virtual `Cache` policy interface | Concrete typed façade over one concrete core | Avoid a virtual dispatch and reject premature policy abstraction |
 | Entry allocation while holding shard mutex | Entry/value/key allocation before locking | Same allocation work, shorter critical section, strong exception safety |
+| Insert new hash link, then resize | One `PrepareInsert` probe; preallocate growth buckets, then commit the same link/rehash result | Allocation failure must leave mappings and counts unchanged |
+| Explicit caller `Release(handle)` | Move-only typed RAII handle | Automatic release with the same one-reference semantics |
+| Null values and zero charge accepted by raw API | Typed `Insert` rejects them before entry allocation | Preserve the existing Modern internal cache contract |
 | Deleter runs from `Unref` under mutex | Intrusive retired chain destroyed after unlocking | Prevent user destruction/reentrancy under the cache lock without allocation |
 | Unchecked `usage += charge` | Overflow yields a successful uncached handle | Preserve the value and mappings without integer wrap |
 | ID mutex | Relaxed atomic monotonically increasing ID | Same semantics with no greater hot work |
@@ -233,7 +266,8 @@ class ShardedLruCache {
 
 The template contains only:
 
-- `TypedEntry<Value>` and its single-allocation factory.
+- Null/zero validation and transfer from `unique_ptr<const Value>`.
+- The typed static value deleter.
 - `Handle::value()` typed access.
 - Conversion between typed handles and the non-template core pin.
 
@@ -279,12 +313,17 @@ Milestone 4.
 ## Exception safety
 
 - Entry/value/key allocation finishes before the shard lock.
-- Hash-table resize allocates its new bucket array before mutating chains.
+- One `PrepareInsert` probes the hash chain once.
+- Hash-table growth allocates its new bucket array before mutating chains,
+  then commits the pinned post-insert chain/resize result without another
+  probe.
 - After mutation begins, list/table/ref/charge operations are `noexcept`.
 - Retirement uses existing entry links and cannot allocate.
 - Invalid insert arguments fail before locking.
 - A failed entry or bucket allocation leaves cache contents unchanged.
 - User value destruction happens only after unlocking.
+- Variable-size entry storage is released through explicit unsized
+  deallocation, never a sized deleting destructor.
 
 ## Validation plan
 
@@ -311,6 +350,8 @@ Tests or static assertions cover:
 - Lookup and additional handles do not create shared ownership.
 - Entry and inline key use one allocation, excluding the separately created
   value object.
+- Variable-size entry destruction reaches the typed deleter and matching
+  unsized storage deallocation under ASan/UBSan and a sized-deallocation build.
 - Erased/replaced/evicted values survive until the last handle releases.
 - Reentrant value destruction can call back into the cache, proving it occurs
   outside the mutex.
@@ -325,6 +366,9 @@ Run:
 - LevelDB compatibility/model/crash tests.
 - AppleClang Debug/Release and GCC warning-clean builds.
 - Changed-code line and branch coverage at 100%.
+- The standalone allocation test uses `_aligned_malloc`/`_aligned_free` on
+  Windows and `posix_memalign`/`free` on POSIX so every required CI platform
+  builds the same allocation contracts.
 
 Do not run a cache-only throughput admission test. Performance is measured only
 after every ADR-0053 milestone is complete.
