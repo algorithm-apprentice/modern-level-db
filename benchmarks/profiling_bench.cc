@@ -146,6 +146,7 @@ struct Arguments {
   std::filesystem::path completion;
   std::filesystem::path diagnostic_report;
   std::string modern_file_access = "default";
+  std::string modern_result_ownership = "reusable";
   std::string reference_file_access = "default";
   bool profile = false;
   bool list = false;
@@ -153,6 +154,7 @@ struct Arguments {
   bool smoke = false;
   bool check_mutations = false;
   bool modern_file_access_set = false;
+  bool modern_result_ownership_set = false;
   bool reference_file_access_set = false;
   std::vector<char*> framework;
 };
@@ -164,7 +166,7 @@ Arguments ParseArguments(int argc, char** argv) {
     const std::string_view option = argv[index];
     if (option == "--case" || option == "--database" || option == "--completion-report" ||
         option == "--diagnostic-report" || option == "--modern-file-access" ||
-        option == "--reference-file-access") {
+        option == "--modern-result-ownership" || option == "--reference-file-access") {
       Require(index + 1 < argc, "performance option needs a value");
       const char* value = argv[++index];
       if (option == "--case") {
@@ -183,6 +185,10 @@ Arguments ParseArguments(int argc, char** argv) {
         Require(!args.modern_file_access_set, "duplicate --modern-file-access");
         args.modern_file_access = value;
         args.modern_file_access_set = true;
+      } else if (option == "--modern-result-ownership") {
+        Require(!args.modern_result_ownership_set, "duplicate --modern-result-ownership");
+        args.modern_result_ownership = value;
+        args.modern_result_ownership_set = true;
       } else {
         Require(!args.reference_file_access_set, "duplicate --reference-file-access");
         args.reference_file_access = value;
@@ -248,6 +254,7 @@ void WriteJsonString(std::ostream& output, std::string_view value) {
 #endif
 
 bool UseModernMmapReads = true;
+bool UseModernOwningGet = false;
 
 void ConfigureModernFileAccess(const Case& selected, const Arguments& args) {
   Require(args.modern_file_access == "default" || args.modern_file_access == "pread",
@@ -260,6 +267,23 @@ void ConfigureModernFileAccess(const Case& selected, const Arguments& args) {
   if (args.modern_file_access == "pread") {
     Require(!IsMutable(selected), "Modern pread control requires a read-family case");
     UseModernMmapReads = false;
+  }
+}
+
+void ConfigureModernResultOwnership(const Case& selected, const Arguments& args) {
+  Require(args.modern_result_ownership == "reusable" || args.modern_result_ownership == "owning",
+          "--modern-result-ownership must be reusable or owning");
+  if (selected.engine != "modern") {
+    Require(!args.modern_result_ownership_set,
+            "--modern-result-ownership is valid only for Modern LevelDB cases");
+    return;
+  }
+  if (args.modern_result_ownership == "owning") {
+    Require(selected.workload == "readrandom" || selected.workload == "readmissing",
+            "Modern owning-result control requires a point-read case");
+    Require(args.diagnostic_report.empty(),
+            "read diagnostics require reusable Modern result ownership");
+    UseModernOwningGet = true;
   }
 }
 
@@ -385,9 +409,15 @@ class Modern final {
     Check(database_.Put(AsBytes(record.key), AsBytes(record.value)));
   }
   void Read(std::string_view key, bool present) {
-    auto value = Take(database_.Get(AsBytes(key)));
-    Require(value.has_value() == present, "Modern LevelDB returned incorrect key presence");
-    benchmark::DoNotOptimize(value);
+    if (UseModernOwningGet) {
+      auto value = Take(database_.Get(AsBytes(key)));
+      Require(value.has_value() == present, "Modern LevelDB returned incorrect key presence");
+      benchmark::DoNotOptimize(value);
+      return;
+    }
+    const bool found = Take(database_.Get(AsBytes(key), read_value_));
+    Require(found == present, "Modern LevelDB returned incorrect key presence");
+    benchmark::DoNotOptimize(read_value_);
   }
   void WriteValue(std::string_view key, std::string_view value, bool sync) {
     Check(database_.Put(AsBytes(key), AsBytes(value), {.sync = sync}));
@@ -398,8 +428,8 @@ class Modern final {
   }
   void Commit(Batch& batch) { Check(database_.Write(batch)); }
   void ReadExpected(std::string_view key, std::string_view expected) {
-    auto value = Take(database_.Get(AsBytes(key)));
-    Require(value.has_value() && AsStringView(*value) == expected,
+    const bool found = Take(database_.Get(AsBytes(key), read_value_));
+    Require(found && AsStringView(read_value_) == expected,
             "Modern LevelDB returned an incorrect current value");
   }
   Cursor NewIterator(bool fill_cache) {
@@ -424,6 +454,7 @@ class Modern final {
     return Take(Database::Open(options, path));
   }
   Database database_;
+  std::vector<std::byte> read_value_;
 };
 
 class Reference final {
@@ -649,7 +680,7 @@ class Fixture final {
     std::ofstream output(path);
     output.imbue(std::locale::classic());
     output << std::setprecision(17);
-    output << "{\"schema_version\":4,\"case\":";
+    output << "{\"schema_version\":5,\"case\":";
     WriteJsonString(output, selected_.name);
     output << ",\"operations\":" << DiagnosticOperations << ",\"sample_schedule\":\"splitmix64-v1\""
            << ",\"sample_seed\":" << diagnostics_.sample_seed
@@ -718,6 +749,8 @@ class Fixture final {
         std::pair{"reference_source_override", ReferenceOverride},
         std::pair{"reference_hardware_crc", std::string_view{"disabled"}},
         std::pair{"modern_file_access", std::string_view{UseModernMmapReads ? "default" : "pread"}},
+        std::pair{"modern_result_ownership", std::string_view{"reusable"}},
+        std::pair{"modern_result_ownership_semantics", std::string_view{"reusable-get-v1"}},
         std::pair{"reference_file_access", std::string_view{"not_applicable"}},
         std::pair{"reference_pread_control_available",
                   std::string_view{MODERN_LEVELDB_REFERENCE_PREAD_CONTROL ? "true" : "false"}},
@@ -1271,6 +1304,19 @@ class StatusReporter final : public benchmark::ConsoleReporter {
   bool failed = false;
 };
 
+std::string_view ModernResultOwnership(const Case& selected, const Arguments& args) {
+  if (selected.engine != "modern") {
+    return "not_applicable";
+  }
+  if (selected.workload == "readrandom" || selected.workload == "readmissing") {
+    return args.modern_result_ownership;
+  }
+  if (selected.workload == "mixed50") {
+    return "reusable";
+  }
+  return "not_applicable";
+}
+
 void AddContext(const Case& selected, const Arguments& args) {
   const auto add = [](std::string_view key, std::string_view value) {
     benchmark::AddCustomContext(std::string(key), std::string(value));
@@ -1295,6 +1341,9 @@ void AddContext(const Case& selected, const Arguments& args) {
       selected.engine == "modern" ? args.modern_file_access : "not_applicable");
   add("modern_file_access_semantics",
       selected.engine == "modern" ? "mmap-default-v1" : "not_applicable");
+  add("modern_result_ownership", ModernResultOwnership(selected, args));
+  add("modern_result_ownership_semantics",
+      selected.engine == "modern" ? "reusable-get-v1" : "not_applicable");
   if (IsMutable(selected)) {
     const MutationSpec specification = MutationSpecification(selected, args.smoke);
     add("workload_family", "mutable");
@@ -1401,8 +1450,8 @@ int Main(int argc, char** argv) {
   if (args.check_mutations) {
     Require(args.case_name.empty() && args.database.empty() && args.completion.empty() &&
                 args.diagnostic_report.empty() && !args.profile && !args.smoke && !args.list &&
-                !args.help && !args.modern_file_access_set && !args.reference_file_access_set &&
-                args.framework.size() == 1,
+                !args.help && !args.modern_file_access_set && !args.modern_result_ownership_set &&
+                !args.reference_file_access_set && args.framework.size() == 1,
             "--check-mutation-stream cannot combine with other options");
     CheckMutationStreams();
     return 0;
@@ -1415,6 +1464,7 @@ int Main(int argc, char** argv) {
     std::cout << "Usage: modern_leveldb_performance --case ENGINE/WORKLOAD/RECORDS "
                  "--database NEW_PATH --completion-report NEW_FILE "
                  "[--modern-file-access default|pread] "
+                 "[--modern-result-ownership reusable|owning] "
                  "[--reference-file-access default|pread] [benchmark flags]\n"
                  "Use --list-cases to list supported cases. --profile-markers requires macOS "
                  "Apple Clang. Mutable cases use fixed work and one repetition; --smoke "
@@ -1430,6 +1480,7 @@ int Main(int argc, char** argv) {
   }
   const Case selected = FindCase(args.case_name);
   ConfigureModernFileAccess(selected, args);
+  ConfigureModernResultOwnership(selected, args);
   ConfigureReferenceFileAccess(selected, args);
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
   if (!args.diagnostic_report.empty()) {

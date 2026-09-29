@@ -8,6 +8,10 @@ the pinned LevelDB implementation and defines sequential attribution and
 validation experiments. Candidate traversal, caching, and ownership behavior
 here remains unchanged until a separate candidate passes admission.
 
+[ADR-0057](0057-leveldb-version-output-parity.md) replaces all-level candidate
+materialization with lazy visitation, records seek charging before a second
+file, and writes directly into caller-owned output.
+
 ## Context
 
 A point read finds the newest version of a user key that a snapshot can see.
@@ -70,19 +74,24 @@ needs them.
 Add `src/engine/lookup.{h,cc}`:
 
 ```cpp
-Result<std::optional<std::vector<std::byte>>> LookupValue(
+Result<bool> LookupValue(
     const MemTable& memtable, const MemTable* immutable, const Version& version,
     TableCache& table_cache, const InternalKeyComparator& comparator, const LookupKey& key,
+    std::vector<std::byte>& value, std::optional<SeekCharge>& seek,
     const TableReadOptions& options = {});
 ```
 
-- `LookupValue` returns the value of the newest entry of the key's user key
-  whose sequence is at most the key's sequence, searching as LevelDB does, or
-  nothing if that entry is a deletion or no source has one. The immutable
-  memtable is optional.
+- `LookupValue` writes the value of the newest visible entry into the caller's
+  vector and returns true, searching as LevelDB does. Deletion or no source
+  returns false without changing the vector. The immutable memtable is
+  optional.
 - The table cache's and the tables' errors are returned unchanged, including
   the file system's `NotFound` for a missing table file. Tables after the
   deciding source are not opened.
+- Only overlapping level-0 files are materialized and sorted. Deeper levels
+  are selected one at a time and stop immediately after a decision.
+- `seek` is populated with the first file immediately before a second file is
+  searched, including when the second search returns an error.
 - The memtables, the version's files, and the table cache must use the
   comparator. The function only reads, so concurrent calls are safe as long
   as the memtables' single writer does not add to them concurrently with a

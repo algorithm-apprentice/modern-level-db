@@ -332,11 +332,17 @@ python3 tools/run_performance.py \
 Add `--modern-file-access pread` to either the throughput or diagnostic
 command to force copied reads instead of Modern's default mmap mode. The
 manifest and native report record the access mode. Diagnostic reports use
-schema version 4, include setup file-open/fallback reasons, and account for
+schema version 5, include setup file-open/fallback reasons, and account for
 mapped-view versus copied blocks.
 Throughput report validation also requires
 `modern_file_access_semantics=mmap-default-v1`, preventing an older
 pread-default binary from being accepted as a current default-mmap run.
+
+Modern point-read benchmarks use reusable caller output by default. Add
+`--modern-result-ownership owning` to `readrandom` or `readmissing` to measure
+the convenience overload separately. Reports require
+`modern_result_ownership_semantics=reusable-get-v1`; other workloads record
+the fixed reusable or not-applicable mode defined by ADR-0057.
 
 The diagnostic runner accepts only Modern `readrandom` and `readmissing`
 cases. Its `read-diagnostics.json` records raw and per-Get counters, sampled

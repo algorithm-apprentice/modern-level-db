@@ -32,10 +32,11 @@ namespace {
 using test_support::MemoryFileSystem;
 
 template <typename T>
-concept LookupWith = requires(const MemTable& memtable, const Version& version, TableCache& cache,
-                              T&& comparator, const LookupKey& key) {
-  LookupValue(memtable, nullptr, version, cache, std::forward<T>(comparator), key);
-};
+concept LookupWith =
+    requires(const MemTable& memtable, const Version& version, TableCache& cache, T&& comparator,
+             const LookupKey& key, std::vector<std::byte>& value, std::optional<SeekCharge>& seek) {
+      LookupValue(memtable, nullptr, version, cache, std::forward<T>(comparator), key, value, seek);
+    };
 static_assert(LookupWith<const InternalKeyComparator&>);
 static_assert(!LookupWith<InternalKeyComparator>);
 
@@ -48,6 +49,26 @@ class ReverseComparator final : public Comparator {
   std::string_view Name() const noexcept override { return "test.Reverse"; }
   void FindShortestSeparator(std::vector<std::byte>&, ByteView) const override {}
   void FindShortSuccessor(std::vector<std::byte>&) const override {}
+};
+
+class BoundaryTrackingComparator final : public Comparator {
+ public:
+  int Compare(ByteView left, ByteView right) const noexcept override {
+    const auto tracked = [](ByteView key) { return AsStringView(key).starts_with("zz-later-"); };
+    if (tracked(left) || tracked(right)) {
+      ++later_comparisons_;
+    }
+    return BytewiseComparator().Compare(left, right);
+  }
+  std::string_view Name() const noexcept override { return "test.BoundaryTracking"; }
+  void FindShortestSeparator(std::vector<std::byte>&, ByteView) const override {}
+  void FindShortSuccessor(std::vector<std::byte>&) const override {}
+
+  void Reset() const noexcept { later_comparisons_ = 0; }
+  [[nodiscard]] std::size_t later_comparisons() const noexcept { return later_comparisons_; }
+
+ private:
+  mutable std::size_t later_comparisons_ = 0;
 };
 
 struct Entry {
@@ -102,15 +123,21 @@ class DatabaseEngine {
     return version.has_value() ? std::move(*version) : Version();
   }
 
-  Result<PointRead> Read(std::string_view user_key, SequenceNumber sequence, const Version& version,
-                         const MemTable* memtable = nullptr, const MemTable* immutable = nullptr,
-                         const TableReadOptions& options = {}) {
+  Result<bool> Read(std::string_view user_key, SequenceNumber sequence, const Version& version,
+                    std::vector<std::byte>& value, const MemTable* memtable = nullptr,
+                    const MemTable* immutable = nullptr, const TableReadOptions& options = {},
+                    std::optional<SeekCharge>* charged = nullptr) {
     const MemTable empty(user_comparator_);
     auto key = LookupKey::Create(AsBytes(user_key), sequence);
     EXPECT_TRUE(key.has_value());
     read_start_ = file_system_.operations().size();
-    return LookupValue(memtable != nullptr ? *memtable : empty, immutable, version, lookup_cache_,
-                       comparator_, *key, options);
+    std::optional<SeekCharge> seek;
+    Result<bool> read = LookupValue(memtable != nullptr ? *memtable : empty, immutable, version,
+                                    lookup_cache_, comparator_, *key, value, seek, options);
+    if (charged != nullptr) {
+      *charged = seek;
+    }
+    return read;
   }
 
   Result<std::optional<std::vector<std::byte>>> TryLookup(std::string_view user_key,
@@ -119,11 +146,15 @@ class DatabaseEngine {
                                                           const MemTable* memtable = nullptr,
                                                           const MemTable* immutable = nullptr,
                                                           const TableReadOptions& options = {}) {
-    Result<PointRead> read = Read(user_key, sequence, version, memtable, immutable, options);
+    std::vector<std::byte> value;
+    Result<bool> read = Read(user_key, sequence, version, value, memtable, immutable, options);
     if (!read.has_value()) {
       return std::unexpected(std::move(read).error());
     }
-    return std::move(read->value);
+    if (!*read) {
+      return std::optional<std::vector<std::byte>>();
+    }
+    return std::optional<std::vector<std::byte>>(std::move(value));
   }
 
   // Returns the value, or "<none>" for an absent key.
@@ -318,9 +349,23 @@ TEST(LookupTest, ReturnsTableErrors) {
   damaged.file_size = 100;
 
   const Version with_missing = database.MakeVersion({{0, level0}, {1, level1}, {2, missing}});
-  const auto not_found = database.TryLookup("m", 100, with_missing);
+  std::optional<SeekCharge> failed_seek;
+  std::vector<std::byte> value;
+  const Result<bool> not_found =
+      database.Read("m", 100, with_missing, value, nullptr, nullptr, {}, &failed_seek);
   ASSERT_FALSE(not_found.has_value());
   EXPECT_EQ(not_found.error().code(), ErrorCode::NotFound);
+  ASSERT_TRUE(failed_seek.has_value());
+  EXPECT_EQ(failed_seek->level, 1U);
+  EXPECT_EQ((**failed_seek->file).number, 41U);
+
+  const Version with_missing_level0 = database.MakeVersion({{0, missing}});
+  failed_seek.reset();
+  const Result<bool> level0_not_found =
+      database.Read("m", 100, with_missing_level0, value, nullptr, nullptr, {}, &failed_seek);
+  ASSERT_FALSE(level0_not_found.has_value());
+  EXPECT_EQ(level0_not_found.error().code(), ErrorCode::NotFound);
+  EXPECT_FALSE(failed_seek.has_value());
 
   const Version with_damaged = database.MakeVersion({{2, damaged}});
   const auto corrupt = database.TryLookup("m", 100, with_damaged);
@@ -365,7 +410,7 @@ TEST(LookupTest, PassesReadOptionsToTables) {
 // "number@level" for a charged file, or "none".
 std::string Charged(const std::optional<SeekCharge>& charge) {
   return charge.has_value()
-             ? std::to_string(charge->file->number) + "@" + std::to_string(charge->level)
+             ? std::to_string((**charge->file).number) + "@" + std::to_string(charge->level)
              : "none";
 }
 
@@ -385,6 +430,17 @@ FileMetadata Range(std::uint64_t number, std::string_view smallest, std::string_
   return Range(number, Internal(smallest, 100), Internal(largest, 1));
 }
 
+TEST(LookupTest, StopsSelectingDeeperLevelsAfterAFileDecides) {
+  BoundaryTrackingComparator user_comparator;
+  DatabaseEngine database(user_comparator);
+  const Version version = database.MakeVersion({{0, database.WriteTable(6, {{"k", 20, "value"}})},
+                                                {1, Range(10, "zz-later-a", "zz-later-z")}});
+
+  user_comparator.Reset();
+  EXPECT_EQ(database.Lookup("k", 100, version), "value");
+  EXPECT_EQ(user_comparator.later_comparisons(), 0U);
+}
+
 TEST(LookupTest, ChargesTheFirstFileOfAReadThatSearchesAnother) {
   DatabaseEngine database(BytewiseComparator());
   const Version version = database.MakeVersion(
@@ -393,9 +449,11 @@ TEST(LookupTest, ChargesTheFirstFileOfAReadThatSearchesAnother) {
        {1, database.WriteTable(10, {{"b", 1, "b10"}, {"k", 1, "k10"}, {"y", 1, "y10"}})},
        {2, database.WriteTable(20, {{"a", 1, "a20"}, {"x", 1, "x20"}})}});
   const auto charged = [&](std::string_view key, const MemTable* memtable = nullptr) {
-    Result<PointRead> read = database.Read(key, 100, version, memtable);
+    std::optional<SeekCharge> seek;
+    std::vector<std::byte> value;
+    Result<bool> read = database.Read(key, 100, version, value, memtable, nullptr, {}, &seek);
     EXPECT_TRUE(read.has_value());
-    return read.has_value() ? Charged(read->seek) : "error";
+    return read.has_value() ? Charged(seek) : "error";
   };
 
   // The first file searched decides.
@@ -403,6 +461,7 @@ TEST(LookupTest, ChargesTheFirstFileOfAReadThatSearchesAnother) {
   EXPECT_EQ(charged("y"), "none");
   // The newest level-0 file is searched first.
   EXPECT_EQ(charged("c"), "6@0");
+  EXPECT_EQ(charged("d"), "6@0");
   EXPECT_EQ(charged("k"), "6@0");
   EXPECT_EQ(charged("x"), "10@1");
   // A read that finds nothing charges the first file it searched, unless it
@@ -414,6 +473,22 @@ TEST(LookupTest, ChargesTheFirstFileOfAReadThatSearchesAnother) {
   MemTable memtable(database.user_comparator());
   Fill(memtable, {{"c", 50, "memtable"}});
   EXPECT_EQ(charged("c", &memtable), "none");
+}
+
+TEST(SampleChargeTest, StopsSelectingAfterTheSecondOverlap) {
+  BoundaryTrackingComparator user_comparator;
+  const InternalKeyComparator comparator(user_comparator);
+  DatabaseEngine database(user_comparator);
+  const Version version = database.MakeVersion({{0, Range(5, "a", "z")},
+                                                {0, Range(6, "a", "z")},
+                                                {1, Range(10, "zz-later-a", "zz-later-z")}});
+
+  user_comparator.Reset();
+  const std::optional<SeekCharge> charge =
+      SampleCharge(version, comparator, Internal("k", 1).encoded());
+  ASSERT_TRUE(charge.has_value());
+  EXPECT_EQ((**charge->file).number, 6U);
+  EXPECT_EQ(user_comparator.later_comparisons(), 0U);
 }
 
 TEST(SampleChargeTest, ChargesTheFirstOfSeveralFilesThatHoldTheKey) {

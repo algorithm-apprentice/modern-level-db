@@ -192,6 +192,11 @@ struct Entry {
   friend bool operator==(const Entry&, const Entry&) = default;
 };
 
+struct Lookup {
+  ValueKind kind;
+  std::vector<std::byte> value;
+};
+
 std::vector<std::byte> BuildTable(const std::vector<Entry>& entries,
                                   const TableBuilderOptions& options,
                                   const InternalKeyComparator& comparator) {
@@ -286,23 +291,33 @@ class TableTest : public testing::Test {
     return options;
   }
 
-  static Result<std::optional<TableLookup>> TryGet(const Table& table, std::string_view user_key,
-                                                   SequenceNumber sequence,
-                                                   const TableReadOptions& options = {}) {
+  static Result<std::optional<Lookup>> TryGet(const Table& table, std::string_view user_key,
+                                              SequenceNumber sequence,
+                                              const TableReadOptions& options = {}) {
     auto key = LookupKey::Create(AsBytes(user_key), sequence);
     EXPECT_TRUE(key.has_value());
-    return table.Get(*key, options);
+    std::vector<std::byte> value;
+    const Result<TableLookupKind> kind = table.Get(*key, value, options);
+    if (!kind.has_value()) {
+      return std::unexpected(kind.error());
+    }
+    if (*kind == TableLookupKind::Missing) {
+      return std::optional<Lookup>();
+    }
+    return std::optional<Lookup>(Lookup{
+        .kind = *kind == TableLookupKind::Value ? ValueKind::Value : ValueKind::Deletion,
+        .value = std::move(value),
+    });
   }
 
-  static std::optional<TableLookup> Get(const Table& table, std::string_view user_key,
-                                        SequenceNumber sequence,
-                                        const TableReadOptions& options = {}) {
+  static std::optional<Lookup> Get(const Table& table, std::string_view user_key,
+                                   SequenceNumber sequence, const TableReadOptions& options = {}) {
     auto lookup = TryGet(table, user_key, sequence, options);
     EXPECT_TRUE(lookup.has_value()) << lookup.error().ToString();
     return lookup.has_value() ? std::move(*lookup) : std::nullopt;
   }
 
-  static void ExpectValue(const std::optional<TableLookup>& lookup, std::string_view value) {
+  static void ExpectValue(const std::optional<Lookup>& lookup, std::string_view value) {
     ASSERT_TRUE(lookup.has_value());
     EXPECT_EQ(lookup->kind, ValueKind::Value);
     EXPECT_EQ(AsStringView(lookup->value), value);
@@ -547,7 +562,7 @@ TEST_F(TableTest, ChargesCompressedBlocksByTheirDecodedSize) {
   options.block_cache = &cache;
   const auto table = Open(data, options);
   ASSERT_NE(table, nullptr);
-  const std::optional<TableLookup> lookup = Get(*table, "key", 1);
+  const std::optional<Lookup> lookup = Get(*table, "key", 1);
   ASSERT_TRUE(lookup.has_value());
   EXPECT_EQ(lookup->value, value);
   EXPECT_EQ(cache.total_charge(), decoded->data().size());
@@ -1194,12 +1209,13 @@ TEST_F(TableTest, SupportsConcurrentLookups) {
   std::vector<std::thread> threads;
   for (int thread = 0; thread < 4; ++thread) {
     threads.emplace_back([&, thread] {
+      std::vector<std::byte> value;
       for (int round = 0; round < 200; ++round) {
         const int index = (round * 7 + thread * 13) % 200;
         auto key = LookupKey::Create(AsBytes("key" + std::to_string(1000 + index)), 1);
-        const auto lookup = table->Get(*key);
-        if (!lookup.has_value() || !lookup->has_value() ||
-            AsStringView((*lookup)->value) != "value" + std::to_string(index)) {
+        const auto lookup = table->Get(*key, value);
+        if (!lookup.has_value() || *lookup != TableLookupKind::Value ||
+            AsStringView(value) != "value" + std::to_string(index)) {
           ++mismatches;
         }
       }
@@ -1289,7 +1305,11 @@ TEST_F(TableTest, MatchesAnOrderedModel) {
       if (parsed.has_value() && AsStringView(parsed->user_key) == user) {
         ASSERT_TRUE(lookup.has_value()) << user << "@" << sequence;
         EXPECT_EQ(lookup->kind, parsed->kind);
-        EXPECT_EQ(lookup->value, entries[first].value);
+        if (parsed->kind == ValueKind::Value) {
+          EXPECT_EQ(lookup->value, entries[first].value);
+        } else {
+          EXPECT_TRUE(lookup->value.empty());
+        }
       } else {
         EXPECT_FALSE(lookup.has_value()) << user << "@" << sequence;
       }

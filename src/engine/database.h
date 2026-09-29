@@ -101,9 +101,10 @@ class DatabaseEngine final {
   // error, every write returns it.
   [[nodiscard]] Status Write(const EncodedWriteBatch& batch, bool sync);
 
-  // Returns the key's value, or nothing if it has none or it is deleted.
-  [[nodiscard]] Result<std::optional<std::vector<std::byte>>> Get(
-      ByteView key, const DatabaseEngineReadOptions& options = {});
+  // Writes the key's value and returns true, or leaves it unchanged and
+  // returns false if the key is missing or deleted.
+  [[nodiscard]] Result<bool> Get(ByteView key, std::vector<std::byte>& value,
+                                 const DatabaseEngineReadOptions& options = {});
 
   // Returns an iterator that must be destroyed before the database, since its
   // samples of what it reads charge the database's seek budgets.
@@ -124,6 +125,25 @@ class DatabaseEngine final {
   [[nodiscard]] Status WaitForBackgroundWork();
 
  private:
+  class ReadSources final {
+   public:
+    ReadSources(DatabaseEngine& engine, std::unique_lock<std::mutex>& lock) noexcept;
+    ReadSources(const ReadSources&) = delete;
+    ReadSources& operator=(const ReadSources&) = delete;
+    ~ReadSources();
+
+    [[nodiscard]] const MemTable& memtable() const noexcept;
+    [[nodiscard]] const MemTable* immutable() const noexcept;
+    [[nodiscard]] const Version& version() const noexcept;
+
+   private:
+    DatabaseEngine* engine_;
+    [[maybe_unused]] std::unique_lock<std::mutex>* lock_;
+    std::optional<MemTable::ReadPin> memtable_;
+    std::optional<MemTable::ReadPin> immutable_;
+    std::optional<VersionSet::ReadPin> version_;
+  };
+
   [[nodiscard]] Status Recover(const DatabaseEngineOptions& options);
   [[nodiscard]] Status MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool force);
   [[nodiscard]] Status SwitchMemTable();
@@ -144,6 +164,8 @@ class DatabaseEngine final {
   // A compaction's check before each entry, which takes the mutex itself.
   [[nodiscard]] Status BeforeCompactionEntry();
   void RecordReadSample(ByteView internal_key);
+  void ClearImmutable();
+  void ReleaseReadPinnedMemtables();
   void RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock);
   void RecordBackgroundError(Error error);
   [[nodiscard]] std::unexpected<Error> BackgroundError() const;
@@ -170,6 +192,7 @@ class DatabaseEngine final {
   std::uint64_t log_number_ = 0;
   std::shared_ptr<MemTable> memtable_;
   std::shared_ptr<const MemTable> immutable_;
+  std::vector<std::shared_ptr<const MemTable>> read_pinned_memtables_;
   WriteQueue write_queue_;
   std::multiset<SequenceNumber> snapshots_;
   std::set<std::uint64_t> pending_outputs_;

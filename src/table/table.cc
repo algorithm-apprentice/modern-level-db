@@ -111,8 +111,8 @@ BlockHandle IndexHandle(ByteView value) {
 // in the block cache.
 Status ValidateIndex(const Block& index, std::uint64_t blocks_end, bool trusted_internal_keys) {
   std::uint64_t next_offset = 0;
-  return index.ValidateEntries(  // GCOVR_EXCL_BR_LINE: GCC 13 closure cleanup
-      [&](ByteView key,  // GCOVR_EXCL_LINE: GCC 13 misses lambda invocation
+  return index.ValidateEntries(                // GCOVR_EXCL_BR_LINE: GCC 13 closure cleanup
+      [&](ByteView key,                        // GCOVR_EXCL_LINE: GCC 13 misses lambda invocation
           ByteView encoded_value) -> Status {  // GCOVR_EXCL_LINE: GCC 13 misses invocation
         if (trusted_internal_keys) {
           const Result<ParsedInternalKey> parsed = ParseInternalKey(key);
@@ -244,8 +244,8 @@ Table::Table(std::unique_ptr<RandomAccessFile> file, std::uint64_t blocks_end,
       cache_id_(cache_id) {}
 // GCOVR_EXCL_STOP
 
-Result<std::optional<TableLookup>> Table::Get(const LookupKey& key,
-                                              const TableReadOptions& options) const {
+Result<TableLookupKind> Table::Get(const LookupKey& key, std::vector<std::byte>& value,
+                                   const TableReadOptions& options) const {
   Block::Iterator index(index_, *block_comparator_, block_key_format_);
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
   Status index_sought;
@@ -263,11 +263,11 @@ Result<std::optional<TableLookup>> Table::Get(const LookupKey& key,
   }
   // GCOVR_EXCL_STOP
   if (!index.valid()) {
-    return std::optional<TableLookup>();
+    return TableLookupKind::Missing;
   }
   const BlockHandle handle = IndexHandle(index.value());
   if (filter_.has_value() && !filter_->KeyMayMatch(handle.offset, key.user_key())) {
-    return std::optional<TableLookup>();
+    return TableLookupKind::Missing;
   }
 
   const Result<BlockReference> block = ReadDataBlock(handle, options);
@@ -289,30 +289,30 @@ Result<std::optional<TableLookup>> Table::Get(const LookupKey& key,
     return std::unexpected(data_sought.error());
   }
   if (!entry.valid()) {
-    return std::optional<TableLookup>();
+    return TableLookupKind::Missing;
   }
   const Result<ParsedInternalKey> parsed = ParseInternalKey(entry.key());
   if (!parsed.has_value()) {
     return std::unexpected(parsed.error());
   }
   if (comparator_->user_comparator().Compare(parsed->user_key, key.user_key()) != 0) {
-    return std::optional<TableLookup>();
+    return TableLookupKind::Missing;
+  }
+  if (parsed->kind == ValueKind::Deletion) {
+    return TableLookupKind::Deletion;
   }
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
-  TableLookup lookup;
-  lookup.kind = parsed->kind;
   {
     read_diagnostics::StageScope copy(read_diagnostics::Stage::ResultCopy);
     read_diagnostics::Add(read_diagnostics::Counter::ResultBytes, entry.value().size());
-    lookup.value.assign(entry.value().begin(), entry.value().end());
+    value.resize(entry.value().size());
+    std::ranges::copy(entry.value(), value.begin());
   }
 #else
-  TableLookup lookup{
-      .kind = parsed->kind,
-      .value = std::vector<std::byte>(entry.value().begin(), entry.value().end()),
-  };
+  value.resize(entry.value().size());
+  std::ranges::copy(entry.value(), value.begin());
 #endif
-  return lookup;
+  return TableLookupKind::Value;
 }
 
 Result<Table::BlockReference> Table::ReadDataBlock(BlockHandle handle,

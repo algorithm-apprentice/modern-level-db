@@ -111,6 +111,59 @@ TEST(PublicDatabaseTest, WritesReadsDeletesBatchesAndReopens) {
   EXPECT_EQ(Text(**value), "2");
 }
 
+TEST(PublicDatabaseTest, ReusesCallerOutputAndLeavesItUnchangedWhenAbsent) {
+  TemporaryDatabaseDirectory directory;
+  Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
+  ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+  Database database = std::move(*opened);
+  ASSERT_TRUE(database.Put(AsBytes("value"), AsBytes("stored")).has_value());
+  ASSERT_TRUE(database.Put(AsBytes("deleted"), AsBytes("old")).has_value());
+  ASSERT_TRUE(database.Delete(AsBytes("deleted")).has_value());
+  ASSERT_TRUE(database.Put(AsBytes("empty"), {}).has_value());
+
+  std::vector<std::byte> output;
+  output.reserve(64);
+  output.assign(AsBytes("sentinel").begin(), AsBytes("sentinel").end());
+  const std::size_t capacity = output.capacity();
+  const std::byte* const storage = output.data();
+
+  const Result<bool> found = database.Get(AsBytes("value"), output);
+  ASSERT_TRUE(found.has_value() && *found);
+  EXPECT_EQ(Text(output), "stored");
+  EXPECT_EQ(output.capacity(), capacity);
+  EXPECT_EQ(output.data(), storage);
+
+  output.assign(AsBytes("unchanged").begin(), AsBytes("unchanged").end());
+  const std::vector<std::byte> unchanged = output;
+  const Result<bool> missing = database.Get(AsBytes("missing"), output);
+  ASSERT_TRUE(missing.has_value());
+  EXPECT_FALSE(*missing);
+  EXPECT_EQ(output, unchanged);
+  EXPECT_EQ(output.capacity(), capacity);
+
+  const Result<bool> deleted = database.Get(AsBytes("deleted"), output);
+  ASSERT_TRUE(deleted.has_value());
+  EXPECT_FALSE(*deleted);
+  EXPECT_EQ(output, unchanged);
+
+  const Result<bool> empty = database.Get(AsBytes("empty"), output);
+  ASSERT_TRUE(empty.has_value() && *empty);
+  EXPECT_TRUE(output.empty());
+  EXPECT_EQ(output.capacity(), capacity);
+
+  const auto owning = database.Get(AsBytes("value"));
+  ASSERT_TRUE(owning.has_value() && owning->has_value());
+  EXPECT_EQ(Text(**owning), "stored");
+
+  Result<Snapshot> snapshot = database.GetSnapshot();
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().ToString();
+  ASSERT_TRUE(database.Put(AsBytes("value"), AsBytes("new")).has_value());
+  ReadOptions snapshot_read{.snapshot = &*snapshot};
+  const Result<bool> old = database.Get(AsBytes("value"), output, snapshot_read);
+  ASSERT_TRUE(old.has_value() && *old);
+  EXPECT_EQ(Text(output), "stored");
+}
+
 TEST(PublicDatabaseTest, IteratesAndSeeksInBothDirections) {
   TemporaryDatabaseDirectory directory;
   Result<Database> opened = Database::Open(CreatingOptions(), directory.path());

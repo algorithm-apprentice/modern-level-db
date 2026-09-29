@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "engine/database.h"
 #include "format/write_batch.h"
@@ -40,6 +41,7 @@ void FuzzDatabase(ByteView input) {
   std::optional<SequenceNumber> snapshot;
   Model model;
   Model frozen;
+  std::vector<std::byte> read_value;
 
   const auto verify_scan = [&](bool at_snapshot) {
     DatabaseEngineReadOptions read;
@@ -98,13 +100,16 @@ void FuzzDatabase(ByteView input) {
         if ((command & 8U) != 0 && snapshot.has_value()) {
           read.snapshot = snapshot;
         }
-        const auto actual = database->Get(AsBytes(key), read);
+        const std::vector<std::byte> previous = read_value;
+        const Result<bool> actual = database->Get(AsBytes(key), read_value, read);
         Require(actual.has_value());
         const Model& expected = read.snapshot.has_value() ? frozen : model;
         const auto entry = expected.find(key);
-        Require(actual->has_value() == (entry != expected.end()));
+        Require(*actual == (entry != expected.end()));
         if (entry != expected.end()) {
-          Require(AsStringView(**actual) == entry->second);
+          Require(AsStringView(read_value) == entry->second);
+        } else {
+          Require(read_value == previous);
         }
         break;
       }

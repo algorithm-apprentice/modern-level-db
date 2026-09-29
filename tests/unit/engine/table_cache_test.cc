@@ -159,11 +159,12 @@ std::optional<std::string> TryLookup(const TableCache::Handle& table, std::strin
   if (!key.has_value()) {
     return std::nullopt;
   }
-  auto lookup = table->Get(*key);
-  if (!lookup.has_value() || !lookup->has_value()) {
+  std::vector<std::byte> value;
+  auto lookup = table->Get(*key, value);
+  if (!lookup.has_value() || *lookup != TableLookupKind::Value) {
     return std::nullopt;
   }
-  return std::string(AsStringView((*lookup)->value));
+  return std::string(AsStringView(value));
 }
 
 class TableCacheTest : public testing::Test {

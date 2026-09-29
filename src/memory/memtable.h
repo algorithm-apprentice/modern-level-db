@@ -14,6 +14,8 @@
 
 namespace modern_leveldb {
 
+class DatabaseEngine;
+
 enum class MemTableLookupKind {
   Missing,
   Value,
@@ -30,8 +32,7 @@ class MemTable final {
   struct EntryComparator {
     const InternalKeyComparator& comparator;
 
-    [[nodiscard]] int operator()(const std::byte* left,
-                                 const std::byte* right) const noexcept;
+    [[nodiscard]] int operator()(const std::byte* left, const std::byte* right) const noexcept;
   };
 
   using Table = SkipList<const std::byte*, EntryComparator>;
@@ -47,12 +48,30 @@ class MemTable final {
   MemTable& operator=(MemTable&&) = delete;
   ~MemTable() = default;
 
-  [[nodiscard]] Status Add(SequenceNumber sequence, ValueKind kind, ByteView key,
-                           ByteView value);
+  [[nodiscard]] Status Add(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value);
   [[nodiscard]] MemTableLookup Lookup(const LookupKey& key) const;
-  [[nodiscard]] std::size_t memory_usage() const noexcept {
-    return arena_.memory_usage();
-  }
+  [[nodiscard]] std::size_t memory_usage() const noexcept { return arena_.memory_usage(); }
+
+  class ReadPin final {
+   public:
+    ReadPin(const ReadPin&) = delete;
+    ReadPin& operator=(const ReadPin&) = delete;
+    ReadPin(ReadPin&& source) noexcept;
+    ReadPin& operator=(ReadPin&&) = delete;
+    ~ReadPin();
+
+    [[nodiscard]] const MemTable& value() const noexcept;
+
+   private:
+    friend class MemTable;
+
+    explicit ReadPin(const MemTable& table) noexcept;
+
+    const MemTable* table_ = nullptr;
+  };
+
+  // The caller externally synchronizes pin creation and destruction.
+  [[nodiscard]] ReadPin PinRead() const noexcept { return ReadPin(*this); }
 
   class Iterator final {
    public:
@@ -79,11 +98,14 @@ class MemTable final {
   };
 
  private:
+  friend class DatabaseEngine;
+
   const Comparator& user_comparator_;
   InternalKeyComparator internal_comparator_;
   EntryComparator entry_comparator_;
   Arena arena_;
   Table table_;
+  mutable std::size_t read_pins_ = 0;
 };
 
 }  // namespace modern_leveldb

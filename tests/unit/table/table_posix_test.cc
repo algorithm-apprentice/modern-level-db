@@ -145,18 +145,19 @@ TEST(TablePosixTest, MappedUncompressedBlockBypassesTheBlockCache) {
   ASSERT_TRUE(table.has_value()) << table.error().ToString();
   const auto lookup = LookupKey::Create(AsBytes("key"), MaxSequenceNumber);
   ASSERT_TRUE(lookup.has_value());
-  const auto value = (*table)->Get(*lookup);
-  ASSERT_TRUE(value.has_value() && value->has_value());
-  EXPECT_EQ(AsStringView((*value)->value), "value");
+  std::vector<std::byte> value;
+  const auto found = (*table)->Get(*lookup, value);
+  ASSERT_TRUE(found.has_value() && *found == TableLookupKind::Value);
+  EXPECT_EQ(AsStringView(value), "value");
 
   std::array<std::byte, 2 * sizeof(std::uint64_t)> cache_key{};
   EncodeFixed64(std::span(cache_key).first<sizeof(std::uint64_t)>(), expected_cache_id);
   EncodeFixed64(std::span(cache_key).last<sizeof(std::uint64_t)>(), built.data.offset);
   EXPECT_FALSE(cache.Lookup(cache_key).has_value());
   EXPECT_EQ(cache.total_charge(), 0U);
-  const auto repeated = (*table)->Get(*lookup);
-  ASSERT_TRUE(repeated.has_value() && repeated->has_value());
-  EXPECT_EQ(AsStringView((*repeated)->value), "value");
+  const auto repeated = (*table)->Get(*lookup, value);
+  ASSERT_TRUE(repeated.has_value() && *repeated == TableLookupKind::Value);
+  EXPECT_EQ(AsStringView(value), "value");
   EXPECT_FALSE(cache.Lookup(cache_key).has_value());
 
   table->reset();
@@ -182,9 +183,10 @@ TEST(TablePosixTest, CachedCopiedUncompressedBlockOutlivesTable) {
   ASSERT_TRUE(table.has_value()) << table.error().ToString();
   const auto lookup = LookupKey::Create(AsBytes("key"), MaxSequenceNumber);
   ASSERT_TRUE(lookup.has_value());
-  const auto value = (*table)->Get(*lookup);
-  ASSERT_TRUE(value.has_value() && value->has_value());
-  EXPECT_EQ(AsStringView((*value)->value), "value");
+  std::vector<std::byte> value;
+  const auto found = (*table)->Get(*lookup, value);
+  ASSERT_TRUE(found.has_value() && *found == TableLookupKind::Value);
+  EXPECT_EQ(AsStringView(value), "value");
 
   std::array<std::byte, 2 * sizeof(std::uint64_t)> cache_key{};
   EncodeFixed64(std::span(cache_key).first<sizeof(std::uint64_t)>(), expected_cache_id);
@@ -224,9 +226,10 @@ TEST(TablePosixTest, CachedMappedCompressedBlockOutlivesTable) {
   ASSERT_TRUE(table.has_value()) << table.error().ToString();
   const auto lookup = LookupKey::Create(AsBytes("key"), MaxSequenceNumber);
   ASSERT_TRUE(lookup.has_value());
-  const auto value = (*table)->Get(*lookup);
-  ASSERT_TRUE(value.has_value() && value->has_value());
-  EXPECT_EQ((*value)->value, expected);
+  std::vector<std::byte> value;
+  const auto found = (*table)->Get(*lookup, value);
+  ASSERT_TRUE(found.has_value() && *found == TableLookupKind::Value);
+  EXPECT_EQ(value, expected);
 
   std::array<std::byte, 2 * sizeof(std::uint64_t)> cache_key{};
   EncodeFixed64(std::span(cache_key).first<sizeof(std::uint64_t)>(), expected_cache_id);

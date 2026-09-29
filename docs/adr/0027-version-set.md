@@ -3,6 +3,10 @@
 - Status: Accepted
 - Date: 2026-09-24
 
+[ADR-0057](0057-leveldb-version-output-parity.md) adds non-owning current
+access and a mutex-protected `ReadPin` for synchronous Get. Existing shared
+ownership remains for iterators, compactions, and installed-version tracking.
+
 ## Context
 
 A version is the set of live table files in every level. The version set
@@ -144,6 +148,9 @@ class VersionSet final {
   // Both factories also have deleted overloads for temporary comparators.
 
   std::shared_ptr<const Version> current() const noexcept;
+  const Version* current_raw() const noexcept;
+  const std::shared_ptr<const Version>& current_owner() const noexcept;
+  ReadPin PinCurrent() noexcept;
   std::span<const std::optional<InternalKey>, NumLevels> compact_pointers() const noexcept;
   std::set<std::uint64_t> LiveFiles() const;
 

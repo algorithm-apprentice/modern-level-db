@@ -33,23 +33,23 @@ std::function<std::uint64_t()> ReadSamplingPeriods(std::uint32_t seed) {
   };
 }
 
-bool SeekStatistics::Charge(const std::shared_ptr<const Version>& version,
-                            const std::shared_ptr<const Version>& current,
+bool SeekStatistics::Charge(const Version& version, const Version& current,
+                            const std::shared_ptr<const Version>& current_owner,
                             const SeekCharge& charge) {
   std::int64_t& budget =
-      budgets_.try_emplace(charge.file, InitialBudget(*charge.file)).first->second;
+      budgets_.try_emplace(*charge.file, InitialBudget(**charge.file)).first->second;
   --budget;
-  if (budget > 0 || version != current || IsRecordedFor(current)) {
+  if (budget > 0 || &version != &current || IsRecordedFor(current)) {
     return false;
   }
-  SeekCompaction compaction{.level = charge.level, .file = charge.file};
+  SeekCompaction compaction{.level = charge.level, .file = *charge.file};
   recorded_ = std::move(compaction);
-  recorded_version_ = current;
+  recorded_version_ = current_owner;
+  recorded_version_address_ = &current;
   return true;
 }
 
-std::optional<SeekCompaction> SeekStatistics::FileToCompact(
-    const std::shared_ptr<const Version>& current) const {
+std::optional<SeekCompaction> SeekStatistics::FileToCompact(const Version& current) const {
   if (!IsRecordedFor(current)) {
     return std::nullopt;
   }
@@ -64,19 +64,19 @@ void SeekStatistics::Retain(const Version& current) {
     }
   }
   std::erase_if(budgets_, [&](const auto& entry) { return !held.contains(entry.first.get()); });
-  const std::shared_ptr<const Version> recorded = recorded_version_.lock();
-  if (recorded.get() != &current) {
+  if (recorded_version_address_ != &current) {
     recorded_.reset();
     recorded_version_.reset();
+    recorded_version_address_ = nullptr;
   }
 }
 
-bool SeekStatistics::IsRecordedFor(const std::shared_ptr<const Version>& version) const {
-  if (!recorded_.has_value()) {
+bool SeekStatistics::IsRecordedFor(const Version& version) const {
+  if (!recorded_.has_value() || recorded_version_address_ != &version) {
     return false;
   }
   const std::shared_ptr<const Version> recorded = recorded_version_.lock();
-  return recorded == version;
+  return recorded.get() == &version;
 }
 
 }  // namespace modern_leveldb

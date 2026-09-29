@@ -82,7 +82,9 @@ Change:
   registers cleanup functions on iterators. Here an iterator holds
   `std::shared_ptr<const MemTable>` and `std::shared_ptr<const Version>`, so
   the engine shares memtables the same way; a held version also keeps its
-  files in `VersionSet::LiveFiles()`.
+  files in `VersionSet::LiveFiles()`. ADR-0057 keeps this long-lived iterator
+  ownership but replaces synchronous Get's temporary shared copies with typed
+  mutex-protected read pins.
 
 LevelDB's `IteratorWrapper`, which caches a child's key to avoid virtual
 calls, is not adopted; the children's accessors are already cheap.

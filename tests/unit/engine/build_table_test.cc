@@ -133,12 +133,13 @@ TEST_F(BuildTableTest, WritesAVerifiedTable) {
                                          operations.end()),
                 "open_random_access 000007.ldb"),
             0);
-  auto beta = (*table)->Get(LookupKey::Create(AsBytes("b"), 10).value());
-  ASSERT_TRUE(beta.has_value() && beta->has_value());
-  EXPECT_EQ(AsStringView((*beta)->value), "beta");
-  auto deleted = (*table)->Get(LookupKey::Create(AsBytes("a"), 10).value());
-  ASSERT_TRUE(deleted.has_value() && deleted->has_value());
-  EXPECT_EQ((*deleted)->kind, ValueKind::Deletion);
+  std::vector<std::byte> value;
+  auto beta = (*table)->Get(LookupKey::Create(AsBytes("b"), 10).value(), value);
+  ASSERT_TRUE(beta.has_value() && *beta == TableLookupKind::Value);
+  EXPECT_EQ(AsStringView(value), "beta");
+  auto deleted = (*table)->Get(LookupKey::Create(AsBytes("a"), 10).value(), value);
+  ASSERT_TRUE(deleted.has_value() && *deleted == TableLookupKind::Deletion);
+  EXPECT_EQ(AsStringView(value), "beta");
 }
 
 TEST_F(BuildTableTest, WritesNothingForAnEmptyMemtable) {

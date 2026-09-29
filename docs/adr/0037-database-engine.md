@@ -3,6 +3,10 @@
 - Status: Accepted
 - Date: 2026-09-24
 
+[ADR-0057](0057-leveldb-version-output-parity.md) replaces synchronous Get's
+temporary shared source captures with typed mutex-protected read pins and
+writes into caller-owned reusable output.
+
 ## Context
 
 Every part of a database now exists on its own: recovery
@@ -163,8 +167,8 @@ class DatabaseEngine final {
   ~DatabaseEngine();
 
   Status Write(const EncodedWriteBatch& batch, bool sync);
-  Result<std::optional<std::vector<std::byte>>> Get(ByteView key,
-                                                    const DatabaseEngineReadOptions& options = {});
+  Result<bool> Get(ByteView key, std::vector<std::byte>& value,
+                   const DatabaseEngineReadOptions& options = {});
   std::unique_ptr<DbIterator> NewIterator(
       const DatabaseEngineReadOptions& options = {});
   SequenceNumber GetSnapshot();
@@ -189,6 +193,10 @@ class DatabaseEngine final {
   sequence. An empty batch writes a log record and raises nothing.
 - `Get` and `NewIterator` read at the snapshot, which `GetSnapshot` must have
   returned and `ReleaseSnapshot` not yet released, or at the last sequence.
+  Get pins the mutable memtable, optional immutable memtable, and current
+  version under the mutex, reads unlocked, then releases those pins under the
+  mutex. It writes a found value into the caller's vector and leaves it
+  unchanged for missing/deletion.
   An iterator must be destroyed before its database, since its samples call
   it and its tables live in its table cache.
 - `GetSnapshot` records and returns the last sequence; snapshots are counted,

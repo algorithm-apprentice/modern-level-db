@@ -2,6 +2,7 @@
 #define MODERN_LEVELDB_METADATA_VERSION_H_
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -28,8 +29,10 @@ class Version final {
 
  private:
   friend class VersionBuilder;
+  friend class VersionSet;
 
   std::array<std::vector<File>, NumLevels> files_;
+  mutable std::size_t read_pins_ = 0;
 };
 
 // Applies version edits to a base version.

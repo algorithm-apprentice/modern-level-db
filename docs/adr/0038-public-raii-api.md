@@ -4,6 +4,10 @@
 
 Accepted
 
+[ADR-0057](0057-leveldb-version-output-parity.md) adds caller-buffer Get and
+removes synchronous per-call database-state/snapshot-registration shared
+copies. Returned iterators and snapshots retain the existing shared lifetime.
+
 ## Context
 
 The engine in ADR-0037 now implements opening, recovery, writes, reads,
@@ -131,6 +135,8 @@ class Database final {
   Status Delete(ByteView key, const WriteOptions& options = {});
   Status Write(const WriteBatch& batch,
                const WriteOptions& options = {});
+  Result<bool> Get(ByteView key, std::vector<std::byte>& value,
+                   const ReadOptions& options = {});
   Result<std::optional<std::vector<std::byte>>> Get(
       ByteView key, const ReadOptions& options = {});
   Result<Iterator> NewIterator(const ReadOptions& options = {});
@@ -155,10 +161,15 @@ class Snapshot final {
 
 `ReadOptions::snapshot` must name a live snapshot from the same database. A
 moved-from snapshot or a snapshot from another database is rejected as
-`InvalidArgument`. `Get` retains the registration for the duration of the
-read. An iterator retains it for the iterator's whole lifetime, so destroying
-the public snapshot handle cannot let a compaction discard entries that the
-iterator still reads.
+`InvalidArgument`. Synchronous `Get` borrows the live registration for the
+call; the caller must not destroy that snapshot concurrently. An iterator
+retains it for the iterator's whole lifetime, so destroying the public
+snapshot handle cannot let a compaction discard entries that the iterator
+still reads.
+
+The reusable Get returns true and writes a found value, or returns false and
+leaves the vector unchanged for missing/deletion. Errors leave it valid with
+unspecified content. The owning overload delegates through one local vector.
 
 The shared registration control block is allocated before it calls
 `DatabaseEngine::GetSnapshot`, and no throwing operation follows that call in
@@ -167,8 +178,10 @@ If the engine insertion itself throws, its multiset operation has the strong
 exception guarantee. No sequence can be registered without an owner that
 later releases it.
 
-Snapshots and iterators also retain the shared engine state. Destroying the
-`Database` handle therefore prevents new operations but closes the engine
+Snapshots and iterators also retain the shared engine state. Synchronous
+Database methods borrow the state from the live facade without incrementing
+its shared control block. Destroying the `Database` handle therefore prevents
+new operations but closes the engine
 only after its last child handle is gone. This replaces LevelDB's manual
 "destroy children first" rule with enforced lifetime safety.
 

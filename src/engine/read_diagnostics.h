@@ -97,7 +97,7 @@ inline constexpr std::array<std::string_view, static_cast<std::size_t>(Counter::
         "data_entries_decoded",
         "internal_key_comparisons",
         "result_bytes",
-};
+    };
 
 inline constexpr std::array<std::string_view, static_cast<std::size_t>(Stage::Count)> StageNames{
     "get",         "candidate_selection", "table_cache_lookup", "block_cache_lookup",
@@ -134,7 +134,7 @@ inline constexpr std::array<std::string_view, static_cast<std::size_t>(FileOpenR
         "count_budget_exhausted",
         "stat_failed",
         "mmap_failed",
-};
+    };
 
 struct FileOpenTotal {
   std::uint64_t files = 0;
@@ -198,6 +198,25 @@ class StageScope final {
   Stage stage_;
   bool active_ = false;
   std::chrono::steady_clock::time_point started_{};
+};
+
+// Accumulates several disjoint intervals into one sampled stage event.
+class StageAccumulator final {
+ public:
+  explicit StageAccumulator(Stage stage) noexcept;
+  StageAccumulator(const StageAccumulator&) = delete;
+  StageAccumulator& operator=(const StageAccumulator&) = delete;
+  ~StageAccumulator();
+
+  void Resume() noexcept;
+  void Pause() noexcept;
+
+ private:
+  Stage stage_;
+  bool active_ = false;
+  bool running_ = false;
+  std::chrono::steady_clock::time_point started_{};
+  std::uint64_t nanoseconds_ = 0;
 };
 
 // Attributes trusted block-entry decoding to the active index or data seek.

@@ -44,6 +44,7 @@ READ_DIAGNOSTIC_SAMPLE_DENOMINATOR = 4_096
 READ_DIAGNOSTIC_SAMPLES = 991
 READ_DIAGNOSTIC_SAMPLE_SCHEDULE = "splitmix64-v1"
 MODERN_FILE_ACCESS_SEMANTICS = "mmap-default-v1"
+MODERN_RESULT_OWNERSHIP_SEMANTICS = "reusable-get-v1"
 READ_DIAGNOSTIC_COUNTERS = (
     "gets", "mutable_hits", "immutable_hits", "sstable_hits", "deletions", "misses",
     "level0_candidates", "deeper_candidates", "files_searched", "table_cache_hits",
@@ -94,9 +95,28 @@ def mutation_specification(case, smoke=False):
     return specification
 
 
+def expected_modern_result_ownership(engine, workload, selected):
+    if selected not in ("reusable", "owning"):
+        raise ValueError("unknown Modern result ownership")
+    if engine != "modern":
+        if selected != "reusable":
+            raise ValueError("Modern result ownership requires a Modern case")
+        return "not_applicable"
+    if workload in ("readrandom", "readmissing"):
+        return selected
+    if selected != "reusable":
+        raise ValueError("owning result control requires a Modern point-read case")
+    if workload == "mixed50":
+        return "reusable"
+    return "not_applicable"
+
+
 def validate_benchmark(report, case, repetitions, smoke=False, modern_file_access="default",
-                       reference_file_access="default"):
+                       reference_file_access="default", modern_result_ownership="reusable"):
     engine, workload, records = case_parts(case)
+    expected_result_ownership = expected_modern_result_ownership(
+        engine, workload, modern_result_ownership
+    )
     if modern_file_access not in ("default", "pread"):
         raise ValueError("unknown Modern file access mode")
     if engine != "modern" and modern_file_access != "default":
@@ -121,6 +141,13 @@ def validate_benchmark(report, case, repetitions, smoke=False, modern_file_acces
     )
     if context.get("modern_file_access_semantics") != expected_access_semantics:
         raise ValueError("incorrect Modern file access semantics")
+    if context.get("modern_result_ownership") != expected_result_ownership:
+        raise ValueError("incorrect Modern result ownership")
+    expected_result_semantics = (
+        MODERN_RESULT_OWNERSHIP_SEMANTICS if engine == "modern" else "not_applicable"
+    )
+    if context.get("modern_result_ownership_semantics") != expected_result_semantics:
+        raise ValueError("incorrect Modern result ownership semantics")
     mutation = mutation_specification(case, smoke)
     if (context.get("library_version") != "v1.9.5"
             or type(context.get("json_schema_version")) is not int
@@ -310,7 +337,7 @@ def validate_read_diagnostics(report, case, modern_file_access="default"):
     if not isinstance(report, dict) or set(report) != fields:
         raise ValueError("invalid read diagnostic schema")
     expected = {
-        "schema_version": 4,
+        "schema_version": 5,
         "case": case,
         "operations": READ_DIAGNOSTIC_OPERATIONS,
         "sample_schedule": READ_DIAGNOSTIC_SAMPLE_SCHEDULE,
@@ -488,6 +515,9 @@ def validate_read_diagnostics(report, case, modern_file_access="default"):
     validate_build_context(build)
     if (build.get("build_type") != "Release"
             or build.get("modern_file_access") != modern_file_access
+            or build.get("modern_result_ownership") != "reusable"
+            or build.get("modern_result_ownership_semantics")
+               != MODERN_RESULT_OWNERSHIP_SEMANTICS
             or build.get("reference_file_access") != "not_applicable"
             or build.get("read_diagnostics_compiled") != "true"):
         raise ValueError("report did not come from a read diagnostic build")
@@ -544,6 +574,7 @@ def validate_build_context(context):
         "reference_requested_revision", "reference_source_override",
         "reference_file_access", "reference_pread_control_available",
         "reference_control_patch_sha256", "read_diagnostics_compiled",
+        "modern_result_ownership", "modern_result_ownership_semantics",
         "snappy_target", "snappy_source", "snappy_source_override",
         "zstd_target", "zstd_source", "zstd_source_override", "profile_capture_supported",
     )
@@ -586,8 +617,11 @@ def record_diagnostics(manifest, output):
 
 def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=None,
              min_time=None, timeout=None, modern_file_access="default",
-             reference_file_access="default"):
+             reference_file_access="default", modern_result_ownership="reusable"):
     engine, workload, _ = case_parts(case)
+    expected_result_ownership = expected_modern_result_ownership(
+        engine, workload, modern_result_ownership
+    )
     if modern_file_access not in ("default", "pread"):
         raise ValueError("unknown Modern file access mode")
     if engine != "modern" and modern_file_access != "default":
@@ -643,6 +677,7 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
         "modern_file_access": (
             modern_file_access if engine == "modern" else "not_applicable"
         ),
+        "modern_result_ownership": expected_result_ownership,
         "reference_file_access": (
             reference_file_access if engine == "leveldb" else "not_applicable"
         ),
@@ -664,6 +699,8 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
     ]
     if engine == "modern" and modern_file_access != "default":
         command.extend(["--modern-file-access", modern_file_access])
+    if engine == "modern" and modern_result_ownership != "reusable":
+        command.extend(["--modern-result-ownership", modern_result_ownership])
     if engine == "leveldb":
         command.extend(["--reference-file-access", reference_file_access])
     if mutation and smoke:
@@ -691,6 +728,7 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
             raw, case, repetitions, smoke=smoke,
             modern_file_access=modern_file_access,
             reference_file_access=reference_file_access,
+            modern_result_ownership=modern_result_ownership,
         )
         manifest["completion"] = validate_completion(read_json(output / "completion.json"), case,
                                                      smoke=smoke)
@@ -777,6 +815,7 @@ def run_read_diagnostics(binary, case, output, timeout=300.0, modern_file_access
         "commands": [],
         "artifacts": {"read_diagnostics": "read-diagnostics.json"},
         "modern_file_access": modern_file_access,
+        "modern_result_ownership": "reusable",
         "recording_timings_are_not_speedup_evidence": True,
     }
     manifest_path = output / "manifest.json"
@@ -853,6 +892,8 @@ def main():
     parser.add_argument("--timeout", type=float)
     parser.add_argument("--modern-file-access", choices=("default", "pread"),
                         default="default")
+    parser.add_argument("--modern-result-ownership", choices=("reusable", "owning"),
+                        default="reusable")
     parser.add_argument("--reference-file-access", choices=("default", "pread"),
                         default="default")
     parser.add_argument("--read-diagnostics", action="store_true")
@@ -860,7 +901,8 @@ def main():
     try:
         if args.read_diagnostics:
             if (args.capture_cpu or args.smoke or args.repetitions is not None
-                    or args.min_time is not None or args.reference_file_access != "default"):
+                    or args.min_time is not None or args.reference_file_access != "default"
+                    or args.modern_result_ownership != "reusable"):
                 raise ValueError("read diagnostics cannot combine with benchmark options")
             result = run_read_diagnostics(
                 args.binary, args.case, args.output,
@@ -871,7 +913,7 @@ def main():
             result = run_case(
                 args.binary, args.case, args.output, args.capture_cpu, args.smoke,
                 args.repetitions, args.min_time, args.timeout, args.modern_file_access,
-                args.reference_file_access,
+                args.reference_file_access, args.modern_result_ownership,
             )
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, ET.ParseError) as error:
         print(f"performance run failed: {error}", file=sys.stderr)

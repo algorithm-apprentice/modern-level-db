@@ -31,25 +31,25 @@ class SeekStatistics final {
   // and keeps falling below zero. If the budget is then at most zero, `version`
   // is `current`, and no file is recorded for `current`, records the file for
   // `current` and returns true.
-  [[nodiscard]] bool Charge(const std::shared_ptr<const Version>& version,
-                            const std::shared_ptr<const Version>& current,
+  [[nodiscard]] bool Charge(const Version& version, const Version& current,
+                            const std::shared_ptr<const Version>& current_owner,
                             const SeekCharge& charge);
 
   // Returns the file recorded for `current`.
-  [[nodiscard]] std::optional<SeekCompaction> FileToCompact(
-      const std::shared_ptr<const Version>& current) const;
+  [[nodiscard]] std::optional<SeekCompaction> FileToCompact(const Version& current) const;
 
   // Forgets the budgets of the files that `current` does not hold, and a file
   // recorded for another version.
   void Retain(const Version& current);
 
  private:
-  [[nodiscard]] bool IsRecordedFor(const std::shared_ptr<const Version>& version) const;
+  [[nodiscard]] bool IsRecordedFor(const Version& version) const;
 
   // Keyed by each file's metadata, which a budget keeps alive, so that no other
   // metadata can take its place.
   std::map<Version::File, std::int64_t> budgets_;
   std::weak_ptr<const Version> recorded_version_;
+  const Version* recorded_version_address_ = nullptr;
   std::optional<SeekCompaction> recorded_;
 };
 
