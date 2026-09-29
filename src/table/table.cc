@@ -112,7 +112,7 @@ BlockHandle IndexHandle(ByteView value) {
 Status ValidateIndex(const Block& index, std::uint64_t blocks_end, bool trusted_internal_keys) {
   std::uint64_t next_offset = 0;
   return index.ValidateEntries(  // GCOVR_EXCL_BR_LINE: GCC 13 closure cleanup
-      [&](ByteView key,
+      [&](ByteView key,  // GCOVR_EXCL_LINE: GCC 13 misses lambda invocation
           ByteView encoded_value) -> Status {  // GCOVR_EXCL_LINE: GCC 13 misses invocation
         if (trusted_internal_keys) {
           const Result<ParsedInternalKey> parsed = ParseInternalKey(key);
