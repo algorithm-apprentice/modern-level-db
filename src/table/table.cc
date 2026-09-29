@@ -325,15 +325,14 @@ Result<Table::BlockReference> Table::ReadDataBlock(BlockHandle handle,
   if (block->empty()) {
     return std::unexpected(Error::Corruption("table data block is empty"));
   }
-  auto shared = std::make_shared<const Block>(std::move(*block));
+  auto owned = std::make_unique<const Block>(std::move(*block));
   if (block_cache_ != nullptr && options.fill_cache) {
-    Result<BlockCache::Handle> inserted = block_cache_->Insert(cache_key, shared, shared->size());
-    // A cache whose charge accounting would overflow leaves the block uncached.
-    if (inserted.has_value()) {
-      return BlockReference(std::move(*inserted));
-    }
+    const std::size_t charge = owned->size();
+    Result<BlockCache::Handle> inserted = block_cache_->Insert(cache_key, std::move(owned), charge);
+    assert(inserted.has_value());
+    return BlockReference(std::move(*inserted));
   }
-  return BlockReference(std::move(shared));
+  return BlockReference(std::move(owned));
 }
 
 Table::Iterator::Iterator(const Table& table, const TableReadOptions& options) noexcept

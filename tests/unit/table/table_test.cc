@@ -567,13 +567,14 @@ TEST_F(TableTest, KeepsTablesApartInASharedCache) {
 TEST_F(TableTest, ReadsBlocksWhoseChargeTheCacheCannotAccount) {
   BlockCache cache(1 << 20);
   // Pinning the largest charge in every shard makes every further insertion
-  // overflow the cache's charge accounting.
-  const auto placeholder =
-      std::make_shared<const Block>(Block::Create(BlockOf({}), BytewiseComparator()).value());
+  // return an uncached handle because its charge cannot be accounted.
   std::vector<BlockCache::Handle> pins;
   for (int candidate = 0; candidate < 256; ++candidate) {
     const std::string key = "pin-" + std::to_string(candidate);
-    auto pin = cache.Insert(AsBytes(key), placeholder, std::numeric_limits<std::size_t>::max());
+    auto placeholder = Block::Create(BlockOf({}), BytewiseComparator());
+    ASSERT_TRUE(placeholder.has_value());
+    auto pin = cache.Insert(AsBytes(key), std::make_unique<const Block>(std::move(*placeholder)),
+                            std::numeric_limits<std::size_t>::max());
     if (pin.has_value()) {
       pins.push_back(std::move(*pin));
     }

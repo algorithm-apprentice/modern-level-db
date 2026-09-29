@@ -63,7 +63,7 @@ Result<TableCache::Handle> TableCache::Find(std::uint64_t file_number, std::uint
   }
   // Tables have charge one, so the charge accounting could overflow only with
   // SIZE_MAX tables in one shard; Insert would return that error.
-  return tables_.Insert(key, std::shared_ptr<const Table>(std::move(*table)), 1);
+  return tables_.Insert(key, std::move(*table), 1);
 }
 
 void TableCache::Evict(std::uint64_t file_number) { tables_.Erase(CacheKey(file_number)); }
