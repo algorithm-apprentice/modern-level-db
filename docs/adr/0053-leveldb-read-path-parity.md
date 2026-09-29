@@ -2,13 +2,11 @@
 
 ## Status
 
-Accepted. Milestones 1-3 merged the intrusive cache, block-iterator, and
-table/mmap parity work. Milestone 4 completes lazy version visitation, typed
-read pins, exact seek charging, and reusable output. The first integrated
-Milestone 5 audit found two residual cost-model gaps: the L0 overlap vector
-does not reserve pinned capacity and seek budgets still allocate/retain
-ownership on charged Gets. The reviewed correction implementation now closes
-both gaps; the final frozen-binary performance matrix remains.
+Completed. Milestones 1-4 merged the intrusive cache, block-iterator,
+table/mmap, lazy version visitation, typed read pin, exact seek charging, and
+reusable output work. The integrated Milestone 5 audit closed two residual
+cost-model gaps and one scan-control implementation deviation. The final
+frozen-binary matrix passes every completion gate.
 
 ## Context
 
@@ -422,6 +420,84 @@ Parity is complete when:
 
 If a point-read case remains outside 5%, the parity audit resumes against the
 checklist. The result does not justify unrelated speculative optimization.
+
+## Final frozen result
+
+The final candidate is merge revision
+`3799c06ca15db9e36b0f2632078d633d93006171`. The pre-parity Modern control is
+`2583eec06cb087ae561c6a478baf94493654d14f`, immediately before the first
+implementation milestone.
+
+The clean detached worktrees produced these binaries:
+
+```text
+candidate SHA-256:
+9d69e8c97b1ce37733e4cf3e4b7c816f03237b9923e1b95bbb40492c8fd3f8a2
+
+pre-parity baseline SHA-256:
+5ffc96778e989fbe828ef19b7b753d666f770db85d9a59bef5c3cdc37dc0553b
+```
+
+The matrix used three paired rounds, three Google Benchmark repetitions per
+fresh process, alternating pair order, a 0.2-second minimum time, and fresh
+database paths. Mapped point reads compare both engines' default mmap modes.
+Copied point reads use Modern `--modern-file-access pread` and LevelDB
+`--reference-file-access pread`.
+
+### Primary point-read gate
+
+Positive deltas mean Modern is slower.
+
+| Access | Workload | Modern ns/op | LevelDB ns/op | Aggregate delta | Three round deltas | Result |
+|---|---|---:|---:|---:|---|---|
+| mapped | readrandom/65536 | 1001.90 | 989.87 | +1.22% | +1.55%, +0.91%, +1.71% | pass |
+| mapped | readmissing/65536 | 967.02 | 979.83 | -1.31% | -1.78%, +2.65%, -2.20% | pass |
+| copied | readrandom/65536 | 1265.89 | 1224.04 | +3.42% | +3.61%, +3.70%, +2.85% | pass |
+| copied | readmissing/65536 | 1226.21 | 1195.35 | +2.58% | +2.32%, +4.48%, +2.17% | pass |
+
+Every primary aggregate is within 5%, and no primary round is more than 10%
+slower. The 4,096-record fixed-cost controls remain slower by 7.94% through
+12.55%; ADR-0053 deliberately classifies them as controls rather than primary
+completion gates.
+
+### Scan and seek-reuse controls
+
+Each aggregate median compares the final candidate with the frozen pre-parity
+Modern binary in the same access mode.
+
+| Access | Workload | Records | Final ns/item | Baseline ns/item | Delta | Result |
+|---|---|---:|---:|---:|---:|---|
+| mapped | scan | 4096 | 46.78 | 46.33 | +0.97% | pass |
+| mapped | scan | 65536 | 79.30 | 104.46 | -24.09% | pass |
+| mapped | seek_reuse | 4096 | 2760.79 | 2922.25 | -5.53% | pass |
+| mapped | seek_reuse | 65536 | 4106.58 | 4691.95 | -12.48% | pass |
+| copied | scan | 4096 | 46.90 | 46.28 | +1.33% | pass |
+| copied | scan | 65536 | 104.69 | 134.33 | -22.07% | pass |
+| copied | seek_reuse | 4096 | 2753.22 | 2894.91 | -4.89% | pass |
+| copied | seek_reuse | 65536 | 4800.70 | 4978.60 | -3.57% | pass |
+
+No scan or seek-reuse aggregate regresses by more than 5%.
+
+### Owning-result control
+
+The owning convenience overload is reported separately from the reusable
+parity path:
+
+| Access | Workload | Records | Owning tax |
+|---|---|---:|---:|
+| mapped | readrandom | 4096 | +6.21% |
+| mapped | readrandom | 65536 | +2.56% |
+| copied | readrandom | 4096 | +5.81% |
+| copied | readrandom | 65536 | +1.46% |
+
+Missing-key controls show no stable owning tax because neither result shape
+allocates a returned value; their paired deltas range around measurement
+noise and are not interpreted as speedups.
+
+The primary point-read gate, scan/seek control gate, and separate owning-result
+reporting requirement all pass. Pinned LevelDB read-path parity is therefore
+complete. Further read-path work may now be proposed as post-parity
+optimization rather than unfinished baseline implementation.
 
 ## Non-goals
 
