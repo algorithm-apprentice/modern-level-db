@@ -423,7 +423,7 @@ Status Table::Iterator::Seek(ByteView target) {
     return Fail(data_sought.error());
   }
   if (data_->valid()) {
-    return ValidatePosition();
+    return {};
   }
   // The target follows the block's last key, and the next block starts after
   // the target.
@@ -443,7 +443,7 @@ Status Table::Iterator::Next() {
     return Fail(advanced_data.error());
   }
   if (data_->valid()) {
-    return ValidatePosition();
+    return {};
   }
   const Status advanced_index = index_.Next();
   // GCOVR_EXCL_START: full physical index validation makes this move infallible
@@ -461,7 +461,7 @@ Status Table::Iterator::Prev() {
     return Fail(retreated_data.error());
   }
   if (data_->valid()) {
-    return ValidatePosition();
+    return {};
   }
   const Status retreated_index = index_.Prev();
   // GCOVR_EXCL_START: full physical index validation makes this move infallible
@@ -505,19 +505,7 @@ Status Table::Iterator::EnterBlock(Edge edge) {
     if (!data_->valid()) {
       return Fail(Error::Corruption("table data block has no reachable entry"));
     }
-    return ValidatePosition();
-  }
-  return {};
-}
-
-Status Table::Iterator::ValidatePosition() {
-  assert(data_.has_value() && data_->valid());
-  if (table_->block_key_format_ != BlockKeyFormat::Internal) {
     return {};
-  }
-  const Result<ParsedInternalKey> parsed = ParseInternalKey(data_->key());
-  if (!parsed.has_value()) {
-    return Fail(parsed.error());
   }
   return {};
 }

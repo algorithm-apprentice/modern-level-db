@@ -183,6 +183,27 @@ calls or allocations and that synchronous Get contains no shared-control-block
 operations. The bounded GPT-5.6 Sol implementation review found no actionable
 issue.
 
+### Scan-control audit correction
+
+The first frozen matrix at `2247447` passed every primary point-read gate but
+failed the 4,096-record scan control: +6.87% mapped and +6.24% copied versus
+the pre-parity baseline. Milestone attribution placed the regression in the
+block-iterator merge, and paired CPU profiles identified
+`Table::Iterator::ValidatePosition` as redundant per-entry work.
+
+That helper reparsed each positioned internal key even though reviewed
+ADR-0055 explicitly assigns semantic value-kind parsing to point lookup,
+`DbIterator`, and compaction. Remove it from `Seek`, edge positioning, `Next`,
+and `Prev`. The block iterator still rejects short keys before trusted
+comparison and propagates structural corruption; higher consumers still
+reject unknown kinds.
+
+The exact three-round local correction gate reduced the matched scan deltas to
++0.82% mapped and -0.05% copied. Full hardening and bounded GPT-5.6 Sol review
+found no safety regression. Merge this correction, refreeze the candidate
+binary, and rerun the entire final matrix; do not splice the local gate into
+the earlier frozen result.
+
 ## Decision
 
 ### Treat parity as one required baseline

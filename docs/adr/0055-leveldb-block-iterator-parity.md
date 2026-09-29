@@ -2,8 +2,12 @@
 
 ## Status
 
-Accepted design. Design PR #67 completed bounded GPT-5.6 Sol review and
-merged before this ADR-0053 Milestone 2 implementation began.
+Implemented. Design PR #67 completed bounded GPT-5.6 Sol review before
+ADR-0053 Milestone 2. The final integrated scan-control audit removed one
+implementation deviation: `Table::Iterator` no longer reparses every
+positioned internal key. It retains the reviewed minimum-length boundary and
+defers semantic value-kind parsing to point lookup, `DbIterator`, and
+compaction exactly as this ADR specifies.
 
 ## Context
 
