@@ -468,6 +468,11 @@ budget and fall back to `pread` on every unavailable-resource or size-mismatch
 condition. Raw patch, binary, adaptive, fixed-work, and diagnostic artifacts
 remain local under `build/mmap-experiment-ba151e5/`.
 
+ADR-0056 supersedes the final product policy while retaining this experiment's
+evidence: mmap is now the default, the limiter is count-only, mapped
+uncompressed blocks remain borrowed and bypass the block cache, and false is
+the explicit copied-read control.
+
 ## Delivery boundary
 
 Obtain one bounded GPT-5.6 Sol design review and merge this design-only PR

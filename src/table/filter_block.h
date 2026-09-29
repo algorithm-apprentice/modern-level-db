@@ -7,6 +7,7 @@
 
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
+#include "table/block_format.h"
 #include "table/bloom_filter.h"
 
 namespace modern_leveldb {
@@ -55,6 +56,8 @@ class FilterBlockReader final {
  public:
   [[nodiscard]] static Result<FilterBlockReader> Create(std::vector<std::byte> contents,
                                                         BloomFilterPolicy policy);
+  [[nodiscard]] static Result<FilterBlockReader> Create(BlockContents contents,
+                                                        BloomFilterPolicy policy);
 
   FilterBlockReader(const FilterBlockReader&) = delete;
   FilterBlockReader& operator=(const FilterBlockReader&) = delete;
@@ -67,14 +70,14 @@ class FilterBlockReader final {
   [[nodiscard]] bool KeyMayMatch(std::uint64_t block_offset, ByteView key) const noexcept;
 
  private:
-  FilterBlockReader(std::vector<std::byte> contents, BloomFilterPolicy policy,
-                    std::size_t array_offset, std::size_t filter_count) noexcept;
+  FilterBlockReader(BlockContents contents, BloomFilterPolicy policy, std::size_t array_offset,
+                    std::size_t filter_count) noexcept;
 
   // Returns the start of filter index; index filter_count_ yields the array
   // offset, which ends the last filter.
   [[nodiscard]] std::uint32_t FilterOffset(std::size_t index) const noexcept;
 
-  std::vector<std::byte> contents_;
+  BlockContents contents_;
   BloomFilterPolicy policy_;
   std::size_t array_offset_;
   std::size_t filter_count_;

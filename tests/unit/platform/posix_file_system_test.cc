@@ -17,6 +17,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <new>
 #include <set>
 #include <string>
 #include <thread>
@@ -220,12 +221,12 @@ TEST(PosixFileSystemTest, MappedRandomReadsExposeStableExactViews) {
   const std::vector<std::byte> expected = Pattern(8'192);
   WriteFixture(path, expected);
 
-  PosixFileSystem copied;
+  PosixFileSystem copied(false);
   auto copied_file = copied.OpenRandomAccess(path, expected.size());
   ASSERT_TRUE(copied_file.has_value());
   EXPECT_FALSE((*copied_file)->TryReadView(10, 64).has_value());
 
-  PosixFileSystem mapped(4, 1U << 20U);
+  PosixFileSystem mapped(PosixFileSystem::NewMmapBudgetForTesting(4));
   auto mapped_file = mapped.OpenRandomAccess(path, expected.size());
   ASSERT_TRUE(mapped_file.has_value());
   const std::optional<ByteView> view = (*mapped_file)->TryReadView(10, 64);
@@ -253,20 +254,20 @@ TEST(PosixFileSystemTest, MappedRandomReadsExposeStableExactViews) {
   ASSERT_FALSE(invalid.has_value());
   EXPECT_EQ(invalid.error().code(), ErrorCode::InvalidArgument);
 
-  PosixFileSystem production_budget(true);
+  PosixFileSystem production_budget;
   auto production_mapped = production_budget.OpenRandomAccess(path, expected.size());
   ASSERT_TRUE(production_mapped.has_value());
   EXPECT_TRUE((*production_mapped)->TryReadView(0, 1).has_value());
 }
 
-TEST(PosixFileSystemTest, MmapBudgetsAreSharedAndReleased) {
+TEST(PosixFileSystemTest, MmapCountBudgetIsSharedAndReleased) {
   TemporaryDirectory directory;
   const auto first_path = directory.path() / "first";
   const auto second_path = directory.path() / "second";
   WriteFixture(first_path, AsBytes("abc"));
   WriteFixture(second_path, AsBytes("def"));
 
-  const auto count_budget = PosixFileSystem::NewMmapBudgetForTesting(1, 100);
+  const auto count_budget = PosixFileSystem::NewMmapBudgetForTesting(1);
   PosixFileSystem first_file_system(count_budget);
   PosixFileSystem second_file_system(count_budget);
   auto first = first_file_system.OpenRandomAccess(first_path, 3);
@@ -280,23 +281,14 @@ TEST(PosixFileSystemTest, MmapBudgetsAreSharedAndReleased) {
   ASSERT_TRUE(after_count_release.has_value());
   EXPECT_TRUE((*after_count_release)->TryReadView(0, 3).has_value());
 
-  const auto byte_budget = PosixFileSystem::NewMmapBudgetForTesting(2, 4);
-  PosixFileSystem byte_first(byte_budget);
-  PosixFileSystem byte_second(byte_budget);
-  auto byte_mapped = byte_first.OpenRandomAccess(first_path, 3);
-  ASSERT_TRUE(byte_mapped.has_value());
-  auto byte_fallback = byte_second.OpenRandomAccess(second_path, 3);
-  ASSERT_TRUE(byte_fallback.has_value());
-  EXPECT_FALSE((*byte_fallback)->TryReadView(0, 3).has_value());
-  byte_mapped->reset();
-  auto after_byte_release = byte_second.OpenRandomAccess(second_path, 3);
-  ASSERT_TRUE(after_byte_release.has_value());
-  EXPECT_TRUE((*after_byte_release)->TryReadView(0, 3).has_value());
+  EXPECT_THROW(static_cast<void>(PosixFileSystem::NewMmapBudgetForTesting(
+                   std::numeric_limits<std::size_t>::max())),
+               std::bad_array_new_length);
 }
 
 TEST(PosixFileSystemTest, MmapFallsBackForEmptyAndMismatchedFiles) {
   TemporaryDirectory directory;
-  PosixFileSystem file_system(4, 1U << 20U);
+  PosixFileSystem file_system(PosixFileSystem::NewMmapBudgetForTesting(4));
   const auto empty_path = directory.path() / "empty";
   const auto changed_path = directory.path() / "changed";
   WriteFixture(empty_path, {});
@@ -318,7 +310,7 @@ TEST(PosixFileSystemTest, MmapFallsBackForEmptyAndMismatchedFiles) {
 
 TEST(PosixFileSystemTest, MappedFileRemainsReadableAfterUnlink) {
   TemporaryDirectory directory;
-  PosixFileSystem file_system(1, 100);
+  PosixFileSystem file_system(PosixFileSystem::NewMmapBudgetForTesting(1));
   const auto path = directory.path() / "unlinked";
   WriteFixture(path, AsBytes("mapped contents"));
   auto opened = file_system.OpenRandomAccess(path, 15);

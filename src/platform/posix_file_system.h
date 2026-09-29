@@ -16,13 +16,12 @@ class PosixMmapBudget;
 
 class PosixFileSystem final : public FileSystem {
  public:
-  PosixFileSystem() noexcept;
-  explicit PosixFileSystem(bool allow_mmap_reads) noexcept;
-  // Uses an isolated mmap budget for tests.
-  PosixFileSystem(std::size_t maximum_mappings, std::uint64_t maximum_mapped_bytes);
+  PosixFileSystem();
+  explicit PosixFileSystem(bool allow_mmap_reads);
   explicit PosixFileSystem(std::shared_ptr<PosixMmapBudget> mmap_budget) noexcept;
+  // Creates an isolated mmap budget for tests.
   [[nodiscard]] static std::shared_ptr<PosixMmapBudget> NewMmapBudgetForTesting(
-      std::size_t maximum_mappings, std::uint64_t maximum_mapped_bytes);
+      std::size_t maximum_mappings);
 
   [[nodiscard]] Result<std::unique_ptr<SequentialFile>> OpenSequential(
       const std::filesystem::path& path) override;

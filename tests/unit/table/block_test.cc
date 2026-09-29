@@ -220,6 +220,25 @@ TEST(BlockTest, AcceptsBuilderBlocks) {
   EXPECT_TRUE(Block::Create(BuildGoldenBlock()).has_value());
 }
 
+TEST(BlockTest, PreservesOwnedAndBorrowedStorageAcrossMoves) {
+  const std::vector<std::byte> contents = BuildGoldenBlock();
+  Result<Block> borrowed = Block::Create(BlockContents::Borrowed(contents));
+  ASSERT_TRUE(borrowed.has_value()) << borrowed.error().ToString();
+  EXPECT_FALSE(borrowed->cacheable());
+  Block moved_borrowed(std::move(*borrowed));
+  Block::Iterator borrowed_iterator(moved_borrowed, BytewiseComparator());
+  ExpectOk(borrowed_iterator.SeekToFirst());
+  ExpectAt(borrowed_iterator, "apple", "1");
+
+  Result<Block> owned = Block::Create(contents);
+  ASSERT_TRUE(owned.has_value()) << owned.error().ToString();
+  EXPECT_TRUE(owned->cacheable());
+  Block moved_owned(std::move(*owned));
+  Block::Iterator owned_iterator(moved_owned, BytewiseComparator());
+  ExpectOk(owned_iterator.SeekToLast());
+  ExpectAt(owned_iterator, "banana", "3");
+}
+
 TEST(BlockTest, ReportsWhetherItHasEntries) {
   BlockBuilder builder(16);
 

@@ -167,7 +167,7 @@ std::vector<std::byte> StoredContents(ByteView file, BlockHandle handle) {
   auto contents =
       DecodeStoredBlock(Materialize(file.subspan(handle.offset, handle.size + BlockTrailerSize)));
   EXPECT_TRUE(contents.has_value());
-  return contents.value_or(std::vector<std::byte>{});
+  return contents.has_value() ? Materialize(contents->data()) : std::vector<std::byte>{};
 }
 
 void ReadTable(ByteView file, const Comparator& comparator, TableContents& table) {

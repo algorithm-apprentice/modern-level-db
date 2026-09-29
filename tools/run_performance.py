@@ -43,6 +43,7 @@ READ_DIAGNOSTIC_SAMPLE_SEED = 401
 READ_DIAGNOSTIC_SAMPLE_DENOMINATOR = 4_096
 READ_DIAGNOSTIC_SAMPLES = 991
 READ_DIAGNOSTIC_SAMPLE_SCHEDULE = "splitmix64-v1"
+MODERN_FILE_ACCESS_SEMANTICS = "mmap-default-v1"
 READ_DIAGNOSTIC_COUNTERS = (
     "gets", "mutable_hits", "immutable_hits", "sstable_hits", "deletions", "misses",
     "level0_candidates", "deeper_candidates", "files_searched", "table_cache_hits",
@@ -55,20 +56,12 @@ READ_DIAGNOSTIC_COUNTERS = (
 )
 READ_DIAGNOSTIC_OPEN_REASONS = (
     "mapped", "disabled", "missing_expected_size", "empty_file", "size_mismatch",
-    "size_unrepresentable", "count_budget_exhausted", "byte_budget_exhausted",
-    "stat_failed", "mmap_failed",
+    "size_unrepresentable", "count_budget_exhausted", "stat_failed", "mmap_failed",
 )
 READ_DIAGNOSTIC_STAGES = (
     "get", "candidate_selection", "table_cache_lookup", "block_cache_lookup",
     "random_read", "stored_block_decode", "block_construction", "index_seek",
     "data_seek", "result_copy",
-)
-READ_DIAGNOSTIC_COMPARISON_COUNTERS = (
-    "block_cache_misses",
-    "stored_blocks",
-    "decompressed_blocks",
-    "decoded_block_bytes",
-    "validation_entries",
 )
 FINGERPRINTS = {
     4096: ("e966aa2f", "387c287f", "c3e3b3de", "7883c9b4"),
@@ -104,12 +97,12 @@ def mutation_specification(case, smoke=False):
 def validate_benchmark(report, case, repetitions, smoke=False, modern_file_access="default",
                        reference_file_access="default"):
     engine, workload, records = case_parts(case)
-    if modern_file_access not in ("default", "mmap"):
+    if modern_file_access not in ("default", "pread"):
         raise ValueError("unknown Modern file access mode")
     if engine != "modern" and modern_file_access != "default":
         raise ValueError("Modern file access mode requires a Modern case")
-    if modern_file_access == "mmap" and workload in MUTATIONS:
-        raise ValueError("Modern mmap control requires a read-family case")
+    if modern_file_access == "pread" and workload in MUTATIONS:
+        raise ValueError("Modern pread control requires a read-family case")
     if reference_file_access not in ("default", "pread"):
         raise ValueError("unknown reference file access mode")
     if engine != "leveldb" and reference_file_access != "default":
@@ -121,11 +114,13 @@ def validate_benchmark(report, case, repetitions, smoke=False, modern_file_acces
     context = report["context"]
     reported_modern_access = context.get("modern_file_access")
     expected_modern_access = modern_file_access if engine == "modern" else "not_applicable"
-    if reported_modern_access is None:
-        if modern_file_access != "default":
-            raise ValueError("benchmark predates the requested Modern file access mode")
-    elif reported_modern_access != expected_modern_access:
+    if reported_modern_access != expected_modern_access:
         raise ValueError("incorrect Modern file access mode")
+    expected_access_semantics = (
+        MODERN_FILE_ACCESS_SEMANTICS if engine == "modern" else "not_applicable"
+    )
+    if context.get("modern_file_access_semantics") != expected_access_semantics:
+        raise ValueError("incorrect Modern file access semantics")
     mutation = mutation_specification(case, smoke)
     if (context.get("library_version") != "v1.9.5"
             or type(context.get("json_schema_version")) is not int
@@ -298,11 +293,10 @@ def validate_mutation_completion(report, case, specification, smoke):
     return report
 
 
-def validate_read_diagnostics(
-        report, case, modern_file_access="default", historical_schema2=False):
+def validate_read_diagnostics(report, case, modern_file_access="default"):
     if case not in READ_DIAGNOSTIC_CASES:
         raise ValueError("unsupported read diagnostic case")
-    if modern_file_access not in ("default", "mmap"):
+    if modern_file_access not in ("default", "pread"):
         raise ValueError("unknown Modern file access mode")
     _, workload, records = case_parts(case)
     fields = {
@@ -316,7 +310,7 @@ def validate_read_diagnostics(
     if not isinstance(report, dict) or set(report) != fields:
         raise ValueError("invalid read diagnostic schema")
     expected = {
-        "schema_version": 2 if historical_schema2 else 3,
+        "schema_version": 4,
         "case": case,
         "operations": READ_DIAGNOSTIC_OPERATIONS,
         "sample_schedule": READ_DIAGNOSTIC_SAMPLE_SCHEDULE,
@@ -354,11 +348,11 @@ def validate_read_diagnostics(
         setup_files[name] = total["files"]
     if sum(setup_files.values()) == 0:
         raise ValueError("read diagnostic setup opened no random-access files")
-    if modern_file_access == "mmap":
+    if modern_file_access == "default":
         if setup_files["mapped"] == 0 or setup_files["disabled"] != 0:
-            raise ValueError("mmap diagnostic did not map its table files")
+            raise ValueError("default diagnostic did not map its table files")
     elif setup_files["mapped"] != 0 or setup_files["disabled"] == 0:
-        raise ValueError("default diagnostic did not retain copied table reads")
+        raise ValueError("pread diagnostic did not retain copied table reads")
 
     counters = report["counters"]
     if not isinstance(counters, dict) or set(counters) != set(READ_DIAGNOSTIC_COUNTERS):
@@ -410,19 +404,16 @@ def validate_read_diagnostics(
         raise ValueError("copied block bytes exceed completed random reads")
     if totals["copied_read_bytes"] > totals["random_read_requested_bytes"]:
         raise ValueError("copied block bytes exceed requested random-read bytes")
-    if modern_file_access == "mmap":
+    if modern_file_access == "default":
         fallback_files = sum(
             setup_files[name] for name in READ_DIAGNOSTIC_OPEN_REASONS
             if name != "mapped"
         )
         if totals["copied_read_blocks"] != 0 and fallback_files == 0:
-            raise ValueError("mmap copied blocks have no persisted fallback reason")
+            raise ValueError("default copied blocks have no persisted fallback reason")
     elif totals["mapped_view_blocks"] != 0:
-        raise ValueError("default diagnostics unexpectedly used mapped block views")
-    if historical_schema2:
-        if totals["validation_entries"] < totals["decoded_blocks"]:
-            raise ValueError("decoded blocks have no validated entries")
-    elif totals["validation_entries"] != 0:
+        raise ValueError("pread diagnostics unexpectedly used mapped block views")
+    if totals["validation_entries"] != 0:
         raise ValueError("lazy block diagnostics performed eager entry validation")
     if totals["files_searched"] < totals["sstable_hits"]:
         raise ValueError("SSTable hits exceed searched files")
@@ -486,11 +477,11 @@ def validate_read_diagnostics(
         for stage in ("stored_block_decode", "block_construction"):
             if stages[stage]["events"] == 0:
                 raise ValueError(f"cache-pressure diagnostic has no {stage} samples")
-        if modern_file_access == "mmap":
+        if modern_file_access == "default":
             if totals["mapped_view_blocks"] == 0 or stages["random_read"]["events"] != 0:
-                raise ValueError("mmap cache-pressure diagnostics retained copied reads")
+                raise ValueError("default cache-pressure diagnostics retained copied reads")
         elif totals["random_read_calls"] == 0 or stages["random_read"]["events"] == 0:
-            raise ValueError("copied cache-pressure diagnostics have no random reads")
+            raise ValueError("pread cache-pressure diagnostics have no random reads")
     build = report["build"]
     if not isinstance(build, dict):
         raise ValueError("missing read diagnostic build provenance")
@@ -501,65 +492,6 @@ def validate_read_diagnostics(
             or build.get("read_diagnostics_compiled") != "true"):
         raise ValueError("report did not come from a read diagnostic build")
     return report
-
-
-def compare_read_diagnostics(
-        baseline, candidate, case, tolerance_percent=2.0,
-        historical_schema2_baseline=False):
-    _, _, records = case_parts(case)
-    if records != 65536:
-        raise ValueError("storage-work comparison requires a 65,536-record case")
-    if (baseline.get("case") != case or candidate.get("case") != case
-            or baseline.get("operations") != READ_DIAGNOSTIC_OPERATIONS
-            or candidate.get("operations") != READ_DIAGNOSTIC_OPERATIONS):
-        raise ValueError("read diagnostic comparison uses different work")
-    if candidate.get("schema_version") != 3:
-        raise ValueError("read diagnostic candidate must use schema 3")
-    baseline_schema = baseline.get("schema_version")
-    if baseline_schema == 2:
-        if not historical_schema2_baseline:
-            raise ValueError("schema-2 baseline requires explicit historical selection")
-    elif baseline_schema != 3:
-        raise ValueError("read diagnostic baseline must use schema 3")
-    result = {}
-    incomparable = {}
-    for name in READ_DIAGNOSTIC_COMPARISON_COUNTERS:
-        try:
-            before = baseline["counters"][name]["per_get"]
-            after = candidate["counters"][name]["per_get"]
-        except (KeyError, TypeError):
-            raise ValueError(f"missing read diagnostic comparison counter: {name}") from None
-        if not number(before) or not number(after):
-            raise ValueError(f"invalid read diagnostic comparison counter: {name}")
-        if baseline_schema == 2 and name == "validation_entries":
-            incomparable[name] = {
-                "baseline_per_get": before,
-                "candidate_per_get": after,
-                "reason": "eager and lazy block-validation schemas are not comparable",
-            }
-            continue
-        if before == 0:
-            if after != 0:
-                raise ValueError(f"read diagnostic counter changed from zero: {name}")
-            delta_percent = 0.0
-        else:
-            delta_percent = (after / before - 1.0) * 100.0
-            if abs(delta_percent) > tolerance_percent:
-                raise ValueError(
-                    f"read diagnostic counter drift exceeds {tolerance_percent}%: {name}"
-                )
-        result[name] = {
-            "baseline_per_get": before,
-            "candidate_per_get": after,
-            "delta_percent": delta_percent,
-        }
-    return {
-        "schema_version": 2,
-        "case": case,
-        "tolerance_percent": tolerance_percent,
-        "counters": result,
-        "incomparable_counters": incomparable,
-    }
 
 
 def reject_duplicate_keys(pairs):
@@ -656,12 +588,12 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
              min_time=None, timeout=None, modern_file_access="default",
              reference_file_access="default"):
     engine, workload, _ = case_parts(case)
-    if modern_file_access not in ("default", "mmap"):
+    if modern_file_access not in ("default", "pread"):
         raise ValueError("unknown Modern file access mode")
     if engine != "modern" and modern_file_access != "default":
         raise ValueError("Modern file access mode requires a Modern case")
-    if modern_file_access == "mmap" and workload in MUTATIONS:
-        raise ValueError("Modern mmap control requires a read-family case")
+    if modern_file_access == "pread" and workload in MUTATIONS:
+        raise ValueError("Modern pread control requires a read-family case")
     if reference_file_access not in ("default", "pread"):
         raise ValueError("unknown reference file access mode")
     if engine != "leveldb" and reference_file_access != "default":
@@ -821,7 +753,7 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
 def run_read_diagnostics(binary, case, output, timeout=300.0, modern_file_access="default"):
     if case not in READ_DIAGNOSTIC_CASES:
         raise ValueError("unsupported read diagnostic case")
-    if modern_file_access not in ("default", "mmap"):
+    if modern_file_access not in ("default", "pread"):
         raise ValueError("unknown Modern file access mode")
     if not number(timeout) or timeout <= 0:
         raise ValueError("timeout must be positive and finite")
@@ -919,7 +851,7 @@ def main():
     parser.add_argument("--repetitions", type=int)
     parser.add_argument("--min-time", type=float)
     parser.add_argument("--timeout", type=float)
-    parser.add_argument("--modern-file-access", choices=("default", "mmap"),
+    parser.add_argument("--modern-file-access", choices=("default", "pread"),
                         default="default")
     parser.add_argument("--reference-file-access", choices=("default", "pread"),
                         default="default")

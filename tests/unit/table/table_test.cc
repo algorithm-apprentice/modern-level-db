@@ -526,7 +526,7 @@ TEST_F(TableTest, ChargesCompressedBlocksByTheirDecodedSize) {
   ASSERT_TRUE(footer.has_value());
   const auto stored_index =
       ByteView(data).subspan(footer->index.offset, footer->index.size + BlockTrailerSize);
-  Result<std::vector<std::byte>> index_contents = DecodeStoredBlock(Materialize(stored_index));
+  Result<BlockContents> index_contents = DecodeStoredBlock(Materialize(stored_index));
   ASSERT_TRUE(index_contents.has_value()) << index_contents.error().ToString();
   Result<Block> index = Block::Create(std::move(*index_contents));
   ASSERT_TRUE(index.has_value()) << index.error().ToString();
@@ -538,9 +538,9 @@ TEST_F(TableTest, ChargesCompressedBlocksByTheirDecodedSize) {
   ASSERT_TRUE(handle.has_value());
   ASSERT_TRUE(encoded_handle.empty());
   const auto stored_data = ByteView(data).subspan(handle->offset, handle->size + BlockTrailerSize);
-  Result<std::vector<std::byte>> decoded = DecodeStoredBlock(Materialize(stored_data));
+  Result<BlockContents> decoded = DecodeStoredBlock(Materialize(stored_data));
   ASSERT_TRUE(decoded.has_value()) << decoded.error().ToString();
-  ASSERT_LT(handle->size, decoded->size());
+  ASSERT_LT(handle->size, decoded->data().size());
 
   BlockCache cache(1 << 20);
   TableOptions options;
@@ -550,7 +550,7 @@ TEST_F(TableTest, ChargesCompressedBlocksByTheirDecodedSize) {
   const std::optional<TableLookup> lookup = Get(*table, "key", 1);
   ASSERT_TRUE(lookup.has_value());
   EXPECT_EQ(lookup->value, value);
-  EXPECT_EQ(cache.total_charge(), decoded->size());
+  EXPECT_EQ(cache.total_charge(), decoded->data().size());
 }
 
 TEST_F(TableTest, ReadsWithoutFillingTheCacheWhenAsked) {
@@ -950,6 +950,23 @@ TEST_F(TableTest, ReadsStoredBlocksThroughStableFileViews) {
   ASSERT_TRUE(table.has_value()) << table.error().ToString();
 
   ExpectValue(Get(**table, "k", 30), "v30");
+  EXPECT_EQ(state_->read_calls.load(), 1);
+}
+
+TEST_F(TableTest, BorrowsMappedIndexMetaFilterAndDataBlocks) {
+  TableBuilderOptions builder_options;
+  builder_options.compression = BlockCompression::None;
+  builder_options.filter_policy = BloomFilterPolicy(10);
+  state_ = std::make_shared<ReadableState>();
+  state_->data =
+      BuildTable({{Key("key", 1), Materialize(AsBytes("value"))}}, builder_options, comparator_);
+  state_->return_views = true;
+  state_->fail_read_call = 2;
+
+  auto table = Table::Open(std::make_unique<MemoryRandomAccessFile>(state_), state_->data.size(),
+                           comparator_, WithFilter());
+  ASSERT_TRUE(table.has_value()) << table.error().ToString();
+  ExpectValue(Get(**table, "key", 1), "value");
   EXPECT_EQ(state_->read_calls.load(), 1);
 }
 

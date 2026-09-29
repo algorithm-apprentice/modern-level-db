@@ -87,23 +87,27 @@ std::size_t Block::Layout::RestartPoint(std::size_t index) const noexcept {
 }
 
 Result<Block> Block::Create(std::vector<std::byte> contents) {
-  if (contents.size() < Fixed32Size) {
+  return Create(BlockContents::Owned(std::move(contents)));
+}
+
+Result<Block> Block::Create(BlockContents contents) {
+  const ByteView data = contents.data();
+  if (data.size() < Fixed32Size) {
     return std::unexpected(Error::Corruption("block is too short"));
   }
-  const std::size_t restart_count = DecodeFixed32(ByteView(contents).last<Fixed32Size>());
-  if (restart_count > (contents.size() - Fixed32Size) / Fixed32Size) {
+  const std::size_t restart_count = DecodeFixed32(data.last<Fixed32Size>());
+  if (restart_count > (data.size() - Fixed32Size) / Fixed32Size) {
     return std::unexpected(Error::Corruption("block restart count is invalid"));
   }
-  const std::size_t entries_end = contents.size() - Fixed32Size * (restart_count + 1);
+  const std::size_t entries_end = data.size() - Fixed32Size * (restart_count + 1);
   return Block(std::move(contents), entries_end, restart_count);
 }
 
 // GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
-Block::Block(std::vector<std::byte> contents, std::size_t entries_end,
-             std::size_t restart_count) noexcept
+Block::Block(BlockContents contents, std::size_t entries_end, std::size_t restart_count) noexcept
     : contents_(std::move(contents)),
       layout_{
-          .contents = contents_,
+          .contents = contents_.data(),
           .entries_end = entries_end,
           .restart_count = restart_count,
       } {}

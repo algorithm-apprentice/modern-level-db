@@ -10,6 +10,7 @@
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/comparator.h"
 #include "modern_leveldb/base/result.h"
+#include "table/block_format.h"
 
 namespace modern_leveldb {
 
@@ -35,6 +36,7 @@ class Block final {
   using EntryVisitor = std::function<Status(ByteView key, ByteView value)>;
 
   [[nodiscard]] static Result<Block> Create(std::vector<std::byte> contents);
+  [[nodiscard]] static Result<Block> Create(BlockContents contents);
 
   Block(const Block&) = delete;
   Block& operator=(const Block&) = delete;
@@ -44,7 +46,8 @@ class Block final {
   ~Block() = default;
 
   [[nodiscard]] bool empty() const noexcept;
-  [[nodiscard]] std::size_t size() const noexcept { return contents_.size(); }
+  [[nodiscard]] std::size_t size() const noexcept { return contents_.data().size(); }
+  [[nodiscard]] bool cacheable() const noexcept { return contents_.cacheable(); }
 
   // Table-open validation for index/metaindex blocks. It walks physical entries
   // from byte zero and validates complete restart topology without comparing
@@ -52,10 +55,9 @@ class Block final {
   [[nodiscard]] Status ValidateEntries(const EntryVisitor& visitor) const;
 
  private:
-  Block(std::vector<std::byte> contents, std::size_t entries_end,
-        std::size_t restart_count) noexcept;
+  Block(BlockContents contents, std::size_t entries_end, std::size_t restart_count) noexcept;
 
-  std::vector<std::byte> contents_;
+  BlockContents contents_;
   Layout layout_;
 };
 

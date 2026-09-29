@@ -5,9 +5,11 @@
   its only planned caller
 - Date: 2026-09-22
 
-[ADR-0050](0050-posix-mmap-table-reads.md) adds an optional exact borrowed
-random-access view and a bounded, explicit-opt-in POSIX mmap implementation.
-Copied `Read` remains the default and fallback.
+[ADR-0050](0050-posix-mmap-table-reads.md) added an optional exact borrowed
+random-access view and the first bounded POSIX mmap implementation.
+[ADR-0056](0056-leveldb-table-mmap-parity.md) makes mmap the 64-bit POSIX
+default, uses a count-only 1,000-map budget, and retains copied `Read` as the
+explicit opt-out and fallback.
 
 ## Context
 
@@ -223,15 +225,16 @@ byte sequences; this layer does not impose UTF-8 normalization.
 - `TryReadView` optionally returns exactly the requested immutable bytes,
   valid until the random-access file is destroyed. The default returns
   nothing. Callers then use the copied `Read` contract.
-- The default POSIX path remains `pread`. With public
-  `Options::allow_mmap_reads`, exact-size SSTables may use full-file read-only
-  mappings under the process-wide 1,000-map/4-GiB budget. Missing resources,
+- The default 64-bit POSIX path uses full-file read-only mappings for
+  exact-size SSTables under the process-wide 1,000-map count budget.
+  `Options::allow_mmap_reads = false` forces `pread`. Missing resources,
   absent/mismatched sizes, empty files, and mmap failures fall back to
   `pread`.
 - Concurrent external mutation or truncation of a live mapped SSTable is
   outside the immutable-file protocol. A storage fault while touching a
   mapped page may terminate the process with `SIGBUS` instead of returning
-  typed `Io`; this is why mmap is explicit opt-in.
+  typed `Io`; applications requiring typed read errors use the copied-read
+  opt-out.
 
 ### Write and close semantics
 

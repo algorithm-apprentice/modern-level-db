@@ -116,8 +116,9 @@ class TableCache {
   outlive the table cache; the deleted overload rejects a temporary
   comparator at compile time.
 - With mmap enabled, the table's random-access file owns its mapping. A table
-  handle therefore also keeps the mapping alive. Blocks remain independently
-  owning, so block-cache entries outlive table eviction and unmapping.
+  handle therefore also keeps the mapping alive. Borrowed mapped-uncompressed
+  blocks never enter the block cache. Copied and decompressed cache entries
+  remain independently owning and outlive table eviction and unmapping.
 - `Evict` erases the cached table of the file number. It does not wait for
   handles or for a `Find` that is opening the file, so it is not by itself a
   barrier before deletion. As in LevelDB, the engine deletes a table file only

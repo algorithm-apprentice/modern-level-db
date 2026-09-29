@@ -96,9 +96,10 @@ modern_leveldb::Options options;
 options.create_if_missing = true;
 // Snappy is the default. Compression::None and Compression::Zstd are also
 // available; Zstd levels -5 through 22 are accepted.
-// POSIX mmap table reads are explicit opt-in because mapped storage faults
-// can terminate with SIGBUS instead of returning a typed I/O error.
-// options.allow_mmap_reads = true;
+// POSIX mmap table reads are the default. Mapped storage faults can terminate
+// with SIGBUS instead of returning a typed I/O error. Set false to force
+// copied reads and typed read errors.
+// options.allow_mmap_reads = false;
 auto opened = modern_leveldb::Database::Open(options, "example-db");
 if (!opened.has_value()) {
   return opened.error();
@@ -118,6 +119,12 @@ auto value = database.Get(modern_leveldb::AsBytes("key"));
 iterators retain the underlying engine, so their storage remains valid even
 if the original `Database` handle is destroyed first. See
 [ADR-0038](docs/adr/0038-public-raii-api.md) for the complete contracts.
+
+One database process exclusively owns an open database directory. External
+modification, replacement, or truncation of live database files is
+unsupported. Default POSIX mmap reads may also deliver an in-contract storage
+fault as `SIGBUS`; set `allow_mmap_reads = false` when typed `Io` read errors
+are required.
 
 ## Development
 
@@ -250,15 +257,15 @@ python3 tools/run_performance.py \
 Diagnostic timings are attribution evidence only. Throughput conclusions must
 use the uninstrumented `modern_leveldb_performance` executable.
 
-Use `--modern-file-access mmap` on a Modern read-family case to measure the
-explicit mmap mode:
+Use `--modern-file-access pread` on a Modern read-family case to force copied
+reads instead of the default mmap mode:
 
 ```bash
 python3 tools/run_performance.py \
   --binary build/profiling/benchmarks/modern_leveldb_performance \
   --case modern/readrandom/65536 \
-  --modern-file-access mmap \
-  --output build/performance/modern-mmap-readrandom-64k
+  --modern-file-access pread \
+  --output build/performance/modern-pread-readrandom-64k
 ```
 
 Mutable cases use fixed operation counts and one repetition, with a fresh

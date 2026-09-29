@@ -20,7 +20,7 @@ namespace {
 constexpr unsigned int FilterRangeShift = 11;
 constexpr std::size_t Fixed32Size = sizeof(std::uint32_t);
 // The array offset and the range shift end the block.
-constexpr std::size_t BlockTrailerSize = Fixed32Size + 1;
+constexpr std::size_t FilterTrailerSize = Fixed32Size + 1;
 constexpr std::uint64_t MaximumBlockSize = std::numeric_limits<std::uint32_t>::max();
 
 std::unexpected<Error> BlockTooLarge() {
@@ -41,7 +41,7 @@ Status FilterBlockBuilder::StartBlock(std::uint64_t block_offset) {
   const std::uint64_t pending_size =
       key_starts_.empty() ? 0 : policy_.FilterSize(key_starts_.size());
   const std::uint64_t finished_size =
-      pending_size + result_.size() + Fixed32Size * filter_index + BlockTrailerSize;
+      pending_size + result_.size() + Fixed32Size * filter_index + FilterTrailerSize;
   if (finished_size > MaximumBlockSize) {
     return BlockTooLarge();
   }
@@ -55,7 +55,7 @@ Status FilterBlockBuilder::AddKey(ByteView key) {
   assert(!finished_);
   const std::uint64_t finished_size = std::uint64_t{policy_.FilterSize(key_starts_.size() + 1)} +
                                       result_.size() + Fixed32Size * (filter_offsets_.size() + 1) +
-                                      BlockTrailerSize;
+                                      FilterTrailerSize;
   if (finished_size > MaximumBlockSize) {
     return BlockTooLarge();
   }
@@ -100,15 +100,20 @@ void FilterBlockBuilder::GenerateFilter() {
 
 Result<FilterBlockReader> FilterBlockReader::Create(std::vector<std::byte> contents,
                                                     BloomFilterPolicy policy) {
-  if (contents.size() < BlockTrailerSize) {
+  return Create(BlockContents::Owned(std::move(contents)), policy);
+}
+
+Result<FilterBlockReader> FilterBlockReader::Create(BlockContents contents,
+                                                    BloomFilterPolicy policy) {
+  const ByteView data = contents.data();
+  if (data.size() < FilterTrailerSize) {
     return std::unexpected(Error::Corruption("filter block is too short"));
   }
-  if (std::to_integer<unsigned int>(contents.back()) != FilterRangeShift) {
+  if (std::to_integer<unsigned int>(data.back()) != FilterRangeShift) {
     return std::unexpected(Error::Corruption("filter block has an unsupported range size"));
   }
-  const std::size_t offsets_end = contents.size() - BlockTrailerSize;
-  const std::size_t array_offset =
-      DecodeFixed32(ByteView(contents).subspan(offsets_end).first<Fixed32Size>());
+  const std::size_t offsets_end = data.size() - FilterTrailerSize;
+  const std::size_t array_offset = DecodeFixed32(data.subspan(offsets_end).first<Fixed32Size>());
   if (array_offset > offsets_end || (offsets_end - array_offset) % Fixed32Size != 0) {
     return std::unexpected(Error::Corruption("filter block offset array is malformed"));
   }
@@ -127,16 +132,18 @@ Result<FilterBlockReader> FilterBlockReader::Create(std::vector<std::byte> conte
   return reader;
 }
 
-FilterBlockReader::FilterBlockReader(std::vector<std::byte> contents, BloomFilterPolicy policy,
+// GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
+FilterBlockReader::FilterBlockReader(BlockContents contents, BloomFilterPolicy policy,
                                      std::size_t array_offset, std::size_t filter_count) noexcept
     : contents_(std::move(contents)),
       policy_(policy),
       array_offset_(array_offset),
       filter_count_(filter_count) {}
+// GCOVR_EXCL_STOP
 
 std::uint32_t FilterBlockReader::FilterOffset(std::size_t index) const noexcept {
   return DecodeFixed32(
-      ByteView(contents_).subspan(array_offset_ + Fixed32Size * index).first<Fixed32Size>());
+      contents_.data().subspan(array_offset_ + Fixed32Size * index).first<Fixed32Size>());
 }
 
 bool FilterBlockReader::KeyMayMatch(std::uint64_t block_offset, ByteView key) const noexcept {
@@ -146,7 +153,7 @@ bool FilterBlockReader::KeyMayMatch(std::uint64_t block_offset, ByteView key) co
   }
   const std::uint32_t start = FilterOffset(static_cast<std::size_t>(index));
   const std::uint32_t limit = FilterOffset(static_cast<std::size_t>(index) + 1);
-  return policy_.KeyMayMatch(key, ByteView(contents_).subspan(start, limit - start));
+  return policy_.KeyMayMatch(key, contents_.data().subspan(start, limit - start));
 }
 
 }  // namespace modern_leveldb

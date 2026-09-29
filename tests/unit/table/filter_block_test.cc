@@ -88,6 +88,17 @@ TEST(FilterBlockTest, EmptyBuilderWritesLevelDbBytes) {
   EXPECT_TRUE(Matches(reader, 100'000, "foo"));
 }
 
+TEST(FilterBlockReaderTest, ReadsBorrowedContentsAfterMovingTheReader) {
+  const std::vector<std::byte> block = RawBlock({}, {}, 0);
+  Result<FilterBlockReader> created =
+      FilterBlockReader::Create(BlockContents::Borrowed(block), BloomFilterPolicy(10));
+  ASSERT_TRUE(created.has_value()) << created.error().ToString();
+
+  FilterBlockReader reader(std::move(*created));
+  EXPECT_TRUE(Matches(reader, 0, "foo"));
+  EXPECT_TRUE(Matches(reader, 100'000, "foo"));
+}
+
 TEST(FilterBlockTest, BlocksInOneRangeShareAFilter) {
   FilterBlockBuilder builder(BloomFilterPolicy(10));
   ASSERT_TRUE(builder.StartBlock(100).has_value());

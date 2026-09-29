@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <cerrno>
 #include <cstddef>
@@ -18,6 +19,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <set>
 #include <string>
@@ -37,7 +39,6 @@ namespace {
 
 constexpr std::size_t WritableBufferSize = 64U * 1'024U;
 constexpr std::size_t DefaultMmapCount = sizeof(void*) >= 8 ? 1'000U : 0U;
-constexpr std::uint64_t DefaultMmapBytes = sizeof(void*) >= 8 ? (std::uint64_t{4} << 30U) : 0U;
 
 std::string PathText(const std::filesystem::path& path) { return path.native(); }
 
@@ -271,12 +272,6 @@ class PosixRandomAccessFile final : public RandomAccessFile {
   const std::filesystem::path path_;
 };
 
-enum class MmapAcquireResult {
-  Acquired,
-  CountExhausted,
-  BytesExhausted,
-};
-
 enum class FileOpenReason {
   Mapped,
   Disabled,
@@ -285,7 +280,6 @@ enum class FileOpenReason {
   SizeMismatch,
   SizeUnrepresentable,
   CountBudgetExhausted,
-  ByteBudgetExhausted,
   StatFailed,
   MmapFailed,
 };
@@ -316,9 +310,6 @@ void RecordFileOpen(FileOpenReason reason, std::uint64_t bytes) noexcept {
     case FileOpenReason::CountBudgetExhausted:
       diagnostic = DiagnosticReason::CountBudgetExhausted;
       break;
-    case FileOpenReason::ByteBudgetExhausted:
-      diagnostic = DiagnosticReason::ByteBudgetExhausted;
-      break;
     case FileOpenReason::StatFailed:
       diagnostic = DiagnosticReason::StatFailed;
       break;
@@ -336,41 +327,39 @@ void RecordFileOpen(FileOpenReason, std::uint64_t) noexcept {}
 
 class PosixMmapBudget final {
  public:
-  PosixMmapBudget(std::size_t maximum_mappings, std::uint64_t maximum_bytes) noexcept
-      : maximum_mappings_(maximum_mappings), maximum_bytes_(maximum_bytes) {}
-
-  [[nodiscard]] MmapAcquireResult Acquire(std::size_t bytes) noexcept {
-    const std::lock_guard lock(mutex_);
-    if (mappings_ == maximum_mappings_) {
-      return MmapAcquireResult::CountExhausted;
-    }
-    if (bytes > maximum_bytes_ - mapped_bytes_) {
-      return MmapAcquireResult::BytesExhausted;
-    }
-    ++mappings_;
-    mapped_bytes_ += bytes;
-    return MmapAcquireResult::Acquired;
+  explicit PosixMmapBudget(std::ptrdiff_t maximum_mappings) noexcept
+      : maximum_mappings_(maximum_mappings), available_(maximum_mappings) {
+    assert(maximum_mappings >= 0);
   }
 
-  void Release(std::size_t bytes) noexcept {
-    const std::lock_guard lock(mutex_);
-    assert(mappings_ > 0 && bytes <= mapped_bytes_);
-    --mappings_;
-    mapped_bytes_ -= bytes;
+  [[nodiscard]] bool Acquire() noexcept {
+    const std::ptrdiff_t previous = available_.fetch_sub(1, std::memory_order_relaxed);
+    if (previous > 0) {
+      return true;
+    }
+    [[maybe_unused]] const std::ptrdiff_t before_restore =
+        available_.fetch_add(1, std::memory_order_relaxed);
+    assert(before_restore < maximum_mappings_);
+    return false;
+  }
+
+  void Release() noexcept {
+    [[maybe_unused]] const std::ptrdiff_t previous =
+        available_.fetch_add(1, std::memory_order_relaxed);
+    assert(previous < maximum_mappings_);
   }
 
  private:
-  std::mutex mutex_;
-  const std::size_t maximum_mappings_;
-  const std::uint64_t maximum_bytes_;
-  std::size_t mappings_ = 0;
-  std::uint64_t mapped_bytes_ = 0;
+  [[maybe_unused]] const std::ptrdiff_t maximum_mappings_;
+  std::atomic<std::ptrdiff_t> available_;
 };
 
 namespace {
 
 std::shared_ptr<PosixMmapBudget> ProcessMmapBudget() {
-  static const auto budget = std::make_shared<PosixMmapBudget>(DefaultMmapCount, DefaultMmapBytes);  // GCOVR_EXCL_LINE: GCC 13 does not attribute static initialization
+  constexpr auto Count = static_cast<std::ptrdiff_t>(DefaultMmapCount);
+  static const auto budget = std::make_shared<PosixMmapBudget>(
+      Count);  // GCOVR_EXCL_LINE: GCC 13 does not attribute static initialization
   return budget;
 }
 
@@ -390,7 +379,7 @@ class PendingMmap final {
     if (mapping_ != MAP_FAILED) {
       (void)::munmap(mapping_, length_);
     }
-    budget_->Release(length_);
+    budget_->Release();
     // GCOVR_EXCL_STOP
   }
 
@@ -418,7 +407,7 @@ class PosixMmapRandomAccessFile final : public RandomAccessFile {
 
   ~PosixMmapRandomAccessFile() override {
     (void)::munmap(const_cast<std::byte*>(mapping_), length_);
-    budget_->Release(length_);
+    budget_->Release();
   }
 
   Result<std::size_t> Read(std::uint64_t offset, MutableByteView output) const override {
@@ -686,20 +675,22 @@ Result<std::string> NormalizeLockIdentity(const std::filesystem::path& path) {
 
 }  // namespace
 
-PosixFileSystem::PosixFileSystem() noexcept = default;
+// GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
+PosixFileSystem::PosixFileSystem() : mmap_budget_(ProcessMmapBudget()) {}
 
-PosixFileSystem::PosixFileSystem(bool allow_mmap_reads) noexcept
+PosixFileSystem::PosixFileSystem(bool allow_mmap_reads)
     : mmap_budget_(allow_mmap_reads ? ProcessMmapBudget() : nullptr) {}
-
-PosixFileSystem::PosixFileSystem(std::size_t maximum_mappings, std::uint64_t maximum_mapped_bytes)
-    : mmap_budget_(std::make_shared<PosixMmapBudget>(maximum_mappings, maximum_mapped_bytes)) {}
 
 PosixFileSystem::PosixFileSystem(std::shared_ptr<PosixMmapBudget> mmap_budget) noexcept
     : mmap_budget_(std::move(mmap_budget)) {}
+// GCOVR_EXCL_STOP
 
 std::shared_ptr<PosixMmapBudget> PosixFileSystem::NewMmapBudgetForTesting(
-    std::size_t maximum_mappings, std::uint64_t maximum_mapped_bytes) {
-  return std::make_shared<PosixMmapBudget>(maximum_mappings, maximum_mapped_bytes);
+    std::size_t maximum_mappings) {
+  if (maximum_mappings > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max())) {
+    throw std::bad_array_new_length();
+  }
+  return std::make_shared<PosixMmapBudget>(static_cast<std::ptrdiff_t>(maximum_mappings));
 }
 
 Result<std::unique_ptr<SequentialFile>> PosixFileSystem::OpenSequential(
@@ -757,12 +748,8 @@ Result<std::unique_ptr<RandomAccessFile>> PosixFileSystem::OpenRandomAccess(
     return copied(FileOpenReason::SizeMismatch, *expected_size);
   }
   const std::size_t length = static_cast<std::size_t>(*expected_size);
-  const MmapAcquireResult acquired = mmap_budget_->Acquire(length);
-  if (acquired == MmapAcquireResult::CountExhausted) {
+  if (!mmap_budget_->Acquire()) {
     return copied(FileOpenReason::CountBudgetExhausted, *expected_size);
-  }
-  if (acquired == MmapAcquireResult::BytesExhausted) {
-    return copied(FileOpenReason::ByteBudgetExhausted, *expected_size);
   }
   PendingMmap pending(mmap_budget_, length);
   void* const mapping = ::mmap(nullptr, length, PROT_READ, MAP_SHARED, descriptor->get(), 0);
