@@ -4,8 +4,11 @@
 
 Accepted. Milestones 1-3 merged the intrusive cache, block-iterator, and
 table/mmap parity work. Milestone 4 completes lazy version visitation, typed
-read pins, exact seek charging, and reusable output. Integrated Milestone 5
-verification remains.
+read pins, exact seek charging, and reusable output. The first integrated
+Milestone 5 audit found two residual cost-model gaps: the L0 overlap vector
+does not reserve pinned capacity and seek budgets still allocate/retain
+ownership on charged Gets. The correction design below must merge before the
+final implementation and measurement.
 
 ## Context
 
@@ -85,6 +88,93 @@ identity. Record each such decision in the milestone's ADR updates.
 | POSIX default | Mmap limit 1,000 on 64-bit POSIX | mmap is opt-in with a 1,000-map/4-GiB budget | Enable mmap by default and match the reference count-based budget under the exclusive live-file ownership contract |
 | Read checksums | Enabled by benchmark option | Always enabled | Retain Modern's stronger default; benchmark work remains matched |
 | Seek charging | First inconclusive searched file | Precomputed candidate vector and later charge | Charge during lazy visitation at the same decision point |
+
+## Milestone 5 audit corrections
+
+The integrated GPT-5.6 Sol review confirmed every control-flow and lifetime
+row, but found two remaining hot-path cost differences. They are required
+parity fixes, not new optimization experiments.
+
+### Reserve the exact L0 temporary shape
+
+Pinned `Version::ForEachOverlapping` reserves the complete L0 file count and
+stores only file pointers in its overlap vector. Modern currently grows an
+unreserved `vector<Candidate>`, where every element also stores the level.
+
+Change the temporary to:
+
+```cpp
+std::vector<const Version::File*> level0;
+level0.reserve(version.files(0).size());
+```
+
+Push only overlapping file slots, sort them by descending file number, and
+construct `Candidate{.level = 0, .file = file}` only when invoking the
+visitor. Retain the existing full-overlap diagnostic count and immediate stop.
+This gives one reserved allocation and the pinned pointer-only element shape.
+
+### Put seek budgets on shared file metadata
+
+Pinned `FileMetaData::allowed_seeks` is initialized when a metadata object is
+created, shared by versions that retain that object, and decremented directly
+under the DB mutex. Modern's `SeekStatistics` map instead allocates on the
+first charged Get, copies a file `shared_ptr`, and later touches a weak version
+control block.
+
+Add a mutable signed `std::int64_t allowed_seeks` runtime-only field to
+`FileMetadata`. It is not part of the MANIFEST encoding.
+`VersionBuilder::Apply` initializes it for every newly created metadata object
+to:
+
+```text
+max(file_size / 16 KiB, 100)
+```
+
+Files carried from a base version retain their shared metadata and remaining
+budget. A file re-added by an edit, including a trivial move or compaction
+output, receives a new metadata object and a fresh budget, matching pinned
+builder behavior.
+
+Remove the budget map and weak/shared recorded-version ownership from
+`SeekStatistics`. Under the DB mutex:
+
+1. `Charge` requires that `charge.file` is the exact slot in
+   `version.files(charge.level)`, not merely another slot holding the same
+   metadata. Lookup and read sampling establish this provenance; add a debug
+   assertion without a release-path scan.
+2. `Charge` decrements `allowed_seeks` through that borrowed slot.
+3. If the post-decrement budget is at most zero, the charged version is
+   current, and no seek compaction is recorded for current, retain only raw
+   current-version identity, the level, and the borrowed file slot. Budgets
+   keep falling below zero, as pinned LevelDB does, so an old-version
+   exhaustion can be recorded by a later current-version charge.
+4. A new `HasFileToCompact(const Version&)` performs the synchronous
+   scheduling check without constructing a `shared_ptr`.
+5. `FileToCompact(const Version&)` materializes the existing owning
+   `SeekCompaction` only when background compaction starts, after that path has
+   already captured the current version owner.
+6. `Retain` clears the borrowed record whenever the current version identity
+   changes.
+
+The current version owns its immutable file-slot vector while a borrowed
+record is usable. Version installation and `Retain` both run under the same DB
+mutex, so no raw slot survives the version whose identity guards it.
+
+Add tests proving:
+
+- L0 overlap storage is reserved and pointer-only by implementation audit.
+- Shared metadata carries its budget across unchanged versions.
+- New metadata from an edit receives a fresh budget.
+- An old-version read can drive a shared budget below zero without recording;
+  a later current-version charge records it.
+- The recorded slot always belongs to the version whose raw identity guards
+  it; releasing an older version cannot invalidate later materialization.
+- Ordinary charges do not increment file or version shared ownership.
+- Synchronous `NeedsCompaction` uses the raw recorded state.
+- Background compaction receives the owning file only after scheduling.
+
+Do not run the final performance matrix until this correction implementation
+passes the complete hardening gates and a bounded implementation review.
 
 ## Decision
 
