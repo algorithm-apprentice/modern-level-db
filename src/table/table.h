@@ -153,7 +153,6 @@ class Table::Iterator final {
   [[nodiscard]] Status LoadBlock();
   // Loads the block at the index position and positions at one of its edges.
   [[nodiscard]] Status EnterBlock(Edge edge);
-  [[nodiscard]] Status ValidatePosition();
   [[nodiscard]] Status Fail(Error error);
 
   const Table* table_;

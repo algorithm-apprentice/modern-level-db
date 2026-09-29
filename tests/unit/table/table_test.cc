@@ -1076,7 +1076,7 @@ TEST_F(TableTest, TrustedIteratorsRejectInvalidSeekTargetsAndRecover) {
   EXPECT_EQ(Materialize(iterator.key()), Key("a", 1));
 }
 
-TEST_F(TableTest, TrustedReadsRejectShortAndUnknownDataKeys) {
+TEST_F(TableTest, TrustedReadsRejectInvalidDataKeysAndIterationDefersUnknownKinds) {
   const auto assemble = [&](ByteView data_key) {
     TableAssembler table;
     const BlockHandle data = table.AddBlock(BlockOf({{data_key, AsBytes("value")}}));
@@ -1097,8 +1097,9 @@ TEST_F(TableTest, TrustedReadsRejectShortAndUnknownDataKeys) {
   ASSERT_NE(unknown_table, nullptr);
   ExpectError(TryGet(*unknown_table, "a", MaxSequenceNumber), ErrorCode::Corruption);
   Table::Iterator unknown_iterator(*unknown_table);
-  ExpectError(unknown_iterator.SeekToLast(), ErrorCode::Corruption);
-  EXPECT_FALSE(unknown_iterator.valid());
+  ASSERT_TRUE(unknown_iterator.SeekToLast().has_value());
+  ASSERT_TRUE(unknown_iterator.valid());
+  EXPECT_EQ(Materialize(unknown_iterator.key()), unknown);
 }
 
 TEST_F(TableTest, LazyDataCorruptionPropagatesAndPositioningRecovers) {
