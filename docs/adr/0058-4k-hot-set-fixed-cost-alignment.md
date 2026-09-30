@@ -2,10 +2,12 @@
 
 ## Status
 
-Accepted design. Bounded GPT-5.6 Sol review fixed the stage transition for
-non-4-K gate failures, made frozen dirty-candidate provenance explicit, and
-completed the decoder's private boolean/public typed-status state machine.
-Merge this design-only ADR before changing production code.
+Rejected outcome. Bounded GPT-5.6 Sol design review fixed the stage transition
+for non-4-K gate failures, made frozen dirty-candidate provenance explicit,
+and completed the decoder's private boolean/public typed-status state machine.
+Both exact candidates passed hardening and implementation review, but neither
+met the predeclared absolute ±5% point-read alignment gate. Production was
+restored unchanged.
 
 ## Context
 
@@ -403,6 +405,124 @@ Decoder tests retain:
   invalid restarts, short internal keys, and lazy corruption propagation
   through table, merging, DB iterator, and compaction layers.
 
+## Outcome
+
+### Invalid preliminary artifacts
+
+The first local comparator and combined matrices reused an older profiling
+build directory whose embedded configure revision was `2247447`, not the
+merged ADR-0058 base. Changed source objects had rebuilt, but the mixed build
+provenance violated this ADR's fresh-build rule. Those artifacts remain local
+for diagnosis only and are excluded from every result below.
+
+Both admission decisions were rerun from independent detached worktrees at
+`cc8b01d09ac5c1dfb1e6cd1b5b6811ed0cf71b36`, with fresh configure/build/test
+directories and `configure_dirty=true` matching the recorded candidate patch.
+The frozen Modern baseline remained:
+
+```text
+revision:
+3799c06ca15db9e36b0f2632078d633d93006171
+
+binary SHA-256:
+9d69e8c97b1ce37733e4cf3e4b7c816f03237b9923e1b95bbb40492c8fd3f8a2
+```
+
+### Stage 1: bytewise comparator
+
+The candidate changed only `BytewiseComparatorImpl::Compare` to normalized
+`memcmp` plus length comparison.
+
+```text
+source patch SHA-256:
+35d2b1a240f99a7c1465581c28393c42566828ad06c483e360cd0df313a4741c
+
+binary SHA-256:
+19bc0b765a141f51671979675740f015375cc0ebd804828fbc3376ca8da0b15d
+
+compile_commands.json SHA-256:
+a0cb72f1a8b6ab39035290f68f280501b95ec5a9995b5dda32261b4bef550e2f
+```
+
+AppleClang and GCC both emitted a `memcmp` call for dynamic nonempty ranges;
+the prior dynamic scalar byte loop disappeared. Full native, sanitizer,
+compatibility/model/crash, fuzz, GCC, profiling-contract, and changed-code
+coverage gates passed. Bounded GPT-5.6 Sol review found no actionable issue.
+
+Positive deltas mean Modern is slower:
+
+| Access | Workload | Modern ns/op | LevelDB ns/op | Delta | Result |
+|---|---|---:|---:|---:|---|
+| mapped | `readrandom/4096` | 430.05 | 418.98 | +2.64% | pass |
+| mapped | `readmissing/4096` | 424.56 | 419.79 | +1.14% | pass |
+| copied | `readrandom/4096` | 431.98 | 420.99 | +2.61% | pass |
+| copied | `readmissing/4096` | 425.20 | 422.26 | +0.69% | pass |
+| mapped | `readrandom/65536` | 912.66 | 995.10 | -8.28% | fail: outside ±5% |
+| mapped | `readmissing/65536` | 888.50 | 969.70 | -8.37% | fail: outside ±5% |
+| copied | `readrandom/65536` | 1179.70 | 1233.14 | -4.33% | pass |
+| copied | `readmissing/65536` | 1145.09 | 1195.56 | -4.22% | pass |
+
+All four 4,096-record rows entered the target interval and no point-read round
+was more than 10% slower. Every scan/seek aggregate control passed; their
+largest slowdown was +1.17%. Stage 1 nevertheless failed the predeclared
+complete gate because the two mapped 65,536-record rows were more than 5%
+faster than LevelDB. ADR-0058 therefore required the predesigned second stage.
+
+### Stage 2: combined comparator and checked decoder
+
+The combined candidate retained stage 1 and added the inline pointer/limit
+decoder, one-byte varint fast path, private boolean iterator moves, and cold
+typed-status conversion.
+
+```text
+source patch SHA-256:
+c8c32fd593c11f6fdcab97f54596df11cef83b27bb72551e8c41709a27dac97f
+
+binary SHA-256:
+1fcf258d630675aae54d243a4c22fd653dd7b300c67eeef19b5f33ceca7d077b
+
+compile_commands.json SHA-256:
+14ce2444286ec04067c309c9daa9af911ecf122d0cbcf66f9ddc9db6ea7df218
+```
+
+Normal, diagnostic, and GCC optimized objects contained no out-of-line
+`DecodeEntry` or varint-helper calls. The single-byte path was inlined, and
+typed error construction remained on corruption branches. The complete
+hardening, 100% changed-code coverage, profiling-contract, and bounded
+GPT-5.6 Sol implementation-review gates passed.
+
+| Access | Workload | Modern ns/op | LevelDB ns/op | Delta | Result |
+|---|---|---:|---:|---:|---|
+| mapped | `readrandom/4096` | 392.99 | 425.27 | -7.59% | fail: outside ±5% |
+| mapped | `readmissing/4096` | 385.52 | 428.99 | -10.13% | fail: outside ±5% |
+| copied | `readrandom/4096` | 395.04 | 429.48 | -8.02% | fail: outside ±5% |
+| copied | `readmissing/4096` | 386.86 | 432.88 | -10.63% | fail: outside ±5% |
+| mapped | `readrandom/65536` | 875.21 | 1020.09 | -14.20% | fail: outside ±5% |
+| mapped | `readmissing/65536` | 838.52 | 988.16 | -15.14% | fail: outside ±5% |
+| copied | `readrandom/65536` | 1125.21 | 1237.11 | -9.05% | fail: outside ±5% |
+| copied | `readmissing/65536` | 1091.62 | 1201.77 | -9.17% | fail: outside ±5% |
+
+Every combined point-read row became faster than pinned LevelDB, by 7.59%
+through 15.14%, and therefore missed the absolute alignment interval. All
+scan/seek aggregate controls passed; the largest slowdown was +0.83%.
+
+### Decision
+
+The results are technically favorable but fail the design that was fixed
+before measurement. Changing the gate after observing that Modern is faster
+would be outcome-driven threshold revision. Accepting only the stage-1
+comparator after the required combined stage failed would violate the explicit
+anti-cherry-picking rule.
+
+Restore both production changes and commit only this rejected outcome.
+ADR-0053 remains the production baseline.
+
+The reference in these matrices retains
+`reference_hardware_crc=disabled` (`HAVE_CRC32C=0`). This is the canonical
+ADR-0053 pinned reference, not the fastest hardware-CRC-enabled LevelDB
+configuration. A separately identified hardware-CRC control may measure that
+configuration, but it must not retroactively change this admission decision.
+
 ## Documentation and delivery
 
 Use sequential pull requests:
@@ -450,14 +570,15 @@ review surface.
 
 ## Consequences
 
-- A simple exact comparator change gets the first opportunity to close the
-  hot-set gap.
-- Decoder complexity is incurred only if the complete comparator-only gate
-  remains outside the target.
-- Every accepted path retains Modern's typed corruption behavior.
-- A passing result makes the 4 KiB controls part of the LevelDB-aligned
-  performance envelope; a rejected result leaves the completed ADR-0053
-  baseline unchanged.
+- The exact LevelDB-style comparator closed the 4 KiB gap but moved mapped
+  65,536-record rows outside the absolute alignment interval.
+- The checked decoder made every measured point-read row materially faster
+  than the canonical pinned reference, which also fails an absolute parity
+  target.
+- Production retains the completed ADR-0053 implementation unchanged.
+- Future work may define a speed-oriented post-parity gate or enable the
+  reference's optional hardware CRC32C, but only through a new reviewed ADR
+  whose thresholds and baseline are fixed before measurement.
 
 ## References
 
