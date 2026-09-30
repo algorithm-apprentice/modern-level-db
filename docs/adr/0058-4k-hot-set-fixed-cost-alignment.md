@@ -2,10 +2,11 @@
 
 ## Status
 
-Accepted design. Bounded GPT-5.6 Sol review fixed the stage transition for
-non-4-K gate failures, made frozen dirty-candidate provenance explicit, and
-completed the decoder's private boolean/public typed-status state machine.
-Merge this design-only ADR before changing production code.
+Accepted design, pending gate amendment. The original absolute ±5% admission
+interval incorrectly treated pinned LevelDB as both a floor and a ceiling,
+which can reject a safe Modern speedup. The amendment below makes LevelDB a
+no-more-than-5%-slower baseline. Merge the amendment before any new
+measurement or implementation decision.
 
 ## Context
 
@@ -83,9 +84,42 @@ an unchecked iterator.
 
 ## Goal
 
-Bring all four 4,096-record point-read controls within 5% of pinned LevelDB
-without regressing the completed 65,536-record parity result, scan/seek
-controls, or corruption safety.
+Make all four 4,096-record point-read controls no more than 5% slower than
+pinned LevelDB without regressing the completed 65,536-record parity result,
+scan/seek controls, or corruption safety. Faster Modern results are valid and
+do not fail alignment.
+
+## Performance-baseline amendment
+
+Pinned LevelDB is the implementation and performance baseline, not a
+performance ceiling. The original wording used an absolute ±5% interval.
+That is suitable for measuring numerical closeness, but it is wrong for a
+post-parity optimization: it rejects improvements solely because Modern is
+more than 5% faster.
+
+Replace every point-read aggregate admission check with:
+
+```text
+Modern / LevelDB - 1 <= +5%
+```
+
+and retain:
+
+```text
+every individual round delta <= +10%
+```
+
+Negative deltas of any magnitude pass. Scan/seek controls likewise continue
+to fail only when the candidate is more than 5% slower than the frozen Modern
+baseline; improvements pass.
+
+This amendment is prospective. The prior local comparator and combined
+measurements do not decide acceptance. After this amendment is reviewed and
+merged, rebuild the exact comparator-only candidate from a fresh detached
+worktree, freeze new binary/patch/compile-command hashes, and rerun the
+complete matrix into a new artifact root. If that fresh stage-1 matrix passes,
+stop and do not include the decoder. Only a fresh stage-1 failure permits a
+fresh combined build and matrix.
 
 ## Scope
 
@@ -358,9 +392,9 @@ the wall-time admission gate.
 
 The final candidate passes only when:
 
-- Every 4,096-record Modern/LevelDB aggregate median is within 5%.
+- No 4,096-record Modern/LevelDB aggregate median is more than 5% slower.
 - No 4,096-record round is more than 10% slower.
-- Every existing 65,536-record primary aggregate remains within 5%.
+- No existing 65,536-record primary aggregate is more than 5% slower.
 - No 65,536-record primary round is more than 10% slower.
 - No scan or seek-reuse aggregate regresses by more than 5% from the frozen
   Modern baseline.
@@ -455,6 +489,8 @@ review surface.
 - Decoder complexity is incurred only if the complete comparator-only gate
   remains outside the target.
 - Every accepted path retains Modern's typed corruption behavior.
+- Safe speedups are accepted rather than rejected for exceeding an artificial
+  closeness ceiling.
 - A passing result makes the 4 KiB controls part of the LevelDB-aligned
   performance envelope; a rejected result leaves the completed ADR-0053
   baseline unchanged.
