@@ -1,8 +1,8 @@
 #include "modern_leveldb/base/comparator.h"
 
 #include <algorithm>
-#include <compare>
 #include <cstddef>
+#include <cstring>
 #include <string_view>
 #include <vector>
 
@@ -12,15 +12,18 @@ namespace {
 class BytewiseComparatorImpl final : public Comparator {
  public:
   [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override {
-    const auto ordering = std::lexicographical_compare_three_way(left.begin(), left.end(),
-                                                                 right.begin(), right.end());
-    if (ordering < 0) {
+    const std::size_t size = std::min(left.size(), right.size());
+    const int order = size == 0 ? 0 : std::memcmp(left.data(), right.data(), size);
+    if (order < 0) {
       return -1;
     }
-    if (ordering > 0) {
+    if (order > 0) {
       return 1;
     }
-    return 0;
+    if (left.size() < right.size()) {
+      return -1;
+    }
+    return left.size() > right.size() ? 1 : 0;
   }
 
   [[nodiscard]] std::string_view Name() const noexcept override {
