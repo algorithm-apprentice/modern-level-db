@@ -7,10 +7,11 @@
 namespace modern_leveldb {
 
 // Iterates internal keys and their values in a comparator's order. A new
-// iterator is not positioned. Seek finds the first entry at or after the
-// target. key() and value() require a valid position and remain valid until
-// the iterator moves; Next and Prev require a valid position. A failed move
-// leaves the iterator invalid, and the next seek starts over.
+// iterator is not positioned. Seek requires a valid, uint32-representable
+// internal key and finds the first entry at or after the target. key() and
+// value() require a valid position and remain valid until the iterator moves;
+// Next and Prev require a valid position. A failed move leaves the iterator
+// invalid, and the next seek starts over.
 class InternalIterator {
  public:
   InternalIterator(const InternalIterator&) = delete;

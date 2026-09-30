@@ -188,6 +188,31 @@ TEST(MemTableTest, ResolvesValuesDeletionsAndSnapshotBoundaries) {
   EXPECT_TRUE(empty.value.empty());
 }
 
+TEST(MemTableTest, TrustedInsertionMatchesCheckedEncodingAndLookup) {
+  MemTable table{BytewiseComparator()};
+
+  table.AddTrusted(100, ValueKind::Value, AsBytes("key"), AsBytes("new"));
+  table.AddTrusted(90, ValueKind::Deletion, AsBytes("key"), {});
+  table.AddTrusted(80, ValueKind::Value, AsBytes("key"), AsBytes("old"));
+
+  const MemTableLookup newest = table.Lookup(MakeLookup("key", 100));
+  ASSERT_EQ(newest.kind, MemTableLookupKind::Value);
+  EXPECT_EQ(AsStringView(newest.value), "new");
+  EXPECT_EQ(table.Lookup(MakeLookup("key", 99)).kind, MemTableLookupKind::Deletion);
+  const MemTableLookup oldest = table.Lookup(MakeLookup("key", 89));
+  ASSERT_EQ(oldest.kind, MemTableLookupKind::Value);
+  EXPECT_EQ(AsStringView(oldest.value), "old");
+}
+
+#ifndef NDEBUG
+TEST(MemTableDeathTest, TrustedInsertionAssertsUniqueInternalKeys) {
+  MemTable table{BytewiseComparator()};
+  table.AddTrusted(1, ValueKind::Value, AsBytes("key"), AsBytes("first"));
+
+  EXPECT_DEATH(table.AddTrusted(1, ValueKind::Value, AsBytes("key"), AsBytes("second")), "");
+}
+#endif
+
 TEST(MemTableTest, MovedFromLookupKeyRemainsAValidCanonicalLookup) {
   MemTable table{BytewiseComparator()};
   ASSERT_TRUE(table.Add(0, ValueKind::Value, {}, AsBytes("empty-key")).has_value());
@@ -288,6 +313,41 @@ TEST(MemTableTest, IteratorUsesInternalKeyOrderAndPreservesStoredDeletionBytes) 
   const MemTableLookup deletion = table.Lookup(MakeLookup("a", 5));
   EXPECT_EQ(deletion.kind, MemTableLookupKind::Deletion);
   EXPECT_TRUE(deletion.value.empty());
+}
+
+TEST(MemTableTest, CheckedAndTrustedIteratorSeekAgreeForValidInternalKeys) {
+  MemTable table{BytewiseComparator()};
+  ASSERT_TRUE(table.Add(5, ValueKind::Value, AsBytes("a"), AsBytes("a5")).has_value());
+  ASSERT_TRUE(table.Add(3, ValueKind::Value, AsBytes("b"), AsBytes("b3")).has_value());
+  const InternalKey target = MakeInternalKey("a", 4, ValueKind::Value);
+
+  MemTable::Iterator checked(table);
+  ASSERT_TRUE(checked.Seek(target.encoded()).has_value());
+  MemTable::Iterator trusted(table);
+  trusted.SeekTrusted(target.encoded());
+
+  ASSERT_TRUE(checked.valid());
+  ASSERT_TRUE(trusted.valid());
+  EXPECT_TRUE(std::ranges::equal(checked.key(), trusted.key()));
+  EXPECT_TRUE(std::ranges::equal(checked.value(), trusted.value()));
+}
+
+TEST(MemTableTest, CheckedIteratorSeekRejectsMalformedInternalKeys) {
+  MemTable table{BytewiseComparator()};
+  MemTable::Iterator iterator(table);
+  const std::array<std::byte, InternalKeyTrailerSize - 1U> short_key{};
+
+  const Status short_status = iterator.Seek(short_key);
+  ASSERT_FALSE(short_status.has_value());
+  EXPECT_EQ(short_status.error().code(), ErrorCode::Corruption);
+
+  const InternalKey valid = MakeInternalKey("key", 1, ValueKind::Value);
+  std::vector<std::byte> unknown_kind(valid.encoded().begin(), valid.encoded().end());
+  unknown_kind[unknown_kind.size() - InternalKeyTrailerSize] = std::byte{0x02};
+
+  const Status kind_status = iterator.Seek(unknown_kind);
+  ASSERT_FALSE(kind_status.has_value());
+  EXPECT_EQ(kind_status.error().code(), ErrorCode::Corruption);
 }
 
 TEST(MemTableTest, RejectsInvalidAndDuplicateInternalKeys) {

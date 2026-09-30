@@ -30,6 +30,7 @@ WalReadResult Event(WalReadEvent event) {
 
 }  // namespace
 
+// GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
 WalWriter::WalWriter(std::unique_ptr<WritableFile> file,
                      std::uint64_t initial_file_size)
     : file_(std::move(file)), fragmenter_(0) {
@@ -43,6 +44,7 @@ WalWriter::WalWriter(std::unique_ptr<WritableFile> file,
     reopen_padding_ = WalBlockSize - block_offset;
   }
 }
+// GCOVR_EXCL_STOP
 
 Status WalWriter::AddRecord(ByteView logical_record) {
   Status usable = CheckUsable("add record");
@@ -50,8 +52,7 @@ Status WalWriter::AddRecord(ByteView logical_record) {
     return usable;
   }
 
-  const std::vector<WalFragment> fragments =
-      fragmenter_.Fragment(logical_record);
+  auto fragments = fragmenter_.Fragment(logical_record);
   static constexpr std::array<std::byte, WalBlockSize> Zeroes{};
 
   if (reopen_padding_ != 0) {
@@ -62,21 +63,21 @@ Status WalWriter::AddRecord(ByteView logical_record) {
     reopen_padding_ = 0;
   }
 
-  for (const WalFragment& fragment : fragments) {
-    if (fragment.padding_before != 0) {
+  while (const std::optional<WalFragment> fragment = fragments.Next()) {
+    if (fragment->padding_before != 0) {
       Status padding =
-          Append(ByteView(Zeroes).first(fragment.padding_before));
+          Append(ByteView(Zeroes).first(fragment->padding_before));
       if (!padding.has_value()) {
         return padding;
       }
     }
 
-    Status header = Append(fragment.header);
+    Status header = Append(fragment->header);
     if (!header.has_value()) {
       return header;
     }
-    if (!fragment.payload.empty()) {
-      Status payload = Append(fragment.payload);
+    if (!fragment->payload.empty()) {
+      Status payload = Append(fragment->payload);
       if (!payload.has_value()) {
         return payload;
       }

@@ -249,6 +249,19 @@ TEST(WalWriterTest, WritesExactRecordsFlushesSyncsAndClosesExplicitly) {
   EXPECT_EQ(writer.Close().error().code(), ErrorCode::InvalidArgument);
 }
 
+TEST(WalWriterTest, StreamsFragmentedRecordsButFlushesOncePerLogicalRecord) {
+  const auto state = std::make_shared<WritableState>();
+  WalWriter writer(Writable(state));
+  const std::vector<std::byte> record(WalBlockSize + 100U, std::byte{0x5a});
+
+  ASSERT_TRUE(writer.AddRecord(record).has_value());
+
+  EXPECT_EQ(state->append_sizes,
+            (std::vector<std::size_t>{
+                WalHeaderSize, WalBlockSize - WalHeaderSize, WalHeaderSize, 107U}));
+  EXPECT_EQ(state->flush_calls, 1);
+}
+
 TEST(WalWriterTest, ReopenPadsPartialBlockBeforeFirstNewRecord) {
   const auto state = std::make_shared<WritableState>();
   state->data = PhysicalRecord(

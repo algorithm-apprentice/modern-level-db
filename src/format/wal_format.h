@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <vector>
+#include <optional>
 
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
@@ -31,19 +31,45 @@ struct WalFragment {
 
 class WalFragmenter final {
  public:
-  explicit WalFragmenter(std::uint64_t initial_file_size = 0) noexcept
-      : block_offset_(static_cast<std::size_t>(initial_file_size % WalBlockSize)) {}
+  class Cursor final {
+   public:
+    Cursor(const Cursor&) = delete;
+    Cursor& operator=(const Cursor&) = delete;
+    Cursor(Cursor&&) = delete;
+    Cursor& operator=(Cursor&&) = delete;
+    ~Cursor() = default;
+
+    [[nodiscard]] std::optional<WalFragment> Next() noexcept;
+
+   private:
+    friend class WalFragmenter;
+
+    Cursor(std::size_t& block_offset, const std::array<std::uint32_t, 4>& type_crc,
+           ByteView logical_record) noexcept
+        : block_offset_(&block_offset), type_crc_(&type_crc), remaining_(logical_record) {}
+
+    std::size_t* block_offset_;
+    const std::array<std::uint32_t, 4>* type_crc_;
+    ByteView remaining_;
+    bool begin_ = true;
+    bool done_ = false;
+  };
+
+  explicit WalFragmenter(std::uint64_t initial_file_size = 0) noexcept;
 
   WalFragmenter(const WalFragmenter&) = delete;
   WalFragmenter& operator=(const WalFragmenter&) = delete;
   WalFragmenter(WalFragmenter&&) = delete;
   WalFragmenter& operator=(WalFragmenter&&) = delete;
 
-  [[nodiscard]] std::vector<WalFragment> Fragment(ByteView logical_record);
+  [[nodiscard]] Cursor Fragment(ByteView logical_record) noexcept {
+    return Cursor(block_offset_, type_crc_, logical_record);
+  }
   [[nodiscard]] std::size_t block_offset() const noexcept { return block_offset_; }
 
  private:
   std::size_t block_offset_;
+  std::array<std::uint32_t, 4> type_crc_{};
 };
 
 enum class WalDecodeKind {

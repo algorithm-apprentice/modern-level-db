@@ -37,11 +37,8 @@ class MemTableIterator final : public InternalIterator {
     return {};
   }
   [[nodiscard]] Status Seek(ByteView target) override {
-    Status sought = iterator_.Seek(target);
-    if (!sought.has_value()) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs a target over 4 GiB
-      Invalidate();             // GCOVR_EXCL_LINE: needs a target over 4 GiB
-    }
-    return sought;
+    iterator_.SeekTrusted(target);
+    return {};
   }
   [[nodiscard]] Status Next() override {
     iterator_.Next();
@@ -53,16 +50,6 @@ class MemTableIterator final : public InternalIterator {
   }
 
  private:
-  // GCOVR_EXCL_START: only a failed seek, which needs a target over 4 GiB, reaches this function
-  // Leaves the iterator past the last entry.
-  void Invalidate() noexcept {
-    iterator_.SeekToLast();
-    if (iterator_.valid()) {
-      iterator_.Next();
-    }
-  }
-  // GCOVR_EXCL_STOP
-
   std::shared_ptr<const MemTable> memtable_;
   MemTable::Iterator iterator_;
 };

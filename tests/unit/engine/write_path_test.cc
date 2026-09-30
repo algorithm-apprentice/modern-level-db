@@ -93,6 +93,20 @@ TEST(InsertBatchTest, AddsEntriesWithTheirSequences) {
   EXPECT_EQ(duplicate.error().code(), ErrorCode::InvalidArgument);
 }
 
+TEST(InsertBatchTest, TrustedOwnedBatchAddsEntriesWithoutRevalidation) {
+  EncodedWriteBatch batch;
+  ASSERT_TRUE(batch.Put(AsBytes("a"), AsBytes("alpha")).has_value());
+  ASSERT_TRUE(batch.Delete(AsBytes("b")).has_value());
+  ASSERT_TRUE(batch.SetSequence(20).has_value());
+  MemTable memtable(BytewiseComparator());
+
+  WriteBatchReader reader = WriteBatchReader::OpenTrusted(batch);
+  InsertBatchTrusted(reader, memtable);
+
+  EXPECT_EQ(Lookup(memtable, "a", 20), "alpha");
+  EXPECT_EQ(Lookup(memtable, "b", 21), "<deleted>");
+}
+
 TEST(PrepareGroupTest, SetsTheSequenceWithinItsRange) {
   EncodedWriteBatch group = Batch({{"a", "1"}, {"b", "2"}, {"c", "3"}});
 

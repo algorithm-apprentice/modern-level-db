@@ -2,12 +2,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
@@ -24,9 +25,15 @@ constexpr bool IsFragmentType(WalRecordType type) noexcept {
          type == WalRecordType::Middle || type == WalRecordType::Last;
 }
 
-std::array<std::byte, WalHeaderSize> EncodeHeader(WalRecordType type, ByteView payload) noexcept {
+constexpr std::size_t TypeIndex(WalRecordType type) noexcept {
+  assert(IsFragmentType(type));
+  return static_cast<std::size_t>(type) - static_cast<std::size_t>(WalRecordType::Full);
+}
+
+std::array<std::byte, WalHeaderSize> EncodeHeader(WalRecordType type, ByteView payload,
+                                                  std::uint32_t type_crc) noexcept {
   const std::byte type_byte = static_cast<std::byte>(type);
-  std::uint32_t crc = ExtendCrc32c(Crc32c(ByteView(&type_byte, 1)), payload);
+  std::uint32_t crc = ExtendCrc32c(type_crc, payload);
   crc = MaskCrc32c(crc);
 
   std::array<std::byte, WalHeaderSize> header{};
@@ -59,49 +66,55 @@ WalDecodeResult DecodeFailure(WalDecodeFailure failure, WalRecoveryAction recove
 
 }  // namespace
 
-std::vector<WalFragment> WalFragmenter::Fragment(ByteView logical_record) {
-  std::vector<WalFragment> fragments;
-  std::size_t next_block_offset = block_offset_;
-  ByteView remaining = logical_record;
-  bool begin = true;
+// GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
+WalFragmenter::WalFragmenter(std::uint64_t initial_file_size) noexcept
+    : block_offset_(static_cast<std::size_t>(initial_file_size % WalBlockSize)) {
+  for (std::size_t index = 0; index < type_crc_.size(); ++index) {
+    const auto type =
+        static_cast<WalRecordType>(index + static_cast<std::size_t>(WalRecordType::Full));
+    const std::byte type_byte = static_cast<std::byte>(type);
+    type_crc_[index] = Crc32c(ByteView(&type_byte, 1));
+  }
+}
+// GCOVR_EXCL_STOP
 
-  do {
-    const std::size_t bytes_left_in_block = WalBlockSize - next_block_offset;
-    std::size_t padding_before = 0;
-    if (bytes_left_in_block < WalHeaderSize) {
-      padding_before = bytes_left_in_block;
-      next_block_offset = 0;
-    }
+std::optional<WalFragment> WalFragmenter::Cursor::Next() noexcept {
+  if (done_) {
+    return std::nullopt;
+  }
 
-    const std::size_t available = WalBlockSize - next_block_offset - WalHeaderSize;
-    const std::size_t fragment_size = std::min(remaining.size(), available);
-    const bool end = fragment_size == remaining.size();
+  const std::size_t bytes_left_in_block = WalBlockSize - *block_offset_;
+  std::size_t padding_before = 0;
+  if (bytes_left_in_block < WalHeaderSize) {
+    padding_before = bytes_left_in_block;
+    *block_offset_ = 0;
+  }
 
-    WalRecordType type;
-    if (begin && end) {
-      type = WalRecordType::Full;
-    } else if (begin) {
-      type = WalRecordType::First;
-    } else if (end) {
-      type = WalRecordType::Last;
-    } else {
-      type = WalRecordType::Middle;
-    }
+  const std::size_t available = WalBlockSize - *block_offset_ - WalHeaderSize;
+  const std::size_t fragment_size = std::min(remaining_.size(), available);
+  const bool end = fragment_size == remaining_.size();
 
-    const ByteView payload = remaining.first(fragment_size);
-    fragments.push_back(WalFragment{
-        .padding_before = padding_before,
-        .header = EncodeHeader(type, payload),
-        .payload = payload,
-    });
+  WalRecordType type;
+  if (begin_ && end) {
+    type = WalRecordType::Full;
+  } else if (begin_) {
+    type = WalRecordType::First;
+  } else if (end) {
+    type = WalRecordType::Last;
+  } else {
+    type = WalRecordType::Middle;
+  }
 
-    next_block_offset += WalHeaderSize + fragment_size;
-    remaining = remaining.subspan(fragment_size);
-    begin = false;
-  } while (!remaining.empty());
-
-  block_offset_ = next_block_offset % WalBlockSize;
-  return fragments;
+  const ByteView payload = remaining_.first(fragment_size);
+  *block_offset_ = (*block_offset_ + WalHeaderSize + fragment_size) % WalBlockSize;
+  remaining_ = remaining_.subspan(fragment_size);
+  begin_ = false;
+  done_ = end;
+  return WalFragment{
+      .padding_before = padding_before,
+      .header = EncodeHeader(type, payload, (*type_crc_)[TypeIndex(type)]),
+      .payload = payload,
+  };
 }
 
 WalDecodeResult DecodeWalFragment(ByteView encoded, bool verify_checksum) {

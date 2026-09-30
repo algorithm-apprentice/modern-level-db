@@ -23,6 +23,10 @@ namespace modern_leveldb {
 // and returns the memtable's first error.
 [[nodiscard]] Status InsertBatch(WriteBatchReader& batch, MemTable& memtable);
 
+// Adds the remaining entries of a trusted owned batch whose sequence interval
+// is reserved and whose internal keys are unique in the memtable.
+void InsertBatchTrusted(WriteBatchReader& batch, MemTable& memtable);
+
 // Sets the valid owned group's sequence. Returns InvalidArgument, changing
 // nothing, if an entry would take a sequence above MaxSequenceNumber.
 [[nodiscard]] Status PrepareGroup(EncodedWriteBatch& group, SequenceNumber first_sequence);

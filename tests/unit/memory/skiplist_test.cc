@@ -116,6 +116,52 @@ TEST(SkipListTest, InsertsAndRejectsDuplicates) {
   EXPECT_FALSE(list.Contains(15));
 }
 
+TEST(SkipListTest, TrustedInsertionFindsAndIteratesUniqueKeys) {
+  Arena arena;
+  IntegerCompare compare;
+  IntegerList list(compare, arena);
+
+  list.InsertTrusted(30U);
+  list.InsertTrusted(10U);
+  list.InsertTrusted(20U);
+
+  IntegerList::Iterator iterator(list);
+  iterator.SeekToFirst();
+  for (const std::uint64_t expected : std::array<std::uint64_t, 3>{10U, 20U, 30U}) {
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(iterator.key(), expected);
+    iterator.Next();
+  }
+  EXPECT_FALSE(iterator.valid());
+}
+
+TEST(SkipListTest, CompactNodesMatchLevelDbArenaConsumption) {
+  Arena arena;
+  IntegerCompare compare;
+  IntegerList list(compare, arena);
+  constexpr std::size_t block_charge = 4U * 1'024U + sizeof(std::byte*);
+
+  EXPECT_EQ(arena.memory_usage(), block_charge);
+  for (std::uint64_t key = 1; key <= 216U; ++key) {
+    list.InsertTrusted(key);
+  }
+  EXPECT_EQ(arena.memory_usage(), block_charge);
+
+  list.InsertTrusted(217U);
+  EXPECT_EQ(arena.memory_usage(), 2U * block_charge);
+}
+
+#ifndef NDEBUG
+TEST(SkipListDeathTest, TrustedInsertionAssertsUniqueKeys) {
+  Arena arena;
+  IntegerCompare compare;
+  IntegerList list(compare, arena);
+  list.InsertTrusted(7U);
+
+  EXPECT_DEATH(list.InsertTrusted(7U), "");
+}
+#endif
+
 TEST(SkipListTest, IteratesSeeksAndMovesBackward) {
   Arena arena;
   IntegerCompare compare;

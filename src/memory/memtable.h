@@ -49,6 +49,9 @@ class MemTable final {
   ~MemTable() = default;
 
   [[nodiscard]] Status Add(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value);
+  // Requires a valid owned-batch entry, a reserved sequence, and a unique
+  // internal key.
+  void AddTrusted(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value);
   [[nodiscard]] MemTableLookup Lookup(const LookupKey& key) const;
   [[nodiscard]] std::size_t memory_usage() const noexcept { return arena_.memory_usage(); }
 
@@ -89,10 +92,14 @@ class MemTable final {
     void Next() { iterator_.Next(); }
     void Prev() { iterator_.Prev(); }
     [[nodiscard]] Status Seek(ByteView internal_key);
+    // Requires a valid internally constructed internal key.
+    void SeekTrusted(ByteView internal_key);
     void SeekToFirst() { iterator_.SeekToFirst(); }
     void SeekToLast() { iterator_.SeekToLast(); }
 
    private:
+    void SeekEncoded(ByteView internal_key);
+
     Table::Iterator iterator_;
     std::vector<std::byte> seek_key_;
   };
