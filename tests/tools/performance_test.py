@@ -14,6 +14,8 @@ from run_performance import (
     FINGERPRINTS,
     MODERN_FILE_ACCESS_SEMANTICS,
     MODERN_RESULT_OWNERSHIP_SEMANTICS,
+    MODERN_WAL_CREATION_SEMANTICS,
+    MODERN_WRITE_BATCH_OWNERSHIP_SEMANTICS,
     READ_DIAGNOSTIC_COUNTERS,
     READ_DIAGNOSTIC_OPERATIONS,
     READ_DIAGNOSTIC_OPEN_REASONS,
@@ -26,6 +28,7 @@ from run_performance import (
     record_diagnostics,
     run_case,
     run_read_diagnostics,
+    source_state,
     validate_benchmark,
     validate_completion,
     validate_read_diagnostics,
@@ -40,6 +43,14 @@ REFERENCE_PREAD_CONTROL = None
 def report(case="modern/readrandom/4096", repetitions=3):
     engine, workload, _ = case.split("/")
     result_ownership = expected_modern_result_ownership(engine, workload, "reusable")
+    batch_ownership = (
+        "copying" if engine == "modern" and workload == "writebatch" else "not_applicable"
+    )
+    wal_creation = (
+        "durable"
+        if engine == "modern" and workload in ("overwrite", "writebatch", "writesync", "mixed50")
+        else "not_applicable"
+    )
     return {
         "context": {
             "library_version": "v1.9.5",
@@ -55,6 +66,16 @@ def report(case="modern/readrandom/4096", repetitions=3):
             "modern_result_ownership_semantics": (
                 MODERN_RESULT_OWNERSHIP_SEMANTICS
                 if engine == "modern" else "not_applicable"
+            ),
+            "modern_write_batch_ownership": batch_ownership,
+            "modern_write_batch_ownership_semantics": (
+                MODERN_WRITE_BATCH_OWNERSHIP_SEMANTICS[batch_ownership]
+                if batch_ownership != "not_applicable" else "not_applicable"
+            ),
+            "modern_wal_creation": wal_creation,
+            "modern_wal_creation_semantics": (
+                MODERN_WAL_CREATION_SEMANTICS[wal_creation]
+                if wal_creation != "not_applicable" else "not_applicable"
             ),
             "reference_file_access": "default" if engine == "leveldb" else "not_applicable",
             "reference_pread_control_available": "true",
@@ -219,21 +240,36 @@ def diagnostic_report(case="modern/readrandom/4096", modern_file_access="default
         "compiler": "compiler",
         "c_flags": "-O3",
         "cxx_flags": "-O3",
+        "exe_linker_flags": "",
+        "static_linker_flags": "",
+        "cmake_generator": "Ninja",
+        "target_architecture": "arm64",
         "benchmark_requested_revision": "192ef10025eb2c4cdd392bc502f0c852196baa48",
         "benchmark_source_override": "",
         "reference_requested_revision": "7ee830d02b623e8ffe0b95d59a74db1e58da04c5",
         "reference_source_override": "",
         "reference_hardware_crc": "disabled",
+        "reference_source": "/reference-source",
+        "reference_binary_directory": "/reference-build",
+        "reference_have_crc32c": "false",
+        "reference_crc32c_linked": "false",
+        "reference_hardware_patch_sha256": "not_applicable",
         "modern_file_access": modern_file_access,
         "modern_result_ownership": "reusable",
         "modern_result_ownership_semantics": MODERN_RESULT_OWNERSHIP_SEMANTICS,
+        "modern_write_batch_ownership": "not_applicable",
+        "modern_write_batch_ownership_semantics": "not_applicable",
+        "modern_wal_creation": "not_applicable",
+        "modern_wal_creation_semantics": "not_applicable",
         "reference_file_access": "not_applicable",
         "reference_pread_control_available": "true",
         "reference_control_patch_sha256": "a" * 64,
         "snappy_target": "snappy",
+        "snappy_requested_revision": "9c28114a38866f6deeaa826db918293bc28ae410",
         "snappy_source": "/snappy",
         "snappy_source_override": "",
         "zstd_target": "zstd",
+        "zstd_requested_revision": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
         "zstd_source": "/zstd",
         "zstd_source_override": "",
         "crc32c_target": "crc32c",
@@ -289,6 +325,8 @@ class PerformanceReportTest(unittest.TestCase):
                          items_per_iteration=0, real_time=0)
         data["benchmarks"].append(aggregate)
         result = validate_benchmark(data, "modern/readrandom/4096", 3)
+        self.assertEqual(result["wall_ns_per_iteration"], [123.0] * 3)
+        self.assertEqual(result["process_cpu_ns_per_iteration"], [100.0] * 3)
         self.assertEqual(result["wall_ns_per_item"], [123.0] * 3)
         self.assertEqual(result["process_cpu_ns_per_item"], [100.0] * 3)
 
@@ -298,6 +336,8 @@ class PerformanceReportTest(unittest.TestCase):
             row.update(items_per_iteration=65536, real_time=65536.0,
                        cpu_time=131072.0, items_per_second=1e9)
         result = validate_benchmark(data, "leveldb/scan/65536", 3)
+        self.assertEqual(result["wall_ns_per_iteration"], [65536.0] * 3)
+        self.assertEqual(result["process_cpu_ns_per_iteration"], [131072.0] * 3)
         self.assertEqual(result["wall_ns_per_item"], [1.0] * 3)
         self.assertEqual(result["process_cpu_ns_per_item"], [2.0] * 3)
 
@@ -434,6 +474,35 @@ class PerformanceReportTest(unittest.TestCase):
                 path.write_text(text)
                 with self.assertRaises(ValueError):
                     read_json(path)
+
+    def test_source_state_fingerprints_dirty_content_not_only_status_names(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary)
+            subprocess.run(["git", "init", "--quiet", str(source)], check=True)
+            subprocess.run(
+                ["git", "-C", str(source), "config", "user.name", "Contract Test"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(source), "config", "user.email", "contract@example.com"],
+                check=True,
+            )
+            tracked = source / "tracked.txt"
+            tracked.write_text("initial", encoding="utf-8")
+            subprocess.run(["git", "-C", str(source), "add", "tracked.txt"], check=True)
+            subprocess.run(
+                ["git", "-C", str(source), "commit", "--quiet", "-m", "initial"],
+                check=True,
+            )
+            clean = source_state(source)
+            tracked.write_text("first", encoding="utf-8")
+            first = source_state(source)
+            tracked.write_text("second", encoding="utf-8")
+            second = source_state(source)
+            self.assertFalse(clean["dirty"])
+            self.assertTrue(first["dirty"])
+            self.assertEqual(first["status_sha256"], second["status_sha256"])
+            self.assertNotEqual(first["worktree_sha256"], second["worktree_sha256"])
 
     def test_runner_preserves_artifacts_and_removes_only_its_scratch_after_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -605,13 +674,17 @@ class MutationReportTest(unittest.TestCase):
         for field in ("warmup_operations", "retained_iterators", "scan_creations", "scan_destructions"):
             del done[field]
         done.update(
-            schema_version=2, smoke=smoke, verifications=3, reopens=2,
+            schema_version=3, smoke=smoke, verifications=3, reopens=2,
             warmup_writes=records, measured_iterations=iterations, batch_size=batch,
             measured_reads=iterations * reads, measured_writes=iterations * batch,
             write_calls=iterations, sync_write_calls=iterations * sync,
             logical_write_bytes=iterations * batch * 267,
             write_order_crc32c="f117174a", version_values_crc32c="204ed629",
             final_crc32c="92030b01" if smoke else "5ff7de22",
+            residual_wal_files=1, residual_wal_bytes=1024,
+            residual_table_files=1, residual_table_bytes=2048,
+            residual_manifest_files=1, residual_manifest_bytes=512,
+            residual_regular_files=5, residual_regular_bytes=4096,
         )
         if records == 65536:
             done.update(
@@ -633,6 +706,50 @@ class MutationReportTest(unittest.TestCase):
                         self.assertEqual(measured["iterations"], [done["measured_iterations"]])
                         self.assertEqual(measured["wall_ns_per_item"],
                                          [123.0 / data["benchmarks"][0]["items_per_iteration"]])
+                        self.assertEqual(measured["wall_ns_per_iteration"], [123.0])
+
+    def test_validates_write_batch_and_wal_creation_provenance(self):
+        case, batch, _ = self.reports("modern", self.CASES[1])
+        batch["context"].update(
+            modern_write_batch_ownership="exclusive",
+            modern_write_batch_ownership_semantics="exclusive-borrow-v1",
+        )
+        validate_benchmark(
+            batch,
+            case,
+            1,
+            modern_write_batch_ownership="exclusive",
+        )
+        with self.assertRaises(ValueError):
+            validate_benchmark(batch, case, 1)
+        with self.assertRaises(ValueError):
+            validate_benchmark(
+                self.reports("modern", self.CASES[0])[1],
+                "modern/overwrite/65536",
+                1,
+                modern_write_batch_ownership="exclusive",
+            )
+
+        case, wal, _ = self.reports("modern", self.CASES[0])
+        wal["context"].update(
+            modern_wal_creation="leveldb",
+            modern_wal_creation_semantics="pinned-leveldb-v1",
+        )
+        validate_benchmark(
+            wal,
+            case,
+            1,
+            modern_wal_creation="leveldb",
+        )
+        with self.assertRaises(ValueError):
+            validate_benchmark(wal, case, 1)
+        with self.assertRaises(ValueError):
+            validate_benchmark(
+                self.reports("leveldb", self.CASES[0])[1],
+                "leveldb/overwrite/65536",
+                1,
+                modern_wal_creation="leveldb",
+            )
 
     def test_rejects_changed_counts_ratios_names_and_context(self):
         case, data, _ = self.reports("modern", self.CASES[3])
@@ -667,6 +784,7 @@ class MutationReportTest(unittest.TestCase):
             ("write_calls", 262144), ("sync_write_calls", 1), ("logical_write_bytes", 0),
             ("record_crc32c", "00000000"), ("write_order_crc32c", "00000000"),
             ("version_values_crc32c", "00000000"), ("final_crc32c", "00000000"),
+            ("residual_wal_files", -1), ("residual_regular_bytes", -1),
         ):
             changed = copy.deepcopy(done)
             changed[field] = value
@@ -677,6 +795,14 @@ class MutationReportTest(unittest.TestCase):
         for changed in ({**done, "extra": 0}, {k: v for k, v in done.items() if k != "final_crc32c"}):
             with self.assertRaises(ValueError):
                 validate_completion(changed, case)
+        for field, total in (
+            ("residual_wal_files", "residual_regular_files"),
+            ("residual_table_bytes", "residual_regular_bytes"),
+        ):
+            changed = copy.deepcopy(done)
+            changed[field] = changed[total] + 1
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                validate_completion(changed, case)
 
     def test_runner_rejects_mutable_calibration_options_without_artifacts(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -684,6 +810,17 @@ class MutationReportTest(unittest.TestCase):
             for options in ({"repetitions": 3}, {"min_time": 0.2}):
                 with self.subTest(options=options), self.assertRaises(ValueError):
                     run_case(Path("/usr/bin/false"), "modern/overwrite/65536", output, **options)
+                self.assertFalse(output.exists())
+
+    def test_runner_rejects_inapplicable_roles_without_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "unused"
+            for case, options in (
+                ("modern/overwrite/65536", {"modern_write_batch_ownership": "exclusive"}),
+                ("leveldb/overwrite/65536", {"modern_wal_creation": "leveldb"}),
+            ):
+                with self.subTest(case=case), self.assertRaises(ValueError):
+                    run_case(Path("/usr/bin/false"), case, output, **options)
                 self.assertFalse(output.exists())
 
 
@@ -899,6 +1036,57 @@ class PerformanceExecutableTest(unittest.TestCase):
         )
         self.assertNotEqual(rejected.returncode, 0)
         self.assertFalse((self.root / "scan-db").exists())
+
+    def test_modern_write_roles_are_explicit_and_case_scoped(self):
+        result = self.invoke(
+            "--case", "modern/writebatch/65536",
+            "--modern-write-batch-ownership", "exclusive",
+            "--modern-wal-creation", "leveldb",
+            "--smoke",
+            "--database", str(self.root / "db"),
+            "--completion-report", str(self.root / "completion.json"),
+            "--benchmark_min_time=1x", "--benchmark_repetitions=1",
+            f"--benchmark_out={self.root / 'benchmark.json'}",
+            "--benchmark_out_format=json",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        validate_benchmark(
+            read_json(self.root / "benchmark.json"),
+            "modern/writebatch/65536",
+            1,
+            smoke=True,
+            modern_write_batch_ownership="exclusive",
+            modern_wal_creation="leveldb",
+        )
+        done = validate_completion(
+            read_json(self.root / "completion.json"),
+            "modern/writebatch/65536",
+            smoke=True,
+        )
+        self.assertEqual(done["schema_version"], 3)
+        self.assertGreaterEqual(done["residual_regular_files"], 1)
+        self.assertGreaterEqual(done["residual_manifest_files"], 1)
+
+        for index, arguments in enumerate((
+            (
+                "--case", "modern/overwrite/65536",
+                "--modern-write-batch-ownership", "exclusive",
+            ),
+            (
+                "--case", "leveldb/overwrite/65536",
+                "--modern-wal-creation", "leveldb",
+            ),
+        )):
+            database = self.root / f"rejected-db-{index}"
+            completion_path = self.root / f"rejected-completion-{index}.json"
+            rejected = self.invoke(
+                *arguments,
+                "--database", str(database),
+                "--completion-report", str(completion_path),
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertFalse(database.exists())
+            self.assertFalse(completion_path.exists())
 
     def test_normal_binary_rejects_read_diagnostics(self):
         rejected = self.invoke(

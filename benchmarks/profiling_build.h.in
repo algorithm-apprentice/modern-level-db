@@ -16,18 +16,38 @@ inline constexpr std::string_view BuildType = "@CMAKE_BUILD_TYPE@";
 inline constexpr std::string_view Compiler = "@CMAKE_CXX_COMPILER_ID@ @CMAKE_CXX_COMPILER_VERSION@";
 inline constexpr std::string_view CxxFlags = R"ml(@PROFILE_CXX_FLAGS@)ml";
 inline constexpr std::string_view CFlags = R"ml(@PROFILE_C_FLAGS@)ml";
+inline constexpr std::string_view ExeLinkerFlags = R"ml(@PROFILE_EXE_LINKER_FLAGS@)ml";
+inline constexpr std::string_view StaticLinkerFlags = R"ml(@PROFILE_STATIC_LINKER_FLAGS@)ml";
+inline constexpr std::string_view CmakeGenerator = R"ml(@PROFILE_CMAKE_GENERATOR@)ml";
+inline constexpr std::string_view TargetArchitecture = R"ml(@PROFILE_TARGET_ARCHITECTURE@)ml";
 inline constexpr std::string_view BenchmarkOverride =
     R"ml(@FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_BENCHMARK@)ml";
 inline constexpr std::string_view ReferenceOverride =
     R"ml(@FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_REFERENCE@)ml";
 inline constexpr std::string_view ReferenceControlPatchSha256 =
     "@MODERN_LEVELDB_REFERENCE_CONTROL_PATCH_SHA256@";
+inline constexpr std::string_view ReferenceHardwareCrc =
+    "@MODERN_LEVELDB_REFERENCE_HARDWARE_CRC@";
+inline constexpr std::string_view ReferenceSource =
+    R"ml(@MODERN_LEVELDB_REFERENCE_SOURCE_DIR@)ml";
+inline constexpr std::string_view ReferenceBinaryDirectory =
+    R"ml(@MODERN_LEVELDB_REFERENCE_BINARY_DIR@)ml";
+inline constexpr std::string_view ReferenceHaveCrc32c =
+    "@MODERN_LEVELDB_REFERENCE_HAVE_CRC32C@";
+inline constexpr std::string_view ReferenceCrc32cLinked =
+    "@MODERN_LEVELDB_REFERENCE_CRC32C_LINKED@";
+inline constexpr std::string_view ReferenceHardwarePatchSha256 =
+    "@MODERN_LEVELDB_REFERENCE_HARDWARE_PATCH_SHA256@";
 inline constexpr std::string_view SnappyOverride =
     R"ml(@FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_SNAPPY@)ml";
 inline constexpr std::string_view ZstdOverride =
     R"ml(@FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_ZSTD@)ml";
 inline constexpr std::string_view SnappyTarget = "@MODERN_LEVELDB_SNAPPY_TARGET@";
 inline constexpr std::string_view ZstdTarget = "@MODERN_LEVELDB_ZSTD_TARGET@";
+inline constexpr std::string_view SnappyRequestedRevision =
+    "@MODERN_LEVELDB_SNAPPY_REQUESTED_REVISION@";
+inline constexpr std::string_view ZstdRequestedRevision =
+    "@MODERN_LEVELDB_ZSTD_REQUESTED_REVISION@";
 inline constexpr std::string_view SnappySource = R"ml(@MODERN_LEVELDB_SNAPPY_SOURCE_DIR@)ml";
 inline constexpr std::string_view ZstdSource = R"ml(@MODERN_LEVELDB_ZSTD_SOURCE_DIR@)ml";
 inline constexpr std::string_view Crc32cTarget = "@MODERN_LEVELDB_CRC32C_TARGET@";
