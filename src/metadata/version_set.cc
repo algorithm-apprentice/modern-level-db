@@ -285,7 +285,24 @@ Status VersionSet::LogAndApply(VersionEdit edit) {
   if (!version.has_value()) {
     return std::unexpected(std::move(version).error());
   }
+  return ApplyPrepared(std::move(edit), std::move(*version), nullptr);
+}
 
+Status VersionSet::LogAndApply(VersionEdit edit, std::unique_lock<std::mutex>& lock) {
+  assert(lock.owns_lock());
+  if (failure_.has_value()) {
+    return std::unexpected(*failure_);
+  }
+  const Status valid = Validate(edit);
+  if (!valid.has_value()) {
+    return valid;
+  }
+  Version version = VersionBuilder::BuildTrusted(*comparator_, *current_, edit);
+  return ApplyPrepared(std::move(edit), std::move(version), &lock);
+}
+
+Status VersionSet::ApplyPrepared(VersionEdit edit, Version version,
+                                 std::unique_lock<std::mutex>* lock) {
   const std::uint64_t log_number = edit.log_number().value_or(log_number_);
   const std::uint64_t prev_log_number = edit.prev_log_number().value_or(prev_log_number_);
   edit.SetLogNumber(log_number);
@@ -296,8 +313,27 @@ Status VersionSet::LogAndApply(VersionEdit edit) {
   for (const CompactPointer& pointer : edit.compact_pointers()) {
     compact_pointers[pointer.level] = pointer.key;
   }
+  std::optional<std::vector<std::byte>> new_manifest_snapshot;
+  if (manifest_ == nullptr) {
+    new_manifest_snapshot =
+        Snapshot(comparator_->user_comparator(), compact_pointers_, *current_).Encode();
+  }
+  auto candidate = std::make_shared<const Version>(std::move(version));
+  ReserveInstall();
 
-  const Status written = Write(edit);
+  Status written;
+  if (lock == nullptr) {
+    written = Write(edit, new_manifest_snapshot);
+  } else {
+    lock->unlock();
+    try {
+      written = Write(edit, new_manifest_snapshot);
+    } catch (...) {
+      lock->lock();
+      throw;
+    }
+    lock->lock();
+  }
   if (!written.has_value()) {
     failure_ = written.error();
     return written;
@@ -305,7 +341,7 @@ Status VersionSet::LogAndApply(VersionEdit edit) {
   compact_pointers_ = std::move(compact_pointers);
   log_number_ = log_number;
   prev_log_number_ = prev_log_number;
-  Install(std::make_shared<const Version>(std::move(*version)));
+  InstallPrepared(std::move(candidate));
   return {};
 }
 
@@ -337,20 +373,23 @@ Status VersionSet::Validate(const VersionEdit& edit) const {
   return {};
 }
 
-Status VersionSet::Write(const VersionEdit& edit) {
+Status VersionSet::Write(const VersionEdit& edit,
+                         const std::optional<std::vector<std::byte>>& new_manifest_snapshot) {
   std::unique_ptr<WalWriter> created;
   if (manifest_ == nullptr) {
+    assert(new_manifest_snapshot.has_value());
     Result<std::unique_ptr<WritableFile>> file =
         file_system_->OpenWritable(DescriptorFileName(directory_, manifest_file_number_));
     if (!file.has_value()) {
       return std::unexpected(std::move(file).error());
     }
     created = std::make_unique<WalWriter>(std::move(*file));
-    const Status snapshot = created->AddRecord(
-        Snapshot(comparator_->user_comparator(), compact_pointers_, *current_).Encode());
+    const Status snapshot = created->AddRecord(*new_manifest_snapshot);
     if (!snapshot.has_value()) {
       return snapshot;
     }
+  } else {
+    assert(!new_manifest_snapshot.has_value());
   }
   WalWriter& manifest = created != nullptr ? *created : *manifest_;
   const Status appended = manifest.AddRecord(edit.Encode());
@@ -403,13 +442,25 @@ Status VersionSet::InstallCurrent() const {
   return file_system_->SyncDirectory(directory_);
 }
 
-void VersionSet::Install(std::shared_ptr<const Version> version) {
+void VersionSet::ReserveInstall() {
+  read_pinned_versions_.reserve(read_pinned_versions_.size() + 1);
+  versions_.reserve(versions_.size() + 1);
+}
+
+void VersionSet::InstallPrepared(std::shared_ptr<const Version> version) noexcept {
+  assert(read_pinned_versions_.capacity() > read_pinned_versions_.size());
+  assert(versions_.capacity() > versions_.size());
   if (current_ != nullptr && current_->read_pins_ != 0) {
     read_pinned_versions_.push_back(current_);
   }
   std::erase_if(versions_, [](const std::weak_ptr<const Version>& held) { return held.expired(); });
   versions_.emplace_back(version);
   current_ = std::move(version);
+}
+
+void VersionSet::Install(std::shared_ptr<const Version> version) {
+  ReserveInstall();
+  InstallPrepared(std::move(version));
 }
 
 void VersionSet::ReleaseRead(const Version& version) noexcept {

@@ -31,7 +31,7 @@ Result<std::uint64_t> WriteTable(std::unique_ptr<WritableFile> file,
   TableBuilder builder(std::move(file), comparator, options);
   for (; entry.valid(); entry.Next()) {
     largest = entry.key();
-    if (!builder.Add(largest, entry.value()).has_value()) {
+    if (!builder.AddTrusted(largest, entry.value()).has_value()) {
       break;
     }
   }

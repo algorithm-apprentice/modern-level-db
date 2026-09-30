@@ -491,10 +491,12 @@ void DatabaseEngine::FlushImmutable(std::unique_lock<std::mutex>& lock) {
                                     *immutable, number, *base, log_number);
   lock.lock();
   Status applied;
-  if (edit.has_value()) {
-    applied = versions_->LogAndApply(std::move(*edit));
-  } else {
+  if (!edit.has_value()) {
     applied = std::unexpected(std::move(edit).error());
+  } else if (closing_) {
+    applied = std::unexpected(Error::Aborted("the database closed during a flush"));
+  } else {
+    applied = versions_->LogAndApply(std::move(*edit), lock);
   }
   if (!applied.has_value()) {
     // Recorded first, so that no cleanup removes a table that the edit may
@@ -537,7 +539,7 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
     const Status added = edit.AddFile(compaction->level + 1, *compaction->inputs[0].front());
     assert(added.has_value());
     static_cast<void>(added);
-    FinishCompaction(versions_->LogAndApply(std::move(edit)));
+    FinishCompaction(versions_->LogAndApply(std::move(edit), lock));
     return false;
   }
 
@@ -569,7 +571,7 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
     // As LevelDB does after its last entry.
     applied = std::unexpected(Error::Aborted("the database closed during a compaction"));
   } else {
-    applied = versions_->LogAndApply(std::move(*edit));
+    applied = versions_->LogAndApply(std::move(*edit), lock);
   }
   FinishCompaction(applied);
   return true;

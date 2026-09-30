@@ -9,9 +9,9 @@ preserve LevelDB's equivalent table directory barrier, make exclusive batch
 mutation opt-in, include runtime VersionBuilder parity, and extend the actual
 retained benchmark runner with raw per-iteration data.
 
-Implementation progress: Milestones 1 through 3 are complete; Milestones 4 and
-5 remain pending and sequential. No write-path performance measurements or
-profiles have been collected for the partial implementation.
+Implementation progress: Milestones 1 through 4 are complete; Milestone 5
+remains pending. No write-path performance measurements or profiles have been
+collected for the partial implementation.
 
 ## Context
 

@@ -1142,13 +1142,42 @@ TEST_F(DatabaseTest, RecordsAnExceptionWhileTheFlushWritesItsTable) {
   EXPECT_EQ(Get(*database, "a"), "1");
 }
 
+TEST_F(DatabaseTest, WritesProceedWhileManifestSyncIsBlocked) {
+  const auto database = Open();
+  Fill(*database, "a");
+  ASSERT_TRUE(Put(*database, "b", "1").has_value());
+  Gate manifest;
+  manifest.Close([](std::string_view operation) { return operation == "sync MANIFEST-000001"; });
+  file_system_.SetOperationHook(std::ref(manifest));
+  std::thread runner([&] { EXPECT_TRUE(executor_.RunOne()); });
+  manifest.WaitUntilReached();
+
+  std::future<Status> written =
+      std::async(std::launch::async, [&] { return Put(*database, "c", "1"); });
+  const std::future_status progress = written.wait_for(std::chrono::seconds(10));
+  std::optional<SequenceNumber> sequence;
+  if (progress == std::future_status::ready) {
+    sequence = database->GetSnapshot();
+  }
+  manifest.Open();
+  runner.join();
+  file_system_.SetOperationHook({});
+
+  ASSERT_EQ(progress, std::future_status::ready);
+  EXPECT_TRUE(written.get().has_value());
+  ASSERT_TRUE(sequence.has_value());
+  EXPECT_EQ(*sequence, 3U);
+  database->ReleaseSnapshot(*sequence);
+  EXPECT_EQ(Get(*database, "c"), "1");
+}
+
 TEST_F(DatabaseTest, RecordsAnExceptionWhileTheFlushAppliesItsEdit) {
   const auto database = Open();
   ASSERT_TRUE(Put(*database, "a", "1").has_value());
   std::optional<Status> flushed;
   std::thread flusher([&] { flushed = database->FlushMemTable(); });
   executor_.WaitForTask();
-  // The MANIFEST is written with the mutex held.
+  // The background call reacquires the mutex before it records the exception.
   file_system_.SetOperationHook([](std::string_view operation) -> Status {
     if (operation.starts_with("append MANIFEST-")) {
       throw std::runtime_error("thrown");
@@ -1189,6 +1218,40 @@ TEST_F(DatabaseTest, ClosesWhileATaskIsPendingAndRecoversAfterward) {
 
   // Recovery replays both logs.
   const auto database = Open();
+  EXPECT_EQ(Get(*database, "a"), Large());
+  EXPECT_EQ(Get(*database, "b"), "1");
+}
+
+TEST_F(DatabaseTest, DiscardsAFlushThatFinishesWhileTheDatabaseCloses) {
+  auto database = Open();
+  Fill(*database, "a");
+  ASSERT_TRUE(Put(*database, "b", "1").has_value());
+  ASSERT_EQ(executor_.queued(), 1U);
+  Gate synced;
+  synced.Close([](std::string_view operation) { return operation == "sync_directory db"; });
+  Gate closing;
+  closing.Close(ClosesTheLog());
+  file_system_.SetOperationHook([&](std::string_view operation) {
+    static_cast<void>(synced(operation));
+    return closing(operation);
+  });
+  std::thread runner([&] { executor_.RunOne(); });
+  synced.WaitUntilReached();
+  std::thread closer([&] { database.reset(); });
+  closing.WaitUntilReached();
+  const std::size_t start = file_system_.operations().size();
+  closing.Open();
+  synced.Open();
+  closer.join();
+  runner.join();
+  file_system_.SetOperationHook({});
+
+  for (const std::string& operation : OperationsSince(start)) {
+    EXPECT_FALSE(operation.starts_with("append MANIFEST-")) << operation;
+  }
+  ASSERT_EQ(Numbers(FileType::Table).size(), 1U);
+
+  database = Open();
   EXPECT_EQ(Get(*database, "a"), Large());
   EXPECT_EQ(Get(*database, "b"), "1");
 }
