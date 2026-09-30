@@ -19,6 +19,7 @@ namespace modern_leveldb {
 struct RecoveryOptions {
   bool create_if_missing = false;
   bool error_if_exists = false;
+  bool sync_wal_creation = true;
   // Replay writes a memtable to a table once its memory usage exceeds this.
   std::size_t write_buffer_size = 4 * 1024 * 1024;
   TableBuilderOptions table_options;

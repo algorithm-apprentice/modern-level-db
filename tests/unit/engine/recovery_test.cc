@@ -181,6 +181,22 @@ TEST_F(RecoveryTest, CreatesADatabaseAndItsDirectory) {
   EXPECT_TRUE(TableEntries(*recovered.versions).empty());
 }
 
+TEST_F(RecoveryTest, CanSkipOnlyTheInitialWalCreationBarrier) {
+  RecoveryOptions options = Creating();
+  options.sync_wal_creation = false;
+
+  const RecoveredDatabase recovered = Recover(options);
+
+  const std::vector<std::string>& operations = file_system_.operations();
+  const auto listed = std::ranges::find(operations, "list db");
+  ASSERT_NE(listed, operations.end());
+  EXPECT_EQ(std::vector<std::string>(listed, operations.end()),
+            (std::vector<std::string>{"list db", "open_writable 000002.log",
+                                      "append MANIFEST-000001", "append MANIFEST-000001",
+                                      "flush MANIFEST-000001", "sync MANIFEST-000001"}));
+  EXPECT_EQ(recovered.log_number, 2U);
+}
+
 TEST_F(RecoveryTest, SyncsTheParentDirectoryWhenCreatingADatabase) {
   for (const auto& [directory, parent] :
        std::vector<std::pair<std::string, std::string>>{{"root/db", "root"}, {"db/", "."}}) {

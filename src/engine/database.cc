@@ -155,6 +155,7 @@ DatabaseEngine::DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options,
       owned_clock_(OwnedClock(options)),
       write_buffer_size_(options.write_buffer_size),
       max_file_size_(options.max_file_size),
+      sync_wal_creation_(options.sync_wal_creation),  // GCOVR_EXCL_LINE: GCC constructor clone
       table_options_(options.table_options),
       directory_(std::move(directory)),
       file_system_(options.file_system != nullptr ? options.file_system : owned_file_system_.get()),
@@ -184,6 +185,7 @@ DatabaseEngine::~DatabaseEngine() {
 Status DatabaseEngine::Recover(const DatabaseEngineOptions& options) {
   RecoveryOptions recovery{.create_if_missing = options.create_if_missing,
                            .error_if_exists = options.error_if_exists,
+                           .sync_wal_creation = options.sync_wal_creation,
                            .write_buffer_size = options.write_buffer_size,
                            .table_options = options.table_options};
   Result<RecoveredDatabase> recovered =
@@ -221,7 +223,7 @@ Status DatabaseEngine::Write(EncodedWriteBatch& batch, bool sync) {
 Status DatabaseEngine::MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool force) {
   bool allow_delay = !force;
   while (true) {
-    const std::size_t level0_files = versions_->current()->files(0).size();
+    const std::size_t level0_files = versions_->current_raw()->files(0).size();
     if (background_error_.has_value()) {
       return BackgroundError();
     }
@@ -259,11 +261,13 @@ Status DatabaseEngine::SwitchMemTable() {
   // The allocations come before any state changes.
   auto new_log = std::make_unique<WalWriter>(std::move(*file));
   auto new_memtable = std::make_shared<MemTable>(comparator_.user_comparator());
-  // The flush of the old memtable makes this the oldest log that recovery
-  // replays, so its directory entry is durable before it takes writes.
-  const Status synced = file_system_->SyncDirectory(directory_);
-  if (!synced.has_value()) {
-    return synced;
+  if (sync_wal_creation_) {
+    // The flush of the old memtable makes this the oldest log that recovery
+    // replays, so its directory entry is durable before it takes writes.
+    const Status synced = file_system_->SyncDirectory(directory_);
+    if (!synced.has_value()) {
+      return synced;
+    }
   }
   const Status closed = log_->Close();
   if (!closed.has_value()) {

@@ -100,6 +100,9 @@ options.create_if_missing = true;
 // with SIGBUS instead of returning a typed I/O error. Set false to force
 // copied reads and typed read errors.
 // options.allow_mmap_reads = false;
+// New WAL files are durably created by default. Set false only to match
+// LevelDB's weaker WAL-creation durability behavior.
+// options.sync_wal_creation = false;
 auto opened = modern_leveldb::Database::Open(options, "example-db");
 if (!opened.has_value()) {
   return opened.error();

@@ -325,13 +325,15 @@ Result<RecoveredDatabase> RecoverDatabase(FileSystem& file_system,
     return std::unexpected(std::move(log_file).error());
   }
   auto log = std::make_unique<WalWriter>(std::move(*log_file));
-  const Status log_synced = log->Sync();
-  if (!log_synced.has_value()) {
-    return std::unexpected(log_synced.error());
-  }
-  const Status directory_synced = file_system.SyncDirectory(directory);
-  if (!directory_synced.has_value()) {
-    return std::unexpected(directory_synced.error());
+  if (options.sync_wal_creation) {
+    const Status log_synced = log->Sync();
+    if (!log_synced.has_value()) {
+      return std::unexpected(log_synced.error());
+    }
+    const Status directory_synced = file_system.SyncDirectory(directory);
+    if (!directory_synced.has_value()) {
+      return std::unexpected(directory_synced.error());
+    }
   }
   edit.SetLogNumber(log_number);
   edit.SetPrevLogNumber(0);

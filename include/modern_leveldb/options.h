@@ -38,6 +38,9 @@ struct Options {
   Compression compression = Compression::Snappy;
   // Used only by Zstd; LevelDB supports levels -5 through 22.
   int zstd_compression_level = 1;
+  // Syncs the initial empty WAL and each new WAL's directory entry before it
+  // accepts writes. Set false to match LevelDB's creation durability.
+  bool sync_wal_creation = true;
 };
 
 struct ReadOptions {
