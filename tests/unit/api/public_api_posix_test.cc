@@ -93,7 +93,15 @@ TEST(PublicDatabaseTest, WritesReadsDeletesBatchesAndReopens) {
     ASSERT_TRUE(batch.Put(AsBytes("b"), AsBytes("2")).has_value());
     ASSERT_TRUE(batch.Delete(AsBytes("a")).has_value());
     WriteOptions write_options{.sync = true};
+    const std::size_t batch_size = batch.ApproximateSize();
     ASSERT_TRUE(database.Write(batch, write_options).has_value());
+    EXPECT_EQ(batch.ApproximateSize(), batch_size);
+
+    WriteBatch exclusive;
+    ASSERT_TRUE(exclusive.Put(AsBytes("c"), AsBytes("3")).has_value());
+    const std::size_t exclusive_size = exclusive.ApproximateSize();
+    ASSERT_TRUE(database.WriteExclusive(exclusive).has_value());
+    EXPECT_EQ(exclusive.ApproximateSize(), exclusive_size);
 
     const auto deleted = database.Get(AsBytes("a"));
     ASSERT_TRUE(deleted.has_value());
@@ -101,6 +109,9 @@ TEST(PublicDatabaseTest, WritesReadsDeletesBatchesAndReopens) {
     const auto value = database.Get(AsBytes("b"));
     ASSERT_TRUE(value.has_value() && value->has_value());
     EXPECT_EQ(Text(**value), "2");
+    const auto exclusive_value = database.Get(AsBytes("c"));
+    ASSERT_TRUE(exclusive_value.has_value() && exclusive_value->has_value());
+    EXPECT_EQ(Text(**exclusive_value), "3");
     ASSERT_TRUE(database.Delete(AsBytes("missing")).has_value());
   }
 
@@ -109,6 +120,9 @@ TEST(PublicDatabaseTest, WritesReadsDeletesBatchesAndReopens) {
   const auto value = reopened->Get(AsBytes("b"));
   ASSERT_TRUE(value.has_value() && value->has_value());
   EXPECT_EQ(Text(**value), "2");
+  const auto exclusive_value = reopened->Get(AsBytes("c"));
+  ASSERT_TRUE(exclusive_value.has_value() && exclusive_value->has_value());
+  EXPECT_EQ(Text(**exclusive_value), "3");
 }
 
 TEST(PublicDatabaseTest, ReusesCallerOutputAndLeavesItUnchangedWhenAbsent) {
@@ -248,6 +262,7 @@ TEST(PublicDatabaseTest, RejectsForeignAndMovedFromHandles) {
   ExpectInvalid(first.Delete(AsBytes("a")));
   WriteBatch valid_batch;
   ExpectInvalid(first.Write(valid_batch));
+  ExpectInvalid(first.WriteExclusive(valid_batch));
   ExpectInvalid(first.Get(AsBytes("a")));
   ExpectInvalid(first.NewIterator());
   ExpectInvalid(first.GetSnapshot());
@@ -279,7 +294,9 @@ TEST(PublicDatabaseTest, RejectsForeignAndMovedFromHandles) {
   WriteBatch moved_batch_source;
   WriteBatch moved_batch = std::move(moved_batch_source);
   ExpectInvalid(assigned.Write(moved_batch_source));
+  ExpectInvalid(assigned.WriteExclusive(moved_batch_source));
   EXPECT_TRUE(assigned.Write(moved_batch).has_value());
+  EXPECT_TRUE(assigned.WriteExclusive(moved_batch).has_value());
 }
 
 TEST(PublicDatabaseTest, ChildHandlesKeepTheEngineAlive) {

@@ -99,7 +99,7 @@ class DatabaseEngine final {
 
   // Commits the batch, syncing the log first if asked. After a background
   // error, every write returns it.
-  [[nodiscard]] Status Write(const EncodedWriteBatch& batch, bool sync);
+  [[nodiscard]] Status Write(EncodedWriteBatch& batch, bool sync);
 
   // Writes the key's value and returns true, or leaves it unchanged and
   // returns false if the key is missing or deleted.
