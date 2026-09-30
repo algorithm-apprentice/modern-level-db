@@ -53,6 +53,9 @@ class TableBuilder final {
   ~TableBuilder() = default;
 
   [[nodiscard]] Status Add(ByteView internal_key, ByteView value);
+  // The key must be a valid internal key that strictly follows every key
+  // already added.
+  [[nodiscard]] Status AddTrusted(ByteView internal_key, ByteView value);
 
   // Writes the remaining blocks and the footer, then syncs and closes the
   // file. After an earlier error it only closes the file. Returns the first
@@ -69,6 +72,7 @@ class TableBuilder final {
   // Keeps the first error and reports whether status succeeded.
   bool Record(Status status);
   [[nodiscard]] Status FirstError() const;
+  [[nodiscard]] Status AddValid(ByteView internal_key, ByteView value);
   void AddPendingIndexEntry();
   void WriteDataBlock();
   void WriteBlock(ByteView contents, BlockHandle& handle);

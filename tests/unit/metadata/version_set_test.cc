@@ -4,16 +4,22 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -115,6 +121,40 @@ class VectorSequentialFile final : public SequentialFile {
  private:
   std::vector<std::byte> data_;
   std::size_t offset_ = 0;
+};
+
+class OperationGate {
+ public:
+  explicit OperationGate(std::string operation) : operation_(std::move(operation)) {}
+
+  Status operator()(std::string_view operation) {
+    std::unique_lock lock(mutex_);
+    if (operation != operation_ || reached_) {
+      return {};
+    }
+    reached_ = true;
+    changed_.notify_all();
+    changed_.wait(lock, [this] { return open_; });
+    return {};
+  }
+
+  void WaitUntilReached() {
+    std::unique_lock lock(mutex_);
+    changed_.wait(lock, [this] { return reached_; });
+  }
+
+  void Open() {
+    const std::lock_guard lock(mutex_);
+    open_ = true;
+    changed_.notify_all();
+  }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable changed_;
+  std::string operation_;
+  bool reached_ = false;
+  bool open_ = false;
 };
 
 std::vector<std::byte> Frame(const std::vector<std::vector<std::byte>>& records) {
@@ -365,6 +405,186 @@ TEST_F(VersionSetTest, RecordsEditsAndRecoversThem) {
   EXPECT_EQ(StateOf(*recovered), expected);
   EXPECT_EQ(recovered->manifest_file_number(), 4U);
   EXPECT_EQ(recovered->NewFileNumber(), 5U);
+}
+
+TEST_F(VersionSetTest, RuntimeApplyUnlocksIoAndPreservesConcurrentCounters) {
+  auto set = Create();
+  ASSERT_NE(set, nullptr);
+  VersionEdit edit;
+  ASSERT_TRUE(edit.AddFile(0, File(set->NewFileNumber(), "a", "b")).has_value());
+  set->SetLastSequence(7);
+  OperationGate synced("sync MANIFEST-000001");
+  file_system_.SetOperationHook(std::ref(synced));
+  std::mutex mutex;
+  std::optional<Status> applied;
+  bool returned_locked = false;
+
+  std::thread manifest([&] {
+    std::unique_lock lock(mutex);
+    applied = set->LogAndApply(edit, lock);
+    returned_locked = lock.owns_lock();
+  });
+  synced.WaitUntilReached();
+  {
+    const std::unique_lock lock(mutex);
+    EXPECT_EQ(set->NewFileNumber(), 3U);
+    set->SetLastSequence(8);
+  }
+  synced.Open();
+  manifest.join();
+  file_system_.SetOperationHook({});
+
+  ASSERT_TRUE(applied.has_value());
+  EXPECT_TRUE(applied->has_value());
+  EXPECT_TRUE(returned_locked);
+  EXPECT_EQ(set->last_sequence(), 8U);
+  EXPECT_EQ(set->NewFileNumber(), 4U);
+  ASSERT_EQ(set->current()->files(0).size(), 1U);
+  EXPECT_EQ(set->current()->files(0).front()->number, 2U);
+  const std::vector<VersionEdit> records = ManifestRecords(1);
+  ASSERT_FALSE(records.empty());
+  EXPECT_EQ(records.back().next_file_number(), 3U);
+  EXPECT_EQ(records.back().last_sequence(), 7U);
+}
+
+TEST_F(VersionSetTest, RuntimeApplyReacquiresTheLockAfterFailureAndException) {
+  {
+    auto set = Create();
+    ASSERT_NE(set, nullptr);
+    file_system_.SetOperationHook([](std::string_view operation) -> Status {
+      if (operation == "sync MANIFEST-000001") {
+        return std::unexpected(Error::Io("injected failure"));
+      }
+      return {};
+    });
+    std::mutex mutex;
+    std::unique_lock lock(mutex);
+
+    const Status failed = set->LogAndApply(VersionEdit(), lock);
+
+    EXPECT_TRUE(lock.owns_lock());
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().message(), "injected failure");
+    file_system_.SetOperationHook({});
+    const Status rejected = set->LogAndApply(VersionEdit(), lock);
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().message(), "injected failure");
+  }
+
+  {
+    auto set = Create();
+    ASSERT_NE(set, nullptr);
+    VersionEdit invalid;
+    ASSERT_TRUE(invalid.SetComparatorName("other").has_value());
+    std::mutex mutex;
+    std::unique_lock lock(mutex);
+
+    const Status rejected = set->LogAndApply(std::move(invalid), lock);
+
+    EXPECT_TRUE(lock.owns_lock());
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().code(), ErrorCode::InvalidArgument);
+  }
+
+  MemoryFileSystem throwing_file_system;
+  auto throwing_set = Create(throwing_file_system);
+  ASSERT_NE(throwing_set, nullptr);
+  throwing_file_system.SetOperationHook([](std::string_view operation) -> Status {
+    if (operation.starts_with("append MANIFEST-")) {
+      throw std::runtime_error("thrown");
+    }
+    return {};
+  });
+  std::mutex mutex;
+  std::unique_lock lock(mutex);
+
+  EXPECT_THROW(static_cast<void>(throwing_set->LogAndApply(VersionEdit(), lock)),
+               std::runtime_error);
+  EXPECT_TRUE(lock.owns_lock());
+  throwing_file_system.SetOperationHook({});
+}
+
+TEST_F(VersionSetTest, RuntimeApplyUnlocksRequiredCurrentInstallation) {
+  Populate(file_system_);
+  auto set = Recover();
+  ASSERT_NE(set, nullptr);
+  OperationGate current("sync 000003.dbtmp");
+  file_system_.SetOperationHook(std::ref(current));
+  std::mutex mutex;
+  std::optional<Status> applied;
+  bool returned_locked = false;
+  std::thread manifest([&] {
+    std::unique_lock lock(mutex);
+    applied = set->LogAndApply(VersionEdit(), lock);
+    returned_locked = lock.owns_lock();
+  });
+  current.WaitUntilReached();
+
+  const bool acquired = mutex.try_lock();
+  if (acquired) {
+    mutex.unlock();
+  }
+  current.Open();
+  manifest.join();
+  file_system_.SetOperationHook({});
+
+  EXPECT_TRUE(acquired);
+  ASSERT_TRUE(applied.has_value());
+  EXPECT_TRUE(applied->has_value());
+  EXPECT_TRUE(returned_locked);
+  EXPECT_EQ(Text(file_system_.Contents(directory_ / "CURRENT")), "MANIFEST-000003\n");
+}
+
+TEST_F(VersionSetTest, RuntimeApplyStagesTheNewManifestSnapshotBeforeUnlocking) {
+  Populate(file_system_);
+  auto set = Recover();
+  ASSERT_NE(set, nullptr);
+  OperationGate opened("open_writable MANIFEST-000003");
+  OperationGate appended("append MANIFEST-000003");
+  file_system_.SetOperationHook([&](std::string_view operation) {
+    static_cast<void>(opened(operation));
+    return appended(operation);
+  });
+  std::mutex mutex;
+  std::optional<Status> applied;
+  std::thread manifest([&] {
+    std::unique_lock lock(mutex);
+    applied = set->LogAndApply(VersionEdit(), lock);
+  });
+  opened.WaitUntilReached();
+
+  Version::File file;
+  {
+    const std::unique_lock lock(mutex);
+    file = set->current()->files(1).front();
+  }
+  const std::int64_t allowed_seeks = file->allowed_seeks;
+  std::atomic<bool> mutating = false;
+  std::atomic<bool> stop = false;
+  std::thread foreground([&] {
+    const std::unique_lock lock(mutex);
+    mutating.store(true, std::memory_order_release);
+    while (!stop.load(std::memory_order_acquire)) {
+      file->allowed_seeks = allowed_seeks;
+      file->allowed_seeks = allowed_seeks - 1;
+    }
+    file->allowed_seeks = allowed_seeks - 1;
+  });
+  while (!mutating.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  opened.Open();
+  appended.WaitUntilReached();
+  stop.store(true, std::memory_order_release);
+  foreground.join();
+  appended.Open();
+  manifest.join();
+  file_system_.SetOperationHook({});
+
+  ASSERT_TRUE(applied.has_value());
+  EXPECT_TRUE(applied->has_value());
+  ASSERT_EQ(set->current()->files(1).size(), 1U);
+  EXPECT_EQ(set->current()->files(1).front()->allowed_seeks, allowed_seeks - 1);
 }
 
 TEST_F(VersionSetTest, WritesANewManifestAfterRecovery) {

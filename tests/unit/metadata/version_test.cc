@@ -115,6 +115,57 @@ TEST_F(VersionBuilderTest, DeletesAndMovesFilesAndSharesTheRest) {
   EXPECT_EQ(Numbers(base, 1), (std::vector<std::uint64_t>{1, 2, 3}));
 }
 
+TEST_F(VersionBuilderTest, TrustedBuildMatchesTheCheckedBuilder) {
+  const Version base = Applied(Version(), {Adding(0, {File(1, "a", "z"), File(2, "b", "c")}),
+                                           Adding(1, {File(3, "a", "b"), File(4, "d", "e")}),
+                                           Adding(2, {File(5, "m", "n")})});
+  VersionEdit edit = Adding(1, {File(7, "x", "z"), File(6, "g", "h")});
+  ASSERT_TRUE(edit.RemoveFile(0, 2).has_value());
+  ASSERT_TRUE(edit.RemoveFile(1, 3).has_value());
+  ASSERT_TRUE(edit.RemoveFile(2, 5).has_value());
+  ASSERT_TRUE(edit.AddFile(0, File(8, "a", "a")).has_value());
+  ASSERT_TRUE(edit.AddFile(1, File(3, "b", "c")).has_value());
+  ASSERT_TRUE(edit.AddFile(3, File(5, "m", "n")).has_value());
+
+  const Version checked = Applied(base, {edit});
+  const Version trusted = VersionBuilder::BuildTrusted(comparator_, base, edit);
+
+  for (std::uint32_t level = 0; level < NumLevels; ++level) {
+    ASSERT_EQ(trusted.files(level).size(), checked.files(level).size());
+    for (std::size_t index = 0; index < checked.files(level).size(); ++index) {
+      const FileMetadata& expected = *checked.files(level)[index];
+      const FileMetadata& actual = *trusted.files(level)[index];
+      EXPECT_EQ(actual.number, expected.number);
+      EXPECT_EQ(actual.file_size, expected.file_size);
+      EXPECT_EQ(comparator_.Compare(actual.smallest, expected.smallest), 0);
+      EXPECT_EQ(comparator_.Compare(actual.largest, expected.largest), 0);
+      EXPECT_EQ(actual.allowed_seeks, expected.allowed_seeks);
+    }
+  }
+  EXPECT_EQ(trusted.files(0).front(), base.files(0).front());
+  EXPECT_EQ(trusted.files(1)[1], base.files(1)[1]);
+}
+
+TEST_F(VersionBuilderTest, TrustedBuildLinearlyMergesALargeBase) {
+  std::vector<FileMetadata> metadata;
+  metadata.reserve(2048);
+  for (std::uint64_t number = 1; number <= 2048; ++number) {
+    const std::string prefix = "key" + std::to_string(10000 + number);
+    metadata.push_back(File(number, prefix + "a", prefix + "z"));
+  }
+  const Version base = Applied(Version(), {Adding(1, metadata)});
+  VersionEdit edit;
+  ASSERT_TRUE(edit.RemoveFile(1, 1024).has_value());
+  ASSERT_TRUE(edit.AddFile(1, File(2049, "key11024b", "key11024c")).has_value());
+
+  const Version version = VersionBuilder::BuildTrusted(comparator_, base, edit);
+
+  ASSERT_EQ(version.files(1).size(), 2048U);
+  EXPECT_EQ(version.files(1).front(), base.files(1).front());
+  EXPECT_EQ(version.files(1).back(), base.files(1).back());
+  EXPECT_EQ(Numbers(version, 1)[1023], 2049U);
+}
+
 TEST_F(VersionBuilderTest, AppliesEditsInOrder) {
   VersionEdit removal;
   ASSERT_TRUE(removal.RemoveFile(0, 4).has_value());

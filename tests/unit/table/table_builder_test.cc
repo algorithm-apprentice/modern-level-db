@@ -253,6 +253,32 @@ TEST_F(TableBuilderTest, WritesLevelDbTablesWithShortenedIndexKeys) {
   EXPECT_EQ(table.index_keys[2], Key("c", MaxSequenceNumber));
 }
 
+TEST_F(TableBuilderTest, TrustedAddsMatchCheckedAdds) {
+  TableBuilderOptions options = WithFilter();
+  options.block_size = 1;
+  const std::vector<std::pair<std::vector<std::byte>, std::string_view>> entries{
+      {Key("apple", 3), "a"},
+      {Key("apricot", 2), "b"},
+      {Key("banana", 1, ValueKind::Deletion), ""},
+  };
+
+  auto checked = MakeBuilder(options);
+  for (const auto& [key, value] : entries) {
+    ASSERT_TRUE(checked->Add(key, AsBytes(value)).has_value());
+  }
+  ASSERT_TRUE(checked->Finish().has_value());
+  const std::vector<std::byte> checked_table = state_->data;
+
+  state_ = std::make_shared<WritableState>();
+  auto trusted = MakeBuilder(options);
+  for (const auto& [key, value] : entries) {
+    ASSERT_TRUE(trusted->AddTrusted(key, AsBytes(value)).has_value());
+  }
+  ASSERT_TRUE(trusted->Finish().has_value());
+
+  EXPECT_EQ(state_->data, checked_table);
+}
+
 TEST_F(TableBuilderTest, FinishSyncsAndClosesTheFileOnce) {
   auto builder = MakeBuilder();
   ASSERT_TRUE(builder->Add(Key("key", 1), AsBytes("value")).has_value());
@@ -394,6 +420,7 @@ TEST_F(TableBuilderTest, KeepsTheFirstErrorAndClosesWithoutWriting) {
   ExpectError(builder->Add(Key("a", 1), {}), ErrorCode::InvalidArgument);
 
   ExpectError(builder->Add(Key("c", 1), {}), ErrorCode::InvalidArgument);
+  ExpectError(builder->AddTrusted(Key("c", 1), {}), ErrorCode::InvalidArgument);
   ExpectError(builder->Finish(), ErrorCode::InvalidArgument);
 
   EXPECT_TRUE(state_->data.empty());
@@ -481,6 +508,7 @@ TEST_F(TableBuilderTest, RejectsCallsAfterFinish) {
   ASSERT_TRUE(builder->Finish().has_value());
 
   ExpectError(builder->Add(Key("a", 1), {}), ErrorCode::InvalidArgument);
+  ExpectError(builder->AddTrusted(Key("a", 1), {}), ErrorCode::InvalidArgument);
   ExpectError(builder->Finish(), ErrorCode::InvalidArgument);
   EXPECT_EQ(state_->close_calls, 1);
 

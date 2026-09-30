@@ -135,7 +135,7 @@ class Outputs {
       smallest_.assign(key.begin(), key.end());
     }
     largest_.assign(key.begin(), key.end());
-    const Status added = builder_->Add(key, value);
+    const Status added = builder_->AddTrusted(key, value);
     if (!added.has_value()) {
       return added;
     }

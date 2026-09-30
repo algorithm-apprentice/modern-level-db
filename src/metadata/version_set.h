@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <span>
@@ -109,6 +110,10 @@ class VersionSet final {
   // next file number and last sequence. After a file operation fails, keeps
   // the previous state and returns that error from every later call.
   [[nodiscard]] Status LogAndApply(VersionEdit edit);
+  // Applies an internally generated edit through the trusted delta builder.
+  // The lock must own the database mutex. MANIFEST I/O temporarily releases
+  // it, and every return and exception path owns it again.
+  [[nodiscard]] Status LogAndApply(VersionEdit edit, std::unique_lock<std::mutex>& lock);
 
  private:
   // Leaves the version set without a current version until one is installed.
@@ -116,8 +121,13 @@ class VersionSet final {
              const InternalKeyComparator& comparator) noexcept;
 
   [[nodiscard]] Status Validate(const VersionEdit& edit) const;
-  [[nodiscard]] Status Write(const VersionEdit& edit);
+  [[nodiscard]] Status ApplyPrepared(VersionEdit edit, Version version,
+                                     std::unique_lock<std::mutex>* lock);
+  [[nodiscard]] Status Write(const VersionEdit& edit,
+                             const std::optional<std::vector<std::byte>>& new_manifest_snapshot);
   [[nodiscard]] Status InstallCurrent() const;
+  void ReserveInstall();
+  void InstallPrepared(std::shared_ptr<const Version> version) noexcept;
   void ReleaseRead(const Version& version) noexcept;
   void Install(std::shared_ptr<const Version> version);
 

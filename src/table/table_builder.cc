@@ -57,6 +57,22 @@ Status TableBuilder::Add(ByteView key, ByteView value) {
     Record(std::unexpected(Error::InvalidArgument("table keys must strictly increase")));
     return FirstError();
   }
+  return AddValid(key, value);
+}
+
+Status TableBuilder::AddTrusted(ByteView key, ByteView value) {
+  if (finished_) {
+    return std::unexpected(Error::InvalidArgument("table builder is finished"));
+  }
+  if (first_error_.has_value()) {
+    return FirstError();
+  }
+  assert(ParseInternalKey(key).has_value());
+  assert(entry_count_ == 0 || comparator_->CompareTrusted(key, last_key_) > 0);
+  return AddValid(key, value);
+}
+
+Status TableBuilder::AddValid(ByteView key, ByteView value) {
   if (filter_block_.has_value()) {
     if (!Record(filter_block_->AddKey(key.first(key.size() - InternalKeyTrailerSize)))) {
       return FirstError();

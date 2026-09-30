@@ -52,6 +52,12 @@ class VersionBuilder final {
   // in a level above 0 overlap.
   [[nodiscard]] Result<Version> Build() const;
 
+  // Applies one internally generated edit by linearly merging its small
+  // per-level delta with the ordered base. The edit must delete live files,
+  // add fresh valid files, and preserve non-overlap above level 0.
+  [[nodiscard]] static Version BuildTrusted(const InternalKeyComparator& comparator,
+                                            const Version& base, const VersionEdit& edit);
+
  private:
   [[nodiscard]] bool IsLive(std::uint64_t number) const;
 
