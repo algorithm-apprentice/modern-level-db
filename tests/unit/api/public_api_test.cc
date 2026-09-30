@@ -35,9 +35,26 @@ static_assert(static_cast<int>(Compression::Zstd) == 2);
 
 TEST(PublicOptionsTest, DefaultsToMmapReadsAndSnappyCompression) {
   const Options options;
+  EXPECT_TRUE(options.sync_wal_creation);
   EXPECT_TRUE(options.allow_mmap_reads);
   EXPECT_EQ(options.compression, Compression::Snappy);
   EXPECT_EQ(options.zstd_compression_level, 1);
+}
+
+TEST(PublicOptionsTest, PreservesTheLegacyAggregateMemberOrder) {
+  const Options options{nullptr,           true, false, 123U, 456U, 789U, false, 1024U, 8U, 12U,
+                        Compression::Zstd, -3};
+
+  EXPECT_EQ(options.write_buffer_size, 123U);
+  EXPECT_EQ(options.max_file_size, 456U);
+  EXPECT_EQ(options.max_open_files, 789U);
+  EXPECT_FALSE(options.allow_mmap_reads);
+  EXPECT_EQ(options.block_size, 1024U);
+  EXPECT_EQ(options.block_restart_interval, 8U);
+  EXPECT_EQ(options.bloom_bits_per_key, 12U);
+  EXPECT_EQ(options.compression, Compression::Zstd);
+  EXPECT_EQ(options.zstd_compression_level, -3);
+  EXPECT_TRUE(options.sync_wal_creation);
 }
 
 TEST(PublicWriteBatchTest, OwnsCopiesAppendsAndClearsOperations) {

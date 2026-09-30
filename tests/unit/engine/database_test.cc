@@ -425,6 +425,7 @@ TEST(DatabaseOptionsTest, ClipsOptionsToLevelDbsRanges) {
   EXPECT_EQ(high.table_options.block_size, std::size_t{4} << 20U);
 
   const DatabaseEngineOptions defaults = SanitizeOptions(DatabaseEngineOptions());
+  EXPECT_TRUE(defaults.sync_wal_creation);
   EXPECT_EQ(defaults.max_open_files, 1000U);
   EXPECT_EQ(defaults.write_buffer_size, std::size_t{4} << 20U);
   EXPECT_EQ(defaults.max_file_size, std::uint64_t{2} << 20U);
@@ -546,6 +547,24 @@ TEST_F(DatabaseTest, SwitchesToASyncedNewLogWhenTheMemtableFills) {
   EXPECT_EQ(Get(*database, "b"), "1");
 }
 
+TEST_F(DatabaseTest, CanSwitchLogsWithoutTheWalCreationBarrier) {
+  options_.sync_wal_creation = false;
+  const auto database = Open();
+  const std::uint64_t old_log = Numbers(FileType::Log).back();
+  Fill(*database, "a");
+
+  const std::size_t start = file_system_.operations().size();
+  ASSERT_TRUE(Put(*database, "b", "1").has_value());
+  const std::vector<std::string> operations = OperationsSince(start);
+  ASSERT_GE(operations.size(), 3U);
+  const std::string new_log = operations[0].substr(std::string("open_writable ").size());
+  EXPECT_EQ(operations[0], "open_writable " + new_log);
+  EXPECT_EQ(operations[1], "close " + Numbered(old_log, ".log"));
+  EXPECT_EQ(operations[2], "append " + new_log);
+  EXPECT_EQ(std::ranges::count(operations, "sync_directory db"), 0);
+  EXPECT_EQ(executor_.RunAll(), 1);
+}
+
 TEST_F(DatabaseTest, SchedulesTheNextFlushWhenTheMemtableSwitchesDuringCleanup) {
   const auto database = Open();
   const std::uint64_t first_log = Numbers(FileType::Log).back();
@@ -634,6 +653,7 @@ TEST_F(DatabaseTest, ReturnsTheErrorOfANewLogThatCannotBeCreated) {
 
   // Nothing stops later writes, which switch the log.
   ASSERT_TRUE(Put(*database, "b", "1").has_value());
+  EXPECT_EQ(Numbers(FileType::Log), (std::vector<std::uint64_t>{2U, 4U, 5U}));
   EXPECT_EQ(executor_.queued(), 1U);
   EXPECT_EQ(Get(*database, "b"), "1");
   EXPECT_EQ(Get(*database, "a"), Large());
@@ -950,6 +970,7 @@ TEST_F(DatabaseTest, SkipsBackgroundWorkAfterAnError) {
 
 TEST_F(DatabaseTest, StopsWritesAfterAFailedCommit) {
   const auto database = Open();
+  const SequenceNumber before = database->GetSnapshot();
   FailInOperations(0);
 
   const Status failed = Put(*database, "a", "1");
@@ -959,12 +980,17 @@ TEST_F(DatabaseTest, StopsWritesAfterAFailedCommit) {
   ASSERT_FALSE(later.has_value());
   EXPECT_EQ(later.error().message(), "injected failure");
   EXPECT_EQ(Get(*database, "a"), "<none>");
+  const SequenceNumber after = database->GetSnapshot();
+  EXPECT_EQ(after, before);
+  database->ReleaseSnapshot(before);
+  database->ReleaseSnapshot(after);
   EXPECT_FALSE(database->FlushMemTable().has_value());
 }
 
 TEST_F(DatabaseTest, StopsWritesAfterAFailedSync) {
   const auto database = Open();
   ASSERT_TRUE(Put(*database, "a", "1").has_value());
+  const SequenceNumber before = database->GetSnapshot();
   // A write appends its record twice and flushes it before it syncs.
   FailInOperations(3);
 
@@ -973,6 +999,10 @@ TEST_F(DatabaseTest, StopsWritesAfterAFailedSync) {
   EXPECT_EQ(failed.error().message(), "injected failure");
   EXPECT_FALSE(Put(*database, "c", "1").has_value());
   EXPECT_EQ(Get(*database, "a"), "1");
+  const SequenceNumber after = database->GetSnapshot();
+  EXPECT_EQ(after, before);
+  database->ReleaseSnapshot(before);
+  database->ReleaseSnapshot(after);
 }
 
 TEST_F(DatabaseTest, StopsWritesAfterACommitThrows) {

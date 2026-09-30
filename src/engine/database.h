@@ -44,6 +44,7 @@ struct DatabaseEngineOptions {
   const Comparator* comparator = &BytewiseComparator();
   bool create_if_missing = false;
   bool error_if_exists = false;
+  bool sync_wal_creation = true;
   // The memtable switches to a new one once it uses more than this.
   std::size_t write_buffer_size = std::size_t{4} << 20U;
   // Compaction splits its outputs at this size.
@@ -178,6 +179,7 @@ class DatabaseEngine final {
 
   std::size_t write_buffer_size_;
   std::uint64_t max_file_size_;
+  bool sync_wal_creation_;
   TableBuilderOptions table_options_;
   std::filesystem::path directory_;
   FileSystem* file_system_;
