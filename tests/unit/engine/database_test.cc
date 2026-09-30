@@ -312,7 +312,8 @@ class DatabaseTest : public testing::Test {
   void Cycle(DatabaseEngine& database) {
     ASSERT_TRUE(Put(database, "z", "1").has_value());
     Fill(database, "a");
-    ASSERT_TRUE(database.Write(EncodedWriteBatch(), false).has_value());
+    EncodedWriteBatch empty;
+    ASSERT_TRUE(database.Write(empty, false).has_value());
     ASSERT_TRUE(executor_.RunOne());
   }
 
@@ -472,7 +473,8 @@ TEST_F(DatabaseTest, WritesAndReadsValuesAndDeletions) {
 
   // An empty batch takes no sequence.
   const SequenceNumber before = database->GetSnapshot();
-  ASSERT_TRUE(database->Write(EncodedWriteBatch(), false).has_value());
+  EncodedWriteBatch empty;
+  ASSERT_TRUE(database->Write(empty, false).has_value());
   const SequenceNumber after = database->GetSnapshot();
   EXPECT_EQ(after, before);
   EXPECT_EQ(before, 4U);

@@ -162,6 +162,18 @@ Status Database::Write(const WriteBatch& batch, const WriteOptions& options) {
   if (batch.impl_ == nullptr) {
     return std::unexpected(Error::InvalidArgument("the write batch was moved from"));
   }
+  EncodedWriteBatch copy = batch.impl_->batch();
+  return state->engine().Write(copy, options.sync);
+}
+
+Status Database::WriteExclusive(WriteBatch& batch, const WriteOptions& options) {
+  detail::DatabaseState* const state = state_.get();
+  if (state == nullptr) {
+    return std::unexpected(MovedFromDatabase("WriteExclusive"));
+  }
+  if (batch.impl_ == nullptr) {
+    return std::unexpected(Error::InvalidArgument("the write batch was moved from"));
+  }
   return state->engine().Write(batch.impl_->batch(), options.sync);
 }
 

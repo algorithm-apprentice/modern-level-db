@@ -142,6 +142,29 @@ TEST(WriteBatchReaderTest, IteratesBorrowedEntriesWithAssignedSequences) {
   EXPECT_FALSE(reader.Next().has_value());
 }
 
+TEST(WriteBatchReaderTest, TrustedReaderUsesAnOwnedBatchWithoutRevalidation) {
+  EncodedWriteBatch batch;
+  ASSERT_TRUE(batch.SetSequence(77).has_value());
+  ASSERT_TRUE(batch.Put(AsBytes("alpha"), AsBytes("one")).has_value());
+  ASSERT_TRUE(batch.Delete(AsBytes("beta")).has_value());
+
+  WriteBatchReader reader = WriteBatchReader::OpenTrusted(batch);
+
+  EXPECT_EQ(reader.sequence(), 77U);
+  EXPECT_EQ(reader.count(), 2U);
+  const auto first = reader.Next();
+  const auto second = reader.Next();
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+  EXPECT_EQ(AsStringView(first->key), "alpha");
+  EXPECT_EQ(AsStringView(first->value), "one");
+  EXPECT_EQ(first->sequence, 77U);
+  EXPECT_EQ(AsStringView(second->key), "beta");
+  EXPECT_EQ(second->kind, ValueKind::Deletion);
+  EXPECT_EQ(second->sequence, 78U);
+  EXPECT_FALSE(reader.Next().has_value());
+}
+
 TEST(WriteBatchTest, AppendPreservesDestinationSequenceAndSource) {
   EncodedWriteBatch destination;
   ASSERT_TRUE(destination.SetSequence(100).has_value());

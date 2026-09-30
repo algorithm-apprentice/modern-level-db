@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <vector>
+#include <string>
 
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
@@ -21,9 +21,13 @@ struct WriteBatchEntry {
   ByteView value;
 };
 
+class EncodedWriteBatch;
+
 class WriteBatchReader final {
  public:
   [[nodiscard]] static Result<WriteBatchReader> Open(ByteView encoded);
+  // Requires an owned batch whose private encoding invariant holds.
+  [[nodiscard]] static WriteBatchReader OpenTrusted(const EncodedWriteBatch& batch) noexcept;
 
   WriteBatchReader(const WriteBatchReader&) = delete;
   WriteBatchReader& operator=(const WriteBatchReader&) = delete;
@@ -63,13 +67,14 @@ class EncodedWriteBatch final {
 
   [[nodiscard]] SequenceNumber sequence() const noexcept;
   [[nodiscard]] std::uint32_t count() const noexcept;
-  [[nodiscard]] ByteView encoded() const noexcept { return encoded_; }
+  [[nodiscard]] ByteView encoded() const noexcept { return AsBytes(encoded_); }
 
  private:
+  [[nodiscard]] Status AppendRecord(ValueKind kind, ByteView key, ByteView value);
   [[nodiscard]] Status ValidateAdditionalRecords(std::uint32_t additional) const;
   void SetCount(std::uint32_t count) noexcept;
 
-  std::vector<std::byte> encoded_;
+  std::string encoded_;
 };
 
 }  // namespace modern_leveldb

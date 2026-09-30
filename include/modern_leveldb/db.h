@@ -32,7 +32,11 @@ class Database final {
 
   [[nodiscard]] Status Put(ByteView key, ByteView value, const WriteOptions& options = {});
   [[nodiscard]] Status Delete(ByteView key, const WriteOptions& options = {});
+  // Copies the batch, so the caller may share or inspect it during the call.
   [[nodiscard]] Status Write(const WriteBatch& batch, const WriteOptions& options = {});
+  // Exclusively borrows the batch until this call returns. No thread may read,
+  // copy, mutate, or submit it concurrently; its public contents are unchanged.
+  [[nodiscard]] Status WriteExclusive(WriteBatch& batch, const WriteOptions& options = {});
   [[nodiscard]] Result<bool> Get(ByteView key, std::vector<std::byte>& value,
                                  const ReadOptions& options = {});
   [[nodiscard]] Result<std::optional<std::vector<std::byte>>> Get(ByteView key,

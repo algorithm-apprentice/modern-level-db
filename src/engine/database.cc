@@ -163,11 +163,6 @@ DatabaseEngine::DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options,
       table_cache_(*file_system_, directory_, comparator_,
                    ReadTableOptions(options, owned_block_cache_.get()),
                    options.max_open_files - NonTableFiles),
-      write_queue_([this](std::unique_lock<std::mutex>& lock,
-                          bool force) { return MakeRoomForWrite(lock, force); },
-                   [this](std::unique_lock<std::mutex>& lock, EncodedWriteBatch& group, bool sync) {
-                     return CommitWrite(lock, group, sync);
-                   }),
       owned_executor_(OwnedExecutor(options)),
       executor_(options.executor != nullptr ? options.executor : owned_executor_.get()) {}
 
@@ -211,9 +206,16 @@ Status DatabaseEngine::Recover(const DatabaseEngineOptions& options) {
   return {};
 }
 
-Status DatabaseEngine::Write(const EncodedWriteBatch& batch, bool sync) {
+Status DatabaseEngine::Write(EncodedWriteBatch& batch, bool sync) {
   std::unique_lock lock(mutex_);
-  return write_queue_.Write(lock, batch, sync);
+  return write_queue_.Write(
+      lock, batch, sync,
+      [this](std::unique_lock<std::mutex>& owned_lock, bool force) {
+        return MakeRoomForWrite(owned_lock, force);
+      },
+      [this](std::unique_lock<std::mutex>& owned_lock, EncodedWriteBatch& group, bool group_sync) {
+        return CommitWrite(owned_lock, group, group_sync);
+      });
 }
 
 Status DatabaseEngine::MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool force) {
@@ -380,7 +382,10 @@ void DatabaseEngine::ReleaseSnapshot(SequenceNumber snapshot) {
 
 Status DatabaseEngine::FlushMemTable() {
   std::unique_lock lock(mutex_);
-  const Status forced = write_queue_.Force(lock);
+  auto prepare = [this](std::unique_lock<std::mutex>& owned_lock, bool force) {
+    return MakeRoomForWrite(owned_lock, force);
+  };
+  const Status forced = write_queue_.Force(lock, prepare);
   if (!forced.has_value()) {
     return forced;
   }

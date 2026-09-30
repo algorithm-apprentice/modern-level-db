@@ -49,7 +49,7 @@ EncodedWriteBatch Batch(std::initializer_list<std::pair<std::string_view, std::s
 // The keys of a batch's entries, joined by commas.
 std::string Keys(const EncodedWriteBatch& batch) {
   std::string keys;
-  WriteBatchReader reader = WriteBatchReader::Open(batch.encoded()).value();
+  WriteBatchReader reader = WriteBatchReader::OpenTrusted(batch);
   while (const std::optional<WriteBatchEntry> entry = reader.Next()) {
     if (!keys.empty()) {
       keys += ",";
@@ -188,17 +188,6 @@ TEST_F(CommitGroupTest, InsertsNothingAfterALogFailure) {
 // or throw. Commits record their groups.
 class QueueHarness {
  public:
-  QueueHarness()
-      : queue_(
-            [this](std::unique_lock<std::mutex>& lock, bool force) {
-              forced_.push_back(force);
-              return Step(lock, prepare_);
-            },
-            [this](std::unique_lock<std::mutex>& lock, EncodedWriteBatch& group, bool sync) {
-              groups_.push_back(Keys(group) + (sync ? " (sync)" : ""));
-              return Step(lock, commit_);
-            }) {}
-
   struct Script {
     // Steps to run before this one fails, waits, or throws; zero means the next.
     std::optional<int> fail_at;
@@ -228,11 +217,20 @@ class QueueHarness {
     return forced_;
   }
 
+  std::map<std::string, SequenceNumber> sequences() {
+    std::lock_guard lock(mutex_);
+    return sequences_;
+  }
+
   // Starts a thread that queues a forced writer and records its status.
   void StartForce(std::string name) {
     threads_.emplace_back([this, name = std::move(name)] {
       std::unique_lock lock(mutex_);
-      const Status status = queue_.Force(lock);
+      const Status status =
+          queue_.Force(lock, [this](std::unique_lock<std::mutex>& owned_lock, bool force) {
+            forced_.push_back(force);
+            return Step(owned_lock, prepare_);
+          });
       results_[name] = status.has_value() ? "ok" : std::string(status.error().message());
     });
   }
@@ -246,13 +244,24 @@ class QueueHarness {
       std::string result;
       try {
         std::unique_lock lock(mutex_);
-        const Status status = queue_.Write(lock, batch, sync);
+        const Status status = queue_.Write(
+            lock, batch, sync,
+            [this](std::unique_lock<std::mutex>& owned_lock, bool force) {
+              forced_.push_back(force);
+              return Step(owned_lock, prepare_);
+            },
+            [this](std::unique_lock<std::mutex>& owned_lock, EncodedWriteBatch& group,
+                   bool group_sync) {
+              groups_.push_back(Keys(group) + (group_sync ? " (sync)" : ""));
+              return Step(owned_lock, commit_);
+            });
         result = status.has_value() ? "ok" : std::string(status.error().message());
       } catch (const std::runtime_error& error) {
         result = std::string("threw ") + error.what();
       }
       std::lock_guard lock(mutex_);
       results_[key] = result;
+      sequences_[key] = batch.sequence();
     });
   }
 
@@ -317,6 +326,7 @@ class QueueHarness {
   std::vector<std::string> groups_;
   std::vector<bool> forced_;
   std::map<std::string, std::string> results_;
+  std::map<std::string, SequenceNumber> sequences_;
   std::vector<std::thread> threads_;
   WriteQueue queue_;
 };
@@ -328,6 +338,70 @@ TEST(WriteQueueTest, CommitsASingleWriterAlone) {
   EXPECT_EQ(harness.groups(), (std::vector<std::string>{"w1 (sync)"}));
   std::unique_lock lock(harness.mutex());
   EXPECT_EQ(harness.queue().size(), 0U);
+}
+
+TEST(WriteQueueTest, UsesTheSingleLeaderDirectlyAndRestoresItsSequence) {
+  WriteQueue queue;
+  std::mutex mutex;
+  EncodedWriteBatch batch = Batch({{"w1", "v"}});
+  ASSERT_TRUE(batch.SetSequence(41).has_value());
+  const std::byte* const storage = batch.encoded().data();
+  bool committed = false;
+  std::unique_lock lock(mutex);
+
+  const Status status = queue.Write(
+      lock, batch, false, [](std::unique_lock<std::mutex>&, bool) -> Status { return {}; },
+      [&](std::unique_lock<std::mutex>&, EncodedWriteBatch& group, bool) -> Status {
+        EXPECT_EQ(group.encoded().data(), storage);
+        EXPECT_TRUE(group.SetSequence(7).has_value());
+        committed = true;
+        return {};
+      });
+
+  EXPECT_TRUE(status.has_value());
+  EXPECT_TRUE(committed);
+  EXPECT_EQ(batch.sequence(), 41U);
+}
+
+TEST(WriteQueueTest, RestoresTheSingleLeaderSequenceAfterACommitError) {
+  WriteQueue queue;
+  std::mutex mutex;
+  EncodedWriteBatch batch = Batch({{"w1", "v"}});
+  ASSERT_TRUE(batch.SetSequence(42).has_value());
+  std::unique_lock lock(mutex);
+
+  const Status status = queue.Write(
+      lock, batch, false, [](std::unique_lock<std::mutex>&, bool) -> Status { return {}; },
+      [](std::unique_lock<std::mutex>&, EncodedWriteBatch& group, bool) -> Status {
+        EXPECT_TRUE(group.SetSequence(8).has_value());
+        return std::unexpected(Error::Io("commit failed"));
+      });
+
+  ASSERT_FALSE(status.has_value());
+  EXPECT_EQ(status.error().message(), "commit failed");
+  EXPECT_EQ(batch.sequence(), 42U);
+}
+
+TEST(WriteQueueTest, RestoresTheSingleLeaderSequenceAndLockAfterAnException) {
+  WriteQueue queue;
+  std::mutex mutex;
+  EncodedWriteBatch batch = Batch({{"w1", "v"}});
+  ASSERT_TRUE(batch.SetSequence(43).has_value());
+  std::unique_lock lock(mutex);
+
+  EXPECT_THROW(
+      static_cast<void>(queue.Write(
+          lock, batch, false, [](std::unique_lock<std::mutex>&, bool) -> Status { return {}; },
+          [](std::unique_lock<std::mutex>& owned_lock, EncodedWriteBatch& group, bool) -> Status {
+            EXPECT_TRUE(group.SetSequence(9).has_value());
+            owned_lock.unlock();
+            throw std::runtime_error("commit threw");
+          })),
+      std::runtime_error);
+
+  EXPECT_TRUE(lock.owns_lock());
+  EXPECT_EQ(batch.sequence(), 43U);
+  EXPECT_EQ(queue.size(), 0U);
 }
 
 TEST(WriteQueueTest, GroupsWritersThatQueueWhileTheFrontPrepares) {
@@ -441,6 +515,8 @@ TEST(WriteQueueTest, GroupsBatchesWhateverSequencesTheyHold) {
 
   EXPECT_EQ(harness.Join(), (std::map<std::string, std::string>{{"w1", "ok"}, {"w2", "ok"}}));
   EXPECT_EQ(harness.groups(), (std::vector<std::string>{"w1,w2"}));
+  EXPECT_EQ(harness.sequences(), (std::map<std::string, SequenceNumber>{
+                                     {"w1", MaxSequenceNumber}, {"w2", MaxSequenceNumber}}));
 }
 
 TEST(WriteQueueTest, LeavesAWriterThatArrivesDuringACommitForTheNextGroup) {
@@ -532,22 +608,22 @@ TEST(WriteQueueTest, ReturnsTheErrorOfAForcedPreparation) {
 TEST(WriteQueueTest, CommitsEveryWriteOnceInOrder) {
   std::mutex mutex;
   std::vector<std::string> committed;
-  WriteQueue queue(
-      [](std::unique_lock<std::mutex>&, bool) -> Status { return {}; },
-      [&](std::unique_lock<std::mutex>& lock, EncodedWriteBatch& group, bool) -> Status {
-        const std::string keys = Keys(group);
-        // Let writers queue while the lock is released.
-        lock.unlock();
-        std::this_thread::yield();
-        lock.lock();
-        std::size_t start = 0;
-        while (start <= keys.size()) {
-          const std::size_t end = std::min(keys.find(',', start), keys.size());
-          committed.push_back(keys.substr(start, end - start));
-          start = end + 1;
-        }
-        return {};
-      });
+  WriteQueue queue;
+  auto prepare = [](std::unique_lock<std::mutex>&, bool) -> Status { return {}; };
+  auto commit = [&](std::unique_lock<std::mutex>& lock, EncodedWriteBatch& group, bool) -> Status {
+    const std::string keys = Keys(group);
+    // Let writers queue while the lock is released.
+    lock.unlock();
+    std::this_thread::yield();
+    lock.lock();
+    std::size_t start = 0;
+    while (start <= keys.size()) {
+      const std::size_t end = std::min(keys.find(',', start), keys.size());
+      committed.push_back(keys.substr(start, end - start));
+      start = end + 1;
+    }
+    return {};
+  };
   constexpr int Threads = 8;
   constexpr int Writes = 200;
   std::vector<std::thread> threads;
@@ -555,9 +631,9 @@ TEST(WriteQueueTest, CommitsEveryWriteOnceInOrder) {
     threads.emplace_back([&, thread] {
       for (int write = 0; write < Writes; ++write) {
         const std::string key = std::to_string(thread) + ":" + std::to_string(write);
-        const EncodedWriteBatch batch = Batch({{key, "v"}});
+        EncodedWriteBatch batch = Batch({{key, "v"}});
         std::unique_lock lock(mutex);
-        EXPECT_TRUE(queue.Write(lock, batch, write % 10 == 0).has_value());
+        EXPECT_TRUE(queue.Write(lock, batch, write % 10 == 0, prepare, commit).has_value());
       }
     });
   }
