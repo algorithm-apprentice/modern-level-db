@@ -539,6 +539,7 @@ integrated baseline is complete.
 - [ADR-0050 opt-in POSIX mmap reads](0050-posix-mmap-table-reads.md)
 - [ADR-0051 trusted comparison outcome](0051-trusted-internal-key-comparison.md)
 - [ADR-0052 superseded gap decomposition](0052-cross-engine-read-gap-decomposition.md)
+- [ADR-0058 post-parity 4 KiB fixed-cost alignment](0058-4k-hot-set-fixed-cost-alignment.md)
 - [Pinned LevelDB `DBImpl::Get`](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/db_impl.cc)
 - [Pinned LevelDB `Version::Get`](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/version_set.cc)
 - [Pinned LevelDB table lookup](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/table/table.cc)
