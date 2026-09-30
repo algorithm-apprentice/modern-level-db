@@ -83,6 +83,30 @@ function(modern_leveldb_add_reference)
     TARGET leveldb PROPERTY INTERFACE_LINK_LIBRARIES
     "${MODERN_LEVELDB_SNAPPY_TARGET};${MODERN_LEVELDB_ZSTD_TARGET};Threads::Threads"
   )
+  get_target_property(reference_link_libraries leveldb LINK_LIBRARIES)
+  list(FIND reference_link_libraries "${MODERN_LEVELDB_CRC32C_TARGET}" reference_crc32c_index)
+  if(reference_crc32c_index EQUAL -1)
+    set(reference_crc32c_linked "false")
+  else()
+    set(reference_crc32c_linked "true")
+  endif()
+  if(HAVE_CRC32C)
+    set(reference_have_crc32c "true")
+  else()
+    set(reference_have_crc32c "false")
+  endif()
+  set(reference_hardware_patch_sha256 "not_applicable")
+  if(DEFINED MODERN_LEVELDB_REFERENCE_HARDWARE_PATCH_SHA256)
+    string(LENGTH "${MODERN_LEVELDB_REFERENCE_HARDWARE_PATCH_SHA256}" patch_sha256_length)
+    if(NOT patch_sha256_length EQUAL 64 OR
+       NOT MODERN_LEVELDB_REFERENCE_HARDWARE_PATCH_SHA256 MATCHES "^[0-9a-f]+$")
+      message(FATAL_ERROR "Reference hardware patch SHA-256 must contain 64 lowercase hex digits")
+    endif()
+    set(
+      reference_hardware_patch_sha256
+      "${MODERN_LEVELDB_REFERENCE_HARDWARE_PATCH_SHA256}"
+    )
+  endif()
   # Keep reference interfaces compatible with RTTI-enabled tests and UBSan vptr checks.
   target_compile_options(
     leveldb PRIVATE "$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-frtti>"
@@ -90,6 +114,11 @@ function(modern_leveldb_add_reference)
   set(
     MODERN_LEVELDB_REFERENCE_SOURCE_DIR
     "${modern_leveldb_reference_SOURCE_DIR}"
+    PARENT_SCOPE
+  )
+  set(
+    MODERN_LEVELDB_REFERENCE_BINARY_DIR
+    "${modern_leveldb_reference_BINARY_DIR}"
     PARENT_SCOPE
   )
   set(
@@ -102,4 +131,12 @@ function(modern_leveldb_add_reference)
     "${reference_control_patch_sha256}"
     PARENT_SCOPE
   )
+  set(MODERN_LEVELDB_REFERENCE_HAVE_CRC32C "${reference_have_crc32c}" PARENT_SCOPE)
+  set(MODERN_LEVELDB_REFERENCE_CRC32C_LINKED "${reference_crc32c_linked}" PARENT_SCOPE)
+  set(
+    MODERN_LEVELDB_REFERENCE_HARDWARE_PATCH_SHA256
+    "${reference_hardware_patch_sha256}"
+    PARENT_SCOPE
+  )
+  set(MODERN_LEVELDB_REFERENCE_HARDWARE_CRC "disabled" PARENT_SCOPE)
 endfunction()

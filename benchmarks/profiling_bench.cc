@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <locale>
 #include <memory>
 #include <numeric>
@@ -147,6 +148,8 @@ struct Arguments {
   std::filesystem::path diagnostic_report;
   std::string modern_file_access = "default";
   std::string modern_result_ownership = "reusable";
+  std::string modern_write_batch_ownership = "copying";
+  std::string modern_wal_creation = "durable";
   std::string reference_file_access = "default";
   bool profile = false;
   bool list = false;
@@ -155,6 +158,8 @@ struct Arguments {
   bool check_mutations = false;
   bool modern_file_access_set = false;
   bool modern_result_ownership_set = false;
+  bool modern_write_batch_ownership_set = false;
+  bool modern_wal_creation_set = false;
   bool reference_file_access_set = false;
   std::vector<char*> framework;
 };
@@ -166,7 +171,8 @@ Arguments ParseArguments(int argc, char** argv) {
     const std::string_view option = argv[index];
     if (option == "--case" || option == "--database" || option == "--completion-report" ||
         option == "--diagnostic-report" || option == "--modern-file-access" ||
-        option == "--modern-result-ownership" || option == "--reference-file-access") {
+        option == "--modern-result-ownership" || option == "--modern-write-batch-ownership" ||
+        option == "--modern-wal-creation" || option == "--reference-file-access") {
       Require(index + 1 < argc, "performance option needs a value");
       const char* value = argv[++index];
       if (option == "--case") {
@@ -189,6 +195,14 @@ Arguments ParseArguments(int argc, char** argv) {
         Require(!args.modern_result_ownership_set, "duplicate --modern-result-ownership");
         args.modern_result_ownership = value;
         args.modern_result_ownership_set = true;
+      } else if (option == "--modern-write-batch-ownership") {
+        Require(!args.modern_write_batch_ownership_set, "duplicate --modern-write-batch-ownership");
+        args.modern_write_batch_ownership = value;
+        args.modern_write_batch_ownership_set = true;
+      } else if (option == "--modern-wal-creation") {
+        Require(!args.modern_wal_creation_set, "duplicate --modern-wal-creation");
+        args.modern_wal_creation = value;
+        args.modern_wal_creation_set = true;
       } else {
         Require(!args.reference_file_access_set, "duplicate --reference-file-access");
         args.reference_file_access = value;
@@ -255,6 +269,8 @@ void WriteJsonString(std::ostream& output, std::string_view value) {
 
 bool UseModernMmapReads = true;
 bool UseModernOwningGet = false;
+bool UseModernExclusiveWriteBatch = false;
+bool UseModernDurableWalCreation = true;
 
 void ConfigureModernFileAccess(const Case& selected, const Arguments& args) {
   Require(args.modern_file_access == "default" || args.modern_file_access == "pread",
@@ -285,6 +301,31 @@ void ConfigureModernResultOwnership(const Case& selected, const Arguments& args)
             "read diagnostics require reusable Modern result ownership");
     UseModernOwningGet = true;
   }
+}
+
+void ConfigureModernWriteBatchOwnership(const Case& selected, const Arguments& args) {
+  Require(args.modern_write_batch_ownership == "copying" ||
+              args.modern_write_batch_ownership == "exclusive",
+          "--modern-write-batch-ownership must be copying or exclusive");
+  const bool applicable = selected.engine == "modern" && selected.workload == "writebatch";
+  if (!applicable) {
+    Require(!args.modern_write_batch_ownership_set,
+            "--modern-write-batch-ownership is valid only for modern/writebatch/65536");
+    return;
+  }
+  UseModernExclusiveWriteBatch = args.modern_write_batch_ownership == "exclusive";
+}
+
+void ConfigureModernWalCreation(const Case& selected, const Arguments& args) {
+  Require(args.modern_wal_creation == "durable" || args.modern_wal_creation == "leveldb",
+          "--modern-wal-creation must be durable or leveldb");
+  const bool applicable = selected.engine == "modern" && IsMutable(selected);
+  if (!applicable) {
+    Require(!args.modern_wal_creation_set,
+            "--modern-wal-creation is valid only for Modern mutable cases");
+    return;
+  }
+  UseModernDurableWalCreation = args.modern_wal_creation == "durable";
 }
 
 void ConfigureReferenceFileAccess(const Case& selected, const Arguments& args) {
@@ -399,6 +440,49 @@ struct Corpus {
   std::array<std::uint32_t, 4> fingerprints{};
 };
 
+struct ResidualFiles {
+  std::uint64_t wal_files = 0;
+  std::uint64_t wal_bytes = 0;
+  std::uint64_t table_files = 0;
+  std::uint64_t table_bytes = 0;
+  std::uint64_t manifest_files = 0;
+  std::uint64_t manifest_bytes = 0;
+  std::uint64_t regular_files = 0;
+  std::uint64_t regular_bytes = 0;
+};
+
+void AddResidual(std::uint64_t size, std::uint64_t& files, std::uint64_t& bytes) {
+  Require(files != std::numeric_limits<std::uint64_t>::max(),
+          "residual file count is not representable");
+  Require(size <= std::numeric_limits<std::uint64_t>::max() - bytes,
+          "residual file bytes are not representable");
+  ++files;
+  bytes += size;
+}
+
+ResidualFiles DescribeResidualFiles(const std::filesystem::path& path) {
+  ResidualFiles result;
+  for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(path)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const auto raw_size = entry.file_size();
+    const auto size = static_cast<std::uint64_t>(raw_size);
+    Require(static_cast<std::uintmax_t>(size) == raw_size,
+            "residual file size is not representable");
+    AddResidual(size, result.regular_files, result.regular_bytes);
+    const std::string name = entry.path().filename().string();
+    if (name.ends_with(".log")) {
+      AddResidual(size, result.wal_files, result.wal_bytes);
+    } else if (name.ends_with(".ldb") || name.ends_with(".sst")) {
+      AddResidual(size, result.table_files, result.table_bytes);
+    } else if (name.starts_with("MANIFEST-")) {
+      AddResidual(size, result.manifest_files, result.manifest_bytes);
+    }
+  }
+  return result;
+}
+
 class Modern final {
  public:
   using Cursor = Iterator;
@@ -426,7 +510,13 @@ class Modern final {
   static void Add(Batch& batch, std::string_view key, std::string_view value) {
     Check(batch.Put(AsBytes(key), AsBytes(value)));
   }
-  void Commit(Batch& batch) { Check(database_.Write(batch)); }
+  void Commit(Batch& batch) {
+    if (UseModernExclusiveWriteBatch) {
+      Check(database_.WriteExclusive(batch));
+    } else {
+      Check(database_.Write(batch));
+    }
+  }
   void ReadExpected(std::string_view key, std::string_view expected) {
     const bool found = Take(database_.Get(AsBytes(key), read_value_));
     Require(found && AsStringView(read_value_) == expected,
@@ -451,6 +541,7 @@ class Modern final {
     options.block_size = 4096;
     options.block_restart_interval = 16;
     options.compression = Compression::Snappy;
+    options.sync_wal_creation = UseModernDurableWalCreation;
     return Take(Database::Open(options, path));
   }
   Database database_;
@@ -741,24 +832,39 @@ class Fixture final {
         std::pair{"compiler", Compiler},
         std::pair{"c_flags", CFlags},
         std::pair{"cxx_flags", CxxFlags},
+        std::pair{"exe_linker_flags", ExeLinkerFlags},
+        std::pair{"static_linker_flags", StaticLinkerFlags},
+        std::pair{"cmake_generator", CmakeGenerator},
+        std::pair{"target_architecture", TargetArchitecture},
         std::pair{"benchmark_requested_revision",
                   std::string_view{"192ef10025eb2c4cdd392bc502f0c852196baa48"}},
         std::pair{"benchmark_source_override", BenchmarkOverride},
         std::pair{"reference_requested_revision",
                   std::string_view{"7ee830d02b623e8ffe0b95d59a74db1e58da04c5"}},
         std::pair{"reference_source_override", ReferenceOverride},
-        std::pair{"reference_hardware_crc", std::string_view{"disabled"}},
         std::pair{"modern_file_access", std::string_view{UseModernMmapReads ? "default" : "pread"}},
         std::pair{"modern_result_ownership", std::string_view{"reusable"}},
         std::pair{"modern_result_ownership_semantics", std::string_view{"reusable-get-v1"}},
+        std::pair{"modern_write_batch_ownership", std::string_view{"not_applicable"}},
+        std::pair{"modern_write_batch_ownership_semantics", std::string_view{"not_applicable"}},
+        std::pair{"modern_wal_creation", std::string_view{"not_applicable"}},
+        std::pair{"modern_wal_creation_semantics", std::string_view{"not_applicable"}},
         std::pair{"reference_file_access", std::string_view{"not_applicable"}},
         std::pair{"reference_pread_control_available",
                   std::string_view{MODERN_LEVELDB_REFERENCE_PREAD_CONTROL ? "true" : "false"}},
         std::pair{"reference_control_patch_sha256", ReferenceControlPatchSha256},
+        std::pair{"reference_hardware_crc", ReferenceHardwareCrc},
+        std::pair{"reference_source", ReferenceSource},
+        std::pair{"reference_binary_directory", ReferenceBinaryDirectory},
+        std::pair{"reference_have_crc32c", ReferenceHaveCrc32c},
+        std::pair{"reference_crc32c_linked", ReferenceCrc32cLinked},
+        std::pair{"reference_hardware_patch_sha256", ReferenceHardwarePatchSha256},
         std::pair{"snappy_target", SnappyTarget},
+        std::pair{"snappy_requested_revision", SnappyRequestedRevision},
         std::pair{"snappy_source", SnappySource},
         std::pair{"snappy_source_override", SnappyOverride},
         std::pair{"zstd_target", ZstdTarget},
+        std::pair{"zstd_requested_revision", ZstdRequestedRevision},
         std::pair{"zstd_source", ZstdSource},
         std::pair{"zstd_source_override", ZstdOverride},
         std::pair{"crc32c_target", Crc32cTarget},
@@ -1212,13 +1318,14 @@ class MutationFixture final {
     Reopen();
     final_crc_ = Verify();
     database_.reset();
+    residual_ = DescribeResidualFiles(path_);
   }
 
   void WriteCompletion(const std::filesystem::path& path, std::size_t invocations) const {
     Require(!std::filesystem::exists(path) && !std::filesystem::is_symlink(path),
             "completion report must not already exist");
     std::ofstream output(path);
-    output << "{\"schema_version\":2,\"case\":\"" << selected_.name
+    output << "{\"schema_version\":3,\"case\":\"" << selected_.name
            << "\",\"smoke\":" << (specification_.smoke ? "true" : "false")
            << ",\"preparations\":1,\"verifications\":" << verifications_
            << ",\"reopens\":" << reopens_ << ",\"callback_invocations\":" << invocations
@@ -1229,7 +1336,15 @@ class MutationFixture final {
            << ",\"measured_writes\":" << workload_.writes
            << ",\"write_calls\":" << workload_.iterations
            << ",\"sync_write_calls\":" << workload_.sync_calls
-           << ",\"logical_write_bytes\":" << workload_.writes * 267;
+           << ",\"logical_write_bytes\":" << workload_.writes * 267
+           << ",\"residual_wal_files\":" << residual_.wal_files
+           << ",\"residual_wal_bytes\":" << residual_.wal_bytes
+           << ",\"residual_table_files\":" << residual_.table_files
+           << ",\"residual_table_bytes\":" << residual_.table_bytes
+           << ",\"residual_manifest_files\":" << residual_.manifest_files
+           << ",\"residual_manifest_bytes\":" << residual_.manifest_bytes
+           << ",\"residual_regular_files\":" << residual_.regular_files
+           << ",\"residual_regular_bytes\":" << residual_.regular_bytes;
     constexpr std::array Names{"record_crc32c",  "insertion_crc32c",   "present_crc32c",
                                "missing_crc32c", "write_order_crc32c", "version_values_crc32c",
                                "final_crc32c"};
@@ -1291,6 +1406,7 @@ class MutationFixture final {
   std::size_t verifications_ = 0;
   std::size_t reopens_ = 0;
   std::uint32_t final_crc_ = 0;
+  ResidualFiles residual_;
 };
 
 class StatusReporter final : public benchmark::ConsoleReporter {
@@ -1313,6 +1429,40 @@ std::string_view ModernResultOwnership(const Case& selected, const Arguments& ar
   }
   if (selected.workload == "mixed50") {
     return "reusable";
+  }
+  return "not_applicable";
+}
+
+std::string_view ModernWriteBatchOwnership(const Case& selected, const Arguments& args) {
+  return selected.engine == "modern" && selected.workload == "writebatch"
+             ? std::string_view(args.modern_write_batch_ownership)
+             : "not_applicable";
+}
+
+std::string_view ModernWriteBatchOwnershipSemantics(const Case& selected, const Arguments& args) {
+  const std::string_view ownership = ModernWriteBatchOwnership(selected, args);
+  if (ownership == "copying") {
+    return "const-copy-v1";
+  }
+  if (ownership == "exclusive") {
+    return "exclusive-borrow-v1";
+  }
+  return "not_applicable";
+}
+
+std::string_view ModernWalCreation(const Case& selected, const Arguments& args) {
+  return selected.engine == "modern" && IsMutable(selected)
+             ? std::string_view(args.modern_wal_creation)
+             : "not_applicable";
+}
+
+std::string_view ModernWalCreationSemantics(const Case& selected, const Arguments& args) {
+  const std::string_view creation = ModernWalCreation(selected, args);
+  if (creation == "durable") {
+    return "file-and-directory-before-write-v1";
+  }
+  if (creation == "leveldb") {
+    return "pinned-leveldb-v1";
   }
   return "not_applicable";
 }
@@ -1344,6 +1494,10 @@ void AddContext(const Case& selected, const Arguments& args) {
   add("modern_result_ownership", ModernResultOwnership(selected, args));
   add("modern_result_ownership_semantics",
       selected.engine == "modern" ? "reusable-get-v1" : "not_applicable");
+  add("modern_write_batch_ownership", ModernWriteBatchOwnership(selected, args));
+  add("modern_write_batch_ownership_semantics", ModernWriteBatchOwnershipSemantics(selected, args));
+  add("modern_wal_creation", ModernWalCreation(selected, args));
+  add("modern_wal_creation_semantics", ModernWalCreationSemantics(selected, args));
   if (IsMutable(selected)) {
     const MutationSpec specification = MutationSpecification(selected, args.smoke);
     add("workload_family", "mutable");
@@ -1362,11 +1516,20 @@ void AddContext(const Case& selected, const Arguments& args) {
   add("compiler", Compiler);
   add("c_flags", CFlags);
   add("cxx_flags", CxxFlags);
+  add("exe_linker_flags", ExeLinkerFlags);
+  add("static_linker_flags", StaticLinkerFlags);
+  add("cmake_generator", CmakeGenerator);
+  add("target_architecture", TargetArchitecture);
   add("benchmark_requested_revision", "192ef10025eb2c4cdd392bc502f0c852196baa48");
   add("benchmark_source_override", BenchmarkOverride);
   add("reference_requested_revision", "7ee830d02b623e8ffe0b95d59a74db1e58da04c5");
   add("reference_source_override", ReferenceOverride);
-  add("reference_hardware_crc", "disabled");
+  add("reference_source", ReferenceSource);
+  add("reference_binary_directory", ReferenceBinaryDirectory);
+  add("reference_hardware_crc", ReferenceHardwareCrc);
+  add("reference_have_crc32c", ReferenceHaveCrc32c);
+  add("reference_crc32c_linked", ReferenceCrc32cLinked);
+  add("reference_hardware_patch_sha256", ReferenceHardwarePatchSha256);
   add("reference_file_access",
       selected.engine == "leveldb" ? args.reference_file_access : "not_applicable");
   add("reference_pread_control_available",
@@ -1374,9 +1537,11 @@ void AddContext(const Case& selected, const Arguments& args) {
   add("reference_control_patch_sha256", ReferenceControlPatchSha256);
   add("read_diagnostics_compiled", MODERN_LEVELDB_READ_DIAGNOSTICS ? "true" : "false");
   add("snappy_target", SnappyTarget);
+  add("snappy_requested_revision", SnappyRequestedRevision);
   add("snappy_source", SnappySource);
   add("snappy_source_override", SnappyOverride);
   add("zstd_target", ZstdTarget);
+  add("zstd_requested_revision", ZstdRequestedRevision);
   add("zstd_source", ZstdSource);
   add("zstd_source_override", ZstdOverride);
   add("crc32c_target", Crc32cTarget);
@@ -1451,6 +1616,7 @@ int Main(int argc, char** argv) {
     Require(args.case_name.empty() && args.database.empty() && args.completion.empty() &&
                 args.diagnostic_report.empty() && !args.profile && !args.smoke && !args.list &&
                 !args.help && !args.modern_file_access_set && !args.modern_result_ownership_set &&
+                !args.modern_write_batch_ownership_set && !args.modern_wal_creation_set &&
                 !args.reference_file_access_set && args.framework.size() == 1,
             "--check-mutation-stream cannot combine with other options");
     CheckMutationStreams();
@@ -1465,6 +1631,8 @@ int Main(int argc, char** argv) {
                  "--database NEW_PATH --completion-report NEW_FILE "
                  "[--modern-file-access default|pread] "
                  "[--modern-result-ownership reusable|owning] "
+                 "[--modern-write-batch-ownership copying|exclusive] "
+                 "[--modern-wal-creation durable|leveldb] "
                  "[--reference-file-access default|pread] [benchmark flags]\n"
                  "Use --list-cases to list supported cases. --profile-markers requires macOS "
                  "Apple Clang. Mutable cases use fixed work and one repetition; --smoke "
@@ -1481,6 +1649,8 @@ int Main(int argc, char** argv) {
   const Case selected = FindCase(args.case_name);
   ConfigureModernFileAccess(selected, args);
   ConfigureModernResultOwnership(selected, args);
+  ConfigureModernWriteBatchOwnership(selected, args);
+  ConfigureModernWalCreation(selected, args);
   ConfigureReferenceFileAccess(selected, args);
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
   if (!args.diagnostic_report.empty()) {

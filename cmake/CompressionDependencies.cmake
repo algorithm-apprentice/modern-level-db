@@ -25,11 +25,13 @@ macro(modern_leveldb_remove_temporary_cache_defaults)
 endmacro()
 
 function(modern_leveldb_compression_dependencies snappy_output zstd_output)
+  set(_modern_leveldb_snappy_requested_revision "external")
   if(TARGET Snappy::snappy)
     set(_modern_leveldb_snappy_target Snappy::snappy)
   elseif(TARGET snappy)
     set(_modern_leveldb_snappy_target snappy)
   else()
+    set(_modern_leveldb_snappy_requested_revision "9c28114a38866f6deeaa826db918293bc28ae410")
     set(_modern_leveldb_temporary_cache_variables)
     modern_leveldb_set_temporary_cache_default(
       BUILD_SHARED_LIBS BOOL OFF "Build shared libraries"
@@ -59,6 +61,7 @@ function(modern_leveldb_compression_dependencies snappy_output zstd_output)
     set(_modern_leveldb_snappy_target snappy)
   endif()
 
+  set(_modern_leveldb_zstd_requested_revision "external")
   foreach(
     _modern_leveldb_candidate
     IN ITEMS
@@ -74,6 +77,7 @@ function(modern_leveldb_compression_dependencies snappy_output zstd_output)
     endif()
   endforeach()
   if(NOT _modern_leveldb_zstd_target)
+    set(_modern_leveldb_zstd_requested_revision "f8745da6ff1ad1e7bab384bd1f9d742439278e99")
     get_property(
       _modern_leveldb_had_build_type
       CACHE CMAKE_BUILD_TYPE
@@ -173,6 +177,16 @@ function(modern_leveldb_compression_dependencies snappy_output zstd_output)
 
   set("${snappy_output}" "${_modern_leveldb_snappy_target}" PARENT_SCOPE)
   set("${zstd_output}" "${_modern_leveldb_zstd_target}" PARENT_SCOPE)
+  set(
+    MODERN_LEVELDB_SNAPPY_REQUESTED_REVISION
+    "${_modern_leveldb_snappy_requested_revision}"
+    PARENT_SCOPE
+  )
+  set(
+    MODERN_LEVELDB_ZSTD_REQUESTED_REVISION
+    "${_modern_leveldb_zstd_requested_revision}"
+    PARENT_SCOPE
+  )
   if(DEFINED modern_leveldb_snappy_SOURCE_DIR)
     set(
       MODERN_LEVELDB_SNAPPY_SOURCE_DIR

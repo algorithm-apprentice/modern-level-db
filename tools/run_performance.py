@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import platform
 import shutil
@@ -45,6 +46,29 @@ READ_DIAGNOSTIC_SAMPLES = 991
 READ_DIAGNOSTIC_SAMPLE_SCHEDULE = "splitmix64-v1"
 MODERN_FILE_ACCESS_SEMANTICS = "mmap-default-v1"
 MODERN_RESULT_OWNERSHIP_SEMANTICS = "reusable-get-v1"
+MODERN_WRITE_BATCH_OWNERSHIP_SEMANTICS = {
+    "copying": "const-copy-v1",
+    "exclusive": "exclusive-borrow-v1",
+}
+MODERN_WAL_CREATION_SEMANTICS = {
+    "durable": "file-and-directory-before-write-v1",
+    "leveldb": "pinned-leveldb-v1",
+}
+REFERENCE_HARDWARE_CRC_ROLES = (
+    "disabled",
+    "google-crc32c-arm64-v1",
+    "google-crc32c-external-v1",
+)
+RESIDUAL_FIELDS = (
+    "residual_wal_files",
+    "residual_wal_bytes",
+    "residual_table_files",
+    "residual_table_bytes",
+    "residual_manifest_files",
+    "residual_manifest_bytes",
+    "residual_regular_files",
+    "residual_regular_bytes",
+)
 READ_DIAGNOSTIC_COUNTERS = (
     "gets", "mutable_hits", "immutable_hits", "sstable_hits", "deletions", "misses",
     "level0_candidates", "deeper_candidates", "files_searched", "table_cache_hits",
@@ -111,11 +135,39 @@ def expected_modern_result_ownership(engine, workload, selected):
     return "not_applicable"
 
 
+def expected_modern_write_batch_ownership(engine, workload, selected):
+    if selected not in MODERN_WRITE_BATCH_OWNERSHIP_SEMANTICS:
+        raise ValueError("unknown Modern write-batch ownership")
+    if engine == "modern" and workload == "writebatch":
+        return selected
+    if selected != "copying":
+        raise ValueError("exclusive write-batch ownership requires modern/writebatch/65536")
+    return "not_applicable"
+
+
+def expected_modern_wal_creation(engine, workload, selected):
+    if selected not in MODERN_WAL_CREATION_SEMANTICS:
+        raise ValueError("unknown Modern WAL-creation policy")
+    if engine == "modern" and workload in MUTATIONS:
+        return selected
+    if selected != "durable":
+        raise ValueError("LevelDB-equivalent WAL creation requires a Modern mutable case")
+    return "not_applicable"
+
+
 def validate_benchmark(report, case, repetitions, smoke=False, modern_file_access="default",
-                       reference_file_access="default", modern_result_ownership="reusable"):
+                       reference_file_access="default", modern_result_ownership="reusable",
+                       modern_write_batch_ownership="copying",
+                       modern_wal_creation="durable"):
     engine, workload, records = case_parts(case)
     expected_result_ownership = expected_modern_result_ownership(
         engine, workload, modern_result_ownership
+    )
+    expected_batch_ownership = expected_modern_write_batch_ownership(
+        engine, workload, modern_write_batch_ownership
+    )
+    expected_wal_creation = expected_modern_wal_creation(
+        engine, workload, modern_wal_creation
     )
     if modern_file_access not in ("default", "pread"):
         raise ValueError("unknown Modern file access mode")
@@ -148,6 +200,24 @@ def validate_benchmark(report, case, repetitions, smoke=False, modern_file_acces
     )
     if context.get("modern_result_ownership_semantics") != expected_result_semantics:
         raise ValueError("incorrect Modern result ownership semantics")
+    if context.get("modern_write_batch_ownership") != expected_batch_ownership:
+        raise ValueError("incorrect Modern write-batch ownership")
+    expected_batch_semantics = (
+        MODERN_WRITE_BATCH_OWNERSHIP_SEMANTICS[expected_batch_ownership]
+        if expected_batch_ownership != "not_applicable"
+        else "not_applicable"
+    )
+    if context.get("modern_write_batch_ownership_semantics") != expected_batch_semantics:
+        raise ValueError("incorrect Modern write-batch ownership semantics")
+    if context.get("modern_wal_creation") != expected_wal_creation:
+        raise ValueError("incorrect Modern WAL-creation policy")
+    expected_wal_semantics = (
+        MODERN_WAL_CREATION_SEMANTICS[expected_wal_creation]
+        if expected_wal_creation != "not_applicable"
+        else "not_applicable"
+    )
+    if context.get("modern_wal_creation_semantics") != expected_wal_semantics:
+        raise ValueError("incorrect Modern WAL-creation semantics")
     mutation = mutation_specification(case, smoke)
     if (context.get("library_version") != "v1.9.5"
             or type(context.get("json_schema_version")) is not int
@@ -237,6 +307,8 @@ def validate_benchmark(report, case, repetitions, smoke=False, modern_file_acces
     return {
         "iterations": [row["iterations"] for row in individuals],
         "items_per_iteration": items,
+        "wall_ns_per_iteration": [row["real_time"] for row in individuals],
+        "process_cpu_ns_per_iteration": [row["cpu_time"] for row in individuals],
         "wall_ns_per_item": [row["real_time"] / items for row in individuals],
         "process_cpu_ns_per_item": [row["cpu_time"] / items for row in individuals],
         "statistics_are_not_request_percentiles": True,
@@ -294,7 +366,7 @@ def validate_mutation_completion(report, case, specification, smoke):
     iterations = specification["iterations"]
     batch = specification["batch"]
     expected = {
-        "schema_version": 2, "case": case, "smoke": smoke, "preparations": 1,
+        "schema_version": 3, "case": case, "smoke": smoke, "preparations": 1,
         "verifications": 3, "reopens": 2, "callback_invocations": 1, "cursor_resets": 1,
         "warmup_writes": records, "measured_iterations": iterations, "batch_size": batch,
         "measured_reads": iterations * specification["reads"],
@@ -312,11 +384,25 @@ def validate_mutation_completion(report, case, specification, smoke):
     else:
         expected.update(write_order_crc32c="365dce99", version_values_crc32c="c93270ce",
                         final_crc32c=("86c2c994" if batch == 32 else "7dc2dbe1") if smoke else "b9ae033b")
-    if not isinstance(report, dict) or set(report) != set(expected):
+    if not isinstance(report, dict) or set(report) != set(expected) | set(RESIDUAL_FIELDS):
         raise ValueError("invalid mutable completion schema")
     for field, value in expected.items():
         if type(report[field]) is not type(value) or report[field] != value:
             raise ValueError(f"incorrect mutable completion field: {field}")
+    for field in RESIDUAL_FIELDS:
+        if not integer(report[field], 0):
+            raise ValueError(f"invalid residual file field: {field}")
+    for prefix in ("wal", "table", "manifest"):
+        if report[f"residual_{prefix}_files"] > report["residual_regular_files"]:
+            raise ValueError("residual category file count exceeds total")
+        if report[f"residual_{prefix}_bytes"] > report["residual_regular_bytes"]:
+            raise ValueError("residual category bytes exceed total")
+    if (sum(report[f"residual_{prefix}_files"] for prefix in ("wal", "table", "manifest"))
+            > report["residual_regular_files"]):
+        raise ValueError("residual named file counts exceed total")
+    if (sum(report[f"residual_{prefix}_bytes"] for prefix in ("wal", "table", "manifest"))
+            > report["residual_regular_bytes"]):
+        raise ValueError("residual named file bytes exceed total")
     return report
 
 
@@ -552,31 +638,80 @@ def file_digest(path):
 
 
 def source_state(source):
+    source = Path(source)
+    commands = {
+        "revision": ["rev-parse", "HEAD"],
+        "status": ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        "diff": ["diff", "--binary", "--no-ext-diff", "HEAD", "--"],
+        "untracked": ["ls-files", "--others", "--exclude-standard", "-z"],
+    }
     result = {}
-    for key, args in (
-        ("revision", ["rev-parse", "HEAD"]),
-        ("status", ["status", "--porcelain", "--untracked-files=normal"]),
-    ):
-        value = subprocess.run(["git", "-C", str(source), *args], text=True,
-                               capture_output=True, timeout=15)
+    for key, args in commands.items():
+        value = subprocess.run(
+            ["git", "-C", str(source), *args],
+            capture_output=True,
+            timeout=15,
+        )
         if value.returncode != 0:
-            return {"available": False, "reason": value.stderr.strip()}
-        result[key] = value.stdout.strip()
-    return {"available": True, "revision": result["revision"], "dirty": bool(result["status"]),
-            "status_sha256": hashlib.sha256(result["status"].encode()).hexdigest()}
+            return {
+                "available": False,
+                "reason": value.stderr.decode(errors="replace").strip(),
+            }
+        result[key] = value.stdout
+    worktree = hashlib.sha256()
+    worktree.update(b"status\0")
+    worktree.update(result["status"])
+    worktree.update(b"diff\0")
+    worktree.update(result["diff"])
+    for raw_path in result["untracked"].split(b"\0"):
+        if not raw_path:
+            continue
+        relative = Path(os.fsdecode(raw_path))
+        path = source / relative
+        worktree.update(b"untracked\0")
+        worktree.update(raw_path)
+        worktree.update(b"\0")
+        if path.is_symlink():
+            worktree.update(b"symlink\0")
+            worktree.update(os.fsencode(os.readlink(path)))
+        elif path.is_file():
+            worktree.update(b"file\0")
+            with path.open("rb") as untracked:
+                for block in iter(lambda: untracked.read(1024 * 1024), b""):
+                    worktree.update(block)
+        else:
+            worktree.update(b"other\0")
+    return {
+        "available": True,
+        "revision": result["revision"].decode().strip(),
+        "dirty": bool(result["status"]),
+        "status_sha256": hashlib.sha256(result["status"]).hexdigest(),
+        "worktree_sha256": worktree.hexdigest(),
+        "untracked_files": sum(bool(path) for path in result["untracked"].split(b"\0")),
+    }
 
 
 def validate_build_context(context):
     required = (
         "source_directory", "build_directory", "configure_revision", "configure_dirty",
-        "build_type", "compiler", "c_flags", "cxx_flags", "benchmark_requested_revision",
+        "build_type", "compiler", "c_flags", "cxx_flags", "exe_linker_flags",
+        "static_linker_flags", "cmake_generator",
+        "target_architecture", "benchmark_requested_revision",
         "benchmark_source_override",
         "reference_requested_revision", "reference_source_override",
+        "reference_hardware_crc", "reference_source", "reference_binary_directory",
+        "reference_have_crc32c", "reference_crc32c_linked",
+        "reference_hardware_patch_sha256",
         "reference_file_access", "reference_pread_control_available",
         "reference_control_patch_sha256", "read_diagnostics_compiled",
         "modern_result_ownership", "modern_result_ownership_semantics",
-        "snappy_target", "snappy_source", "snappy_source_override",
-        "zstd_target", "zstd_source", "zstd_source_override", "profile_capture_supported",
+        "modern_write_batch_ownership", "modern_write_batch_ownership_semantics",
+        "modern_wal_creation", "modern_wal_creation_semantics",
+        "snappy_target", "snappy_requested_revision", "snappy_source",
+        "snappy_source_override", "zstd_target", "zstd_requested_revision",
+        "zstd_source", "zstd_source_override", "profile_capture_supported",
+        "crc32c_target", "crc32c_provider", "crc32c_source", "crc32c_source_override",
+        "crc32c_requested_revision", "crc32c_compiled_arm64", "crc32c_compiled_sse42",
     )
     if any(not isinstance(context.get(key), str) for key in required):
         raise ValueError("benchmark build provenance is incomplete")
@@ -586,13 +721,40 @@ def validate_build_context(context):
             or context["reference_pread_control_available"] not in ("true", "false")
             or context["read_diagnostics_compiled"] not in ("true", "false")
             or context["reference_file_access"] not in ("default", "pread", "not_applicable")
+            or context["reference_hardware_crc"] not in REFERENCE_HARDWARE_CRC_ROLES
+            or context["reference_have_crc32c"] not in ("true", "false")
+            or context["reference_crc32c_linked"] not in ("true", "false")
             or len(context["reference_control_patch_sha256"]) != 64):
         raise ValueError("invalid build provenance flags")
-    flags = context["c_flags"] + " " + context["cxx_flags"]
+    hardware_reference = context["reference_hardware_crc"] != "disabled"
+    hardware_patch = context["reference_hardware_patch_sha256"]
+    if (hardware_reference
+            and (context["reference_have_crc32c"] != "true"
+                 or context["reference_crc32c_linked"] != "true"
+                 or len(hardware_patch) != 64
+                 or any(character not in "0123456789abcdef" for character in hardware_patch))):
+        raise ValueError("hardware reference provenance is incomplete")
+    if (not hardware_reference
+            and (context["reference_have_crc32c"] != "false"
+                 or context["reference_crc32c_linked"] != "false"
+                 or hardware_patch != "not_applicable")):
+        raise ValueError("canonical reference reports hardware CRC provenance")
+    flags = " ".join(
+        context[field]
+        for field in ("c_flags", "cxx_flags", "exe_linker_flags", "static_linker_flags")
+    )
     if any(flag in flags for flag in ("--coverage", "-fprofile", "-fsanitize")):
         raise ValueError("instrumented build timings are not performance measurements")
-    if not Path(context["source_directory"]).is_absolute() or not Path(context["build_directory"]).is_absolute():
-        raise ValueError("build provenance paths must be absolute")
+    for field in (
+        "source_directory",
+        "build_directory",
+        "reference_source",
+        "reference_binary_directory",
+    ):
+        if not Path(context[field]).is_absolute():
+            raise ValueError("build provenance paths must be absolute")
+    if not context["cmake_generator"] or not context["target_architecture"]:
+        raise ValueError("build generator or target architecture is missing")
 
 
 def record_diagnostics(manifest, output):
@@ -617,10 +779,17 @@ def record_diagnostics(manifest, output):
 
 def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=None,
              min_time=None, timeout=None, modern_file_access="default",
-             reference_file_access="default", modern_result_ownership="reusable"):
+             reference_file_access="default", modern_result_ownership="reusable",
+             modern_write_batch_ownership="copying", modern_wal_creation="durable"):
     engine, workload, _ = case_parts(case)
     expected_result_ownership = expected_modern_result_ownership(
         engine, workload, modern_result_ownership
+    )
+    expected_batch_ownership = expected_modern_write_batch_ownership(
+        engine, workload, modern_write_batch_ownership
+    )
+    expected_wal_creation = expected_modern_wal_creation(
+        engine, workload, modern_wal_creation
     )
     if modern_file_access not in ("default", "pread"):
         raise ValueError("unknown Modern file access mode")
@@ -678,6 +847,18 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
             modern_file_access if engine == "modern" else "not_applicable"
         ),
         "modern_result_ownership": expected_result_ownership,
+        "modern_write_batch_ownership": expected_batch_ownership,
+        "modern_write_batch_ownership_semantics": (
+            MODERN_WRITE_BATCH_OWNERSHIP_SEMANTICS[expected_batch_ownership]
+            if expected_batch_ownership != "not_applicable"
+            else "not_applicable"
+        ),
+        "modern_wal_creation": expected_wal_creation,
+        "modern_wal_creation_semantics": (
+            MODERN_WAL_CREATION_SEMANTICS[expected_wal_creation]
+            if expected_wal_creation != "not_applicable"
+            else "not_applicable"
+        ),
         "reference_file_access": (
             reference_file_access if engine == "leveldb" else "not_applicable"
         ),
@@ -701,6 +882,10 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
         command.extend(["--modern-file-access", modern_file_access])
     if engine == "modern" and modern_result_ownership != "reusable":
         command.extend(["--modern-result-ownership", modern_result_ownership])
+    if engine == "modern" and workload == "writebatch":
+        command.extend(["--modern-write-batch-ownership", modern_write_batch_ownership])
+    if engine == "modern" and mutation:
+        command.extend(["--modern-wal-creation", modern_wal_creation])
     if engine == "leveldb":
         command.extend(["--reference-file-access", reference_file_access])
     if mutation and smoke:
@@ -729,11 +914,14 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
             modern_file_access=modern_file_access,
             reference_file_access=reference_file_access,
             modern_result_ownership=modern_result_ownership,
+            modern_write_batch_ownership=modern_write_batch_ownership,
+            modern_wal_creation=modern_wal_creation,
         )
         manifest["completion"] = validate_completion(read_json(output / "completion.json"), case,
                                                      smoke=smoke)
         context = raw["context"]
         validate_build_context(context)
+        manifest["reference_hardware_crc"] = context["reference_hardware_crc"]
         manifest["build"] = {
             key: value for key, value in context.items()
             if key not in ("date", "host_name", "executable", "caches", "load_avg")
@@ -894,6 +1082,10 @@ def main():
                         default="default")
     parser.add_argument("--modern-result-ownership", choices=("reusable", "owning"),
                         default="reusable")
+    parser.add_argument("--modern-write-batch-ownership", choices=("copying", "exclusive"),
+                        default="copying")
+    parser.add_argument("--modern-wal-creation", choices=("durable", "leveldb"),
+                        default="durable")
     parser.add_argument("--reference-file-access", choices=("default", "pread"),
                         default="default")
     parser.add_argument("--read-diagnostics", action="store_true")
@@ -902,7 +1094,9 @@ def main():
         if args.read_diagnostics:
             if (args.capture_cpu or args.smoke or args.repetitions is not None
                     or args.min_time is not None or args.reference_file_access != "default"
-                    or args.modern_result_ownership != "reusable"):
+                    or args.modern_result_ownership != "reusable"
+                    or args.modern_write_batch_ownership != "copying"
+                    or args.modern_wal_creation != "durable"):
                 raise ValueError("read diagnostics cannot combine with benchmark options")
             result = run_read_diagnostics(
                 args.binary, args.case, args.output,
@@ -914,6 +1108,7 @@ def main():
                 args.binary, args.case, args.output, args.capture_cpu, args.smoke,
                 args.repetitions, args.min_time, args.timeout, args.modern_file_access,
                 args.reference_file_access, args.modern_result_ownership,
+                args.modern_write_batch_ownership, args.modern_wal_creation,
             )
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, ET.ParseError) as error:
         print(f"performance run failed: {error}", file=sys.stderr)

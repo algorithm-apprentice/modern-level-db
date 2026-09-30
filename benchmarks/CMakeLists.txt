@@ -46,6 +46,20 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
   string(TOUPPER "${CMAKE_BUILD_TYPE}" profile_config)
   set(PROFILE_C_FLAGS "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${profile_config}}")
   set(PROFILE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${profile_config}}")
+  set(
+    PROFILE_EXE_LINKER_FLAGS
+    "${CMAKE_EXE_LINKER_FLAGS} ${CMAKE_EXE_LINKER_FLAGS_${profile_config}}"
+  )
+  set(
+    PROFILE_STATIC_LINKER_FLAGS
+    "${CMAKE_STATIC_LINKER_FLAGS} ${CMAKE_STATIC_LINKER_FLAGS_${profile_config}}"
+  )
+  set(PROFILE_CMAKE_GENERATOR "${CMAKE_GENERATOR}")
+  if(CMAKE_OSX_ARCHITECTURES)
+    string(REPLACE ";" "," PROFILE_TARGET_ARCHITECTURE "${CMAKE_OSX_ARCHITECTURES}")
+  else()
+    set(PROFILE_TARGET_ARCHITECTURE "${CMAKE_SYSTEM_PROCESSOR}")
+  endif()
   modern_leveldb_profile_markers(MODERN_LEVELDB_PROFILE_MARKERS)
   configure_file(profiling_build.h.in profiling_build.h @ONLY)
 
@@ -93,6 +107,10 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/profile_process_test.py"
   )
   add_test(
+    NAME performance.write_parity_contracts
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/write_parity_test.py"
+  )
+  add_test(
     NAME performance.smoke
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/performance_smoke.py"
       --binary "$<TARGET_FILE:modern_leveldb_performance>"
@@ -116,7 +134,8 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
       --output "${CMAKE_CURRENT_BINARY_DIR}/performance-read-diagnostics"
   )
   set_tests_properties(
-    performance.contracts performance.profile_parser performance.process_control performance.mutation_stream
+    performance.contracts performance.profile_parser performance.process_control
+    performance.write_parity_contracts performance.mutation_stream
     PROPERTIES LABELS performance TIMEOUT 120
   )
   set_tests_properties(

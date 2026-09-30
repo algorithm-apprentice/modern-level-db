@@ -45,6 +45,182 @@ in smoke mode, checks the recording diagnostic, and executes all eight normal
 mutable cases. Its raw reports are under `build/profiling/benchmarks/`
 in `performance-smoke/` and `performance-mutations/`.
 
+## ADR-0060 write-path parity extension
+
+The final write-path parity measurement keeps the fixed operation streams and
+adds explicit benchmark roles. The executable accepts:
+
+```text
+--modern-write-batch-ownership copying|exclusive
+--modern-wal-creation durable|leveldb
+```
+
+Defaults remain `copying` and `durable`. An explicitly selected batch role is
+valid only for `modern/writebatch/65536`; `exclusive` calls
+`Database::WriteExclusive`, while `copying` retains `Database::Write`.
+An explicitly selected WAL role is valid only for Modern mutable cases;
+`leveldb` sets `sync_wal_creation=false`, while `durable` retains the
+production default. LevelDB and unrelated workloads report both roles as
+`not_applicable`. Invalid values, duplicate selectors, and invalid
+case/selector combinations fail before opening the database.
+
+Every Google Benchmark context and retained manifest records:
+
+```text
+modern_write_batch_ownership
+modern_write_batch_ownership_semantics
+modern_wal_creation
+modern_wal_creation_semantics
+reference_hardware_crc
+```
+
+The versioned semantics are:
+
+```text
+copying       -> const-copy-v1
+exclusive     -> exclusive-borrow-v1
+durable       -> file-and-directory-before-write-v1
+leveldb       -> pinned-leveldb-v1
+not_applicable
+```
+
+The hardware-CRC marker is build provenance, not a runtime selector. Canonical
+builds report `disabled`; the retained measurement-only LevelDB link patch
+reports its exact versioned marker. `tools/run_write_parity.py` compares that
+marker and the complete expected frozen-build identity supplied by its plan.
+
+### Schema-3 mutable completion
+
+Mutable completion reports advance from schema 2 to schema 3. All schema-2
+fields remain unchanged. After the final verified close, the benchmark scans
+the database directory and adds these nonnegative integer fields:
+
+```text
+residual_wal_files
+residual_wal_bytes
+residual_table_files
+residual_table_bytes
+residual_manifest_files
+residual_manifest_bytes
+residual_regular_files
+residual_regular_bytes
+```
+
+WAL files end in `.log`; table files end in `.ldb` or `.sst`; MANIFEST files
+begin with `MANIFEST-`. Total residual metrics include every regular file in
+the database directory, including metadata files. Each category must fit
+within the total, and the sum of the three named categories must not exceed
+the total. These values are descriptive; the harness does not force
+background completion or infer steady state from them.
+
+`tools/run_performance.py` retains the existing normalized values and also
+stores the raw Google Benchmark per-iteration values:
+
+```text
+wall_ns_per_iteration
+process_cpu_ns_per_iteration
+```
+
+For fixed mutable cases each array has exactly one value. Matrix aggregation
+uses these per-iteration arrays as its primary input. `writebatch` additionally
+derives per-written-key values by dividing the batch-call value by 32; it never
+substitutes normalized per-item input for the primary metric.
+
+### Predeclared parity plan
+
+`tools/run_write_parity.py` accepts only:
+
+```text
+--plan PLAN.json
+--output NEW_DIRECTORY
+```
+
+The plan has `schema_version=1`, `matrix=write-path-parity-v1`, and exactly
+three frozen binary roles: `final`, `baseline`, and `canonical`. Each role
+contains an absolute executable path, expected SHA-256, expected compile
+commands SHA-256, an exact expected build-provenance object, and an exact
+runtime source-state object. The plan also records the already completed
+correctness/review evidence for the final revision. Required build identity
+includes source/build directories, configure revision and dirty state,
+compiler and complete flags, pinned dependency revisions, the hardware-CRC
+marker, CRC provider/source/capabilities, and reference control patch hash.
+
+The top-level plan contains exactly `schema_version`, `matrix`, `roles`, and
+`evidence`. Every role contains exactly `executable`, `executable_sha256`,
+`compile_commands_sha256`, `build`, `runtime_source`, and `reference`.
+`runtime_source` must be the available clean/dirty source-state object emitted by
+`run_performance.py`, including both its porcelain-status SHA-256 and a
+SHA-256 over the tracked binary diff plus every untracked path and file
+content. Frozen matrix roles must have zero untracked files. The driver retains
+each role's exact binary `git diff` and its SHA-256 in the matrix output.
+
+The exact `reference` proof contains absolute paths and SHA-256 values for the
+generated LevelDB `port_config.h` and `libleveldb` archive, the expected
+Boolean `HAVE_CRC32C` state, and either the exact hardware-control patch
+SHA-256 or `not_applicable`. Before every process, the driver rehashes these
+files, parses the header, finds LevelDB's `util/crc32c.cc` command in the
+retained compile database, and inspects the archive's undefined symbols. The
+hardware role must compile with the pinned Google CRC32C include directory and
+reference `crc32c::Extend`; canonical and baseline roles must do neither.
+
+`evidence` contains `final_revision`, a `hardware_crc_profile` object, plus Boolean
+`correctness`, `compatibility`, `crash`, `sanitizers`, `compilers`, `coverage`,
+`benchmark_contracts`, and `review` gates; every gate must be true before a
+matrix can start, and `final_revision` must equal the final role's configure
+and runtime revision. The profile object identifies retained profile manifest
+and summary files by absolute path and SHA-256. They must describe the final
+binary, exact final build identity, `leveldb/readrandom/65536`, at least 100
+samples without a low-confidence warning, and a positive
+`crc32c::ExtendArm64` inclusive sample weight.
+
+The three source directories, build directories, and executable paths must be
+distinct. The final role must declare a non-disabled versioned hardware-CRC
+marker, pinned-source provider, empty CRC source override, compiled ARM64
+capability, `HAVE_CRC32C=1`, and an exact retained hardware patch. The
+canonical role must declare `disabled`, `HAVE_CRC32C=0`, and no hardware
+patch. Final and canonical use the same final source revision. Baseline uses a
+different pre-parity revision. All three roles must use the same generator,
+target architecture, compiler, complete flags, requested dependency revisions,
+reference-control patch, and no dependency source overrides. The normalized
+Modern `write_path.cc` compile command must also match between baseline and
+final. Final and canonical executables must have different SHA-256 values.
+
+The driver hashes each binary before every process and validates every
+completed `run_performance.py` manifest against the selected role. A changed
+binary, mixed revision, changed dirty-state fingerprint, missing compile
+commands, unexpected role marker, or inconsistent build identity fails the
+entire matrix. The output directory must not exist; failed matrices are
+retained but cannot be resumed, amended, or used to replace individual cells.
+
+The fixed execution order is matrix, round, ADR workload order, then the two
+adjacent pair members. Odd rounds run the reference/control first; even rounds
+run the candidate first:
+
+| Matrix | Rounds | Pair | Processes |
+|---|---:|---|---:|
+| `primary` | 5 | hardware LevelDB / matched Modern | 40 |
+| `production` | 5 | pre-parity Modern / final production Modern | 40 |
+| `batch_ownership` | 3 | exclusive / copying Modern `writebatch` | 6 |
+| `crc_continuity` | 3 | canonical / hardware LevelDB | 24 |
+
+The exact total is 110 fresh processes. The driver has no workload, round,
+repetition, calibration, minimum-time, cell-selection, or resume options.
+Every fixed-work report must contain one callback, one framework repetition,
+the exact operation count, schema-3 completion, required residual metrics, and
+the expected role provenance.
+
+Aggregation rejects duplicate or missing cells and compares the canonical
+completion fingerprint and operation counts across every role for a workload.
+It reports per-round and median wall/process-CPU values from raw per-iteration
+timings, primary and production deltas, the descriptive batch and CRC controls,
+and the non-`writebatch` production/matched WAL-durability ratio.
+
+Admission is evaluated exactly as ADR-0060 specifies: primary non-sync
+aggregate and individual wall limits, the wider predeclared sync-round rule,
+non-sync process-CPU aggregate limits, and production-regression aggregate
+limits. Completion, residual, frozen identity, and correctness/review evidence
+must also be valid. No failed cell can be discarded or replaced.
+
 ## Resolved research
 
 The isolated native probe linked the existing pinned Google Benchmark,
