@@ -2,11 +2,10 @@
 
 ## Status
 
-Accepted design, pending gate amendment. The original absolute ±5% admission
-interval incorrectly treated pinned LevelDB as both a floor and a ceiling,
-which can reject a safe Modern speedup. The amendment below makes LevelDB a
-no-more-than-5%-slower baseline. Merge the amendment before any new
-measurement or implementation decision.
+Accepted outcome. The amended one-sided gate treats pinned LevelDB as a
+no-more-than-5%-slower baseline. A fresh comparator-only candidate passed
+every point-read and regression-control condition, so the stage-2 decoder was
+not implemented in production.
 
 ## Context
 
@@ -437,6 +436,87 @@ Decoder tests retain:
   invalid restarts, short internal keys, and lazy corruption propagation
   through table, merging, DB iterator, and compaction layers.
 
+## Outcome
+
+### Excluded pre-amendment measurements
+
+The comparator and combined matrices collected before the one-sided gate
+amendment do not decide this outcome. Some earlier local artifacts also reused
+a build directory with stale embedded configure provenance. All such
+artifacts remain diagnostic only.
+
+After amendment PR #79 merged as
+`6399425482be2465cf2ff3361cc06ad24ef55282`, the comparator-only candidate was
+rebuilt from a fresh detached worktree. Its report correctly records that
+revision and `configure_dirty=true`.
+
+### Frozen artifacts
+
+```text
+candidate source patch SHA-256:
+35d2b1a240f99a7c1465581c28393c42566828ad06c483e360cd0df313a4741c
+
+candidate executable SHA-256:
+e76f2a422517ddf19619be7aa6a6f134768d444efd2f12736ed1e4755df71be2
+
+candidate compile_commands.json SHA-256:
+cbb2601bb42c0e32fa29bfd74ce911bc894365fb30371a6969c50eaf1f129585
+
+frozen Modern baseline revision:
+3799c06ca15db9e36b0f2632078d633d93006171
+
+frozen baseline executable SHA-256:
+9d69e8c97b1ce37733e4cf3e4b7c816f03237b9923e1b95bbb40492c8fd3f8a2
+```
+
+The candidate passed the full native, sanitizer, compatibility/model/crash,
+LLVM fuzz, GCC, profiling-contract, and 100% changed-code coverage gates.
+AppleClang and GCC both emit a `memcmp` call for dynamic nonempty comparisons;
+the prior scalar byte loop is absent. Bounded GPT-5.6 Sol implementation
+review found no actionable issue.
+
+### Point-read gate
+
+Positive deltas mean Modern is slower. Negative deltas are speedups and pass.
+
+| Access | Workload | Modern ns/op | LevelDB ns/op | Aggregate delta | Three round deltas | Result |
+|---|---|---:|---:|---:|---|---|
+| mapped | `readrandom/4096` | 414.94 | 401.33 | +3.39% | +4.10%, +1.92%, +3.79% | pass |
+| mapped | `readmissing/4096` | 410.11 | 407.25 | +0.70% | +0.76%, -1.37%, +0.70% | pass |
+| copied | `readrandom/4096` | 421.10 | 407.24 | +3.40% | -0.33%, +4.00%, +3.63% | pass |
+| copied | `readmissing/4096` | 416.30 | 413.84 | +0.59% | +2.01%, -0.09%, +1.33% | pass |
+| mapped | `readrandom/65536` | 899.91 | 945.11 | -4.78% | -4.78%, -7.99%, -2.42% | pass |
+| mapped | `readmissing/65536` | 897.28 | 968.96 | -7.40% | -4.76%, -5.86%, -11.22% | pass |
+| copied | `readrandom/65536` | 1143.41 | 1193.53 | -4.20% | -3.46%, -5.86%, +9.69% | pass |
+| copied | `readmissing/65536` | 1086.83 | 1148.19 | -5.34% | -3.21%, -6.65%, -5.34% | pass |
+
+No aggregate is more than 5% slower, and no round is more than 10% slower.
+
+### Regression controls
+
+| Access | Workload | Records | Candidate versus baseline | Result |
+|---|---|---:|---:|---|
+| mapped | scan | 4096 | -0.20% | pass |
+| mapped | scan | 65536 | -0.00% | pass |
+| mapped | seek-reuse | 4096 | -7.67% | pass |
+| mapped | seek-reuse | 65536 | +2.31% | pass |
+| copied | scan | 4096 | -0.83% | pass |
+| copied | scan | 65536 | -1.35% | pass |
+| copied | seek-reuse | 4096 | -30.69% | pass |
+| copied | seek-reuse | 65536 | +0.25% | pass |
+
+No aggregate control regresses by more than 5%.
+
+### Decision
+
+Accept the comparator-only candidate. It closes the 4 KiB hot-set gap without
+regressing the completed pressure or scan/seek gates. The conditional checked
+decoder stage is skipped exactly as the predeclared stop rule requires.
+
+The pinned reference still has optional external hardware CRC32C disabled.
+That separately identified control remains future work and does not alter this
+candidate's admission.
+
 ## Documentation and delivery
 
 Use sequential pull requests:
@@ -486,8 +566,8 @@ review surface.
 
 - A simple exact comparator change gets the first opportunity to close the
   hot-set gap.
-- Decoder complexity is incurred only if the complete comparator-only gate
-  remains outside the target.
+- The comparator-only candidate passed, so decoder complexity is not added to
+  production.
 - Every accepted path retains Modern's typed corruption behavior.
 - Safe speedups are accepted rather than rejected for exceeding an artificial
   closeness ceiling.
