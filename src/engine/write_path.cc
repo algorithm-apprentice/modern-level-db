@@ -39,6 +39,12 @@ Status InsertBatch(WriteBatchReader& batch, MemTable& memtable) {
   return {};
 }
 
+void InsertBatchTrusted(WriteBatchReader& batch, MemTable& memtable) {
+  while (const std::optional<WriteBatchEntry> entry = batch.Next()) {
+    memtable.AddTrusted(entry->sequence, entry->kind, entry->key, entry->value);
+  }
+}
+
 Status PrepareGroup(EncodedWriteBatch& group, SequenceNumber first_sequence) {
   return group.SetSequence(first_sequence);
 }
@@ -56,9 +62,7 @@ Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log, Me
   }
   // A prepared group's keys fit the memtable, and its sequences are unused.
   WriteBatchReader entries = WriteBatchReader::OpenTrusted(group);
-  const Status inserted = InsertBatch(entries, memtable);
-  assert(inserted.has_value());
-  static_cast<void>(inserted);
+  InsertBatchTrusted(entries, memtable);
   return {};
 }
 

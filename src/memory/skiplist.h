@@ -17,7 +17,7 @@ namespace modern_leveldb {
 template <typename Key>
 concept ArenaCompatibleSkipListKey =
     std::is_default_constructible_v<Key> && std::is_trivially_copy_constructible_v<Key> &&
-    std::is_trivially_destructible_v<Key> && alignof(Key) <= alignof(std::max_align_t);
+    std::is_trivially_destructible_v<Key> && alignof(Key) <= Arena::Alignment;
 
 template <ArenaCompatibleSkipListKey Key, typename Compare>
 class SkipList final {
@@ -29,9 +29,9 @@ class SkipList final {
   explicit SkipList(const Compare& compare, Arena& arena)
       : compare_(compare), arena_(arena), head_(NewNode(Key{}, MaxHeight)) {
     static_assert(std::is_trivially_destructible_v<Link>);
-    static_assert(alignof(Link) <= alignof(std::max_align_t));
+    static_assert(alignof(Link) <= Arena::Alignment);
     static_assert(sizeof(Link) % alignof(Link) == 0);
-    static_assert(alignof(Node) <= alignof(std::max_align_t));
+    static_assert(alignof(Node) <= Arena::Alignment);
   }
 
   SkipList(Compare&&, Arena&) = delete;
@@ -48,25 +48,16 @@ class SkipList final {
     if (existing != nullptr && Equal(existing->key, key)) {
       return false;
     }
-
-    const int height = RandomHeight();
-    const int current_height = max_height_.load(std::memory_order_relaxed);
-    if (height > current_height) {
-      for (int level = current_height; level < height; ++level) {
-        predecessors[static_cast<std::size_t>(level)] = head_;
-      }
-    }
-
-    Node* node = NewNode(key, height);
-    if (height > current_height) {
-      max_height_.store(height, std::memory_order_relaxed);
-    }
-    for (int level = 0; level < height; ++level) {
-      Node* predecessor = predecessors[static_cast<std::size_t>(level)];
-      node->SetNextRelaxed(level, predecessor->NextRelaxed(level));
-      predecessor->SetNext(level, node);
-    }
+    InsertAfterSearch(key, predecessors);
     return true;
+  }
+
+  void InsertTrusted(Key key) {
+    std::array<Node*, MaxHeight> predecessors{};
+    Node* existing = FindGreaterOrEqual(key, predecessors.data());
+    assert(existing == nullptr || !Equal(existing->key, key));
+    (void)existing;
+    InsertAfterSearch(key, predecessors);
   }
 
   [[nodiscard]] bool Contains(const Key& key) const {
@@ -127,8 +118,7 @@ class SkipList final {
   static constexpr std::uint64_t RandomMultiplier = 16'807U;
 
   struct Node {
-    Node(Key node_key, int node_height, std::byte* node_links) noexcept
-        : key(node_key), height(node_height), links(node_links) {}
+    explicit Node(Key node_key) noexcept : key(node_key) {}
 
     [[nodiscard]] Node* Next(int level) const noexcept {
       return LinkAt(level).load(std::memory_order_acquire);
@@ -148,27 +138,49 @@ class SkipList final {
 
     [[nodiscard]] Link& LinkAt(int level) const noexcept {
       assert(level >= 0);
-      assert(level < height);
-      std::byte* address = links + static_cast<std::size_t>(level) * sizeof(Link);
+      auto* base = reinterpret_cast<std::byte*>(const_cast<Node*>(this));
+      std::byte* address = base + LinksOffset() + static_cast<std::size_t>(level) * sizeof(Link);
       return *std::launder(reinterpret_cast<Link*>(address));
     }
 
     const Key key;
-    const int height;
-    std::byte* const links;
   };
 
-  [[nodiscard]] Node* NewNode(Key key, int height) {
-    MutableByteView link_storage =
-        arena_.AllocateAligned(sizeof(Link) * static_cast<std::size_t>(height));
-    for (int level = 0; level < height; ++level) {
-      std::byte* address = link_storage.data() + static_cast<std::size_t>(level) * sizeof(Link);
-      (void)std::construct_at(reinterpret_cast<Link*>(address), nullptr);
+  static constexpr std::size_t LinksOffset() noexcept {
+    static_assert((alignof(Link) & (alignof(Link) - 1U)) == 0U);
+    return (sizeof(Node) + alignof(Link) - 1U) & ~(alignof(Link) - 1U);
+  }
+
+  void InsertAfterSearch(Key key, std::array<Node*, MaxHeight>& predecessors) {
+    const int height = RandomHeight();
+    const int current_height = max_height_.load(std::memory_order_relaxed);
+    if (height > current_height) {
+      for (int level = current_height; level < height; ++level) {
+        predecessors[static_cast<std::size_t>(level)] = head_;
+      }
     }
 
-    MutableByteView node_storage = arena_.AllocateAligned(sizeof(Node));
-    return std::construct_at(reinterpret_cast<Node*>(node_storage.data()), key, height,
-                             link_storage.data());
+    Node* node = NewNode(key, height);
+    if (height > current_height) {
+      max_height_.store(height, std::memory_order_relaxed);
+    }
+    for (int level = 0; level < height; ++level) {
+      Node* predecessor = predecessors[static_cast<std::size_t>(level)];
+      node->SetNextRelaxed(level, predecessor->NextRelaxed(level));
+      predecessor->SetNext(level, node);
+    }
+  }
+
+  [[nodiscard]] Node* NewNode(Key key, int height) {
+    MutableByteView storage =
+        arena_.AllocateAligned(LinksOffset() + sizeof(Link) * static_cast<std::size_t>(height));
+    Node* node = std::construct_at(reinterpret_cast<Node*>(storage.data()), key);
+    for (int level = 0; level < height; ++level) {
+      std::byte* address =
+          storage.data() + LinksOffset() + static_cast<std::size_t>(level) * sizeof(Link);
+      (void)std::construct_at(reinterpret_cast<Link*>(address), nullptr);
+    }
+    return node;
   }
 
   [[nodiscard]] std::uint32_t NextRandom() noexcept {

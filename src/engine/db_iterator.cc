@@ -1,8 +1,10 @@
 #include "engine/db_iterator.h"
 
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -84,6 +86,13 @@ Status DbIterator::SeekToLast() {
 Status DbIterator::Seek(ByteView user_key) {
   forward_ = true;
   saved_value_.clear();
+  constexpr std::size_t MaximumUserKeySize =
+      static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) - InternalKeyTrailerSize;
+  const bool key_too_long = user_key.size() > MaximumUserKeySize;
+  if (key_too_long) {                    // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs a key over 4 GiB
+    return Fail(Error::InvalidArgument(  // GCOVR_EXCL_LINE: needs a key over 4 GiB
+        "iterator seek key exceeds uint32 length"));  // GCOVR_EXCL_LINE
+  }
   // The newest entry of the user key that the sequence sees sorts first.
   const InternalKey target = InternalKey::Create(user_key, sequence_, ValueKind::Value).value();
   const Status moved = internal_->Seek(target.encoded());

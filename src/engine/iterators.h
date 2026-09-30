@@ -14,9 +14,8 @@
 
 namespace modern_leveldb {
 
-// Iterates the memtable, which the iterator holds. A seek fails only for a
-// target over 4 GiB, which no internal key of a memtable or a table reaches,
-// and then leaves the iterator invalid.
+// Iterates the memtable, which the iterator holds. Seek targets are trusted
+// internal keys constructed by the engine.
 [[nodiscard]] std::unique_ptr<InternalIterator> NewMemTableIterator(
     std::shared_ptr<const MemTable> memtable);
 

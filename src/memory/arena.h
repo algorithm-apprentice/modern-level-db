@@ -11,6 +11,9 @@ namespace modern_leveldb {
 
 class Arena final {
  public:
+  static constexpr std::size_t Alignment =
+      sizeof(void*) > std::size_t{8} ? sizeof(void*) : std::size_t{8};
+
   Arena() noexcept = default;
 
   Arena(const Arena&) = delete;

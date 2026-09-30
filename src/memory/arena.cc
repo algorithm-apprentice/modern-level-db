@@ -26,7 +26,6 @@ MutableByteView Arena::AllocateAligned(std::size_t bytes) {
     return {};
   }
 
-  constexpr std::size_t Alignment = alignof(std::max_align_t);
   static_assert((Alignment & (Alignment - 1U)) == 0U);
 
   std::size_t padding = 0;
@@ -67,7 +66,7 @@ std::byte* Arena::AllocateBlock(std::size_t bytes) {
   auto block = std::unique_ptr<std::byte[]>(new std::byte[bytes]);
   std::byte* result = block.get();
   blocks_.push_back(std::move(block));
-  memory_usage_ += bytes;
+  memory_usage_ += bytes + sizeof(std::byte*);
   return result;
 }
 

@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string_view>
 #include <type_traits>
 #include <vector>
@@ -22,6 +23,8 @@ static_assert(!std::is_copy_constructible_v<WalFragmenter>);
 static_assert(!std::is_copy_assignable_v<WalFragmenter>);
 static_assert(!std::is_move_constructible_v<WalFragmenter>);
 static_assert(!std::is_move_assignable_v<WalFragmenter>);
+static_assert(!std::is_copy_constructible_v<WalFragmenter::Cursor>);
+static_assert(!std::is_move_constructible_v<WalFragmenter::Cursor>);
 
 std::vector<std::byte> Bytes(std::initializer_list<unsigned int> values) {
   std::vector<std::byte> result;
@@ -40,6 +43,15 @@ std::vector<std::byte> Materialize(const std::vector<WalFragment>& fragments) {
     result.insert(result.end(), fragment.payload.begin(), fragment.payload.end());
   }
   return result;
+}
+
+std::vector<WalFragment> Collect(WalFragmenter& fragmenter, ByteView logical_record) {
+  std::vector<WalFragment> fragments;
+  auto cursor = fragmenter.Fragment(logical_record);
+  while (std::optional<WalFragment> fragment = cursor.Next()) {
+    fragments.push_back(*fragment);
+  }
+  return fragments;
 }
 
 std::vector<std::byte> PhysicalRecord(std::uint8_t type, ByteView payload,
@@ -80,17 +92,34 @@ TEST(WalFormatTest, PersistentConstantsMatchLevelDb) {
 TEST(WalFragmenterTest, MatchesLevelDbEmptyAndSmallGoldenRecords) {
   WalFragmenter fragmenter;
 
-  EXPECT_EQ(Materialize(fragmenter.Fragment({})),
+  EXPECT_EQ(Materialize(Collect(fragmenter, {})),
             Bytes({0x05, 0x2b, 0x28, 0x43, 0x00, 0x00, 0x01}));
-  EXPECT_EQ(Materialize(fragmenter.Fragment(AsBytes("foo"))),
+  EXPECT_EQ(Materialize(Collect(fragmenter, AsBytes("foo"))),
             Bytes({0xdd, 0x5f, 0xb3, 0x7a, 0x03, 0x00, 0x01, 0x66, 0x6f, 0x6f}));
   EXPECT_EQ(fragmenter.block_offset(), 17U);
+}
+
+TEST(WalFragmenterTest, StreamsOneBorrowedFragmentAtATime) {
+  const std::vector<std::byte> logical_record = Pattern(WalBlockSize + 100U);
+  WalFragmenter fragmenter;
+  auto cursor = fragmenter.Fragment(logical_record);
+
+  const std::optional<WalFragment> first = cursor.Next();
+  const std::optional<WalFragment> last = cursor.Next();
+
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(last.has_value());
+  EXPECT_EQ(first->header[6], static_cast<std::byte>(WalRecordType::First));
+  EXPECT_EQ(last->header[6], static_cast<std::byte>(WalRecordType::Last));
+  EXPECT_EQ(first->payload.data(), logical_record.data());
+  EXPECT_EQ(last->payload.data(), logical_record.data() + first->payload.size());
+  EXPECT_FALSE(cursor.Next().has_value());
 }
 
 TEST(WalFragmenterTest, PadsShortBlockTrailerFromInitialOffset) {
   WalFragmenter fragmenter(WalBlockSize - 3U);
 
-  const auto fragments = fragmenter.Fragment(AsBytes("a"));
+  const auto fragments = Collect(fragmenter, AsBytes("a"));
 
   ASSERT_EQ(fragments.size(), 1U);
   EXPECT_EQ(fragments[0].padding_before, 3U);
@@ -104,7 +133,7 @@ TEST(WalFragmenterTest, PadsEveryShortBlockTrailer) {
     SCOPED_TRACE(trailer);
     WalFragmenter fragmenter(WalBlockSize - trailer);
 
-    const auto fragments = fragmenter.Fragment(AsBytes("x"));
+    const auto fragments = Collect(fragmenter, AsBytes("x"));
 
     ASSERT_EQ(fragments.size(), 1U);
     EXPECT_EQ(fragments[0].padding_before, trailer);
@@ -115,7 +144,7 @@ TEST(WalFragmenterTest, PadsEveryShortBlockTrailer) {
 TEST(WalFragmenterTest, PreservesExactSevenByteLevelDbBoundaryBehavior) {
   WalFragmenter fragmenter(WalBlockSize - WalHeaderSize);
 
-  const auto fragments = fragmenter.Fragment(AsBytes("bar"));
+  const auto fragments = Collect(fragmenter, AsBytes("bar"));
 
   ASSERT_EQ(fragments.size(), 2U);
   EXPECT_EQ(fragments[0].padding_before, 0U);
@@ -132,7 +161,7 @@ TEST(WalFragmenterTest, NormalizesExactlyFullBlockToZeroOffset) {
   const std::vector<std::byte> logical_record = Pattern(WalBlockSize - WalHeaderSize);
   WalFragmenter fragmenter;
 
-  const auto fragments = fragmenter.Fragment(logical_record);
+  const auto fragments = Collect(fragmenter, logical_record);
 
   ASSERT_EQ(fragments.size(), 1U);
   EXPECT_EQ(fragments[0].header[6], static_cast<std::byte>(WalRecordType::Full));
@@ -143,7 +172,7 @@ TEST(WalFragmenterTest, FragmentsLargeRecordsWithoutCopyingPayload) {
   const std::vector<std::byte> logical_record = Pattern(2U * WalBlockSize + 100U);
   WalFragmenter fragmenter;
 
-  const auto fragments = fragmenter.Fragment(logical_record);
+  const auto fragments = Collect(fragmenter, logical_record);
 
   ASSERT_EQ(fragments.size(), 3U);
   EXPECT_EQ(fragments[0].header[6], static_cast<std::byte>(WalRecordType::First));
