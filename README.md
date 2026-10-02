@@ -80,6 +80,7 @@ upstream compatibility, power-loss, sanitizer, fuzz, and benchmark gates.
 
 ## Architecture
 
+- [Guided learning path: concepts, code tours, and hands-on labs](docs/learning/README.md)
 - [LevelDB architecture analysis](docs/architecture.md)
 - [Implementation dependency DAG](docs/dependency-dag.md)
 - [Architecture decision records](docs/adr/)
