@@ -19,6 +19,7 @@ systems.
 | Compaction | Merge selected persistent files and install an equivalent retained logical history | [07](07-writes-and-compaction.md) |
 | CRC32C | Non-cryptographic checksum used to detect accidental WAL/block corruption | [02](02-bytes-and-formats.md) |
 | CURRENT | Small file naming the authoritative MANIFEST | [04](04-wal-and-recovery.md) |
+| Database state | Owning on-demand copy of current LSM topology, published sequence, snapshot, queue, memtable, and maintenance state | [10](10-guided-labs.md) |
 | Differential test | Apply comparable operations to implementations and compare against an independent oracle | [09](09-verification-and-performance.md) |
 | Directory sync | Durability operation for file/directory namespace changes, distinct from file-content sync | [04](04-wal-and-recovery.md) |
 | Flush | In the engine, turn an immutable memtable into a table; in WritableFile, drain application buffering | [04](04-wal-and-recovery.md), [07](07-writes-and-compaction.md) |

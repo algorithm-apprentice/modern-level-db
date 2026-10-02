@@ -231,6 +231,87 @@ TEST(PublicDatabaseTest, IteratorRetainsItsSnapshotAfterTheSnapshotHandleIsDestr
   EXPECT_EQ(Text(iterator.value()), "old");
 }
 
+TEST(PublicDatabaseTest, ReportsOwningDatabaseStateAndRetainedSnapshotRegistration) {
+  TemporaryDatabaseDirectory directory;
+  Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
+  ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+  Database database = std::move(*opened);
+
+  Result<DatabaseState> initial = database.GetState();
+  ASSERT_TRUE(initial.has_value()) << initial.error().ToString();
+  EXPECT_EQ(initial->last_sequence, 0U);
+  EXPECT_EQ(initial->snapshot_count, 0U);
+  EXPECT_FALSE(initial->oldest_snapshot_sequence.has_value());
+  EXPECT_EQ(initial->write_queue_depth, 0U);
+  EXPECT_GT(initial->mutable_memtable_bytes, 0U);
+  EXPECT_FALSE(initial->immutable_memtable_bytes.has_value());
+  EXPECT_EQ(initial->protected_output_count, 0U);
+  EXPECT_FALSE(initial->background_work_scheduled);
+  EXPECT_FALSE(initial->sticky_error.has_value());
+  for (const DatabaseLevelState& level : initial->levels) {
+    EXPECT_EQ(level.file_count, 0U);
+    EXPECT_EQ(level.file_bytes, 0U);
+  }
+
+  const std::string large(5000, 'v');
+  ASSERT_TRUE(database.Put(AsBytes("a"), AsBytes(large)).has_value());
+  Result<DatabaseState> written = database.GetState();
+  ASSERT_TRUE(written.has_value()) << written.error().ToString();
+  EXPECT_EQ(written->last_sequence, 1U);
+  EXPECT_GT(written->mutable_memtable_bytes, initial->mutable_memtable_bytes);
+
+  std::optional<Iterator> retained_iterator;
+  {
+    Result<Snapshot> snapshot = database.GetSnapshot();
+    ASSERT_TRUE(snapshot.has_value()) << snapshot.error().ToString();
+    Result<DatabaseState> snapshotted = database.GetState();
+    ASSERT_TRUE(snapshotted.has_value()) << snapshotted.error().ToString();
+    EXPECT_EQ(snapshotted->snapshot_count, 1U);
+    EXPECT_EQ(snapshotted->oldest_snapshot_sequence, 1U);
+
+    ReadOptions options{.snapshot = &*snapshot};
+    Result<Iterator> iterator = database.NewIterator(options);
+    ASSERT_TRUE(iterator.has_value()) << iterator.error().ToString();
+    retained_iterator.emplace(std::move(*iterator));
+  }
+
+  Result<DatabaseState> retained = database.GetState();
+  ASSERT_TRUE(retained.has_value()) << retained.error().ToString();
+  EXPECT_EQ(retained->snapshot_count, 1U);
+  EXPECT_EQ(retained->oldest_snapshot_sequence, 1U);
+  retained_iterator.reset();
+
+  Result<DatabaseState> released = database.GetState();
+  ASSERT_TRUE(released.has_value()) << released.error().ToString();
+  EXPECT_EQ(released->snapshot_count, 0U);
+  EXPECT_FALSE(released->oldest_snapshot_sequence.has_value());
+
+  const DatabaseState saved = *released;
+  ASSERT_TRUE(database.Put(AsBytes("b"), AsBytes("later")).has_value());
+  Result<DatabaseState> later = database.GetState();
+  ASSERT_TRUE(later.has_value()) << later.error().ToString();
+  EXPECT_EQ(later->last_sequence, 2U);
+  EXPECT_EQ(saved.last_sequence, 1U);
+  EXPECT_GT(saved.mutable_memtable_bytes, 0U);
+}
+
+TEST(PublicDatabaseTest, DatabaseStateOutlivesItsDatabase) {
+  TemporaryDatabaseDirectory directory;
+  DatabaseState saved;
+  {
+    Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
+    ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+    ASSERT_TRUE(opened->Put(AsBytes("a"), AsBytes("1")).has_value());
+    Result<DatabaseState> state = opened->GetState();
+    ASSERT_TRUE(state.has_value()) << state.error().ToString();
+    saved = *state;
+  }
+
+  EXPECT_EQ(saved.last_sequence, 1U);
+  EXPECT_GT(saved.mutable_memtable_bytes, 0U);
+  EXPECT_FALSE(saved.sticky_error.has_value());
+}
+
 TEST(PublicDatabaseTest, RejectsForeignAndMovedFromHandles) {
   TemporaryDatabaseDirectory first_directory;
   TemporaryDatabaseDirectory second_directory;
@@ -266,6 +347,7 @@ TEST(PublicDatabaseTest, RejectsForeignAndMovedFromHandles) {
   ExpectInvalid(first.Get(AsBytes("a")));
   ExpectInvalid(first.NewIterator());
   ExpectInvalid(first.GetSnapshot());
+  ExpectInvalid(first.GetState());
 
   Result<Iterator> iterator = moved.NewIterator();
   ASSERT_TRUE(iterator.has_value()) << iterator.error().ToString();

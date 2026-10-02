@@ -23,6 +23,27 @@ struct PreparedRead {
   std::shared_ptr<detail::SnapshotRegistration> snapshot;
 };
 
+DatabaseState PublicState(DatabaseEngineState state) {
+  static_assert(DatabaseLevelCount == NumLevels);
+  DatabaseState result;
+  for (std::size_t level = 0; level < DatabaseLevelCount; ++level) {
+    result.levels[level] = {
+        .file_count = state.levels[level].file_count,
+        .file_bytes = state.levels[level].file_bytes,
+    };
+  }
+  result.last_sequence = state.last_sequence;
+  result.snapshot_count = state.snapshot_count;
+  result.oldest_snapshot_sequence = state.oldest_snapshot_sequence;
+  result.write_queue_depth = state.write_queue_depth;
+  result.mutable_memtable_bytes = state.mutable_memtable_bytes;
+  result.immutable_memtable_bytes = state.immutable_memtable_bytes;
+  result.protected_output_count = state.protected_output_count;
+  result.background_work_scheduled = state.background_work_scheduled;
+  result.sticky_error = std::move(state.sticky_error);
+  return result;
+}
+
 Error MovedFromDatabase(std::string_view operation) {
   return Error::InvalidArgument(std::string(operation) + " used a moved-from database");
 }
@@ -235,6 +256,15 @@ Result<Snapshot> Database::GetSnapshot() {
   }
   auto registration = std::make_shared<detail::SnapshotRegistration>(state);
   return Snapshot(std::move(registration));
+}
+
+Result<DatabaseState> Database::GetState() {
+  detail::DatabaseState* const state = state_.get();
+  if (state == nullptr) {
+    return std::unexpected(MovedFromDatabase("GetState"));
+  }
+  return state->engine().GetState().transform(
+      [](DatabaseEngineState captured) { return PublicState(std::move(captured)); });
 }
 
 }  // namespace modern_leveldb

@@ -1,6 +1,7 @@
 #ifndef MODERN_LEVELDB_ENGINE_DATABASE_H_
 #define MODERN_LEVELDB_ENGINE_DATABASE_H_
 
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -76,6 +77,27 @@ struct DatabaseEngineReadOptions {
   bool fill_cache = true;
 };
 
+struct DatabaseEngineLevelState {
+  std::size_t file_count = 0;
+  std::uint64_t file_bytes = 0;
+};
+
+struct DatabaseEngineState {
+  std::array<DatabaseEngineLevelState, NumLevels> levels{};
+
+  SequenceNumber last_sequence = 0;
+  std::size_t snapshot_count = 0;
+  std::optional<SequenceNumber> oldest_snapshot_sequence;
+
+  std::size_t write_queue_depth = 0;
+  std::size_t mutable_memtable_bytes = 0;
+  std::optional<std::size_t> immutable_memtable_bytes;
+
+  std::size_t protected_output_count = 0;
+  bool background_work_scheduled = false;
+  std::optional<Error> sticky_error;
+};
+
 // An open database, as LevelDB's DBImpl. Its methods are safe to call from
 // several threads.
 class DatabaseEngine final {
@@ -116,6 +138,9 @@ class DatabaseEngine final {
   // Each call needs its own release.
   [[nodiscard]] SequenceNumber GetSnapshot();
   void ReleaseSnapshot(SequenceNumber snapshot);
+
+  // Returns an owning snapshot of the current topology and maintenance state.
+  [[nodiscard]] Result<DatabaseEngineState> GetState();
 
   // Switches to a new memtable, even an empty one, and waits until the old one
   // is flushed. Returns the background error if there is one.
@@ -193,6 +218,9 @@ class DatabaseEngine final {
   std::unique_ptr<WalWriter> log_;
   std::uint64_t log_number_ = 0;
   std::shared_ptr<MemTable> memtable_;
+  // Published only at recovery, rotation, and completed successful commit
+  // boundaries. Commit insertion mutates the live arena without the mutex.
+  std::size_t published_mutable_memtable_bytes_ = 0;
   std::shared_ptr<const MemTable> immutable_;
   std::vector<std::shared_ptr<const MemTable>> read_pinned_memtables_;
   WriteQueue write_queue_;

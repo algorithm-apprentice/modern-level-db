@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <type_traits>
 #include <utility>
 
@@ -25,10 +26,17 @@ static_assert(std::is_copy_constructible_v<WriteBatch>);
 static_assert(std::is_copy_assignable_v<WriteBatch>);
 static_assert(std::is_nothrow_move_constructible_v<WriteBatch>);
 static_assert(std::is_nothrow_move_assignable_v<WriteBatch>);
+static_assert(std::is_copy_constructible_v<DatabaseState>);
+static_assert(std::is_copy_assignable_v<DatabaseState>);
+static_assert(std::is_nothrow_move_constructible_v<DatabaseState>);
+static_assert(std::is_nothrow_move_assignable_v<DatabaseState>);
+static_assert(std::tuple_size_v<decltype(DatabaseState::levels)> == DatabaseLevelCount);
 using DatabaseWrite = Status (Database::*)(const WriteBatch&, const WriteOptions&);
 using DatabaseWriteExclusive = Status (Database::*)(WriteBatch&, const WriteOptions&);
+using DatabaseGetState = Result<DatabaseState> (Database::*)();
 static_assert(std::is_same_v<decltype(&Database::Write), DatabaseWrite>);
 static_assert(std::is_same_v<decltype(&Database::WriteExclusive), DatabaseWriteExclusive>);
+static_assert(std::is_same_v<decltype(&Database::GetState), DatabaseGetState>);
 static_assert(static_cast<int>(Compression::None) == 0);
 static_assert(static_cast<int>(Compression::Snappy) == 1);
 static_assert(static_cast<int>(Compression::Zstd) == 2);
