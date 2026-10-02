@@ -23,6 +23,7 @@ from run_write_parity import (
     MATRIX_NAME,
     aggregate_cells,
     enumerate_cells,
+    main,
     run_matrix,
     validate_cell_manifest,
     validate_plan,
@@ -499,10 +500,19 @@ class CellAndAggregationTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_cell_manifest(cell, changed, self.plan)
 
-    def test_aggregates_raw_iteration_values_and_applies_exact_admission(self):
+    def test_aggregates_raw_iteration_values_with_diagnostic_policy(self):
         report = aggregate_cells(self.cells, self.plan["evidence"])
         self.assertEqual(report["processes"], 110)
-        self.assertTrue(report["admission"]["passed"])
+        self.assertEqual(report["schema_version"], 2)
+        self.assertEqual(
+            report["evaluation"],
+            {
+                "performance_policy": "diagnostic-only",
+                "preset_performance_thresholds": False,
+                "correctness_and_review_evidence": True,
+            },
+        )
+        self.assertNotIn("admission", report)
         primary_batch = report["primary"]["writebatch"]
         self.assertAlmostEqual(primary_batch["aggregate_wall_delta"], 0.04)
         self.assertEqual(primary_batch["candidate_median_wall_ns_per_iteration"], 104.0)
@@ -530,7 +540,7 @@ class CellAndAggregationTest(unittest.TestCase):
             with self.subTest(index=index), self.assertRaises(ValueError):
                 aggregate_cells(changed, self.plan["evidence"])
 
-    def test_reports_threshold_failures_without_rerunning_cells(self):
+    def test_reports_regressions_without_applying_performance_thresholds(self):
         changed = copy.deepcopy(self.cells)
         for cell in changed:
             if (cell["matrix"] == "primary" and cell["workload"] == "overwrite"
@@ -538,26 +548,19 @@ class CellAndAggregationTest(unittest.TestCase):
                 cell["measurement"]["wall_ns_per_iteration"] = [106.0]
                 cell["measurement"]["process_cpu_ns_per_iteration"] = [106.0]
         report = aggregate_cells(changed, self.plan["evidence"])
-        self.assertFalse(report["admission"]["passed"])
-        failed = {
-            check["name"] for check in report["admission"]["checks"] if not check["passed"]
-        }
-        self.assertIn("primary.overwrite.aggregate_wall", failed)
-        self.assertIn("primary.overwrite.aggregate_process_cpu", failed)
+        self.assertAlmostEqual(report["primary"]["overwrite"]["aggregate_wall_delta"], 0.06)
+        self.assertAlmostEqual(
+            report["primary"]["overwrite"]["aggregate_process_cpu_delta"], 0.06
+        )
+        self.assertEqual(report["evaluation"]["performance_policy"], "diagnostic-only")
+        self.assertNotIn("admission", report)
 
-    def test_admission_accepts_exact_decimal_threshold_boundaries(self):
-        changed = copy.deepcopy(self.cells)
-        for cell in changed:
-            if (cell["matrix"] == "primary" and cell["workload"] == "overwrite"
-                    and cell["side"] == "candidate"):
-                cell["measurement"]["wall_ns_per_iteration"] = [105.0]
-                cell["measurement"]["process_cpu_ns_per_iteration"] = [105.0]
-        report = aggregate_cells(changed, self.plan["evidence"])
-        checks = {
-            check["name"]: check["passed"] for check in report["admission"]["checks"]
-        }
-        self.assertTrue(checks["primary.overwrite.aggregate_wall"])
-        self.assertTrue(checks["primary.overwrite.aggregate_process_cpu"])
+    def test_reports_invalid_correctness_evidence_without_a_performance_fallback(self):
+        evidence = copy.deepcopy(self.plan["evidence"])
+        evidence["correctness"] = False
+        report = aggregate_cells(self.cells, evidence)
+        self.assertFalse(report["evaluation"]["correctness_and_review_evidence"])
+        self.assertFalse(report["evaluation"]["preset_performance_thresholds"])
 
 
 class MatrixExecutionTest(unittest.TestCase):
@@ -600,13 +603,28 @@ class MatrixExecutionTest(unittest.TestCase):
             result = run_matrix(self.plan_path, output)
         self.assertEqual(result["status"], "complete")
         self.assertEqual(calls, [cell["id"] for cell in expected])
-        self.assertEqual(read_json(output / "manifest.json")["status"], "complete")
-        self.assertTrue(read_json(output / "report.json")["admission"]["passed"])
+        manifest = read_json(output / "manifest.json")
+        self.assertEqual(manifest["status"], "complete")
+        self.assertEqual(manifest["performance_policy"], "diagnostic-only")
+        report = read_json(output / "report.json")
+        self.assertEqual(report["evaluation"]["performance_policy"], "diagnostic-only")
+        self.assertNotIn("admission", report)
         with mock.patch("run_write_parity.verify_all_role_files"), mock.patch(
             "run_write_parity.retain_source_patches", return_value={}
         ):
             with self.assertRaises(FileExistsError):
                 run_matrix(self.plan_path, output)
+
+    def test_main_returns_success_after_complete_diagnostic_collection(self):
+        with mock.patch(
+            "run_write_parity.run_matrix",
+            return_value={"status": "complete", "performance_policy": "diagnostic-only"},
+        ), mock.patch.object(
+            sys,
+            "argv",
+            ["run_write_parity.py", "--plan", str(self.plan_path), "--output", "output"],
+        ):
+            self.assertEqual(main(), 0)
 
     def test_retains_failed_matrix_without_cell_replacement(self):
         calls = 0
