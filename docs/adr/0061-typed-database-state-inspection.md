@@ -2,9 +2,13 @@
 
 ## Status
 
-Proposed.
+Accepted by PR #91.
 
-Implementation begins only after this design is reviewed and merged.
+Implementation and final validation are complete. Debug, Release,
+compatibility, model, crash, ASan/UBSan, TSan, fuzz smoke, benchmark,
+profiling-contract, and changed-code coverage evidence passed. A bounded
+GPT-5.6 Sol implementation review found no actionable issue. Final delivery
+is through the sequential implementation PR.
 
 ## Context
 
@@ -361,15 +365,17 @@ Development remains test-first.
 - A new database reports seven empty levels, sequence zero, no snapshots,
   no queued writer, no immutable memtable, no pending output, no scheduled
   work, no error, and a nonzero mutable arena reservation.
-- A large write that requires a dedicated arena allocation advances the
-  published sequence and mutable-memory boundary; a small write may advance
-  only the sequence because arena accounting measures reserved blocks.
+- A large write that exhausts the current arena block and requires a
+  dedicated allocation advances the published sequence and mutable-memory
+  boundary; a small write may advance only the sequence because arena
+  accounting measures reserved blocks.
 - An empty batch advances neither the published sequence nor memory boundary.
 - Multiple explicit snapshots report their count and oldest sequence and
   disappear after release.
-- A pre-populated memtable, a value above the arena's dedicated-allocation
-  threshold, and `BlockingComparator` pause a commit during skip-list
-  insertion after entry allocation while the database mutex is released.
+- A pre-populated memtable, a value larger than both the remaining normal
+  arena block and the dedicated-allocation threshold, and
+  `BlockingComparator` pause a commit during skip-list insertion after entry
+  allocation while the database mutex is released.
   `GetState` still reports the previous sequence/memory boundary and an active
   write queue; after release, both published fields advance and the queue
   empties. This test would expose an implementation that reads the live arena

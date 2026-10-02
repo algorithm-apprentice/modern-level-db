@@ -8,8 +8,8 @@ LevelDB release has identical capabilities.
 Modern's current public headers and engine implementation are the other
 side of the comparison.
 
-The feature suggestions below are **unapproved proposals**, not API
-promises or implementation tasks. Adding one still requires a concrete
+The remaining feature suggestions below are **unapproved proposals**, not
+API promises or implementation tasks. Adding one still requires a concrete
 requirement, an ADR, and sequential development.
 
 ## The core storage engine is already present
@@ -27,7 +27,7 @@ Modern is not missing the basic LSM pipeline:
 | Leveled and seek-triggered compaction | Yes | Yes |
 | Concurrent API callers and grouped writes | Yes | Yes |
 | Table/block caches and POSIX mapped reads | Yes | Yes, with an explicit copied-read option |
-| Public properties/statistics | `GetProperty` | No equivalent public API |
+| Public state/properties | Formatted string `GetProperty` | Typed owning `DatabaseState` snapshot; no arbitrary property strings |
 | Approximate disk usage by key range | `GetApproximateSizes` | Not exposed |
 | Manual range compaction | `CompactRange` | Not implemented as a public/manual operation |
 | Destroy and lossy repair helpers | `DestroyDB`, `RepairDB` | Not exposed |
@@ -66,19 +66,19 @@ harder to understand.
 
 | Priority | Proposal | Knowledge made visible | Smallest useful boundary |
 |---|---|---|---|
-| First | Typed database-state/statistics snapshot | Levels, retained memory/history, write stalls, maintenance progress/errors | Copy selected state under the engine mutex; no generic metrics framework |
 | First | Offline WAL/MANIFEST/SSTable inspector | Binary formats, sequences, checksums, block routing, metadata edits | Read-only tools over disposable, closed database files |
 | Next | Public deterministic flush | WAL/memtable/table transitions and installation barriers | Reuse the internal flush mechanism with explicit blocking/error semantics |
 | Next, separate task | Manual range compaction | Input selection, tombstone retention, and physical reclamation | Define scheduling/range/completion contracts before implementing |
 | When experiments need it | Public block-cache capacity | Eviction, working sets, pins, and memory/read tradeoffs | A per-database size option, not arbitrary shared cache plugins |
 | Lower priority | Approximate range disk sizes | Logical versus compressed physical space | Clearly approximate SSTable accounting; not exact live-value size |
 
-### State/statistics first
+### Typed state inspection is now implemented
 
-A small initial state report could expose per-level file counts/bytes,
-memtable usage, registered-snapshot state, current maintenance state, and
-the sticky background error.
-It would answer questions such as:
+`Database::GetState` now exposes per-level file counts/bytes, the published
+sequence, explicit snapshot retention, write-queue depth, mutable/immutable
+memtable arena reservations, protected output numbers, accepted background
+work, and the recorded sticky error.
+It answers questions such as:
 
 ```text
 Why did this write slow down?
@@ -87,15 +87,14 @@ Why are old tables still present?
 Did this workload leave maintenance debt?
 ```
 
-Those facts are more useful to a learner than many tuning knobs.
-Some state already exists; completed-work counters would require new
-accounting. Do not claim the public API merely needs to forward an existing
-complete statistics implementation.
+Those facts are more useful to a learner than many tuning knobs. The value is
+an owning on-demand snapshot, not a metrics stream, file inspector,
+background-progress estimate, or total process-memory report.
 
 The project already has a separate read-diagnostics executable and retained
 profiling reports. Start there for detailed read counters.
-A production state API should not add expensive instrumentation to every
-hot-path operation just to reproduce those diagnostics.
+The production state API does not add expensive read instrumentation merely
+to reproduce those diagnostics.
 
 ### An inspector is not automatic repair
 
@@ -149,8 +148,8 @@ unfavorable measurements.
 ## A useful next-step sequence
 
 For study, finish the learning path and existing labs first.
-If extending the engine afterward, prefer one observability or inspection
-feature, then one deterministic maintenance experiment.
+If extending the engine afterward, prefer the offline inspector, then one
+deterministic maintenance experiment.
 Do not implement every row above simply to match an API checklist.
 
 The decision rule remains [need-driven simplicity](../adr/0010-need-driven-simplicity.md):

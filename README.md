@@ -50,8 +50,9 @@ memtables to a new synced log, flushes immutable memtables in the background,
 serves reads and iterators at snapshots, runs size and seek compactions,
 slows or stops writes while level 0 backs up, and removes obsolete files. The
 public RAII facade exposes database handles, atomic write batches, snapshots,
-and bidirectional iterators while keeping engine and child-handle lifetimes
-safe. The canonical MVP implementation also includes reproducible model,
+bidirectional iterators, and an owning typed snapshot of LSM topology and
+maintenance state while keeping engine and child-handle lifetimes safe. The
+canonical MVP implementation also includes reproducible model,
 upstream compatibility, power-loss, sanitizer, fuzz, and benchmark gates.
 
 ## Goals
@@ -131,6 +132,26 @@ if (*found) {
   // value_buffer contains the value. Missing/deleted keys leave it unchanged.
 }
 ```
+
+Inspect the current LSM and maintenance state without file I/O or a
+background-work barrier:
+
+```cpp
+auto state = database.GetState();
+if (!state.has_value()) {
+  return state.error();
+}
+
+const auto& level_zero = state->levels[0];
+const std::size_t level_zero_files = level_zero.file_count;
+const std::size_t mutable_memtable_bytes = state->mutable_memtable_bytes;
+```
+
+The returned value owns its fields. File bytes are recorded SSTable sizes;
+memtable bytes are arena reservations rather than exact payload or total
+process memory. See
+[ADR-0061](docs/adr/0061-typed-database-state-inspection.md) for every field's
+snapshot, error, and concurrency contract.
 
 `Database`, `Snapshot`, and `Iterator` are move-only handles. Snapshots and
 iterators retain the underlying engine, so their storage remains valid even

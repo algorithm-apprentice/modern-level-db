@@ -8,10 +8,12 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <span>
 #include <stop_token>
 #include <string>
 #include <utility>
@@ -83,6 +85,18 @@ TableReadOptions ReadOptionsFor(const DatabaseEngineReadOptions& options) {
   TableReadOptions read_options;
   read_options.fill_cache = options.fill_cache;
   return read_options;
+}
+
+Result<std::uint64_t> LevelFileBytes(std::span<const Version::File> files, std::uint32_t level) {
+  std::uint64_t total = 0;
+  for (const Version::File& file : files) {
+    if (file->file_size > std::numeric_limits<std::uint64_t>::max() - total) {
+      return std::unexpected(
+          Error::Aborted("level " + std::to_string(level) + " file bytes exceed uint64"));
+    }
+    total += file->file_size;
+  }
+  return total;
 }
 
 }  // namespace
@@ -199,6 +213,7 @@ Status DatabaseEngine::Recover(const DatabaseEngineOptions& options) {
   log_ = std::move(recovered->log);
   log_number_ = recovered->log_number;
   memtable_ = std::make_shared<MemTable>(comparator_.user_comparator());
+  published_mutable_memtable_bytes_ = memtable_->memory_usage();
   RemoveObsoleteFiles(lock);
   // Only a task that cannot be scheduled records an error here.
   MaybeScheduleBackgroundWork();
@@ -278,6 +293,7 @@ Status DatabaseEngine::SwitchMemTable() {
   immutable_ = std::move(memtable_);
   has_immutable_.store(true, std::memory_order_release);
   memtable_ = std::move(new_memtable);
+  published_mutable_memtable_bytes_ = memtable_->memory_usage();
   MaybeScheduleBackgroundWork();
   return {};
 }
@@ -307,6 +323,7 @@ Status DatabaseEngine::CommitWrite(std::unique_lock<std::mutex>& lock, EncodedWr
     RecordBackgroundError(committed.error());
     return committed;
   }
+  published_mutable_memtable_bytes_ = memtable.memory_usage();
   // An empty group leaves the last sequence as it was.
   versions_->SetLastSequence(first + count - 1);
   return {};
@@ -382,6 +399,38 @@ void DatabaseEngine::ReleaseSnapshot(SequenceNumber snapshot) {
   const auto found = snapshots_.find(snapshot);
   assert(found != snapshots_.end());
   snapshots_.erase(found);
+}
+
+Result<DatabaseEngineState> DatabaseEngine::GetState() {
+  const std::lock_guard lock(mutex_);
+  DatabaseEngineState state;
+  const Version& current = *versions_->current_raw();
+  for (std::uint32_t level = 0; level < NumLevels; ++level) {
+    const std::span<const Version::File> files = current.files(level);
+    Result<std::uint64_t> bytes = LevelFileBytes(files, level);
+    if (!bytes.has_value()) {
+      return std::unexpected(std::move(bytes).error());
+    }
+    state.levels[level] = {
+        .file_count = files.size(),
+        .file_bytes = *bytes,
+    };
+  }
+
+  state.last_sequence = versions_->last_sequence();
+  state.snapshot_count = snapshots_.size();
+  if (!snapshots_.empty()) {
+    state.oldest_snapshot_sequence = *snapshots_.begin();
+  }
+  state.write_queue_depth = write_queue_.size();
+  state.mutable_memtable_bytes = published_mutable_memtable_bytes_;
+  if (immutable_ != nullptr) {
+    state.immutable_memtable_bytes = immutable_->memory_usage();
+  }
+  state.protected_output_count = pending_outputs_.size();
+  state.background_work_scheduled = background_scheduled_;
+  state.sticky_error = background_error_;
+  return state;
 }
 
 Status DatabaseEngine::FlushMemTable() {

@@ -9,6 +9,7 @@
 
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
+#include "modern_leveldb/database_state.h"
 #include "modern_leveldb/iterator.h"
 #include "modern_leveldb/options.h"
 #include "modern_leveldb/snapshot.h"
@@ -43,6 +44,9 @@ class Database final {
                                                                   const ReadOptions& options = {});
   [[nodiscard]] Result<Iterator> NewIterator(const ReadOptions& options = {});
   [[nodiscard]] Result<Snapshot> GetSnapshot();
+  // Returns an owning snapshot without performing I/O or waiting for
+  // background work.
+  [[nodiscard]] Result<DatabaseState> GetState();
 
  private:
   explicit Database(std::shared_ptr<detail::DatabaseState> state) noexcept;

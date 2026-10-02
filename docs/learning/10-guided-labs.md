@@ -264,7 +264,47 @@ Draw two lifetimes: membership in the cache and ownership through a handle.
 **Completion:** explain why an eviction budget is not a process-wide hard
 memory limit, and identify the owner of an uncompressed mmap block.
 
-## Lab 7: inspect read costs, not just elapsed time
+## Lab 7: observe LSM and maintenance state
+
+Read [lessons 03, 06, and 07](README.md), then run:
+
+```bash
+ctest --preset dev-debug -L unit \
+  -R 'DatabaseTest\.(ReportsPublishedStateAndExplicitSnapshots|ReportsImmutableAndProtectedFlushState)|PublicDatabaseTest\.(ReportsOwningDatabaseStateAndRetainedSnapshotRegistration|DatabaseStateOutlivesItsDatabase)'
+```
+
+Follow `Database::GetState` into `DatabaseEngine::GetState`.
+For each returned field, identify the mutex-protected source that it copies.
+Then follow a write through `CommitWrite` and explain why
+`mutable_memtable_bytes` uses a published value instead of reading the live
+arena while the database mutex is held.
+
+Predict these transitions before reading the assertions:
+
+```text
+new database:
+  seven empty levels, sequence 0, mutable arena reservation
+
+explicit snapshot:
+  snapshot_count increases and oldest_snapshot_sequence appears
+
+forced rotation:
+  immutable_memtable_bytes appears and background_work_scheduled is true
+
+flush output construction:
+  protected_output_count becomes one, then clears after installation
+```
+
+`file_bytes` is current SSTable metadata, not live user bytes or total
+directory usage. Memtable values are arena-reserved bytes, not exact payload
+or process RSS. A nonzero protected count is a cleanup invariant and can
+remain after an exceptional background termination.
+
+**Completion:** explain why a state value remains valid after the database
+changes or closes, why it performs no I/O, and why it is not a metrics stream
+or background-progress percentage.
+
+## Lab 8: inspect read costs, not just elapsed time
 
 This is optional and more expensive than the focused unit labs.
 Build the profiling preset:

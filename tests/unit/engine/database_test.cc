@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <functional>
 #include <future>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -900,6 +901,186 @@ TEST_F(DatabaseTest, FlushWaitsForACommitThatReleasedTheMutex) {
   // The switch came after the write, so the flushed table holds it.
   EXPECT_EQ(Numbers(FileType::Table).size(), 1U);
   EXPECT_EQ(Get(*database, "a"), "1");
+}
+
+TEST_F(DatabaseTest, ReportsPublishedStateAndExplicitSnapshots) {
+  const auto database = Open();
+  Result<DatabaseEngineState> initial = database->GetState();
+  ASSERT_TRUE(initial.has_value()) << initial.error().ToString();
+  EXPECT_EQ(initial->last_sequence, 0U);
+  EXPECT_EQ(initial->snapshot_count, 0U);
+  EXPECT_FALSE(initial->oldest_snapshot_sequence.has_value());
+  EXPECT_EQ(initial->write_queue_depth, 0U);
+  EXPECT_GT(initial->mutable_memtable_bytes, 0U);
+  EXPECT_FALSE(initial->immutable_memtable_bytes.has_value());
+  EXPECT_EQ(initial->protected_output_count, 0U);
+  EXPECT_FALSE(initial->background_work_scheduled);
+  EXPECT_FALSE(initial->sticky_error.has_value());
+  for (const DatabaseEngineLevelState& level : initial->levels) {
+    EXPECT_EQ(level.file_count, 0U);
+    EXPECT_EQ(level.file_bytes, 0U);
+  }
+
+  ASSERT_TRUE(Put(*database, "small", "1").has_value());
+  Result<DatabaseEngineState> small = database->GetState();
+  ASSERT_TRUE(small.has_value()) << small.error().ToString();
+  EXPECT_EQ(small->last_sequence, 1U);
+  EXPECT_EQ(small->mutable_memtable_bytes, initial->mutable_memtable_bytes);
+
+  EncodedWriteBatch empty;
+  ASSERT_TRUE(database->Write(empty, false).has_value());
+  Result<DatabaseEngineState> empty_written = database->GetState();
+  ASSERT_TRUE(empty_written.has_value()) << empty_written.error().ToString();
+  EXPECT_EQ(empty_written->last_sequence, small->last_sequence);
+  EXPECT_EQ(empty_written->mutable_memtable_bytes, small->mutable_memtable_bytes);
+
+  const SequenceNumber oldest = database->GetSnapshot();
+  const std::string large(5000, 'v');
+  ASSERT_TRUE(Put(*database, "large", large).has_value());
+  const SequenceNumber newest = database->GetSnapshot();
+  const SequenceNumber duplicate = database->GetSnapshot();
+  Result<DatabaseEngineState> snapshotted = database->GetState();
+  ASSERT_TRUE(snapshotted.has_value()) << snapshotted.error().ToString();
+  EXPECT_EQ(snapshotted->last_sequence, 2U);
+  EXPECT_GT(snapshotted->mutable_memtable_bytes, small->mutable_memtable_bytes);
+  EXPECT_EQ(snapshotted->snapshot_count, 3U);
+  EXPECT_EQ(snapshotted->oldest_snapshot_sequence, oldest);
+
+  database->ReleaseSnapshot(oldest);
+  database->ReleaseSnapshot(newest);
+  database->ReleaseSnapshot(duplicate);
+  Result<DatabaseEngineState> released = database->GetState();
+  ASSERT_TRUE(released.has_value()) << released.error().ToString();
+  EXPECT_EQ(released->snapshot_count, 0U);
+  EXPECT_FALSE(released->oldest_snapshot_sequence.has_value());
+}
+
+TEST_F(DatabaseTest, StateKeepsThePublishedPairWhileACommitInsertsUnlocked) {
+  BlockingComparator comparator;
+  options_.comparator = &comparator;
+  const auto database = Open();
+  ASSERT_TRUE(Put(*database, "a", "1").has_value());
+  Result<DatabaseEngineState> before = database->GetState();
+  ASSERT_TRUE(before.has_value()) << before.error().ToString();
+
+  const std::string large = Large();
+  comparator.Close("b");
+  std::optional<Status> written;
+  std::thread writer([&] { written = Put(*database, "b", large); });
+  comparator.WaitUntilReached();
+
+  Result<DatabaseEngineState> inserting = database->GetState();
+  ASSERT_TRUE(inserting.has_value()) << inserting.error().ToString();
+  EXPECT_EQ(inserting->last_sequence, before->last_sequence);
+  EXPECT_EQ(inserting->mutable_memtable_bytes, before->mutable_memtable_bytes);
+  EXPECT_EQ(inserting->write_queue_depth, 1U);
+  EXPECT_FALSE(inserting->sticky_error.has_value());
+
+  comparator.Open();
+  writer.join();
+  ASSERT_TRUE(written->has_value());
+  Result<DatabaseEngineState> after = database->GetState();
+  ASSERT_TRUE(after.has_value()) << after.error().ToString();
+  EXPECT_EQ(after->last_sequence, before->last_sequence + 1U);
+  EXPECT_GT(after->mutable_memtable_bytes, before->mutable_memtable_bytes);
+  EXPECT_EQ(after->write_queue_depth, 0U);
+}
+
+TEST_F(DatabaseTest, ReportsImmutableAndProtectedFlushState) {
+  const auto database = Open();
+  ASSERT_TRUE(Put(*database, "a", "1").has_value());
+  std::optional<Status> flushed;
+  std::thread flusher([&] { flushed = database->FlushMemTable(); });
+  executor_.WaitForTask();
+
+  Result<DatabaseEngineState> rotated = database->GetState();
+  ASSERT_TRUE(rotated.has_value()) << rotated.error().ToString();
+  EXPECT_TRUE(rotated->immutable_memtable_bytes.has_value());
+  EXPECT_TRUE(rotated->background_work_scheduled);
+  EXPECT_EQ(rotated->protected_output_count, 0U);
+
+  Gate output;
+  output.Close(OpensATable);
+  file_system_.SetOperationHook(std::ref(output));
+  std::thread runner([&] { executor_.RunAll(); });
+  output.WaitUntilReached();
+
+  Result<DatabaseEngineState> building = database->GetState();
+  ASSERT_TRUE(building.has_value()) << building.error().ToString();
+  EXPECT_TRUE(building->immutable_memtable_bytes.has_value());
+  EXPECT_TRUE(building->background_work_scheduled);
+  EXPECT_EQ(building->protected_output_count, 1U);
+
+  output.Open();
+  runner.join();
+  flusher.join();
+  file_system_.SetOperationHook({});
+  ASSERT_TRUE(flushed->has_value());
+
+  Result<DatabaseEngineState> installed = database->GetState();
+  ASSERT_TRUE(installed.has_value()) << installed.error().ToString();
+  EXPECT_FALSE(installed->immutable_memtable_bytes.has_value());
+  EXPECT_FALSE(installed->background_work_scheduled);
+  EXPECT_EQ(installed->protected_output_count, 0U);
+  std::size_t files = 0;
+  for (const DatabaseEngineLevelState& level : installed->levels) {
+    files += level.file_count;
+  }
+  EXPECT_EQ(files, 1U);
+}
+
+TEST_F(DatabaseTest, ReportsProtectedOutputAndStickyErrorAfterBackgroundException) {
+  const auto database = Open();
+  ASSERT_TRUE(Put(*database, "a", "1").has_value());
+  std::optional<Status> flushed;
+  std::thread flusher([&] { flushed = database->FlushMemTable(); });
+  executor_.WaitForTask();
+  file_system_.SetOperationHook([](std::string_view operation) -> Status {
+    if (OpensATable(operation)) {
+      throw std::runtime_error("thrown");
+    }
+    return {};
+  });
+  executor_.RunAll();
+  flusher.join();
+  file_system_.SetOperationHook({});
+
+  ASSERT_FALSE(flushed->has_value());
+  Result<DatabaseEngineState> state = database->GetState();
+  ASSERT_TRUE(state.has_value()) << state.error().ToString();
+  EXPECT_EQ(state->protected_output_count, 1U);
+  EXPECT_FALSE(state->background_work_scheduled);
+  ASSERT_TRUE(state->sticky_error.has_value());
+  EXPECT_EQ(state->sticky_error->code(), ErrorCode::Aborted);
+}
+
+TEST_F(DatabaseTest, RejectsUnrepresentableLevelByteTotals) {
+  {
+    const auto database = Open();
+  }
+  const InternalKeyComparator comparator(BytewiseComparator());
+  auto versions = VersionSet::Recover(file_system_, directory_, comparator);
+  ASSERT_TRUE(versions.has_value());
+  VersionEdit edit;
+  for (const std::string_view key : {"a", "b"}) {
+    const std::uint64_t number = (*versions)->NewFileNumber();
+    Result<InternalKey> smallest = InternalKey::Create(AsBytes(key), 1, ValueKind::Value);
+    Result<InternalKey> largest = InternalKey::Create(AsBytes(key), 1, ValueKind::Value);
+    ASSERT_TRUE(smallest.has_value() && largest.has_value());
+    FileMetadata file{.number = number,
+                      .file_size = std::numeric_limits<std::uint64_t>::max(),
+                      .smallest = std::move(*smallest),
+                      .largest = std::move(*largest)};
+    ASSERT_TRUE(edit.AddFile(0, std::move(file)).has_value());
+    file_system_.Write(TableFileName(directory_, number), {});
+  }
+  ASSERT_TRUE((*versions)->LogAndApply(std::move(edit)).has_value());
+  versions->reset();
+
+  const auto database = Open();
+  const Result<DatabaseEngineState> state = database->GetState();
+  ASSERT_FALSE(state.has_value());
+  EXPECT_EQ(state.error().code(), ErrorCode::Aborted);
 }
 
 TEST_F(DatabaseTest, StopsWritesAfterAFailedFlush) {
