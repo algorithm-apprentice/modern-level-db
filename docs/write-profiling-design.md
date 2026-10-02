@@ -161,7 +161,11 @@ SHA-256 or `not_applicable`. Before every process, the driver rehashes these
 files, parses the header, finds LevelDB's `util/crc32c.cc` command in the
 retained compile database, and inspects the archive's undefined symbols. The
 hardware role must compile with the pinned Google CRC32C include directory and
-reference `crc32c::Extend`; canonical and baseline roles must do neither.
+reference `crc32c::Extend`; canonical and baseline roles must do neither. The
+symbol check accepts both GNU `nm -u -C` output with a `U` type prefix and
+Darwin output that prints only the demangled undefined symbol. It requires the
+top-level Google namespace and must not treat LevelDB's portable
+`leveldb::crc32c::Extend` symbol as hardware-provider evidence.
 
 `evidence` contains `final_revision`, a `hardware_crc_profile` object, plus Boolean
 `correctness`, `compatibility`, `crash`, `sanitizers`, `compilers`, `coverage`,

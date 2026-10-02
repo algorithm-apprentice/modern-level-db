@@ -550,7 +550,7 @@ def verify_reference_files(name, role):
     if symbols.returncode != 0:
         raise ValueError(f"cannot inspect frozen LevelDB archive: {name}")
     uses_google_crc = re.search(
-        r"(?m)^\s*U\s+crc32c::Extend\(",
+        r"(?m)^(?:\s*U\s+)?crc32c::Extend\(",
         symbols.stdout,
     ) is not None
     if uses_google_crc != reference["have_crc32c"]:

@@ -436,14 +436,24 @@ class FrozenPlanTest(unittest.TestCase):
     def test_verifies_reference_compile_archive_and_runtime_profile_evidence(self):
         final = self.plan["roles"]["final"]
         canonical = self.plan["roles"]["canonical"]
-        hardware_symbols = subprocess.CompletedProcess(
-            ["nm"], 0, "         U crc32c::Extend(unsigned int, char const*, unsigned long)\n", ""
-        )
-        canonical_symbols = subprocess.CompletedProcess(["nm"], 0, "", "")
-        with mock.patch("run_write_parity.subprocess.run", return_value=hardware_symbols):
-            verify_reference_files("final", final)
-        with mock.patch("run_write_parity.subprocess.run", return_value=canonical_symbols):
-            verify_reference_files("canonical", canonical)
+        for output in (
+            "         U crc32c::Extend(unsigned int, char const*, unsigned long)\n",
+            "crc32c::Extend(unsigned int, unsigned char const*, unsigned long)\n",
+        ):
+            hardware_symbols = subprocess.CompletedProcess(["nm"], 0, output, "")
+            with self.subTest(output=output), mock.patch(
+                "run_write_parity.subprocess.run", return_value=hardware_symbols
+            ):
+                verify_reference_files("final", final)
+        for output in (
+            "         U leveldb::crc32c::Extend(unsigned int, char const*, unsigned long)\n",
+            "leveldb::crc32c::Extend(unsigned int, char const*, unsigned long)\n",
+        ):
+            canonical_symbols = subprocess.CompletedProcess(["nm"], 0, output, "")
+            with self.subTest(output=output), mock.patch(
+                "run_write_parity.subprocess.run", return_value=canonical_symbols
+            ):
+                verify_reference_files("canonical", canonical)
         verify_compile_alignment(self.plan)
         verify_profile_evidence(self.plan)
 
