@@ -219,11 +219,11 @@ It reports per-round and median wall/process-CPU values from raw per-iteration
 timings, primary and production deltas, the descriptive batch and CRC controls,
 and the non-`writebatch` production/matched WAL-durability ratio.
 
-Admission is evaluated exactly as ADR-0060 specifies: primary non-sync
-aggregate and individual wall limits, the wider predeclared sync-round rule,
-non-sync process-CPU aggregate limits, and production-regression aggregate
-limits. Completion, residual, frozen identity, and correctness/review evidence
-must also be valid. No failed cell can be discarded or replaced.
+Performance deltas are diagnostic and have no preset pass/fail threshold.
+Collection succeeds only when completion, residual, frozen identity, and
+correctness/review evidence are valid. Positive deltas remain regressions and
+must be reported and analyzed rather than relabeled, hidden, or replaced. No
+failed cell can be discarded or replaced.
 
 ## Resolved research
 

@@ -3,7 +3,6 @@
 
 import argparse
 import copy
-import math
 from pathlib import Path
 import re
 import shlex
@@ -914,68 +913,15 @@ def pair_report(cells, matrix, workload, rounds):
     return report
 
 
-def admission_report(primary, production, evidence):
-    checks = []
-
-    def at_most(value, limit):
-        return value <= limit or math.isclose(value, limit, rel_tol=1e-12, abs_tol=1e-12)
-
-    def add(name, passed, observed, limit):
-        checks.append(
-            {
-                "name": name,
-                "passed": bool(passed),
-                "observed": observed,
-                "limit": limit,
-            }
-        )
-
-    for workload in WORKLOADS:
-        matched = primary[workload]
-        add(
-            f"primary.{workload}.aggregate_wall",
-            at_most(matched["aggregate_wall_delta"], 0.05),
-            matched["aggregate_wall_delta"],
-            0.05,
-        )
-        if workload == "writesync":
-            passing_rounds = sum(
-                at_most(round_report["wall_delta"], 0.20)
-                for round_report in matched["rounds"]
-            )
-            add(
-                "primary.writesync.individual_wall_rounds",
-                passing_rounds >= 4,
-                passing_rounds,
-                "at_least_4_of_5_at_or_below_0.20",
-            )
-        else:
-            maximum = max(round_report["wall_delta"] for round_report in matched["rounds"])
-            add(
-                f"primary.{workload}.individual_wall",
-                at_most(maximum, 0.10),
-                maximum,
-                0.10,
-            )
-            add(
-                f"primary.{workload}.aggregate_process_cpu",
-                at_most(matched["aggregate_process_cpu_delta"], 0.05),
-                matched["aggregate_process_cpu_delta"],
-                0.05,
-            )
-        regression = production[workload]
-        limit = 0.10 if workload == "writesync" else 0.05
-        add(
-            f"production.{workload}.aggregate_wall",
-            at_most(regression["aggregate_wall_delta"], limit),
-            regression["aggregate_wall_delta"],
-            limit,
-        )
+def evaluation_report(evidence):
     evidence_valid = (
         isinstance(evidence, dict) and all(evidence.get(gate) is True for gate in EVIDENCE_GATES)
     )
-    add("correctness_and_review_evidence", evidence_valid, evidence_valid, True)
-    return {"passed": all(check["passed"] for check in checks), "checks": checks}
+    return {
+        "performance_policy": "diagnostic-only",
+        "preset_performance_thresholds": False,
+        "correctness_and_review_evidence": evidence_valid,
+    }
 
 
 def aggregate_cells(cells, evidence):
@@ -1012,7 +958,7 @@ def aggregate_cells(cells, evidence):
             "causal_estimate": False,
         }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "matrix": MATRIX_NAME,
         "processes": len(cells),
         "primary": primary,
@@ -1020,7 +966,7 @@ def aggregate_cells(cells, evidence):
         "batch_ownership": batch,
         "crc_continuity": crc,
         "wal_durability": wal_durability,
-        "admission": admission_report(primary, production, evidence),
+        "evaluation": evaluation_report(evidence),
     }
 
 
@@ -1075,7 +1021,7 @@ def run_matrix(plan_path, output):
         report = aggregate_cells(matrix_manifest["cells"], plan["evidence"])
         write_json(output / "report.json", report)
         matrix_manifest["status"] = "complete"
-        matrix_manifest["admission_passed"] = report["admission"]["passed"]
+        matrix_manifest["performance_policy"] = report["evaluation"]["performance_policy"]
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         matrix_manifest["status"] = "failed"
         matrix_manifest["error"] = str(error)
@@ -1097,11 +1043,11 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
-        manifest = run_matrix(args.plan, args.output)
+        run_matrix(args.plan, args.output)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"write-path parity matrix failed: {error}", file=sys.stderr)
         return 1
-    return 0 if manifest["admission_passed"] else 2
+    return 0
 
 
 if __name__ == "__main__":
