@@ -258,6 +258,16 @@ cannot be proved, fail explicitly and retain the scratch directory rather
 than deleting files beneath a live process or signaling an unrelated PID.
 The workload does not launch grandchildren.
 
+Target discovery and identity revalidation are fallible cleanup inputs, not
+permission to abandon the owned collector. Retain every exact matching child
+identity discovered before an inspection or cardinality error. Cleanup still
+signals every retained identity, requests collector-group termination, and
+reaps the direct collector before reporting the original error. More than one
+exact target remains a failed capture, but all verified matches are stopped.
+If no target can be verified, stop and reap the collector, mark cleanup
+unverified, preserve `work/`, and fail rather than claiming that the unknown
+workload was terminated.
+
 Capture has a finite outer deadline and preserves diagnostic output on
 failure; it never deletes or overwrites an existing artifact directory.
 

@@ -66,6 +66,104 @@ class ProfileProcessTest(unittest.TestCase):
         self.assertIsNone(profile_report.process_identity(entry["pid"]))
         self.assertIsNone(profile_report.process_identity(entry["target_pid"]))
 
+    def test_discovery_failure_still_stops_and_reaps_the_collector(self):
+        processes = []
+        real_popen = subprocess.Popen
+
+        def start_process(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            processes.append(process)
+            return process
+
+        try:
+            with mock.patch.object(
+                profile_report.subprocess, "Popen", side_effect=start_process
+            ):
+                with mock.patch.object(
+                    profile_report, "find_target",
+                    side_effect=RuntimeError("target discovery failed"),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "target discovery failed"):
+                        profile_report.run_owned(
+                            [sys.executable, "-c", "import time;time.sleep(60)"],
+                            self.root / "discovery-failure.log", 10, self.journal,
+                            target_executable=sys.executable, grace=0.1,
+                        )
+        finally:
+            for process in processes:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=5)
+
+        entry = self.journal[0]
+        self.assertIsNotNone(entry["returncode"])
+        self.assertFalse(entry["cleanup_verified"])
+        self.assertIsNone(profile_report.process_identity(entry["pid"]))
+
+    def test_multiple_discovered_targets_are_stopped_before_failure(self):
+        first = profile_report.ProcessIdentity(101, 100, 101, "first", Path("/target"))
+        second = profile_report.ProcessIdentity(102, 100, 102, "second", Path("/target"))
+
+        class FakeProcess:
+            pid = 100
+
+            def __init__(self):
+                self.returncode = None
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout=None):
+                self.returncode = 1
+                return self.returncode
+
+        process = FakeProcess()
+        discovery_error = profile_report.TargetDiscoveryError(
+            "collector launched more than one matching workload",
+            [first, second], complete=True,
+        )
+        with mock.patch.object(profile_report.subprocess, "Popen", return_value=process):
+            with mock.patch.object(
+                profile_report, "find_target", side_effect=discovery_error
+            ):
+                with mock.patch.object(
+                    profile_report, "signal_target"
+                ) as signal_target:
+                    with mock.patch.object(
+                        profile_report, "same_process", return_value=False
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError, "more than one matching workload"
+                        ):
+                            profile_report.run_owned(
+                                ["collector"], self.root / "multiple-targets.log", 10,
+                                self.journal, target_executable="/target", grace=0.1,
+                            )
+
+        signal_target.assert_has_calls([
+            mock.call(first, signal.SIGTERM),
+            mock.call(second, signal.SIGTERM),
+        ])
+        self.assertEqual(self.journal[0]["returncode"], 1)
+        self.assertTrue(self.journal[0]["cleanup_verified"])
+
+    def test_cardinality_error_preserves_every_discovered_identity(self):
+        first = profile_report.ProcessIdentity(101, 100, 101, "first", Path("/target"))
+        second = profile_report.ProcessIdentity(102, 100, 102, "second", Path("/target"))
+        children = mock.Mock(returncode=0, stdout="101\n102\n", stderr="")
+        with mock.patch.object(profile_report.subprocess, "run", return_value=children):
+            with mock.patch.object(
+                profile_report, "process_identity", side_effect=[first, second]
+            ):
+                with self.assertRaisesRegex(
+                    profile_report.TargetDiscoveryError,
+                    "more than one matching workload",
+                ) as raised:
+                    profile_report.find_target(100, Path("/target"))
+
+        self.assertTrue(raised.exception.complete)
+        self.assertEqual(raised.exception.targets, (first, second))
+
     def test_never_signals_a_reused_identity(self):
         old = profile_report.ProcessIdentity(123, 100, 123, "old", Path("/old"))
         new = profile_report.ProcessIdentity(123, 100, 123, "new", Path("/new"))

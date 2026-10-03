@@ -23,6 +23,13 @@ class ProcessIdentity:
     executable: Path
 
 
+class TargetDiscoveryError(RuntimeError):
+    def __init__(self, message, targets=(), complete=False):
+        super().__init__(message)
+        self.targets = tuple(targets)
+        self.complete = complete
+
+
 def process_identity(pid):
     result = subprocess.run(
         ["ps", "-p", str(pid), "-o", "ppid=,pgid=,stat=,lstart=,comm="],
@@ -54,20 +61,27 @@ def same_process(identity):
 
 
 def find_target(parent, executable):
-    result = subprocess.run(
-        ["pgrep", "-P", str(parent)], capture_output=True, text=True, timeout=3
-    )
-    if result.returncode not in (0, 1):
-        raise RuntimeError(f"cannot inspect collector children: {result.stderr.strip()}")
     matches = []
-    for value in result.stdout.split():
-        identity = process_identity(int(value))
-        if (identity is not None and identity.parent == parent
-                and identity.executable == executable):
-            matches.append(identity)
-    if len(matches) > 1:
-        raise RuntimeError("collector launched more than one matching workload")
-    return matches[0] if matches else None
+    try:
+        result = subprocess.run(
+            ["pgrep", "-P", str(parent)], capture_output=True, text=True, timeout=3
+        )
+        if result.returncode not in (0, 1):
+            raise RuntimeError(f"cannot inspect collector children: {result.stderr.strip()}")
+        for value in result.stdout.split():
+            identity = process_identity(int(value))
+            if (identity is not None and identity.parent == parent
+                    and identity.executable == executable):
+                matches.append(identity)
+        if len(matches) > 1:
+            raise TargetDiscoveryError(
+                "collector launched more than one matching workload", matches, complete=True
+            )
+        return matches[0] if matches else None
+    except TargetDiscoveryError:
+        raise
+    except Exception as error:
+        raise TargetDiscoveryError(str(error), matches) from error
 
 
 def signal_target(identity, sig):
@@ -78,40 +92,120 @@ def signal_target(identity, sig):
             pass
 
 
-def stop_owned(process, target, target_executable, grace=5):
+def remember_targets(targets, discovered):
+    for target in discovered:
+        if target not in targets:
+            targets.append(target)
+
+
+def stop_owned(process, targets, target_executable, discovery_complete, grace=5):
     # xctrace's launched workload is a direct child in a different process group.
-    if target is None and target_executable is not None and process.poll() is None:
-        target = find_target(process.pid, target_executable)
-    signal_target(target, signal.SIGTERM)
-    if target_executable is None and process.poll() is None:
-        os.killpg(process.pid, signal.SIGTERM)
+    targets = list(targets)
+    cleanup_error = None
+    target_checks_complete = True
+
+    def remember_error(error):
+        nonlocal cleanup_error
+        if cleanup_error is None:
+            cleanup_error = error
+
+    def discover_target():
+        nonlocal discovery_complete
+        try:
+            target = find_target(process.pid, target_executable)
+        except TargetDiscoveryError as error:
+            remember_targets(targets, error.targets)
+            discovery_complete = error.complete
+            remember_error(error)
+        except Exception as error:
+            discovery_complete = False
+            remember_error(error)
+        else:
+            discovery_complete = True
+            if target is not None:
+                remember_targets(targets, [target])
+
+    def signal_targets(sig):
+        nonlocal target_checks_complete
+        for target in targets:
+            try:
+                signal_target(target, sig)
+            except Exception as error:
+                target_checks_complete = False
+                remember_error(error)
+
+    def signal_collector(sig):
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, sig)
+            except ProcessLookupError:
+                pass
+            except Exception as error:
+                remember_error(error)
+
+    if (target_executable is not None and process.poll() is None
+            and (not targets or not discovery_complete)):
+        discover_target()
+
+    signal_targets(signal.SIGTERM)
+    if target_executable is None:
+        signal_collector(signal.SIGTERM)
+    elif not targets:
+        signal_collector(signal.SIGINT)
+
     try:
         process.wait(timeout=grace)
     except subprocess.TimeoutExpired:
-        signal_target(target, signal.SIGKILL)
-        if process.poll() is None:
-            os.killpg(process.pid, signal.SIGINT)
+        signal_targets(signal.SIGKILL)
+        signal_collector(signal.SIGINT)
         try:
             process.wait(timeout=grace * 2)
         except subprocess.TimeoutExpired:
-            signal_target(target, signal.SIGKILL)
-            if process.poll() is None:
-                os.killpg(process.pid, signal.SIGKILL)
+            signal_targets(signal.SIGKILL)
+            signal_collector(signal.SIGKILL)
             process.wait(timeout=grace)
-    if target is not None and same_process(target):
-        signal_target(target, signal.SIGKILL)
-        deadline = time.monotonic() + grace
-        while same_process(target) and time.monotonic() < deadline:
-            time.sleep(0.05)
-        if same_process(target):
-            raise RuntimeError("workload termination is unverified; preserve the scratch directory")
-    return target
+
+    targets_stopped = True
+    for target in targets:
+        try:
+            alive = same_process(target)
+        except Exception as error:
+            target_checks_complete = False
+            targets_stopped = False
+            remember_error(error)
+            continue
+        if not alive:
+            continue
+        try:
+            signal_target(target, signal.SIGKILL)
+            deadline = time.monotonic() + grace
+            while same_process(target) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            alive = same_process(target)
+        except Exception as error:
+            target_checks_complete = False
+            targets_stopped = False
+            remember_error(error)
+            continue
+        if alive:
+            targets_stopped = False
+            remember_error(
+                RuntimeError("workload termination is unverified; preserve the scratch directory")
+            )
+
+    cleanup_verified = (
+        target_executable is None
+        or (bool(targets) and discovery_complete and target_checks_complete and targets_stopped)
+    )
+    return targets, cleanup_verified, cleanup_error
 
 
 def run_owned(command, log, timeout, journal, target_executable=None, grace=5):
     """Run only owned processes; record status and verify cleanup before returning."""
-    target = None
+    targets = []
     target_executable = Path(target_executable).resolve() if target_executable else None
+    discovery_complete = target_executable is None
+    cleanup_error = None
     record = {"argv": [str(arg) for arg in command], "log": Path(log).name, "returncode": None,
               "cleanup_verified": True, "timed_out": False}
     journal.append(record)
@@ -123,25 +217,39 @@ def run_owned(command, log, timeout, journal, target_executable=None, grace=5):
         try:
             deadline = time.monotonic() + timeout
             while process.poll() is None:
-                if target_executable is not None and target is None:
-                    target = find_target(process.pid, target_executable)
+                if target_executable is not None and not targets:
+                    try:
+                        target = find_target(process.pid, target_executable)
+                    except TargetDiscoveryError as error:
+                        remember_targets(targets, error.targets)
+                        discovery_complete = error.complete
+                        raise
+                    except Exception:
+                        discovery_complete = False
+                        raise
+                    discovery_complete = True
                     if target is not None:
+                        remember_targets(targets, [target])
                         record["target_pid"] = target.pid
                 if time.monotonic() >= deadline:
                     record["timed_out"] = True
                     raise subprocess.TimeoutExpired(record["argv"], timeout)
                 time.sleep(0.05)
-            if target is not None and same_process(target):
+            if any(same_process(target) for target in targets):
                 raise RuntimeError("collector exited before its workload")
         finally:
-            if process.poll() is None or (target is not None and same_process(target)):
-                target = stop_owned(process, target, target_executable, grace)
-            if target is not None:
-                record["target_pid"] = target.pid
+            if process.poll() is None or targets:
+                targets, cleanup_verified, cleanup_error = stop_owned(
+                    process, targets, target_executable, discovery_complete, grace
+                )
+            else:
+                cleanup_verified = target_executable is None
+            if len(targets) == 1:
+                record["target_pid"] = targets[0].pid
             record["returncode"] = process.wait(timeout=grace)
-            record["cleanup_verified"] = (
-                target_executable is None or (target is not None and not same_process(target))
-            )
+            record["cleanup_verified"] = cleanup_verified
+    if cleanup_error is not None:
+        raise cleanup_error
     if not record["cleanup_verified"]:
         raise RuntimeError("workload identity or termination is unverified; preserve scratch")
     if record["returncode"] != 0:
