@@ -164,6 +164,29 @@ unsupported. Default POSIX mmap reads may also deliver an in-contract storage
 fault as `SIGBUS`; set `allow_mmap_reads = false` when typed `Io` read errors
 are required.
 
+## Inspecting storage files
+
+Top-level Linux/macOS builds also produce a read-only diagnostic tool:
+
+```bash
+./build/dev-debug/tools/modern_leveldb_tool --help
+./build/dev-debug/tools/modern_leveldb_tool dump \
+  example-db/MANIFEST-000001 \
+  example-db/000002.log \
+  example-db/000003.ldb
+```
+
+It decodes canonical WAL, MANIFEST, and SSTable files through the same
+production readers, escapes binary keys and values, and returns nonzero when
+the selected traversal encounters corruption. Its versioned text is for
+diagnosis and learning, not backup, restore, repair, or whole-file
+certification.
+
+Use it only on files from a closed database, a stable fixture, or a consistent
+offline copy. Do not redirect stdout onto an input or any database file.
+Output can contain sensitive application keys and values. Set
+`MODERN_LEVELDB_BUILD_TOOLS=OFF` to omit the executable.
+
 ## Development
 
 The project uses C++23, CMake, Ninja, CTest, and GoogleTest.

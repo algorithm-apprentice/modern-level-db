@@ -1,0 +1,11 @@
+add_executable(modern_leveldb_tool modern_leveldb_tool.cc)
+target_include_directories(modern_leveldb_tool PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(modern_leveldb_tool PRIVATE modern_leveldb::modern_leveldb)
+modern_leveldb_set_project_warnings(modern_leveldb_tool PRIVATE)
+
+if(BUILD_TESTING)
+  add_test(NAME tool.help COMMAND modern_leveldb_tool --help)
+  set_tests_properties(tool.help PROPERTIES LABELS unit TIMEOUT 10)
+  add_test(NAME tool.usage COMMAND modern_leveldb_tool)
+  set_tests_properties(tool.usage PROPERTIES LABELS unit TIMEOUT 10 WILL_FAIL TRUE)
+endif()

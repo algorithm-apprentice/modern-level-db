@@ -28,6 +28,7 @@ Modern is not missing the basic LSM pipeline:
 | Concurrent API callers and grouped writes | Yes | Yes |
 | Table/block caches and POSIX mapped reads | Yes | Yes, with an explicit copied-read option |
 | Public state/properties | Formatted string `GetProperty` | Typed owning `DatabaseState` snapshot; no arbitrary property strings |
+| Storage-file diagnostics | `DumpFile` and `leveldbutil dump` | Versioned `modern_leveldb_tool dump` for WAL, MANIFEST, and SSTable files |
 | Approximate disk usage by key range | `GetApproximateSizes` | Not exposed |
 | Manual range compaction | `CompactRange` | Not implemented as a public/manual operation |
 | Destroy and lossy repair helpers | `DestroyDB`, `RepairDB` | Not exposed |
@@ -66,7 +67,6 @@ harder to understand.
 
 | Priority | Proposal | Knowledge made visible | Smallest useful boundary |
 |---|---|---|---|
-| First | Offline WAL/MANIFEST/SSTable inspector | Binary formats, sequences, checksums, block routing, metadata edits | Read-only tools over disposable, closed database files |
 | Next | Public deterministic flush | WAL/memtable/table transitions and installation barriers | Reuse the internal flush mechanism with explicit blocking/error semantics |
 | Next, separate task | Manual range compaction | Input selection, tombstone retention, and physical reclamation | Define scheduling/range/completion contracts before implementing |
 | When experiments need it | Public block-cache capacity | Eviction, working sets, pins, and memory/read tradeoffs | A per-database size option, not arbitrary shared cache plugins |
@@ -96,19 +96,20 @@ profiling reports. Start there for detailed read counters.
 The production state API does not add expensive read instrumentation merely
 to reproduce those diagnostics.
 
-### An inspector is not automatic repair
+### Read-only storage diagnostics are now implemented
 
-An inspector could show escaped binary keys, sequence/kind trailers, batch
-contents, physical WAL fragments, table block offsets, restart points, and
-MANIFEST file edits.
-This directly connects lessons 02, 04, and 05.
+`modern_leveldb_tool dump` decodes canonical WAL, MANIFEST, and SSTable files
+through existing production readers. It shows escaped binary keys and values,
+batch sequences, VersionEdit fields, and visible table history.
+This directly connects lessons 02, 04, and 05 without adding online engine
+state.
 
-Prefer standalone read-only inspection of a closed disposable database or
-an already consistent offline copy.
+Use it on a closed disposable database or an already consistent offline copy.
 Blindly copying an actively changing database directory does not create a
 consistent backup.
-Report corruption explicitly; never silently turn damaged data into a
-successful repair.
+Encountered corruption remains a non-success result even when safe partial
+text is available. The text is not restore input, a whole-file verification
+certificate, or automatic repair.
 
 ### Flush is smaller than manual compaction
 
@@ -148,8 +149,9 @@ unfavorable measurements.
 ## A useful next-step sequence
 
 For study, finish the learning path and existing labs first.
-If extending the engine afterward, prefer the offline inspector, then one
-deterministic maintenance experiment.
+If extending the engine afterward, prefer one deterministic maintenance
+experiment, beginning with a precisely designed manual compaction or public
+flush boundary.
 Do not implement every row above simply to match an API checklist.
 
 The decision rule remains [need-driven simplicity](../adr/0010-need-driven-simplicity.md):

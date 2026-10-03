@@ -335,6 +335,54 @@ device reads, why compressed mmap blocks still need owned output, and why
 inclusive sampled stage durations should not be summed.
 Use [the profiling guide](../profiling-design.md) before interpreting speed.
 
+## Lab 9: inspect persistent files without treating text as a backup
+
+Build the normal Debug preset, which produces the tool on Linux/macOS:
+
+```bash
+cmake --build --preset dev-debug
+./build/dev-debug/tools/modern_leveldb_tool --help
+```
+
+Run its focused format tests:
+
+```bash
+ctest --preset dev-debug -L unit \
+  -R 'DumpFileTest|DumpCommandTest|PosixOutputTest'
+```
+
+Then choose one canonical file from a **closed disposable database**, such as
+the database created in Lab 2:
+
+```bash
+ls lesson-db-01
+./build/dev-debug/tools/modern_leveldb_tool dump \
+  lesson-db-01/MANIFEST-000001
+```
+
+Use the actual MANIFEST/log/table names printed by `ls`; file numbers depend
+on the database's history. The output connects:
+
+```text
+WAL record       -> write batch operations and assigned sequences
+MANIFEST record  -> file/counter VersionEdit fields
+SSTable entry    -> user key, sequence, value/deletion kind, and value
+```
+
+Corruption that the selected traversal encounters produces useful partial
+stdout, an escaped error on stderr, and a nonzero exit status. A successful
+table dump is not a whole-file verifier: unrequested filter metadata and
+unreferenced bytes may not be read.
+
+Never redirect the output onto an input or another database file. Dump text
+can expose application data and is deliberately not accepted as restore
+input. For an offline backup, close the database and copy its original binary
+directory instead.
+
+**Completion:** explain why forward SSTable dumping does not need the original
+custom comparator, why a truncated final WAL fragment is benign EOF, and why
+diagnostic output is not a checkpoint or repair operation.
+
 ## Capstone: explain a complete lifecycle
 
 Without source open, draw:

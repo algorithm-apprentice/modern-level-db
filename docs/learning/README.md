@@ -37,7 +37,7 @@ not a complete C++ or operating-systems textbook.
 | [07. Writes and compaction](07-writes-and-compaction.md) | How does the engine keep making progress? | Group commit, flushes, compaction selection, version retention, and backpressure |
 | [08. C++ and concurrency](08-cpp-ownership-errors-and-concurrency.md) | What makes the implementation safe? | Ownership, explicit errors, publication, locks, condition variables, and shutdown |
 | [09. Verification and performance](09-verification-and-performance.md) | What evidence supports correctness and speed? | Golden tests, models, differential tests, crash simulation, fuzzing, sanitizers, and fair measurement |
-| [10. Guided labs](10-guided-labs.md) | Can I predict the engine's behavior? | A runnable API example and focused experiments with existing tests |
+| [10. Guided labs](10-guided-labs.md) | Can I predict and inspect the engine's behavior? | A runnable API example, focused tests, state observation, and storage-file diagnostics |
 
 [The glossary](glossary.md) is a quick reference, not another prerequisite.
 [The LevelDB comparison](11-leveldb-comparison.md) separates existing
