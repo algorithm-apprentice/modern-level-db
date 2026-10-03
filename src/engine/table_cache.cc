@@ -10,7 +10,7 @@
 #include <utility>
 
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
-#include "engine/read_diagnostics.h"
+#include "instrumentation/read_diagnostics.h"
 #endif
 #include "metadata/filenames.h"
 #include "modern_leveldb/base/coding.h"

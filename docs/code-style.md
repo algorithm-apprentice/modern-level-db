@@ -88,7 +88,9 @@ repeat recoverable-error checks for states those invariants exclude. Keep
 external-input and I/O failures explicit, and use debug assertions for proven
 internal preconditions. Any unchecked helper needs identified callers and a
 complete validity/lifetime argument; see
-[ADR-0046](adr/0046-validated-block-decoding-experiment.md).
+[ADR-0046](adr/0046-validated-block-decoding-experiment.md) for the historical
+proof pattern and [ADR-0055](adr/0055-leveldb-block-iterator-parity.md) for the
+current lazy, checked block-decoding boundary.
 
 ## Review and changes
 

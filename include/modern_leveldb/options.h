@@ -33,6 +33,9 @@ struct Options {
   bool allow_mmap_reads = true;
   std::size_t block_size = std::size_t{4} << 10U;
   std::uint32_t block_restart_interval = 16;
+  // Enabling Bloom requires comparator equality to imply byte equality;
+  // otherwise equivalent keys can be reported missing. Leave unset for
+  // comparators that consider different byte strings equal.
   std::optional<std::uint32_t> bloom_bits_per_key;
   // Snappy matches LevelDB's default. Incompressible blocks are stored raw.
   Compression compression = Compression::Snappy;

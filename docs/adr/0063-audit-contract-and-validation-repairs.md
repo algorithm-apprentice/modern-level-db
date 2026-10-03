@@ -2,9 +2,17 @@
 
 ## Status
 
-Accepted for one sequential maintenance slice. Design precedes implementation;
-the slice changes no public signatures, persistent formats, comparator
-semantics, diagnostic report schema, or durability guarantees.
+Implemented as one sequential maintenance slice. The design was recorded
+before implementation; the slice changes no public signatures, persistent
+formats, comparator semantics, diagnostic report schema, or durability
+guarantees.
+
+One bounded GPT-5.6 Sol review of the design and exact implementation found
+no actionable issue. The new fixture failed before the policy repair and then
+verified nonempty/empty selections for all nine visible test presets. Native
+consumer/storage tests, affected ASan/UBSan and model cases, installed-LLVM
+fuzz smoke, profiling contracts, diagnostic work accounting, and read-hook
+symbol isolation passed before delivery. GCC 13 CI remains the coverage gate.
 
 ## Context
 

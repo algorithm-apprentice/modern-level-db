@@ -7,9 +7,15 @@ Snappy and Zstd blocks. Cache charges count decoded bytes rather than the
 stored compressed size; malformed compressed input returns `Corruption`.
 
 [ADR-0049](0049-leveldb-style-point-read-baseline.md) defines the reference
-controls and diagnostic evidence used to change data-block validation. Data
-blocks now retain complete structural validation while trusting the writer's
-key order; index and metaindex blocks retain full order validation.
+controls and diagnostic evidence that initially replaced data-block key-order
+validation with a complete structural scan.
+
+[ADR-0055](0055-leveldb-block-iterator-parity.md) supersedes that eager
+data-block scan. `Block::Create` now bounds only the restart-array region;
+data entries are checked lazily as iterators reach them. Table open walks all
+index/metaindex physical entries and validates their restart topology, plus
+index keys and handles as required. No reader compares whole-block key order:
+index, metaindex, and data key order are writer-established invariants.
 
 [ADR-0050](0050-posix-mmap-table-reads.md) adds direct stored-block decoding
 from an optional mapped file view. [ADR-0056](0056-leveldb-table-mmap-parity.md)

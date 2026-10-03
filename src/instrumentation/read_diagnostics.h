@@ -1,5 +1,5 @@
-#ifndef MODERN_LEVELDB_ENGINE_READ_DIAGNOSTICS_H_
-#define MODERN_LEVELDB_ENGINE_READ_DIAGNOSTICS_H_
+#ifndef MODERN_LEVELDB_INSTRUMENTATION_READ_DIAGNOSTICS_H_
+#define MODERN_LEVELDB_INSTRUMENTATION_READ_DIAGNOSTICS_H_
 
 #include <array>
 #include <chrono>
@@ -97,7 +97,7 @@ inline constexpr std::array<std::string_view, static_cast<std::size_t>(Counter::
         "data_entries_decoded",
         "internal_key_comparisons",
         "result_bytes",
-    };
+};
 
 inline constexpr std::array<std::string_view, static_cast<std::size_t>(Stage::Count)> StageNames{
     "get",         "candidate_selection", "table_cache_lookup", "block_cache_lookup",
@@ -134,7 +134,7 @@ inline constexpr std::array<std::string_view, static_cast<std::size_t>(FileOpenR
         "count_budget_exhausted",
         "stat_failed",
         "mmap_failed",
-    };
+};
 
 struct FileOpenTotal {
   std::uint64_t files = 0;
@@ -219,7 +219,7 @@ class StageAccumulator final {
   std::uint64_t nanoseconds_ = 0;
 };
 
-// Attributes trusted block-entry decoding to the active index or data seek.
+// Attributes checked block-entry decoding to the active index or data seek.
 class BlockRoleScope final {
  public:
   explicit BlockRoleScope(BlockRole role) noexcept;
@@ -238,4 +238,4 @@ void RecordFileOpen(FileOpenReason reason, std::uint64_t bytes) noexcept;
 
 }  // namespace modern_leveldb::read_diagnostics
 
-#endif  // MODERN_LEVELDB_ENGINE_READ_DIAGNOSTICS_H_
+#endif  // MODERN_LEVELDB_INSTRUMENTATION_READ_DIAGNOSTICS_H_

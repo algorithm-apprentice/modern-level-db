@@ -158,6 +158,14 @@ iterators retain the underlying engine, so their storage remains valid even
 if the original `Database` handle is destroyed first. See
 [ADR-0038](docs/adr/0038-public-raii-api.md) for the complete contracts.
 
+Custom comparators must provide deterministic, unchanged ordering/equality,
+support concurrent calls, preserve separator/successor bounds, and keep the
+same semantic identity on every reopen. Changing a comparator's name does
+not migrate already sorted data. Optional `bloom_bits_per_key` filtering
+requires comparator equality to imply byte equality; leave it unset for
+comparators that consider different byte strings equal, such as
+case-insensitive comparators, or equivalent keys can be reported missing.
+
 One database process exclusively owns an open database directory. External
 modification, replacement, or truncation of live database files is
 unsupported. Default POSIX mmap reads may also deliver an in-contract storage
@@ -211,6 +219,10 @@ preserved.
 Run `ctest --preset dev-debug` to include the `cmake` consumer-configuration
 checks as well as the fast `unit` suite.
 
+Every test preset fails when its selection contains no tests. A disabled
+tier, stale configuration, or mistyped selector must not count as passing
+validation.
+
 The optional extended harness keeps slower verification out of the unit loop:
 
 ```bash
@@ -225,15 +237,29 @@ recovers simulated power-loss images at every mutating I/O boundary. These
 database tests require the POSIX backend. The reference source is fetched
 only when `MODERN_LEVELDB_BUILD_EXTENDED_TESTS=ON`.
 
-Coverage-guided fuzzing requires a full LLVM toolchain with libFuzzer
-(`brew install llvm` on macOS; select that installation's `clang`/`clang++`
-with `-DCMAKE_C_COMPILER` and `-DCMAKE_CXX_COMPILER`):
+Coverage-guided fuzzing requires a full LLVM toolchain with libFuzzer:
 
 ```bash
 cmake --preset fuzz
 cmake --build --preset fuzz
 ctest --preset fuzz
 ```
+
+On macOS, Homebrew LLVM is keg-only: installing it does not replace
+`/usr/bin/clang` or guarantee its tools are on PATH. If needed, install it
+with `brew install llvm`, then explicitly select both compilers:
+
+```bash
+cmake --preset fuzz --fresh \
+  -DCMAKE_C_COMPILER="$(brew --prefix llvm)/bin/clang" \
+  -DCMAKE_CXX_COMPILER="$(brew --prefix llvm)/bin/clang++"
+cmake --build --preset fuzz
+ctest --preset fuzz
+```
+
+Use `--fresh` when switching compilers so CMake cannot reset the cache and
+silently lose preset options. Keep the same explicit compiler arguments when
+reconfiguring that build.
 
 The format and stateful-engine targets use deterministic seed corpora and
 explicit input, time, and memory bounds. Reproducers are retained under

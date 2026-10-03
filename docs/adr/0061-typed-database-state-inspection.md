@@ -2,13 +2,12 @@
 
 ## Status
 
-Accepted by PR #91.
+Implemented by PR #92 after design PR #91.
 
 Implementation and final validation are complete. Debug, Release,
 compatibility, model, crash, ASan/UBSan, TSan, fuzz smoke, benchmark,
 profiling-contract, and changed-code coverage evidence passed. A bounded
-GPT-5.6 Sol implementation review found no actionable issue. Final delivery
-is through the sequential implementation PR.
+GPT-5.6 Sol implementation review found no actionable issue.
 
 ## Context
 
@@ -74,7 +73,8 @@ normal reviewed API changes while the project is pre-alpha.
 
 ### Modern read diagnostics
 
-`engine/read_diagnostics.h` supplies compile-time-enabled, foreground-thread
+`instrumentation/read_diagnostics.h` supplies compile-time-enabled,
+foreground-thread
 sessions for profiling table/cache/read stages. Those counters are sampled
 instrumentation with a separate diagnostic binary. They are not a stable
 database-wide production state API and must not be enabled on every hot path
@@ -506,7 +506,7 @@ transitions. It is a separate future feature.
 - [Modern database engine](../../src/engine/database.h)
 - [Modern write commit](../../src/engine/database.cc)
 - [Modern arena accounting](../../src/memory/arena.h)
-- [Modern read diagnostics](../../src/engine/read_diagnostics.h)
+- [Modern read diagnostics](../../src/instrumentation/read_diagnostics.h)
 - [Need-driven simplicity](0010-need-driven-simplicity.md)
 - [Public RAII API](0038-public-raii-api.md)
 - [Completed read-path parity](0053-leveldb-read-path-parity.md)

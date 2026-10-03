@@ -9,7 +9,7 @@
 #include "api/api_internal.h"
 #include "format/write_batch.h"
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
-#include "engine/read_diagnostics.h"
+#include "instrumentation/read_diagnostics.h"
 #endif
 #include "modern_leveldb/db.h"
 #include "table/bloom_filter.h"

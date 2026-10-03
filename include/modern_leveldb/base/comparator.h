@@ -9,6 +9,9 @@
 
 namespace modern_leveldb {
 
+// Defines a deterministic total ordering of logical keys. Ordering and equality
+// must remain unchanged for the lifetime of a database and across every reopen.
+// All methods must support concurrent calls.
 class Comparator {
  public:
   Comparator() = default;
@@ -18,10 +21,17 @@ class Comparator {
   Comparator& operator=(Comparator&&) = delete;
   virtual ~Comparator() = default;
 
+  // Returns negative, zero, or positive for less, equal, or greater logical keys.
   [[nodiscard]] virtual int Compare(ByteView left, ByteView right) const noexcept = 0;
+  // Identifies exactly one ordering/equality contract in persisted metadata.
+  // Reusing a name with changed semantics does not migrate existing data.
   [[nodiscard]] virtual std::string_view Name() const noexcept = 0;
 
+  // If original start < limit, the result must remain in [original start, limit).
+  // Leaving start unchanged is correct.
   virtual void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const = 0;
+  // The result must compare not less than the original key. Leaving it unchanged
+  // is correct.
   virtual void FindShortSuccessor(std::vector<std::byte>& key) const = 0;
 };
 

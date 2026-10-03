@@ -165,5 +165,5 @@ before adding a capability.
 - [Modern database API](../../include/modern_leveldb/db.h)
 - [Modern options](../../include/modern_leveldb/options.h)
 - [Internal engine and existing flush barrier](../../src/engine/database.h)
-- [Existing read diagnostics](../../src/engine/read_diagnostics.h)
+- [Existing read diagnostics](../../src/instrumentation/read_diagnostics.h)
 - [Goals and non-goals](../../README.md)

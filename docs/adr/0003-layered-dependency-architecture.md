@@ -31,6 +31,11 @@ base
 The detailed graph and implementation nodes are defined in
 `docs/dependency-dag.md`.
 
+[ADR-0063](0063-audit-contract-and-validation-repairs.md) places optional
+read-profiling collection in a separate layer-zero `instrumentation` leaf.
+It depends only on the standard library; compile-time-enabled hooks may
+depend downward on it without an engine-header exception.
+
 Lower layers must never include public API or engine headers. Persistent format
 encoding must not perform filesystem I/O. Platform services must not know about
 LSM concepts.

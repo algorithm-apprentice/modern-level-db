@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted design. Bounded GPT-5.6 Sol review added the independent mapped-page
-storage-fault warning, completed the `BlockContents` construction contract,
+Implemented by PR #70. Bounded GPT-5.6 Sol review added the independent
+mapped-page storage-fault warning, completed the `BlockContents` construction contract,
 and corrected the uninjectable POSIX fallback validation claims. Design PR
 #69 merged before ADR-0053 Milestone 3 implementation began.
 

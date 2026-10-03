@@ -235,7 +235,7 @@ Status EncodedWriteBatch::Append(const EncodedWriteBatch& source) {
   }
   const bool records_too_large = records.size() > encoded_.max_size() - encoded_.size();
   if (records_too_large) {   // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs more than string max_size
-    return BatchTooLarge();  // GCOVR_EXCL_LINE
+    return BatchTooLarge();  // GCOVR_EXCL_LINE: needs more than string max_size
   }
   encoded_.append(records.data(), records.size());
   SetCount(count() + source_count);
@@ -257,7 +257,7 @@ Status EncodedWriteBatch::AppendRecord(ValueKind kind, ByteView key, ByteView va
                                 : std::uint64_t{0});
   const bool record_too_large = record_size > encoded_.max_size() - encoded_.size();
   if (record_too_large) {    // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs more than string max_size
-    return BatchTooLarge();  // GCOVR_EXCL_LINE
+    return BatchTooLarge();  // GCOVR_EXCL_LINE: needs more than string max_size
   }
 
   const ByteView storage = encoded();

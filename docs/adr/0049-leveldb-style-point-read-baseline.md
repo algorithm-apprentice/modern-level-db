@@ -5,6 +5,11 @@
 Accepted. Design PR #52 and diagnostic-tooling PR #53 merged before the
 separately reviewed and measured structural-validation candidate below.
 
+[ADR-0055](0055-leveldb-block-iterator-parity.md) subsequently replaced that
+candidate's eager structural scan and unchecked data decoding with lazy
+checked decoding. The measurements below remain historical evidence, not
+the current block-validation contract.
+
 ## Context
 
 Modern LevelDB's point reads remain slower than the pinned Google LevelDB
