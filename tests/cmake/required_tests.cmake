@@ -37,15 +37,24 @@ foreach(index RANGE 0 "${last_test}")
     continue()
   endif()
   string(JSON name GET "${presets}" testPresets "${index}" name)
+  set(pass_report "${BINARY_DIR}/${name}.xml")
+  file(REMOVE "${pass_report}")
   execute_process(
-    COMMAND "${CTEST_COMMAND}" --preset "${name}"
+    COMMAND "${CTEST_COMMAND}" --preset "${name}" --output-junit "${pass_report}"
     WORKING_DIRECTORY "${fixture_source}"
     RESULT_VARIABLE passed
     OUTPUT_VARIABLE pass_output
     ERROR_VARIABLE pass_error
   )
-  if(NOT passed EQUAL 0 OR NOT pass_output MATCHES "100% tests passed out of 1")
+  if(NOT passed EQUAL 0 OR NOT EXISTS "${pass_report}")
     message(FATAL_ERROR "Preset ${name} did not run its test:\n${pass_output}\n${pass_error}")
+  endif()
+  file(READ "${pass_report}" report)
+  string(REGEX MATCH "<testsuite[ \t\r\n][^>]*>" suite "${report}")
+  if(NOT suite MATCHES "[ \t\r\n]tests=\"1\"" OR
+     NOT suite MATCHES "[ \t\r\n]failures=\"0\"" OR
+     NOT suite MATCHES "[ \t\r\n]skipped=\"0\"")
+    message(FATAL_ERROR "Preset ${name} did not execute exactly one passing test:\n${report}")
   endif()
 
   execute_process(

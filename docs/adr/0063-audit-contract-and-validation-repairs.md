@@ -111,6 +111,10 @@ one correctly labelled passing test and a nonzero result when a selector
 matches nothing. It must exercise CTest rather than merely inspect JSON.
 Observe this regression fail before changing the preset policy.
 
+Check positive execution through CTest's JUnit report, supported by the
+minimum CMake version, rather than parsing its human-readable summary.
+CTest versions vary that summary even for the same successful test count.
+
 Keep compiler selection explicit, not auto-detected or hard-coded in shared
 presets. Add a complete Homebrew LLVM command using `brew --prefix llvm`
 and `--fresh`, and explain why installed keg-only tools need not be on PATH.
