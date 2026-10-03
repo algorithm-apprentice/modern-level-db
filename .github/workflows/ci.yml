@@ -64,7 +64,7 @@ jobs:
 
       - name: Run tests
         if: env.RUN_FULL_CI == 'true'
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --no-tests=error
 
   crc32c-portable:
     name: ${{ github.event_name == 'push' && 'push / crc32c-portable' || 'crc32c-portable' }}
@@ -95,7 +95,7 @@ jobs:
         run: cmake --build build/crc32c-portable --target modern_leveldb_unit_tests --parallel 2
       - name: Check portable checksum contracts
         if: env.RUN_FULL_CI == 'true'
-        run: ctest --test-dir build/crc32c-portable -R '^Crc32cTest\.' --output-on-failure
+        run: ctest --test-dir build/crc32c-portable -R '^Crc32cTest\.' --output-on-failure --no-tests=error
 
   coverage:
     name: ${{ github.event_name == 'push' && 'push / coverage' || 'coverage' }}

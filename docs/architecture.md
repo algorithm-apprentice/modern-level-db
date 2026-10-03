@@ -203,7 +203,7 @@ layer, but never on a module in a higher layer.
 
 | Layer | Modules | Responsibility |
 |---|---|---|
-| 0 | `base` | Byte views, errors, results, coding, checksums, hashing, assertions |
+| 0 | `base`, `instrumentation` | Byte views, errors, results, coding, checksums, hashing, assertions; optional standard-library-only profiling collection |
 | 1 | `platform` | Filesystem, files, locking, clock, executor, logging |
 | 2 | `format` | Internal keys, WAL records, block/SST formats, MANIFEST records |
 | 3 | `wal`, `memory` | WAL stream I/O; arena, skip list, write batch, memtable |
@@ -230,6 +230,12 @@ layer, but never on a module in a higher layer.
 9. Diagnostics depend on existing decoders, never on the engine or public API,
    and never mutate database files.
 
+`instrumentation` is a leaf used only by compile-time-enabled read-profiling
+hooks. It owns passive counters and thread-local collection state, with no
+engine, platform, or decoder dependency. The ordinary library compiles those
+hooks out. It is not the layer-seven storage-file `diagnostics` module; see
+[ADR-0063](adr/0063-audit-contract-and-validation-repairs.md).
+
 ## Planned source layout
 
 ```text
@@ -244,6 +250,7 @@ src/
   base/
   platform/
   format/
+  instrumentation/
   wal/
   memory/
   table/

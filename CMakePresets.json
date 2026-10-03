@@ -150,7 +150,15 @@
   ],
   "testPresets": [
     {
+      "name": "required-tests",
+      "hidden": true,
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
       "name": "profiling",
+      "inherits": "required-tests",
       "configurePreset": "profiling",
       "output": {
         "outputOnFailure": true
@@ -163,6 +171,7 @@
     },
     {
       "name": "asan",
+      "inherits": "required-tests",
       "configurePreset": "asan",
       "output": {
         "outputOnFailure": true
@@ -175,6 +184,7 @@
     },
     {
       "name": "tsan",
+      "inherits": "required-tests",
       "configurePreset": "tsan",
       "output": {
         "outputOnFailure": true
@@ -187,6 +197,7 @@
     },
     {
       "name": "benchmarks",
+      "inherits": "required-tests",
       "configurePreset": "benchmarks",
       "output": {
         "outputOnFailure": true
@@ -199,6 +210,7 @@
     },
     {
       "name": "fuzz",
+      "inherits": "required-tests",
       "configurePreset": "fuzz",
       "output": {
         "outputOnFailure": true
@@ -211,6 +223,7 @@
     },
     {
       "name": "compatibility",
+      "inherits": "required-tests",
       "configurePreset": "compatibility",
       "output": {
         "outputOnFailure": true
@@ -223,6 +236,7 @@
     },
     {
       "name": "dev-debug",
+      "inherits": "required-tests",
       "configurePreset": "dev-debug",
       "output": {
         "outputOnFailure": true
@@ -230,6 +244,7 @@
     },
     {
       "name": "release",
+      "inherits": "required-tests",
       "configurePreset": "release",
       "output": {
         "outputOnFailure": true
@@ -237,6 +252,7 @@
     },
     {
       "name": "coverage",
+      "inherits": "required-tests",
       "configurePreset": "coverage",
       "output": {
         "outputOnFailure": true

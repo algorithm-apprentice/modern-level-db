@@ -36,7 +36,7 @@
 #endif
 
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
-#include "engine/read_diagnostics.h"
+#include "instrumentation/read_diagnostics.h"
 #endif
 #include "modern_leveldb/base/crc32c.h"
 #include "modern_leveldb/db.h"

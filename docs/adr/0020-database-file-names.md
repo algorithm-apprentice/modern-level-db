@@ -1,6 +1,6 @@
 # ADR-0020: Database File Names
 
-- Status: Proposed
+- Status: Accepted; implemented by PR #14
 - Date: 2026-09-23
 
 ## Context

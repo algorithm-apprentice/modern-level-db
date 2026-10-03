@@ -2,8 +2,18 @@
 
 ## Status
 
-Accepted. Design-only PR #46 merged before implementation. The local
-experiment passed the throughput criteria below before its code was committed.
+Historical accepted experiment; its block implementation is superseded by
+[ADR-0049](0049-leveldb-style-point-read-baseline.md) and
+[ADR-0055](0055-leveldb-block-iterator-parity.md). Design-only PR #46 merged
+before implementation. The local experiment passed the throughput criteria
+below before its code was committed.
+
+The proof boundary, unchecked iterator decoders, and creation-time key-order
+validation below describe that experiment, not today's `Block::Create`.
+Current data decoding is lazy and checked; table-open index/metaindex
+validation checks physical entries and restart topology without comparing
+key order. The general requirement to prove a trusted path's validity and
+lifetime remains applicable, but its old block proof must not be reused.
 
 ## Context and experiment selection
 
@@ -39,7 +49,7 @@ the same. This experiment exploits the stronger invariant Modern LevelDB
 already promises, without adopting another persistent format or weakening
 the corruption-detection contract.
 
-## Decision
+## Historical decision
 
 ### Validation belongs where it establishes a fact
 

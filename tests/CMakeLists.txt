@@ -207,6 +207,17 @@ foreach(
 endforeach()
 
 add_test(
+  NAME cmake.required_tests
+  COMMAND "${CMAKE_COMMAND}"
+    "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+    "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/cmake/required-tests"
+    "-DGENERATOR=${CMAKE_GENERATOR}"
+    "-DCTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/required_tests.cmake"
+)
+set_tests_properties(cmake.required_tests PROPERTIES LABELS cmake TIMEOUT 120)
+
+add_test(
   NAME cmake.crc32c_declaration
   COMMAND "${CMAKE_COMMAND}"
     "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/cmake/crc32c_declaration"

@@ -2,10 +2,10 @@
 
 ## Status
 
-Accepted design. The 2026-09-29 amendment below resolves implementation-review
+Implemented by PR #66 after design PR #64 and amendment PR #65.
+The 2026-09-29 amendment below resolves implementation-review
 findings about variable-size deallocation, unapproved entry metadata, and
-double-probe insertion. Merge and review the amendment before restarting
-ADR-0053 Milestone 1.
+double-probe insertion. ADR-0053 Milestone 1 is complete.
 
 ## Context
 
@@ -19,7 +19,7 @@ The first implementation draft began after only the route-level ADR. It used
 the correct broad ideas—intrusive references, in-use/LRU lists, and a custom
 hash table—but made layout, pimpl, retirement, value ownership, overflow, and
 coverage decisions during coding. PR #63 was closed before merge. No cache
-implementation change reached `main`.
+implementation from that draft reached `main`.
 
 This ADR fixes the complete cache design before code.
 

@@ -10,7 +10,7 @@
 #include <vector>
 
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
-#include "engine/read_diagnostics.h"
+#include "instrumentation/read_diagnostics.h"
 #endif
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
@@ -306,7 +306,8 @@ Status Block::Iterator::Prev() {
     if (!parsed.has_value()) {
       return parsed;
     }
-  } while (valid() && next_ < original);  // GCOVR_EXCL_BR_LINE: a successful parse stays valid
+    assert(valid());
+  } while (next_ < original);
   return {};
 }
 

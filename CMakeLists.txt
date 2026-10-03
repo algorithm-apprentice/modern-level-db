@@ -63,7 +63,6 @@ set(
     src/engine/flush.cc
     src/engine/iterators.cc
     src/engine/lookup.cc
-    src/engine/read_diagnostics.cc
     src/engine/recovery.cc
     src/engine/seek_statistics.cc
     src/engine/table_cache.cc
@@ -71,6 +70,7 @@ set(
     src/format/internal_key.cc
     src/format/wal_format.cc
     src/format/write_batch.cc
+    src/instrumentation/read_diagnostics.cc
     src/memory/arena.cc
     src/memory/memtable.cc
     src/metadata/filenames.cc

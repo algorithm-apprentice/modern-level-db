@@ -2,13 +2,12 @@
 
 ## Status
 
-Accepted by PR #93.
+Implemented by PR #94 after design PR #93.
 
-Implementation and final validation are complete on the delivery branch. A
+Implementation and final validation are complete. A
 bounded GPT-5.6 Sol implementation review found one corruption-precedence
 issue; a regression now preserves an earlier malformed internal-key error
-when a later reachable table block is also corrupt. Final PR delivery is in
-progress.
+when a later reachable table block is also corrupt.
 
 ## Context
 

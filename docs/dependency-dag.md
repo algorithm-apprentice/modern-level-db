@@ -24,8 +24,10 @@ flowchart TD
   FORMAT[format]
   PLATFORM[platform]
   BASE[base]
+  INSTRUMENTATION[instrumentation]
 
   API --> ENGINE
+  API -. read profiling .-> INSTRUMENTATION
   DIAGNOSTICS --> METADATA
   DIAGNOSTICS --> TABLE
   DIAGNOSTICS --> WAL
@@ -37,17 +39,26 @@ flowchart TD
   ENGINE --> MEMORY
   ENGINE --> FORMAT
   ENGINE --> PLATFORM
+  ENGINE -. read profiling .-> INSTRUMENTATION
   METADATA --> TABLE
   METADATA --> FORMAT
   METADATA --> PLATFORM
   TABLE --> FORMAT
   TABLE --> PLATFORM
   TABLE --> BASE
+  TABLE -. read profiling .-> INSTRUMENTATION
   MEMORY --> FORMAT
   MEMORY --> BASE
   FORMAT --> BASE
+  FORMAT -. read profiling .-> INSTRUMENTATION
   PLATFORM --> BASE
+  PLATFORM -. read profiling .-> INSTRUMENTATION
 ```
+
+The optional `instrumentation` leaf uses only the standard library. Dashed
+edges exist only in the separately compiled read-diagnostic library, not the
+ordinary library. Storage-file `diagnostics` remains a high-level decoder
+consumer, distinct from profiling collection.
 
 ## Nodes and direct dependencies
 

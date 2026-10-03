@@ -91,7 +91,7 @@ Status DbIterator::Seek(ByteView user_key) {
   const bool key_too_long = user_key.size() > MaximumUserKeySize;
   if (key_too_long) {                    // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs a key over 4 GiB
     return Fail(Error::InvalidArgument(  // GCOVR_EXCL_LINE: needs a key over 4 GiB
-        "iterator seek key exceeds uint32 length"));  // GCOVR_EXCL_LINE
+        "iterator seek key exceeds uint32 length"));  // GCOVR_EXCL_LINE: needs a key over 4 GiB
   }
   // The newest entry of the user key that the sequence sees sorts first.
   const InternalKey target = InternalKey::Create(user_key, sequence_, ValueKind::Value).value();
