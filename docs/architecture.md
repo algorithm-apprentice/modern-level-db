@@ -210,7 +210,7 @@ layer, but never on a module in a higher layer.
 | 4 | `table` | Blocks, filters, SST reader/writer |
 | 5 | `metadata` | Filenames, versions, version edits, version set |
 | 6 | `engine` | Table cache, recovery, read/write paths, flush, compaction, snapshots, DB state |
-| 7 | `api` | Public RAII facade and user-facing options |
+| 7 | `api`, `diagnostics` | Public RAII facade; read-only storage-file diagnostics and tool support |
 
 ### Required dependency rules
 
@@ -227,11 +227,14 @@ layer, but never on a module in a higher layer.
    API contracts.
 8. Each persistent transition has a documented synchronization order and a
    fault-injection test.
+9. Diagnostics depend on existing decoders, never on the engine or public API,
+   and never mutate database files.
 
 ## Planned source layout
 
 ```text
 include/modern_leveldb/
+  database_state.h
   db.h
   iterator.h
   options.h
@@ -246,6 +249,7 @@ src/
   table/
   metadata/
   engine/
+  diagnostics/
 tests/
   unit/
   model/

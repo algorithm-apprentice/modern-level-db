@@ -16,6 +16,7 @@ Arrows point from a dependent layer to a prerequisite layer.
 ```mermaid
 flowchart TD
   API[api]
+  DIAGNOSTICS[diagnostics]
   ENGINE[engine]
   METADATA[metadata]
   TABLE[table]
@@ -25,6 +26,12 @@ flowchart TD
   BASE[base]
 
   API --> ENGINE
+  DIAGNOSTICS --> METADATA
+  DIAGNOSTICS --> TABLE
+  DIAGNOSTICS --> WAL
+  DIAGNOSTICS --> FORMAT
+  DIAGNOSTICS --> PLATFORM
+  DIAGNOSTICS --> BASE
   ENGINE --> METADATA
   ENGINE --> TABLE
   ENGINE --> MEMORY
@@ -90,6 +97,13 @@ flowchart TD
 Each production-code node includes its own unit and applicable format/fault
 tests. The later compatibility-harness node integrates end-to-end scenarios;
 it does not defer lower-level validation.
+
+## Post-MVP sequential nodes
+
+| Node | Deliverable | Direct dependencies | Decision |
+|---|---|---|---|
+| `implement-database-state-inspection` | Typed owning snapshot of LSM and maintenance state | `implement-public-api`, `implement-db-compactions` | ADR-0061, complete |
+| `implement-storage-file-diagnostics` | Read-only WAL, MANIFEST, and SSTable dump operation and POSIX tool | `implement-filenames`, `implement-write-batch`, `implement-wal-io`, `implement-version-edit`, `implement-sstable-reader` | ADR-0062, complete |
 
 ## Canonical topological order
 

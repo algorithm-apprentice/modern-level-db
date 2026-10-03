@@ -21,6 +21,16 @@ option(MODERN_LEVELDB_BUILD_EXTENDED_TESTS "Build model, compatibility, and cras
 option(MODERN_LEVELDB_BUILD_FUZZERS "Build coverage-guided libFuzzer targets" OFF)
 option(MODERN_LEVELDB_BUILD_BENCHMARKS "Build the comparative database benchmark" OFF)
 option(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS "Build the selected-workload profiling harness" OFF)
+set(MODERN_LEVELDB_BUILD_TOOLS_DEFAULT OFF)
+if(PROJECT_IS_TOP_LEVEL AND (APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+  set(MODERN_LEVELDB_BUILD_TOOLS_DEFAULT ON)
+endif()
+option(
+  MODERN_LEVELDB_BUILD_TOOLS
+  "Build Modern LevelDB command-line tools"
+  ${MODERN_LEVELDB_BUILD_TOOLS_DEFAULT}
+)
+unset(MODERN_LEVELDB_BUILD_TOOLS_DEFAULT)
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompilerWarnings.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompressionDependencies.cmake")
@@ -43,6 +53,8 @@ set(
     src/base/crc32c.cc
     src/base/hash.cc
     src/cache/sharded_lru_cache_core.cc
+    src/diagnostics/dump_command.cc
+    src/diagnostics/dump_file.cc
     src/engine/build_table.cc
     src/engine/compaction.cc
     src/engine/compaction_picker.cc
@@ -85,6 +97,7 @@ function(modern_leveldb_add_library target)
       "${target}"
       PRIVATE
         src/platform/posix_file_system.cc
+        src/diagnostics/posix_output.cc
     )
     target_compile_definitions("${target}" PRIVATE MODERN_LEVELDB_HAVE_POSIX_FILE_SYSTEM)
   endif()
@@ -145,6 +158,13 @@ endif()
 
 if(MODERN_LEVELDB_BUILD_TESTS AND BUILD_TESTING)
   add_subdirectory(tests)
+endif()
+
+if(MODERN_LEVELDB_BUILD_TOOLS)
+  if(NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "Modern LevelDB command-line tools require the POSIX backend")
+  endif()
+  add_subdirectory(tools)
 endif()
 
 if(MODERN_LEVELDB_BUILD_FUZZERS)

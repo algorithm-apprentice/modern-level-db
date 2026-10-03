@@ -246,8 +246,17 @@ Result<std::vector<std::filesystem::path>> MemoryFileSystem::ListDirectory(
   return names;
 }
 
-Result<std::uint64_t> MemoryFileSystem::FileSize(const std::filesystem::path&) const {
-  return Unsupported("FileSize");
+Result<std::uint64_t> MemoryFileSystem::FileSize(const std::filesystem::path& path) const {
+  const Status recorded = Record("size " + Name(path));
+  if (!recorded.has_value()) {
+    return std::unexpected(recorded.error());
+  }
+  const std::lock_guard lock(mutex_);
+  const auto found = files_.find(path);
+  if (found == files_.end()) {
+    return std::unexpected(Error::NotFound(path.string()));
+  }
+  return found->second.size();
 }
 
 Status MemoryFileSystem::CreateDirectory(const std::filesystem::path& path) {

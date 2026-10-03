@@ -13,6 +13,7 @@
 
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
+#include "support/memory_file_system.h"
 
 namespace modern_leveldb {
 namespace {
@@ -86,6 +87,27 @@ static_assert(
 
 TEST(FileSystemInterfaceTest, UsesFilesystemPathAsItsPathType) {
   EXPECT_TRUE((std::same_as<Path, std::filesystem::path>));
+}
+
+TEST(MemoryFileSystemTest, ReportsAndCanFailRecordedFileSizes) {
+  test_support::MemoryFileSystem file_system;
+  file_system.Write("db/data", std::vector<std::byte>(17));
+
+  const Result<std::uint64_t> size = file_system.FileSize("db/data");
+
+  ASSERT_TRUE(size.has_value());
+  EXPECT_EQ(*size, 17U);
+  ASSERT_FALSE(file_system.operations().empty());
+  EXPECT_EQ(file_system.operations().back(), "size data");
+
+  file_system.FailOperation(file_system.operations().size(), Error::Io("injected size failure"));
+  const Result<std::uint64_t> failed = file_system.FileSize("db/data");
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().message(), "injected size failure");
+
+  const Result<std::uint64_t> missing = file_system.FileSize("db/missing");
+  ASSERT_FALSE(missing.has_value());
+  EXPECT_EQ(missing.error().code(), ErrorCode::NotFound);
 }
 
 }  // namespace

@@ -2,9 +2,13 @@
 
 ## Status
 
-Proposed.
+Accepted by PR #93.
 
-Implementation begins only after this design is reviewed and merged.
+Implementation and final validation are complete on the delivery branch. A
+bounded GPT-5.6 Sol implementation review found one corruption-precedence
+issue; a regression now preserves an earlier malformed internal-key error
+when a later reachable table block is also corrupt. Final PR delivery is in
+progress.
 
 ## Context
 
@@ -118,7 +122,8 @@ backup or checkpoint.
 
 The caller-provided `output` must not alias `path` or any database file.
 `WritableFile` exposes no path identity, so `DumpFile` cannot enforce this
-precondition. The command-line tool satisfies it by writing only to stdout.
+precondition. The command-line tool writes only to stdout, but the caller must
+not redirect stdout onto an input or other database file.
 
 The output contains user keys and values and may expose sensitive application
 data. It is sent only to the caller-provided sink; the caller controls
@@ -307,6 +312,10 @@ Add:
 ```text
 src/diagnostics/dump_file.h
 src/diagnostics/dump_file.cc
+src/diagnostics/dump_command.h
+src/diagnostics/dump_command.cc
+src/diagnostics/posix_output.h
+src/diagnostics/posix_output.cc
 tools/modern_leveldb_tool.cc
 tools/CMakeLists.txt
 tests/unit/diagnostics/dump_file_test.cc

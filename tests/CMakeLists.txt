@@ -27,6 +27,8 @@ add_executable(
   unit/base/hash_test.cc
   unit/base/result_test.cc
   unit/cache/sharded_lru_cache_test.cc
+  unit/diagnostics/dump_command_test.cc
+  unit/diagnostics/dump_file_test.cc
   unit/engine/build_table_test.cc
   unit/engine/compaction_test.cc
   unit/engine/compaction_picker_test.cc
@@ -68,6 +70,7 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     modern_leveldb_unit_tests
     PRIVATE
       unit/engine/database_posix_test.cc
+      unit/diagnostics/posix_output_test.cc
       unit/platform/posix_file_system_test.cc
       unit/table/table_posix_test.cc
       unit/wal/wal_io_posix_test.cc
