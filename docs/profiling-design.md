@@ -283,6 +283,13 @@ own process group. Accordingly the collector must track both, not assume
 `killpg(collector)` is enough. PID discovery uses direct-child inspection and
 exact executable/parent validation, not the potentially buffered
 `--target-stdout` file. No broad process scan or all-process trace is required.
+Discovery, cardinality validation, and identity revalidation errors are
+deferred until cleanup completes. Every exact target identity already found
+is retained and stopped, while the runner-owned collector group is always
+terminated and the direct collector reaped. Multiple exact matches fail the
+capture after all verified matches are stopped. If no target identity can be
+verified, cleanup remains unverified, `work/` is preserved, and the run fails
+after the collector has been stopped and reaped.
 
 These are collection budgets, not pass/fail performance thresholds. Small CPU
 sample counts are reported as low-confidence; zero valid in-window samples or
