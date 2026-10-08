@@ -201,5 +201,16 @@ TEST(NativeCommandTest, SharesInputErrorContinuationAndOutputFailurePrecedence) 
   EXPECT_EQ(RunNativeDiagnosticTool(arguments, file_system, unused_output, failed_errors), 1);
 }
 
+TEST(NativeCommandTest, EmptyNativeFilenameIsAnInputErrorRatherThanAnOption) {
+  MemoryFileSystem file_system;
+  CommandOutput output;
+  CommandOutput errors;
+  const std::array<std::filesystem::path, 2> arguments{std::filesystem::path{"dump"},
+                                                       std::filesystem::path{}};
+  EXPECT_EQ(RunNativeDiagnosticTool(arguments, file_system, output, errors), 1);
+  EXPECT_NE(errors.text().find("invalid_argument:"), std::string::npos);
+  EXPECT_TRUE(output.text().empty());
+}
+
 }  // namespace
 }  // namespace modern_leveldb
