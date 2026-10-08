@@ -352,6 +352,11 @@ compiled only on CMake `UNIX` platforms. Windows continues to compile the
 portable interfaces but has no native backend until a future requirement and
 ADR define one.
 
+[ADR-0064](0064-windows-filesystem-and-delivery.md) proposes that backend,
+including an explicit weak-namespace opt-in rather than silently treating a
+Windows no-op as POSIX directory synchronization. The proposal is not yet
+implemented and does not amend the current durability guarantee.
+
 The initial backend does not add:
 
 - `mmap`, direct I/O, read-ahead hints, descriptor limits, or file caches.

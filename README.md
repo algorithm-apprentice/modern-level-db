@@ -86,6 +86,7 @@ upstream compatibility, power-loss, sanitizer, fuzz, and benchmark gates.
 - [Implementation dependency DAG](docs/dependency-dag.md)
 - [Architecture decision records](docs/adr/)
 - [Benchmark and profiling design and usage](docs/profiling-design.md)
+- [Proposed Windows filesystem contracts and delivery roadmap](docs/adr/0064-windows-filesystem-and-delivery.md)
 
 ## Using the library
 
