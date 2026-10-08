@@ -204,6 +204,43 @@ jobs:
           name: compatibility-failure
           path: build/compatibility/Testing/Temporary/
 
+  windows-compatibility:
+    name: ${{ github.event_name == 'push' && 'push / windows-compatibility' || 'windows-compatibility' }} (${{ matrix.build_type }})
+    needs: changes
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Debug, Release]
+    runs-on: ${{ needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true' && 'ubuntu-24.04' || 'windows-latest' }}
+    timeout-minutes: 20
+    env:
+      RUN_FULL_CI: ${{ needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true' }}
+    steps:
+      - name: Acknowledge documentation-only change
+        if: env.RUN_FULL_CI == 'false'
+        run: echo "Documentation-only change; native Windows recovery validation is not required."
+      - uses: actions/checkout@v4
+        if: env.RUN_FULL_CI == 'true'
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: env.RUN_FULL_CI == 'true'
+        with:
+          arch: x64
+      - name: Configure native extended harness
+        if: env.RUN_FULL_CI == 'true'
+        run: cmake --preset windows-compatibility -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+      - name: Build native extended harness
+        if: env.RUN_FULL_CI == 'true'
+        run: cmake --build --preset windows-compatibility --target modern_leveldb_extended_tests --parallel 2
+      - name: Verify native model, cross-open, and process recovery
+        if: env.RUN_FULL_CI == 'true'
+        run: ctest --preset windows-compatibility --parallel 2
+      - uses: actions/upload-artifact@v4
+        if: failure() && env.RUN_FULL_CI == 'true'
+        with:
+          name: windows-compatibility-${{ matrix.build_type }}
+          path: build/windows-compatibility/Testing/Temporary/
+
   fuzz:
     name: ${{ github.event_name == 'push' && 'push / fuzz' || 'fuzz' }}
     needs: changes

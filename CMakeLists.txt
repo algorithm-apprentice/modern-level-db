@@ -146,13 +146,20 @@ if(MODERN_LEVELDB_BUILD_EXTENDED_TESTS)
   if(NOT MODERN_LEVELDB_BUILD_TESTS OR NOT BUILD_TESTING)
     message(FATAL_ERROR "Extended tests require MODERN_LEVELDB_BUILD_TESTS and BUILD_TESTING")
   endif()
+  if(NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+     NOT MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+    message(FATAL_ERROR "Extended database tests require an admitted native backend")
+  endif()
+endif()
+
+if(MODERN_LEVELDB_BUILD_BENCHMARKS OR MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
+  if(NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "The database benchmarks and profiling require the POSIX backend")
+  endif()
 endif()
 
 if(MODERN_LEVELDB_BUILD_EXTENDED_TESTS OR MODERN_LEVELDB_BUILD_BENCHMARKS OR
    MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
-  if(NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(FATAL_ERROR "The database harness and benchmarks require the POSIX backend")
-  endif()
   if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
     include("${CMAKE_CURRENT_LIST_DIR}/cmake/GoogleBenchmark.cmake")
     modern_leveldb_add_google_benchmark()

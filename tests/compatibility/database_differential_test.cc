@@ -12,6 +12,7 @@
 #include <string_view>
 
 #include "support/database_model.h"
+#include "support/reference_directory.h"
 #include "support/temporary_directory.h"
 
 namespace modern_leveldb {
@@ -160,11 +161,14 @@ TEST(LevelDbCompatibilityTest, ReferenceReallyEnablesBothCodecs) {
 TEST(LevelDbCompatibilityTest, MatchesTheModelAndSwapsDatabaseDirectories) {
   for (const auto compression : {Compression::None, Compression::Snappy, Compression::Zstd}) {
     SCOPED_TRACE(static_cast<int>(compression));
-    test_support::TemporaryDirectory root;
+    test_support::ReferenceTemporaryDirectory root;
     const auto modern_path = root.path() / "modern";
     const auto reference_path = root.path() / "reference";
     Options options;
     options.create_if_missing = true;
+#if defined(_WIN32)
+    options.allow_weak_namespace_durability = true;
+#endif
     options.write_buffer_size = 64 * 1024;
     options.compression = compression;
     test_support::Model expected;

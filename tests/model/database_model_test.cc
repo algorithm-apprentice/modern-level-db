@@ -15,6 +15,9 @@ TEST(DatabaseModelTest, MatchesSeededBinarySnapshotTraces) {
       test_support::TemporaryDirectory directory;
       Options options;
       options.create_if_missing = true;
+#if defined(_WIN32)
+      options.allow_weak_namespace_durability = true;
+#endif
       options.write_buffer_size = 64 * 1024;
       options.compression = compression;
       options.bloom_bits_per_key = 10;

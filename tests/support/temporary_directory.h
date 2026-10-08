@@ -11,13 +11,14 @@ namespace modern_leveldb::test_support {
 
 class TemporaryDirectory final {
  public:
-  TemporaryDirectory() {
+  TemporaryDirectory() : TemporaryDirectory(std::filesystem::temp_directory_path()) {}
+
+  explicit TemporaryDirectory(const std::filesystem::path& root) {
     static std::atomic<unsigned> next{0};
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     do {
-      path_ =
-          std::filesystem::temp_directory_path() / ("modern-leveldb-test-" + std::to_string(stamp) +
-                                                    "-" + std::to_string(next.fetch_add(1)));
+      path_ = root / ("modern-leveldb-test-" + std::to_string(stamp) + "-" +
+                      std::to_string(next.fetch_add(1)));
     } while (!std::filesystem::create_directory(path_));
   }
 

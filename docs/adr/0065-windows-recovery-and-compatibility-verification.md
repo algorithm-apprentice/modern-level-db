@@ -2,7 +2,8 @@
 
 ## Status and scope
 
-Proposed on 2026-10-08 after database integration PR #99. This design adds
+Design accepted and merged by PR #100 on 2026-10-08 after database integration
+PR #99. The verification slice is implemented. This design adds
 verification and build admission, not a stronger Windows durability guarantee.
 Independent storage/failure-model and Windows/process/build reviews precede
 implementation; owner-authorized sequential delivery still requires this PR
@@ -260,6 +261,42 @@ No actionable finding remains from those bounded design passes.
 ASCII English, LF/whitespace, code fences, local links, DAG ordering, and the
 exact documentation-only changed-file selection were checked. No production
 build, child launch, or storage-runtime result is claimed by this design PR.
+
+## Implementation evidence
+
+The private native fixture implements creation-time selective handle and job
+attributes, suspended checked launch, native quoted paths, sticky observation
+errors, steady overall deadlines, terminal exit-code observation, and final
+pipe validation through EOF. The helper emits acknowledgements only after
+successful synchronous writes and preserves the open database until the
+selected ExitProcess or owned termination path.
+
+The missing Windows extended capability was observed as a configure failure
+before admission. All four protocol unit cases failed against the initial
+stub and passed after implementing exact ordered/EOF/oversize/first-error
+behavior. Windows extended tests explicitly opt into weak namespace durability
+at their disk-fixture call sites; injected deterministic crash tests are
+unchanged. The reference receives target-local MSVC RTTI restoration.
+
+Native MSVC Debug and Release builds each passed all eighteen model,
+compatibility, and crash cases, including both compression codecs,
+bidirectional reference cross-open, frozen golden data, all deterministic
+fault cases, ordinary/Unicode paths, malformed and invalid-tail output,
+readiness timeout, destructor containment, invalid launch, and all eight
+acknowledged values after normal and forced child exit. The native unit and
+consumer suite also passed all 694 cases with the added parser and compatibility
+preset. The subsequent reference-root review correction added two selector
+cases, bringing the final native unit/consumer suite to 696 passing cases.
+No OS-crash or power-loss guarantee is inferred.
+
+Independent storage and native-process code reviewers found one fixture
+environment issue: system temp is not necessarily ASCII. Cross-engine tests
+now select and validate an ASCII absolute root and actually create their
+owned directory there. An explicit MODERN_LEVELDB_REFERENCE_TMPDIR override
+is checked; otherwise ASCII system temp or the CTest build directory is used.
+All unsuitable roots fail with a clear requirement rather than an ANSI
+conversion accident. Modern-only Unicode cases remain unchanged.
+Focused reviewer follow-ups confirmed the selection and positive-test fixes.
 
 ## References
 

@@ -52,6 +52,8 @@ add_executable(
   unit/metadata/version_set_test.cc
   unit/metadata/version_test.cc
   unit/platform/clock_test.cc
+  unit/platform/crash_observation_test.cc
+  unit/platform/reference_directory_test.cc
   unit/platform/file_system_test.cc
   unit/platform/serial_executor_test.cc
   unit/table/block_format_test.cc

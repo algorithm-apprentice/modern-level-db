@@ -243,8 +243,25 @@ ctest --preset windows-release
 
 The Windows presets require the initialized developer environment; they are
 not Linux/macOS presets and do not carry GCC coverage or sanitizer flags.
-Extended crash/compatibility tests, the Windows dump command, and benchmarks
-are separate sequential delivery slices, not yet enabled by this integration.
+Native model, golden/differential cross-open, deterministic fault, and
+process-crash recovery tiers are also available:
+
+```text
+cmake --preset windows-compatibility
+cmake --build --preset windows-compatibility --target modern_leveldb_extended_tests
+ctest --preset windows-compatibility
+```
+
+The private reference remains pinned; an existing matching local source can
+be selected with `FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_REFERENCE`.
+Reference comparison selects validated writable ASCII fixture paths because
+its Windows Env uses ANSI APIs. If neither system temp nor the CTest build
+directory is suitable, set `MODERN_LEVELDB_REFERENCE_TMPDIR` to an existing
+writable ASCII absolute directory. Modern-only recovery tests include Unicode
+paths. The child tests
+verify process-only failure while Windows stays running; they are not
+power-loss evidence. See [ADR-0065](docs/adr/0065-windows-recovery-and-compatibility-verification.md).
+The Windows dump command and benchmarks remain separate delivery slices.
 
 ## Development
 

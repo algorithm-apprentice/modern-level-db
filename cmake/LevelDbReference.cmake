@@ -109,7 +109,9 @@ function(modern_leveldb_add_reference)
   endif()
   # Keep reference interfaces compatible with RTTI-enabled tests and UBSan vptr checks.
   target_compile_options(
-    leveldb PRIVATE "$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-frtti>"
+    leveldb PRIVATE
+      "$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-frtti>"
+      "$<$<CXX_COMPILER_ID:MSVC>:/GR>"
   )
   set(
     MODERN_LEVELDB_REFERENCE_SOURCE_DIR

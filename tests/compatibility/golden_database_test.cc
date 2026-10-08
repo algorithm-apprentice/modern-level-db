@@ -46,7 +46,11 @@ void MaterializeGolden(const std::filesystem::path& directory) {
 TEST(LevelDbGoldenTest, OpensFrozenWalManifestAndCompressedTableImage) {
   test_support::TemporaryDirectory directory;
   MaterializeGolden(directory.path());
-  test_support::ModernClient database(directory.path(), {});
+  Options options;
+#if defined(_WIN32)
+  options.allow_weak_namespace_durability = true;
+#endif
+  test_support::ModernClient database(directory.path(), options);
   const test_support::Model expected{{std::string("binary\0key", 10), std::string("value\0", 6)},
                                      {"kept", std::string(256, 'x')}};
   EXPECT_EQ(database.Scan(false), test_support::ExpectedEntries(expected, false));

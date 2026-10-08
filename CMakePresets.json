@@ -59,6 +59,15 @@
       }
     },
     {
+      "name": "windows-compatibility",
+      "displayName": "MSVC x64 Compatibility and Process Recovery",
+      "inherits": "windows-debug",
+      "binaryDir": "${sourceDir}/build/windows-compatibility",
+      "cacheVariables": {
+        "MODERN_LEVELDB_BUILD_EXTENDED_TESTS": "ON"
+      }
+    },
+    {
       "name": "asan",
       "displayName": "Address and Undefined Behavior Sanitizers",
       "inherits": "compatibility",
@@ -132,6 +141,10 @@
   ],
   "buildPresets": [
     {
+      "name": "windows-compatibility",
+      "configurePreset": "windows-compatibility"
+    },
+    {
       "name": "windows-debug",
       "configurePreset": "windows-debug"
     },
@@ -190,6 +203,19 @@
       "configurePreset": "windows-debug",
       "output": {
         "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-compatibility",
+      "inherits": "required-tests",
+      "configurePreset": "windows-compatibility",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "model|compatibility|crash"
+        }
       }
     },
     {
