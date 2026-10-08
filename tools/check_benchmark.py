@@ -90,7 +90,7 @@ def bind_run(report_path, binary, policy_path, diagnostic_only, snapshots=None):
     if diagnostic_only and (
             policy["platform"] != "Windows" or policy["compiler_id"] != "MSVC"
             or policy["target_architecture"] != "native_x64"
-            or policy["modern_file_access"] != "copied"
+            or policy["modern_file_access"] not in ("copied", "mapped_default")
             or policy["modern_namespace_policy"] != "explicit_weak"):
         raise ValueError("diagnostic baseline policy must describe the admitted Windows backend")
     binding = {

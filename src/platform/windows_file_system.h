@@ -1,6 +1,7 @@
 #ifndef MODERN_LEVELDB_PLATFORM_WINDOWS_FILE_SYSTEM_H_
 #define MODERN_LEVELDB_PLATFORM_WINDOWS_FILE_SYSTEM_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -13,12 +14,19 @@
 namespace modern_leveldb {
 
 class WindowsFileOperations;
+class MappedReadLimiter;
 
 class WindowsFileSystem final : public FileSystem {
  public:
-  explicit WindowsFileSystem(bool allow_weak_namespace_durability = false);
+  explicit WindowsFileSystem(bool allow_weak_namespace_durability = false,
+                             bool allow_mmap_reads = true);
   WindowsFileSystem(bool allow_weak_namespace_durability,
                     std::shared_ptr<WindowsFileOperations> operations);
+  WindowsFileSystem(bool allow_weak_namespace_durability,
+                    std::shared_ptr<WindowsFileOperations> operations,
+                    std::shared_ptr<MappedReadLimiter> mmap_limiter);
+  [[nodiscard]] static std::shared_ptr<MappedReadLimiter> NewMmapBudgetForTesting(
+      std::size_t maximum_mappings);
 
   // Checks consent and the resolved local NTFS location before database mutation.
   [[nodiscard]] Result<std::filesystem::path> PrepareDatabaseDirectory(
@@ -49,6 +57,7 @@ class WindowsFileSystem final : public FileSystem {
  private:
   bool allow_weak_namespace_durability_;
   std::shared_ptr<WindowsFileOperations> operations_;
+  std::shared_ptr<MappedReadLimiter> mmap_limiter_;
 };
 
 }  // namespace modern_leveldb

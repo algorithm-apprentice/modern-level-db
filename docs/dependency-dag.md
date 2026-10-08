@@ -120,7 +120,7 @@ it does not defer lower-level validation.
 | `verify-windows-compatibility-crash` | Windows process/lock helpers, model/golden/differential tiers and native recovery evidence | `integrate-windows-database`, `build-compatibility-harness` | ADR-0065, implemented |
 | `implement-windows-diagnostics` | Native Unicode CLI and checked Windows output adapter | `implement-windows-filesystem`, `implement-storage-file-diagnostics` | ADR-0066, implemented |
 | `baseline-windows-performance` | Copied-read Windows workloads, private reference build, portable process execution | `integrate-windows-database`, `verify-windows-compatibility-crash` | ADR-0067, implemented |
-| `implement-windows-mapped-reads` | Native LevelDB-aligned default mappings, 1,000-map limiter, verified lifetime and explicit copied control | `baseline-windows-performance`, `implement-table-cache` | ADR-0068, proposed reference-parity design |
+| `implement-windows-mapped-reads` | Native LevelDB-aligned default mappings, 1,000-map limiter, verified lifetime and explicit copied control | `baseline-windows-performance`, `implement-table-cache` | ADR-0068, implemented reference parity |
 | `implement-windows-profiling` | Supported Windows collector and owned-process/report contracts | `baseline-windows-performance` | ADR-0064 roadmap only; separate profiling ADR required |
 
 The [Windows delivery design](adr/0064-windows-filesystem-and-delivery.md)

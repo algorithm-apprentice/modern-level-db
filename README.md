@@ -208,11 +208,21 @@ No ANSI code-page conversion or text-mode CRLF translation is used.
 ## Windows database support
 
 Windows 10/11 desktop, native x64 MSVC, and local fixed NTFS volumes are
-supported with copied reads. ARM64/ARM64EC, other toolchains, network storage,
-other filesystems, and mapped reads are not admitted by this first backend.
+supported with native read-only mappings and an explicit copied-read control.
+ARM64/ARM64EC, other toolchains, network storage and other filesystems are
+not admitted.
 Native wide paths, including Chinese/non-BMP names and long paths, are used
 without ANSI code-page conversion. Ordinary DOS path components ending in a
 dot or space are rejected; explicitly extended paths retain literal semantics.
+
+`allow_mmap_reads` defaults to true, matching the pinned Windows reference's
+read-only mapped path and process-wide 1,000-file count-only limit.
+Exact-size immutable SSTs map when a slot is available; missing/mismatched
+size hints and exhausted slots use copied reads. Acquisition failures remain
+checked errors. Set `allow_mmap_reads = false` for copied reads.
+**Mapped-page storage faults can terminate the process with a Windows in-page
+exception instead of typed `Io`.** External mutation/truncation of live tables
+is unsupported. See [ADR-0068](docs/adr/0068-windows-mapped-read-parity.md).
 
 Opening requires consent on every open, including reopening:
 
@@ -276,8 +286,10 @@ ctest --preset windows-benchmarks
 
 This runs the unchanged validated write/read/scan workload against the pinned
 original LevelDB. Windows collection is **diagnostic-only**, not a passed
-20x performance-admission experiment: Modern uses copied reads and explicitly
-weak namespace durability, while the reference uses its platform defaults.
+20x performance-admission experiment. The existing binary uses an explicit
+copied control; a separately compiled binary uses the native mapped default.
+Both preserve the same workload, and both use explicit weak namespace
+durability while the reference retains its platform defaults.
 Linux/macOS retain the existing severe-regression gate. Invalid samples or
 nonfinite ratios fail under either policy; report metadata never selects a
 weaker checker mode.
@@ -288,8 +300,13 @@ The build directory contains `benchmarks\results-Release.json` (unchanged v1 sam
 Keep those same-run artifacts together. Source overrides record actual
 revision and modified/unknown state, not assumed clean pinned identity.
 See [ADR-0067](docs/adr/0067-windows-comparative-benchmark-baseline.md).
-Windows mapped reads, instrumented selected-workload profiling, and CPU
-collection remain explicitly unsupported, separate future work.
+The mapped comparison produces `results-mapped-Release.json`,
+`benchmark_policy-mapped-Release.json`, and `results-mapped-Release.provenance.json`
+in the same directory, independently bound to `modern_leveldb_mapped_bench`.
+Do not interpret either access policy as equivalent durability, or every
+eligible table as guaranteed to map.
+Windows instrumented selected-workload profiling and CPU collection remain
+separate future work.
 
 ## Development
 

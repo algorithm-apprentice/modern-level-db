@@ -137,6 +137,20 @@ class BenchmarkGateTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 bind_run(samples, binary, sidecar, False)
 
+    def test_binding_accepts_explicit_native_mapped_default_without_selecting_policy(self):
+        with tempfile.TemporaryDirectory(prefix="modern-mapped-policy-") as root:
+            root = Path(root)
+            binary, samples, sidecar = root / "benchmark", root / "samples.json", root / "policy.json"
+            binary.write_bytes(b"native mapped binary")
+            samples.write_text(json.dumps(report()), encoding="utf-8")
+            data = policy()
+            data["modern_file_access"] = "mapped_default"
+            sidecar.write_text(json.dumps(data), encoding="utf-8")
+            self.assertEqual(bind_run(samples, binary, sidecar, True)["performance_policy"],
+                             "diagnostic-only")
+            with self.assertRaises(ValueError):
+                bind_run(samples, binary, sidecar, False)
+
     def test_diagnostic_sidecar_cannot_downgrade_default_admission(self):
         with tempfile.TemporaryDirectory(prefix="modern-benchmark-policy-") as root:
             root = Path(root)

@@ -409,6 +409,7 @@ jobs:
           path: |
             build/windows-benchmarks/benchmarks/results-*.json
             build/windows-benchmarks/benchmarks/benchmark_policy-Release.json
+            build/windows-benchmarks/benchmarks/benchmark_policy-mapped-Release.json
             build/windows-benchmarks/Testing/Temporary/
 
   performance:

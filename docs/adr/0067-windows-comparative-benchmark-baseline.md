@@ -4,6 +4,8 @@
 
 Design accepted by PR #104 on 2026-10-08 after native diagnostics PR #103.
 The ordinary native benchmark slice is implemented.
+ADR-0068 adds a separately bound native default-mapped comparison while this
+slice's original copied binary remains an explicit control.
 This is the final first-release delivery slice,
 `baseline-windows-performance`, in ADR-0064. Independent measurement/storage
 and Windows/build/report-contract reviews precede implementation.

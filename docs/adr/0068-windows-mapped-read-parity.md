@@ -2,7 +2,8 @@
 
 ## Status and scope
 
-Proposed after the copied-read Windows baseline in PR #105.
+Design accepted and merged by PR #106 on 2026-10-08 after the copied-read
+Windows baseline in PR #105. The native mapping slice is implemented.
 The owner requires alignment with the pinned original Windows implementation
 before adding independent resource policies or claiming performance parity.
 Independent storage/lifetime and Win32/build/policy design reviews precede
@@ -213,6 +214,38 @@ superseded by owner direction, not accepted as native parity. Its rounded-byte
 closure is not an approval of this different contract. Native probes and the
 before-implementation Modern capability observation were collected separately
 from the read-only design reviews.
+
+## Implementation evidence and code review
+
+The implementation extracts the existing relaxed-atomic count limiter for
+both native platforms without changing its policy. Windows honors the public
+mapped default, returns exact stable borrowed views, closes acquisition
+handles, and reports native acquisition errors after rollback. No byte cap,
+reservation mutex or extra per-view file/section handle was added.
+
+Native validation passed 41 filesystem/lifecycle cases, full Debug 718 and
+Release 714 cases, 18 extended model/cross-open/process cases, 14 checker
+contracts and all four copied/mapped/provenance benchmark CTests.
+Full-suite validation exposed the copied-fixture helper's old ignored-option
+assumption; the helper now explicitly disables mapping instead of weakening
+its copied-block assertions. Separate real native SST cases prove borrowed
+uncompressed cache bypass and owning Snappy/Zstd decompression.
+
+Idle-machine measurements used the same source/workload with distinct binaries
+differing in Modern file-access selection, with independently checked binary/sample/policy
+bindings. At 65,536 entries and five alternating trials, copied read/scan
+medians were approximately 3.23x/3.09x the native reference; default-mapped
+medians were approximately 1.14x/1.16x. The smaller 4,096-entry baseline showed
+mapped read/scan at approximately 1.72x/0.93x. These are local diagnostic
+observations, not universal admission or equal-speed claims. Mapping removes
+the dominant large-workload file-access gap; residual workload/API differences
+remain for the separate native profiling and attribution slice.
+
+Independent storage/lifetime and Win32/build/mode-provenance code personas
+reviewed the exact implementation, shared limiter, fixture correction and
+fault/concurrency coverage. Both reported no actionable high-confidence bug.
+Runtime execution and performance observations were collected separately
+from those read-only reviews. POSIX gates and persistent formats are unchanged.
 
 ## References
 

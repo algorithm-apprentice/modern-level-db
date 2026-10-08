@@ -59,6 +59,11 @@ modern_leveldb::Options ModernOptions() {
   options.create_if_missing = true;
 #if defined(_WIN32)
   options.allow_weak_namespace_durability = true;
+#if defined(MODERN_LEVELDB_BENCHMARK_MAPPED_DEFAULT)
+  options.allow_mmap_reads = true;
+#else
+  options.allow_mmap_reads = false;
+#endif
 #endif
   options.write_buffer_size = 64 * 1024;
   options.block_size = 4096;

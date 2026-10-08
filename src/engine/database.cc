@@ -52,7 +52,8 @@ Result<std::unique_ptr<FileSystem>> PrepareOwnedFileSystem(const DatabaseEngineO
   static_cast<void>(directory);
   return std::make_unique<PosixFileSystem>(options.allow_mmap_reads);
 #elif defined(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
-  auto file_system = std::make_unique<WindowsFileSystem>(options.allow_weak_namespace_durability);
+  auto file_system = std::make_unique<WindowsFileSystem>(options.allow_weak_namespace_durability,
+                                                         options.allow_mmap_reads);
   auto prepared = file_system->PrepareDatabaseDirectory(directory);
   if (!prepared.has_value()) {
     return std::unexpected(prepared.error());

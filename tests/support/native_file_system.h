@@ -12,7 +12,7 @@ namespace modern_leveldb::test_support {
 // Native fixtures consent explicitly to Windows' weaker namespace policy.
 [[nodiscard]] inline auto CopiedFileSystem() {
 #if defined(_WIN32)
-  return WindowsFileSystem(true);
+  return WindowsFileSystem(true, false);
 #else
   return PosixFileSystem(false);
 #endif

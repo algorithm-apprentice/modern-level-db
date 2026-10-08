@@ -27,9 +27,9 @@ struct Options {
   std::size_t write_buffer_size = std::size_t{4} << 20U;
   std::uint64_t max_file_size = std::uint64_t{2} << 20U;
   std::size_t max_open_files = 1000;
-  // Uses POSIX mmap for exact-size immutable table files where supported.
-  // Mapped page storage faults may terminate with SIGBUS instead of returning
-  // typed Io. Set false to force copied reads and typed read errors.
+  // Uses read-only mappings for exact-size immutable tables where supported.
+  // Mapped page storage faults may terminate the process (POSIX SIGBUS or
+  // Windows in-page errors) instead of returning typed Io. False uses copies.
   bool allow_mmap_reads = true;
   std::size_t block_size = std::size_t{4} << 10U;
   std::uint32_t block_restart_interval = 16;

@@ -1,9 +1,5 @@
 find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
 if(MODERN_LEVELDB_BUILD_BENCHMARKS)
-  add_executable(modern_leveldb_bench db_bench.cc)
-  target_include_directories(modern_leveldb_bench PRIVATE "${PROJECT_SOURCE_DIR}/tests")
-  target_link_libraries(modern_leveldb_bench PRIVATE modern_leveldb::modern_leveldb leveldb)
-  modern_leveldb_set_project_warnings(modern_leveldb_bench PRIVATE)
   set(benchmark_policy_arguments)
   if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
     set(BENCHMARK_TARGET_ARCHITECTURE "native_x64")
@@ -23,24 +19,58 @@ if(MODERN_LEVELDB_BUILD_BENCHMARKS)
     set(BENCHMARK_PERFORMANCE_POLICY "severe-regression")
     set(benchmark_run_test benchmark.severe_regression)
   endif()
-  configure_file(benchmark_policy.json.in benchmark_policy.configured.json @ONLY)
-  file(GENERATE
-    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/benchmark_policy-base-$<IF:$<BOOL:$<CONFIG>>,$<CONFIG>,unspecified>.json"
-    INPUT "${CMAKE_CURRENT_BINARY_DIR}/benchmark_policy.configured.json"
-  )
   set(benchmark_configuration "$<IF:$<BOOL:$<CONFIG>>,$<CONFIG>,unspecified>")
-  add_custom_target(
-    modern_leveldb_benchmark_policy
-    COMMAND "${CMAKE_COMMAND}"
-      "-DREFERENCE_SOURCE=${MODERN_LEVELDB_REFERENCE_SOURCE_DIR}"
-      "-DREFERENCE_OVERRIDE=${FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_REFERENCE}"
-      "-DPOLICY_BASE=${CMAKE_CURRENT_BINARY_DIR}/benchmark_policy-base-${benchmark_configuration}.json"
-      "-DPOLICY_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/benchmark_policy-${benchmark_configuration}.json"
-      -P "${PROJECT_SOURCE_DIR}/cmake/RefreshBenchmarkPolicy.cmake"
-    VERBATIM
-  )
-  add_dependencies(modern_leveldb_benchmark_policy leveldb)
-  add_dependencies(modern_leveldb_bench modern_leveldb_benchmark_policy)
+  set(benchmark_modes default)
+  if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+    list(APPEND benchmark_modes mapped)
+  endif()
+  foreach(benchmark_mode IN LISTS benchmark_modes)
+    set(benchmark_target modern_leveldb_bench)
+    set(benchmark_policy_target modern_leveldb_benchmark_policy)
+    set(benchmark_policy_file benchmark_policy)
+    set(benchmark_report_file results)
+    set(benchmark_mode_test "${benchmark_run_test}")
+    if(benchmark_mode STREQUAL "mapped")
+      set(benchmark_target modern_leveldb_mapped_bench)
+      set(benchmark_policy_target modern_leveldb_mapped_benchmark_policy)
+      set(benchmark_policy_file benchmark_policy-mapped)
+      set(benchmark_report_file results-mapped)
+      set(benchmark_mode_test benchmark.native_mapped_baseline)
+      set(BENCHMARK_MODERN_FILE_ACCESS "mapped_default")
+    endif()
+    add_executable("${benchmark_target}" db_bench.cc)
+    if(benchmark_mode STREQUAL "mapped")
+      target_compile_definitions("${benchmark_target}" PRIVATE MODERN_LEVELDB_BENCHMARK_MAPPED_DEFAULT=1)
+    endif()
+    target_include_directories("${benchmark_target}" PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries("${benchmark_target}" PRIVATE modern_leveldb::modern_leveldb leveldb)
+    modern_leveldb_set_project_warnings("${benchmark_target}" PRIVATE)
+    configure_file(benchmark_policy.json.in "${benchmark_policy_file}.configured.json" @ONLY)
+    file(GENERATE
+      OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${benchmark_policy_file}-base-${benchmark_configuration}.json"
+      INPUT "${CMAKE_CURRENT_BINARY_DIR}/${benchmark_policy_file}.configured.json"
+    )
+    add_custom_target("${benchmark_policy_target}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DREFERENCE_SOURCE=${MODERN_LEVELDB_REFERENCE_SOURCE_DIR}"
+        "-DREFERENCE_OVERRIDE=${FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_REFERENCE}"
+        "-DPOLICY_BASE=${CMAKE_CURRENT_BINARY_DIR}/${benchmark_policy_file}-base-${benchmark_configuration}.json"
+        "-DPOLICY_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/${benchmark_policy_file}-${benchmark_configuration}.json"
+        -P "${PROJECT_SOURCE_DIR}/cmake/RefreshBenchmarkPolicy.cmake"
+      VERBATIM
+    )
+    add_dependencies("${benchmark_policy_target}" leveldb)
+    add_dependencies("${benchmark_target}" "${benchmark_policy_target}")
+    add_test(
+      NAME "${benchmark_mode_test}"
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/check_benchmark.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/${benchmark_report_file}-${benchmark_configuration}.json"
+        --run "$<TARGET_FILE:${benchmark_target}>"
+        --policy-sidecar "${CMAKE_CURRENT_BINARY_DIR}/${benchmark_policy_file}-${benchmark_configuration}.json"
+        ${benchmark_policy_arguments}
+    )
+    set_tests_properties("${benchmark_mode_test}" PROPERTIES LABELS benchmark TIMEOUT 240)
+  endforeach()
 
   add_test(
     NAME benchmark.checker
@@ -53,15 +83,6 @@ if(MODERN_LEVELDB_BUILD_BENCHMARKS)
       --cmake "${CMAKE_COMMAND}" --source "${PROJECT_SOURCE_DIR}"
   )
   set_tests_properties(benchmark.reference_provenance PROPERTIES LABELS benchmark TIMEOUT 120)
-  add_test(
-    NAME "${benchmark_run_test}"
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/check_benchmark.py"
-      "${CMAKE_CURRENT_BINARY_DIR}/results-${benchmark_configuration}.json"
-      --run "$<TARGET_FILE:modern_leveldb_bench>"
-      --policy-sidecar "${CMAKE_CURRENT_BINARY_DIR}/benchmark_policy-${benchmark_configuration}.json"
-      ${benchmark_policy_arguments}
-  )
-  set_tests_properties("${benchmark_run_test}" PROPERTIES LABELS benchmark TIMEOUT 240)
 endif()
 
 if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)

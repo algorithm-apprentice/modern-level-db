@@ -12,15 +12,15 @@
 
 namespace modern_leveldb {
 
-class PosixMmapBudget;
+class MappedReadLimiter;
 
 class PosixFileSystem final : public FileSystem {
  public:
   PosixFileSystem();
   explicit PosixFileSystem(bool allow_mmap_reads);
-  explicit PosixFileSystem(std::shared_ptr<PosixMmapBudget> mmap_budget) noexcept;
+  explicit PosixFileSystem(std::shared_ptr<MappedReadLimiter> mmap_budget) noexcept;
   // Creates an isolated mmap budget for tests.
-  [[nodiscard]] static std::shared_ptr<PosixMmapBudget> NewMmapBudgetForTesting(
+  [[nodiscard]] static std::shared_ptr<MappedReadLimiter> NewMmapBudgetForTesting(
       std::size_t maximum_mappings);
 
   [[nodiscard]] Result<std::unique_ptr<SequentialFile>> OpenSequential(
@@ -48,7 +48,7 @@ class PosixFileSystem final : public FileSystem {
       const std::filesystem::path& path) override;
 
  private:
-  std::shared_ptr<PosixMmapBudget> mmap_budget_;
+  std::shared_ptr<MappedReadLimiter> mmap_budget_;
 };
 
 }  // namespace modern_leveldb

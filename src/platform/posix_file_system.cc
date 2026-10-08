@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cassert>
 #include <cerrno>
 #include <cstddef>
@@ -33,6 +32,7 @@
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
 #include "platform/file_system.h"
+#include "platform/mapped_read_limiter.h"
 
 namespace modern_leveldb {
 namespace {
@@ -325,47 +325,18 @@ void RecordFileOpen(FileOpenReason, std::uint64_t) noexcept {}
 
 }  // namespace
 
-class PosixMmapBudget final {
- public:
-  explicit PosixMmapBudget(std::ptrdiff_t maximum_mappings) noexcept
-      : maximum_mappings_(maximum_mappings), available_(maximum_mappings) {
-    assert(maximum_mappings >= 0);
-  }
-
-  [[nodiscard]] bool Acquire() noexcept {
-    const std::ptrdiff_t previous = available_.fetch_sub(1, std::memory_order_relaxed);
-    if (previous > 0) {
-      return true;
-    }
-    [[maybe_unused]] const std::ptrdiff_t before_restore =
-        available_.fetch_add(1, std::memory_order_relaxed);
-    assert(before_restore < maximum_mappings_);
-    return false;
-  }
-
-  void Release() noexcept {
-    [[maybe_unused]] const std::ptrdiff_t previous =
-        available_.fetch_add(1, std::memory_order_relaxed);
-    assert(previous < maximum_mappings_);
-  }
-
- private:
-  [[maybe_unused]] const std::ptrdiff_t maximum_mappings_;
-  std::atomic<std::ptrdiff_t> available_;
-};
-
 namespace {
 
-std::shared_ptr<PosixMmapBudget> ProcessMmapBudget() {
+std::shared_ptr<MappedReadLimiter> ProcessMmapBudget() {
   constexpr auto Count = static_cast<std::ptrdiff_t>(DefaultMmapCount);
-  static const auto budget = std::make_shared<PosixMmapBudget>(
+  static const auto budget = std::make_shared<MappedReadLimiter>(
       Count);  // GCOVR_EXCL_LINE: GCC 13 does not attribute static initialization
   return budget;
 }
 
 class PendingMmap final {
  public:
-  PendingMmap(std::shared_ptr<PosixMmapBudget> budget, std::size_t length) noexcept
+  PendingMmap(std::shared_ptr<MappedReadLimiter> budget, std::size_t length) noexcept
       : budget_(std::move(budget)), length_(length) {}
 
   PendingMmap(const PendingMmap&) = delete;
@@ -391,7 +362,7 @@ class PendingMmap final {
   void Commit() noexcept { active_ = false; }
 
  private:
-  const std::shared_ptr<PosixMmapBudget> budget_;
+  const std::shared_ptr<MappedReadLimiter> budget_;
   const std::size_t length_;
   void* mapping_ = MAP_FAILED;
   bool active_ = true;
@@ -400,7 +371,7 @@ class PendingMmap final {
 class PosixMmapRandomAccessFile final : public RandomAccessFile {
  public:
   PosixMmapRandomAccessFile(void* mapping, std::size_t length,
-                            std::shared_ptr<PosixMmapBudget> budget) noexcept
+                            std::shared_ptr<MappedReadLimiter> budget) noexcept
       : mapping_(static_cast<const std::byte*>(mapping)),
         length_(length),
         budget_(std::move(budget)) {}
@@ -442,7 +413,7 @@ class PosixMmapRandomAccessFile final : public RandomAccessFile {
  private:
   const std::byte* const mapping_;
   const std::size_t length_;
-  const std::shared_ptr<PosixMmapBudget> budget_;
+  const std::shared_ptr<MappedReadLimiter> budget_;
 };
 
 class PosixWritableFile final : public WritableFile {
@@ -681,16 +652,16 @@ PosixFileSystem::PosixFileSystem() : mmap_budget_(ProcessMmapBudget()) {}
 PosixFileSystem::PosixFileSystem(bool allow_mmap_reads)
     : mmap_budget_(allow_mmap_reads ? ProcessMmapBudget() : nullptr) {}
 
-PosixFileSystem::PosixFileSystem(std::shared_ptr<PosixMmapBudget> mmap_budget) noexcept
+PosixFileSystem::PosixFileSystem(std::shared_ptr<MappedReadLimiter> mmap_budget) noexcept
     : mmap_budget_(std::move(mmap_budget)) {}
 // GCOVR_EXCL_STOP
 
-std::shared_ptr<PosixMmapBudget> PosixFileSystem::NewMmapBudgetForTesting(
+std::shared_ptr<MappedReadLimiter> PosixFileSystem::NewMmapBudgetForTesting(
     std::size_t maximum_mappings) {
   if (maximum_mappings > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max())) {
     throw std::bad_array_new_length();
   }
-  return std::make_shared<PosixMmapBudget>(static_cast<std::ptrdiff_t>(maximum_mappings));
+  return std::make_shared<MappedReadLimiter>(static_cast<std::ptrdiff_t>(maximum_mappings));
 }
 
 Result<std::unique_ptr<SequentialFile>> PosixFileSystem::OpenSequential(

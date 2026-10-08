@@ -7,8 +7,10 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <latch>
 #include <limits>
 #include <memory>
 #include <set>
@@ -16,9 +18,12 @@
 #include <thread>
 #include <vector>
 
+#include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
 #include "platform/windows_file_system_internal.h"
 #include "support/temporary_directory.h"
+#include "table/table.h"
+#include "table/table_builder.h"
 
 namespace modern_leveldb {
 namespace {
@@ -41,6 +46,11 @@ class FaultOperations final : public WindowsFileOperations {
   bool fail_find_close = false;
   bool fail_volume = false;
   bool report_refs = false;
+  bool fail_size = false;
+  bool fail_mapping = false;
+  bool fail_map = false;
+  bool fail_unmap = false;
+  unsigned fail_close_call = 0;
   UINT forced_drive_type = std::numeric_limits<UINT>::max();
   DWORD maximum_write = MAXDWORD;
   mutable unsigned live_handles = 0;
@@ -49,6 +59,7 @@ class FaultOperations final : public WindowsFileOperations {
   mutable unsigned write_calls = 0;
   mutable unsigned sync_calls = 0;
   mutable unsigned close_calls = 0;
+  mutable unsigned live_views = 0;
 
   HANDLE Open(const wchar_t* path, DWORD access, DWORD share, DWORD disposition,
               DWORD flags) const noexcept override {
@@ -122,13 +133,53 @@ class FaultOperations final : public WindowsFileOperations {
     }
     return WindowsFileOperations::Sync(file);
   }
+  BOOL Size(HANDLE file, LARGE_INTEGER* size) const noexcept override {
+    if (fail_size) {
+      ::SetLastError(ERROR_READ_FAULT);
+      return FALSE;
+    }
+    return WindowsFileOperations::Size(file, size);
+  }
+  HANDLE Mapping(HANDLE file) const noexcept override {
+    if (fail_mapping) {
+      ::SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+      return nullptr;
+    }
+    const HANDLE handle = WindowsFileOperations::Mapping(file);
+    if (handle != nullptr) {
+      ++live_handles;
+    }
+    return handle;
+  }
+  void* Map(HANDLE mapping) const noexcept override {
+    if (fail_map) {
+      ::SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+      return nullptr;
+    }
+    void* view = WindowsFileOperations::Map(mapping);
+    if (view != nullptr) {
+      ++live_views;
+    }
+    return view;
+  }
+  BOOL Unmap(const void* mapping) const noexcept override {
+    const BOOL unmapped = WindowsFileOperations::Unmap(mapping);
+    if (unmapped) {
+      --live_views;
+    }
+    if (fail_unmap) {
+      ::SetLastError(ERROR_INVALID_ADDRESS);
+      return FALSE;
+    }
+    return unmapped;
+  }
   BOOL Close(HANDLE file) const noexcept override {
     ++close_calls;
     const BOOL closed = WindowsFileOperations::Close(file);
     if (closed) {
       --live_handles;
     }
-    if (fail_close) {
+    if (fail_close || close_calls == fail_close_call) {
       ::SetLastError(ERROR_WRITE_FAULT);
       return FALSE;
     }
@@ -294,7 +345,7 @@ TEST(WindowsFileSystemTest, PerformsConcurrentPositionedCopiedReads) {
   }
   const auto path = directory.path() / "random";
   WriteFixture(path, data);
-  WindowsFileSystem file_system;
+  WindowsFileSystem file_system(false, false);
   auto opened = file_system.OpenRandomAccess(path, data.size());
   ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
   EXPECT_FALSE((*opened)->TryReadView(0, 1).has_value());
@@ -316,6 +367,290 @@ TEST(WindowsFileSystemTest, PerformsConcurrentPositionedCopiedReads) {
   }
   threads.clear();
   EXPECT_EQ(failures.load(), 0U);
+}
+
+TEST(WindowsFileSystemTest, MapsExactNativeFilesByDefaultAndKeepsCopiedControl) {
+  TemporaryDirectory directory;
+  const auto path = directory.path() / "mapped";
+  WriteFixture(path, "abcdef");
+  WindowsFileSystem mapped;
+  auto file = mapped.OpenRandomAccess(path, 6);
+  ASSERT_TRUE(file.has_value()) << file.error().ToString();
+  const auto view = (*file)->TryReadView(1, 4);
+  ASSERT_TRUE(view.has_value());
+  EXPECT_EQ(AsStringView(*view), "bcde");
+  EXPECT_TRUE((*file)->TryReadView(6, 0).has_value());
+  EXPECT_FALSE((*file)->TryReadView(6, 1).has_value());
+  EXPECT_FALSE((*file)->TryReadView(7, 0).has_value());
+  EXPECT_FALSE((*file)->TryReadView(std::numeric_limits<std::uint64_t>::max(), 1).has_value());
+  EXPECT_FALSE((*file)->TryReadView(1, std::numeric_limits<std::size_t>::max()).has_value());
+  std::array<std::byte, 8> bytes{};
+  EXPECT_EQ((*file)->Read(4, bytes).value(), 2U);
+  EXPECT_EQ(AsStringView(ByteView(bytes).first(2)), "ef");
+  EXPECT_EQ((*file)->Read(6, bytes).value(), 0U);
+  EXPECT_EQ((*file)->Read(0, {}).value(), 0U);
+  EXPECT_FALSE((*file)->Read(std::numeric_limits<std::uint64_t>::max(), bytes).has_value());
+  EXPECT_FALSE(
+      (*file)
+          ->Read(static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()), bytes)
+          .has_value());
+  EXPECT_EQ((*file)->Read(std::numeric_limits<std::uint64_t>::max(), {}).value(), 0U);
+  WindowsFileSystem copied(false, false);
+  auto control = copied.OpenRandomAccess(path, 6);
+  ASSERT_TRUE(control.has_value());
+  EXPECT_FALSE((*control)->TryReadView(0, 6).has_value());
+  EXPECT_EQ((*control)->Read(0, bytes).value(), 6U);
+}
+
+TEST(WindowsFileSystemTest, MappedFilesReleaseAcquisitionHandlesAndOutliveFilesystem) {
+  TemporaryDirectory directory;
+  const auto path = directory.path() / std::filesystem::path{u8"mapped-\u4e2d-\U0001f680"};
+  WriteFixture(path, "owned view");
+  auto operations = std::make_shared<FaultOperations>();
+  auto limiter = WindowsFileSystem::NewMmapBudgetForTesting(1);
+  std::unique_ptr<RandomAccessFile> file;
+  {
+    WindowsFileSystem filesystem(false, operations, limiter);
+    auto opened = filesystem.OpenRandomAccess(path, 10);
+    ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+    file = std::move(*opened);
+    EXPECT_EQ(operations->live_handles, 0U);
+    EXPECT_EQ(operations->live_views, 1U);
+  }
+  ASSERT_TRUE(file->TryReadView(0, 10).has_value());
+  EXPECT_EQ(AsStringView(*file->TryReadView(0, 10)), "owned view");
+  file.reset();
+  EXPECT_EQ(operations->live_views, 0U);
+  WindowsFileSystem another(false, operations, limiter);
+  auto reacquired = another.OpenRandomAccess(path, 10);
+  ASSERT_TRUE(reacquired.has_value());
+  EXPECT_TRUE((*reacquired)->TryReadView(0, 10).has_value());
+}
+
+TEST(WindowsFileSystemTest, ConcurrentMappedReadsDoNotUseCopiedIoOrInvalidateViews) {
+  TemporaryDirectory directory;
+  const auto path = directory.path() / "mapped";
+  std::string data(8'192, 'x');
+  for (std::size_t index = 0; index < data.size(); ++index) {
+    data[index] = static_cast<char>(index % 127U);
+  }
+  WriteFixture(path, data);
+  auto operations = std::make_shared<FaultOperations>();
+  WindowsFileSystem filesystem(false, operations, WindowsFileSystem::NewMmapBudgetForTesting(1));
+  auto mapped = filesystem.OpenRandomAccess(path, data.size());
+  ASSERT_TRUE(mapped.has_value());
+  ASSERT_TRUE((*mapped)->TryReadView(0, data.size()).has_value());
+  operations->fail_read = true;
+  std::atomic<unsigned> failures{0};
+  std::vector<std::jthread> threads;
+  for (unsigned reader = 0; reader != 4; ++reader) {
+    threads.emplace_back([&, reader] {
+      for (unsigned index = 0; index != 100; ++index) {
+        const std::size_t offset = (reader * 997U + index * 53U) % 8'000U;
+        const auto view = (*mapped)->TryReadView(offset, 64);
+        std::array<std::byte, 64> output{};
+        auto read = (*mapped)->Read(offset, output);
+        if (!view.has_value() || AsStringView(*view) != std::string_view(data).substr(offset, 64) ||
+            !read.has_value() || *read != 64 ||
+            AsStringView(output) != std::string_view(data).substr(offset, 64)) {
+          failures.fetch_add(1, std::memory_order_relaxed);
+        }
+      }
+    });
+  }
+  threads.clear();
+  EXPECT_EQ(failures.load(), 0U);
+  EXPECT_EQ(operations->completed_reads, 0U);
+  EXPECT_EQ(operations->live_handles, 0U);
+}
+
+TEST(WindowsFileSystemTest, NativeMappedTablesPreserveBorrowedAndCompressedCacheability) {
+  TemporaryDirectory directory;
+  InternalKeyComparator comparator(BytewiseComparator());
+  const auto key = InternalKey::Create(AsBytes("key"), 1, ValueKind::Value);
+  const auto lookup = LookupKey::Create(AsBytes("key"), MaxSequenceNumber);
+  ASSERT_TRUE(key.has_value());
+  ASSERT_TRUE(lookup.has_value());
+  const std::string expected(1'024, 'x');
+  for (const auto compression :
+       {BlockCompression::None, BlockCompression::Snappy, BlockCompression::Zstd}) {
+    const auto path = directory.path() / std::to_string(static_cast<int>(compression));
+    WindowsFileSystem filesystem;
+    auto writable = filesystem.OpenWritable(path);
+    ASSERT_TRUE(writable.has_value());
+    TableBuilderOptions options;
+    options.compression = compression;
+    TableBuilder builder(std::move(*writable), comparator, options);
+    ASSERT_TRUE(builder.Add(key->encoded(), AsBytes(expected)).has_value());
+    ASSERT_TRUE(builder.Finish().has_value());
+    BlockCache cache(1U << 20U);
+    auto file = filesystem.OpenRandomAccess(path, builder.file_size());
+    ASSERT_TRUE(file.has_value());
+    ASSERT_TRUE((*file)->TryReadView(0, static_cast<std::size_t>(builder.file_size())).has_value());
+    auto table = Table::Open(std::move(*file), builder.file_size(), comparator,
+                             TableOptions{.block_cache = &cache});
+    ASSERT_TRUE(table.has_value()) << table.error().ToString();
+    std::vector<std::byte> value;
+    ASSERT_EQ((*table)->Get(*lookup, value).value(), TableLookupKind::Value);
+    EXPECT_EQ(AsStringView(value), expected);
+    if (compression == BlockCompression::None) {
+      EXPECT_EQ(cache.total_charge(), 0U);
+    } else {
+      EXPECT_GT(cache.total_charge(), 0U);
+    }
+    Table::Iterator iterator(**table);
+    ASSERT_TRUE(iterator.SeekToFirst().has_value());
+    EXPECT_EQ(AsStringView(iterator.value()), expected);
+  }
+}
+
+TEST(WindowsFileSystemTest, SharesCountLimitAndRestoresExhaustedSlots) {
+  TemporaryDirectory directory;
+  const auto path = directory.path() / "mapped";
+  WriteFixture(path, "abc");
+  auto limiter = WindowsFileSystem::NewMmapBudgetForTesting(1);
+  auto operations = std::make_shared<WindowsFileOperations>();
+  WindowsFileSystem first(false, operations, limiter);
+  WindowsFileSystem second(false, operations, limiter);
+  auto held = first.OpenRandomAccess(path, 3);
+  ASSERT_TRUE(held.has_value());
+  EXPECT_TRUE((*held)->TryReadView(0, 3).has_value());
+  auto exhausted = second.OpenRandomAccess(path, 3);
+  ASSERT_TRUE(exhausted.has_value());
+  EXPECT_FALSE((*exhausted)->TryReadView(0, 3).has_value());
+  held->reset();
+  auto restored = second.OpenRandomAccess(path, 3);
+  ASSERT_TRUE(restored.has_value());
+  EXPECT_TRUE((*restored)->TryReadView(0, 3).has_value());
+}
+
+TEST(WindowsFileSystemTest, MappingEligibilityGuardsDoNotConsumeSlots) {
+  TemporaryDirectory directory;
+  const auto path = directory.path() / "mapped";
+  WriteFixture(path, "abc");
+  auto operations = std::make_shared<WindowsFileOperations>();
+  auto limiter = WindowsFileSystem::NewMmapBudgetForTesting(1);
+  WindowsFileSystem filesystem(false, operations, limiter);
+  for (const auto expected :
+       {std::optional<std::uint64_t>{}, std::optional<std::uint64_t>{0},
+        std::optional<std::uint64_t>{2}, std::optional<std::uint64_t>{4},
+        std::optional<std::uint64_t>{std::numeric_limits<std::uint64_t>::max()}}) {
+    auto copied = filesystem.OpenRandomAccess(path, expected);
+    ASSERT_TRUE(copied.has_value());
+    EXPECT_FALSE((*copied)->TryReadView(0, 3).has_value());
+  }
+  auto mapped = filesystem.OpenRandomAccess(path, 3);
+  ASSERT_TRUE(mapped.has_value());
+  EXPECT_TRUE((*mapped)->TryReadView(0, 3).has_value());
+  WriteFixture(directory.path() / "empty", "");
+  auto empty = filesystem.OpenRandomAccess(directory.path() / "empty", 0);
+  ASSERT_TRUE(empty.has_value());
+  EXPECT_FALSE((*empty)->TryReadView(0, 0).has_value());
+  WindowsFileSystem disabled(false, operations, WindowsFileSystem::NewMmapBudgetForTesting(0));
+  auto zero = disabled.OpenRandomAccess(path, 3);
+  ASSERT_TRUE(zero.has_value());
+  EXPECT_FALSE((*zero)->TryReadView(0, 3).has_value());
+}
+
+TEST(WindowsFileSystemTest, ConcurrentOpensReserveOnlyTheAvailableMappingSlots) {
+  TemporaryDirectory directory;
+  const auto path = directory.path() / "mapped";
+  WriteFixture(path, "abc");
+  auto limiter = WindowsFileSystem::NewMmapBudgetForTesting(1);
+  auto operations = std::make_shared<WindowsFileOperations>();
+  std::latch ready(8);
+  std::latch release(1);
+  std::atomic<unsigned> mapped{0};
+  std::atomic<unsigned> failures{0};
+  std::vector<std::jthread> threads;
+  for (unsigned index = 0; index != 8; ++index) {
+    threads.emplace_back([&] {
+      WindowsFileSystem filesystem(false, operations, limiter);
+      auto opened = filesystem.OpenRandomAccess(path, 3);
+      if (!opened.has_value()) {
+        failures.fetch_add(1, std::memory_order_relaxed);
+      } else if ((*opened)->TryReadView(0, 3).has_value()) {
+        mapped.fetch_add(1, std::memory_order_relaxed);
+      }
+      ready.count_down();
+      release.wait();
+    });
+  }
+  ready.wait();
+  EXPECT_EQ(mapped.load(), 1U);
+  EXPECT_EQ(failures.load(), 0U);
+  release.count_down();
+  threads.clear();
+  WindowsFileSystem filesystem(false, operations, limiter);
+  auto opened = filesystem.OpenRandomAccess(path, 3);
+  ASSERT_TRUE(opened.has_value());
+  EXPECT_TRUE((*opened)->TryReadView(0, 3).has_value());
+}
+
+TEST(WindowsFileSystemTest, NativeMappingFailuresReportErrorsAndRollbackAllResources) {
+  TemporaryDirectory directory;
+  const auto path = directory.path() / "mapped";
+  WriteFixture(path, "abc");
+  for (unsigned failure = 0; failure != 5; ++failure) {
+    auto operations = std::make_shared<FaultOperations>();
+    auto limiter = WindowsFileSystem::NewMmapBudgetForTesting(1);
+    WindowsFileSystem filesystem(false, operations, limiter);
+    operations->fail_size = failure == 0;
+    operations->fail_mapping = failure == 1;
+    operations->fail_map = failure == 2;
+    operations->fail_close = failure == 3;
+    operations->fail_close_call = failure == 4 ? 2 : 0;
+    auto failed = filesystem.OpenRandomAccess(path, 3);
+    ASSERT_FALSE(failed.has_value()) << failure;
+    EXPECT_EQ(failed.error().code(), ErrorCode::Io);
+    EXPECT_EQ(operations->live_handles, 0U);
+    EXPECT_EQ(operations->live_views, 0U);
+    operations->fail_size = operations->fail_mapping = operations->fail_map =
+        operations->fail_close = false;
+    operations->fail_close_call = 0;
+    auto recovered = filesystem.OpenRandomAccess(path, 3);
+    ASSERT_TRUE(recovered.has_value()) << recovered.error().ToString();
+    EXPECT_TRUE((*recovered)->TryReadView(0, 3).has_value());
+  }
+}
+
+TEST(WindowsFileSystemTest, MappedViewsSurviveNativeRenameRemovalAndAllowReuseAfterRelease) {
+  TemporaryDirectory directory;
+  const auto path = directory.path() / "mapped";
+  const auto renamed = directory.path() / "renamed";
+  WriteFixture(path, "abc");
+  WindowsFileSystem filesystem;
+  auto mapped = filesystem.OpenRandomAccess(path, 3);
+  ASSERT_TRUE(mapped.has_value());
+  ASSERT_TRUE((*mapped)->TryReadView(0, 3).has_value());
+  ASSERT_TRUE(filesystem.RenameFile(path, renamed).has_value());
+  EXPECT_EQ(AsStringView(*(*mapped)->TryReadView(0, 3)), "abc");
+  ASSERT_TRUE(filesystem.RemoveFile(renamed).has_value());
+  EXPECT_EQ(AsStringView(*(*mapped)->TryReadView(0, 3)), "abc");
+  mapped->reset();
+  auto reused = filesystem.OpenWritable(renamed);
+  ASSERT_TRUE(reused.has_value()) << reused.error().ToString();
+  ASSERT_TRUE((*reused)->Append(AsBytes("new")).has_value());
+  ASSERT_TRUE((*reused)->Close().has_value());
+}
+
+TEST(WindowsFileSystemDeathTest, FailedOwnedViewUnmapDoesNotRecycleAnActiveSlot) {
+  TemporaryDirectory directory;
+  const auto path = directory.path() / "mapped";
+  WriteFixture(path, "abc");
+  EXPECT_DEATH(
+      {
+        auto operations = std::make_shared<FaultOperations>();
+        WindowsFileSystem filesystem(false, operations,
+                                     WindowsFileSystem::NewMmapBudgetForTesting(1));
+        auto mapped = filesystem.OpenRandomAccess(path, 3);
+        if (!mapped.has_value() || !(*mapped)->TryReadView(0, 3).has_value()) {
+          std::exit(0);
+        }
+        operations->fail_unmap = true;
+        mapped->reset();
+      },
+      "");
 }
 
 TEST(WindowsFileSystemTest, RandomReadsHandleShortEofAndInvalidOffsets) {

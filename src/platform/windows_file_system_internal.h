@@ -53,6 +53,18 @@ class WindowsFileOperations {
     return ::WriteFile(file, data, size, written, nullptr);
   }
   [[nodiscard]] virtual BOOL Sync(HANDLE file) const noexcept { return ::FlushFileBuffers(file); }
+  [[nodiscard]] virtual BOOL Size(HANDLE file, LARGE_INTEGER* size) const noexcept {
+    return ::GetFileSizeEx(file, size);
+  }
+  [[nodiscard]] virtual HANDLE Mapping(HANDLE file) const noexcept {
+    return ::CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+  }
+  [[nodiscard]] virtual void* Map(HANDLE mapping) const noexcept {
+    return ::MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+  }
+  [[nodiscard]] virtual BOOL Unmap(const void* mapping) const noexcept {
+    return ::UnmapViewOfFile(mapping);
+  }
   [[nodiscard]] virtual BOOL Close(HANDLE handle) const noexcept { return ::CloseHandle(handle); }
   [[nodiscard]] virtual HANDLE Find(const wchar_t* pattern,
                                     WIN32_FIND_DATAW* information) const noexcept {
