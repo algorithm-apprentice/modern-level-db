@@ -42,6 +42,7 @@ struct ByteViewCompare {
 
 struct alignas(64) OverAlignedKey {
   std::uint64_t value;
+  std::array<std::byte, 64 - sizeof(std::uint64_t)> padding;
 };
 
 struct OverAlignedCompare {

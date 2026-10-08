@@ -194,6 +194,7 @@ TEST(SerialExecutorTest, DestructorRequestsStopAndCancelsQueuedTasks) {
 
 TEST(SerialExecutorTest, DestructorRunsStopCallbacksWithoutQueueLock) {
   std::latch callback_registered(1);
+  std::latch callback_finished(1);
   std::atomic<int> callback_error_code = -1;
   auto executor = std::make_unique<SerialExecutor>();
   SerialExecutor* executor_pointer = executor.get();
@@ -205,11 +206,11 @@ TEST(SerialExecutorTest, DestructorRunsStopCallbacksWithoutQueueLock) {
         callback_error_code.store(static_cast<int>(status.error().code()),
                                   std::memory_order_relaxed);
       }
+      callback_finished.count_down();
     });
     callback_registered.count_down();
-    while (!stop_token.stop_requested()) {
-      std::this_thread::yield();
-    }
+    // Keep the registration alive until dispatch, not merely until the stop flag.
+    callback_finished.wait();
   }));
   callback_registered.wait();
 

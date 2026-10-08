@@ -33,6 +33,7 @@ option(
 unset(MODERN_LEVELDB_BUILD_TOOLS_DEFAULT)
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompilerWarnings.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/WindowsBackend.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompressionDependencies.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/Crc32cDependency.cmake")
 find_package(Threads REQUIRED)
@@ -78,6 +79,7 @@ set(
     src/metadata/version_edit.cc
     src/metadata/version_set.cc
     src/platform/clock.cc
+    src/platform/path.cc
     src/platform/serial_executor.cc
     src/table/block.cc
     src/table/block_builder.cc
@@ -100,6 +102,9 @@ function(modern_leveldb_add_library target)
         src/diagnostics/posix_output.cc
     )
     target_compile_definitions("${target}" PRIVATE MODERN_LEVELDB_HAVE_POSIX_FILE_SYSTEM)
+  elseif(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+    target_sources("${target}" PRIVATE src/platform/windows_file_system.cc)
+    target_compile_definitions("${target}" PRIVATE MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
   endif()
   target_compile_features("${target}" PUBLIC cxx_std_23)
   target_include_directories(

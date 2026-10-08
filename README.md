@@ -55,6 +55,11 @@ maintenance state while keeping engine and child-handle lifetimes safe. The
 canonical MVP implementation also includes reproducible model,
 upstream compatibility, power-loss, sanitizer, fuzz, and benchmark gates.
 
+An internal x64/MSVC Windows filesystem now provides copied reads, native
+locks, Unicode/long paths, and an explicit weak namespace policy. It is not
+yet selected by public database opening; Windows database integration follows
+the accepted [sequential delivery design](docs/adr/0064-windows-filesystem-and-delivery.md).
+
 ## Goals
 
 - Provide an embeddable ordered key-value store with `Put`, `Get`, `Delete`,
@@ -86,7 +91,7 @@ upstream compatibility, power-loss, sanitizer, fuzz, and benchmark gates.
 - [Implementation dependency DAG](docs/dependency-dag.md)
 - [Architecture decision records](docs/adr/)
 - [Benchmark and profiling design and usage](docs/profiling-design.md)
-- [Proposed Windows filesystem contracts and delivery roadmap](docs/adr/0064-windows-filesystem-and-delivery.md)
+- [Windows filesystem contracts and delivery roadmap](docs/adr/0064-windows-filesystem-and-delivery.md)
 
 ## Using the library
 

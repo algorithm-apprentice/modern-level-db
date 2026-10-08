@@ -2,15 +2,21 @@
 
 ## Status
 
-Proposed on 2026-10-08. This is a design-only change, not an implemented
-Windows backend or an assertion of new durability guarantees.
+Design accepted and merged by PR #97 on 2026-10-08.
+
+The native filesystem slice is implemented with copied reads, explicit
+namespace consent, resolved-volume preflight, and native/fault contract
+tests. It is not yet the owned public database backend: database integration,
+extended recovery tests, diagnostics, and benchmarks remain sequential slices.
+No strict Windows namespace durability guarantee has been added.
 
 Independent design reviews precede owner review. Production implementation
 must not begin until this design PR has been reviewed and merged, following
 [ADR-0006](0006-sequential-pull-request-workflow.md). Each subsequent code
 slice receives separate storage-correctness and Windows/integration reviews.
-The independent design reviews and focused closure pass below are complete;
-owner acceptance and all implementation remain pending.
+The independent design reviews and focused closure pass below are complete.
+Each implementation slice still requires its independent code reviews and
+green validation before merge.
 
 ## Context and current callers
 
@@ -186,7 +192,8 @@ process-exit test or a directory FlushFileBuffers call alone.
 
 The implementation updates the option comments, README example, public
 contract, and current ADR-0011 platform summary together. The present
-design-only PR merely links the proposal and changes no active guarantee.
+native-filesystem slice does not yet add the public option or change default
+database opening behavior.
 
 ## Decision 3: Implement the existing filesystem contracts
 
@@ -509,6 +516,47 @@ The existing complete CI-routing suite has a Windows-incompatible newline
 filename in its GitChangeScopeTest fixture; the full Linux CI gate remains
 required. No tests were changed to hide that limitation, and no production
 build, native backend execution, or power-loss evidence is claimed here.
+
+## Native filesystem implementation record
+
+The first implementation slice adds the internal backend, not public
+Windows database enablement. Native contract tests cover copied/concurrent
+reads, sparse offsets beyond 4 GiB, buffered/short writes, first-error
+retention, resource failures, Unicode/long/literal paths, native replacement,
+delete sharing, resolved junctions, and same/cross-process lock contention.
+The private fault seam wraps only OS operations needed by these tests and is
+retained by returned file objects. Shared UTF-8 path rendering is extracted
+into the platform layer without an upward dependency on diagnostics.
+
+The Win32 integration review found that ARM64EC also defines _M_X64 and that
+the three bounded child runs exceeded the old ten-second CTest budget.
+The capability probe now rejects _M_ARM64EC with a fresh native-x64 cache key,
+and an actual target-definition consumer fixture demonstrates rejection.
+Windows native unit tests have a thirty-second outer budget; other platforms
+retain ten seconds.
+
+Actual MSVC admission also exposed two test/build-environment issues:
+
+- The over-aligned skip-list rejection key now has explicit padding rather
+  than relying on implicit padding that newer MSVC diagnoses under /W4 /WX.
+- The stop-callback test now keeps its registration alive until callback
+  completion. Merely observing stop_requested can race callback deregistration
+  before dispatch. The scheduler itself is unchanged, and the test still
+  detects a queue mutex held during request_stop.
+
+Use Windows-native CMake and an established MSVC x64 developer environment.
+The installed MSYS-built CMake failed the shared-Zstd resource-compiler
+consumer; the installed Visual Studio native CMake builds it successfully.
+No product flag, dependency selection, or test was disabled to hide that
+toolchain mismatch. Windows CI explicitly initializes the x64 MSVC environment.
+
+Validation observed the initial sequential/concurrent/buffered-read-write
+tests fail against missing-backend stubs, the enumeration fault case fail
+before its native seam was wired, and the ARM64EC consumer fail before the
+capability repair. Native MSVC /W4 /WX validation then passed all 31 Windows
+contract cases, 669 Debug unit/consumer cases, and 653 Release unit cases.
+The repaired callback fixture also passed 100 repeated runs. These are file
+and process-lifetime checks, not real Windows power-loss evidence.
 
 ## References
 

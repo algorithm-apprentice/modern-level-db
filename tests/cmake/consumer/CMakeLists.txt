@@ -40,6 +40,9 @@ elseif(TEST_SCENARIO STREQUAL "dependency_parent_values")
 elseif(TEST_SCENARIO STREQUAL "dependency_shared_only")
   set(MODERN_LEVELDB_BUILD_TESTS OFF CACHE BOOL "")
   set(ZSTD_BUILD_STATIC OFF CACHE BOOL "")
+elseif(TEST_SCENARIO STREQUAL "windows_arm64ec_rejected")
+  set(MODERN_LEVELDB_BUILD_TESTS OFF CACHE BOOL "")
+  set(CMAKE_REQUIRED_DEFINITIONS -D_M_ARM64EC=1)
 elseif(TEST_SCENARIO STREQUAL "benchmark_reference_collision")
   set(MODERN_LEVELDB_BUILD_TESTS OFF CACHE BOOL "")
   set(MODERN_LEVELDB_BUILD_BENCHMARKS ON CACHE BOOL "")
@@ -64,6 +67,13 @@ if(HAD_BUILD_TYPE)
 endif()
 
 add_subdirectory("${MODERN_LEVELDB_SOURCE_DIR}" modern-leveldb)
+
+if(TEST_SCENARIO STREQUAL "windows_arm64ec_rejected")
+  get_target_property(native_definitions modern_leveldb COMPILE_DEFINITIONS)
+  if("MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM" IN_LIST native_definitions)
+    message(FATAL_ERROR "The native Windows backend must not admit ARM64EC")
+  endif()
+endif()
 
 get_directory_property(
   library_cxx_flags DIRECTORY "${MODERN_LEVELDB_SOURCE_DIR}" DEFINITION CMAKE_CXX_FLAGS

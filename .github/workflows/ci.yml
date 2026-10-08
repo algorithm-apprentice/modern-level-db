@@ -50,6 +50,12 @@ jobs:
       - uses: actions/checkout@v4
         if: env.RUN_FULL_CI == 'true'
 
+      - name: Set up MSVC x64
+        if: env.RUN_FULL_CI == 'true' && runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Configure
         if: env.RUN_FULL_CI == 'true'
         run: >

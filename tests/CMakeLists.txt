@@ -82,6 +82,20 @@ else()
       unit/engine/database_without_posix_test.cc
   )
 endif()
+if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+  add_executable(modern_leveldb_windows_lock_child support/windows_lock_child.cc)
+  target_include_directories(modern_leveldb_windows_lock_child PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(modern_leveldb_windows_lock_child PRIVATE modern_leveldb::modern_leveldb)
+  modern_leveldb_set_project_warnings(modern_leveldb_windows_lock_child PRIVATE)
+  target_sources(
+    modern_leveldb_unit_tests PRIVATE unit/platform/windows_file_system_test.cc
+  )
+  target_compile_definitions(
+    modern_leveldb_unit_tests
+    PRIVATE MODERN_LEVELDB_WINDOWS_LOCK_CHILD="$<TARGET_FILE:modern_leveldb_windows_lock_child>"
+  )
+  add_dependencies(modern_leveldb_unit_tests modern_leveldb_windows_lock_child)
+endif()
 target_include_directories(
   modern_leveldb_unit_tests
   PRIVATE "${PROJECT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -95,12 +109,18 @@ target_link_libraries(
 modern_leveldb_set_project_warnings(modern_leveldb_unit_tests PRIVATE)
 
 include(GoogleTest)
+set(unit_test_timeout 10)
+if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+  # The kernel-lock case owns three child runs, each bounded to five seconds.
+  set(unit_test_timeout 30)
+endif()
 gtest_discover_tests(
   modern_leveldb_unit_tests
   PROPERTIES
     LABELS unit
-    TIMEOUT 10
+    TIMEOUT "${unit_test_timeout}"
 )
+unset(unit_test_timeout)
 
 add_executable(
   modern_leveldb_cache_allocation_tests
@@ -187,6 +207,7 @@ foreach(
     crc32c_parent_target
     dependency_parent_values
     dependency_shared_only
+    windows_arm64ec_rejected
 )
   add_test(
     NAME "cmake.${scenario}"
