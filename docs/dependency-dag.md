@@ -121,7 +121,7 @@ it does not defer lower-level validation.
 | `implement-windows-diagnostics` | Native Unicode CLI and checked Windows output adapter | `implement-windows-filesystem`, `implement-storage-file-diagnostics` | ADR-0066, implemented |
 | `baseline-windows-performance` | Copied-read Windows workloads, private reference build, portable process execution | `integrate-windows-database`, `verify-windows-compatibility-crash` | ADR-0067, implemented |
 | `implement-windows-mapped-reads` | Native LevelDB-aligned default mappings, 1,000-map limiter, verified lifetime and explicit copied control | `baseline-windows-performance`, `implement-table-cache` | ADR-0068, implemented reference parity |
-| `implement-windows-profiling` | Supported Windows collector and owned-process/report contracts | `baseline-windows-performance` | ADR-0064 roadmap only; separate profiling ADR required |
+| `implement-windows-profiling` | Native selected workloads, owned CPU-weighted stack collector and checked process/symbol/report contracts | `baseline-windows-performance`, `implement-windows-mapped-reads` | ADR-0069, proposed |
 
 The [Windows delivery design](adr/0064-windows-filesystem-and-delivery.md)
 was accepted by PR #97. Windows database integration requires explicit weak
