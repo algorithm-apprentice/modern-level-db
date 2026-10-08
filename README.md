@@ -265,8 +265,31 @@ writable ASCII absolute directory. Modern-only recovery tests include Unicode
 paths. The child tests
 verify process-only failure while Windows stays running; they are not
 power-loss evidence. See [ADR-0065](docs/adr/0065-windows-recovery-and-compatibility-verification.md).
-The Windows dump command is available with the same offline/read-only
-contract; comparative benchmarks remain the next delivery slice.
+The Windows dump command is available with the same offline/read-only contract.
+The ordinary comparative benchmark is also available:
+
+```text
+cmake --preset windows-benchmarks
+cmake --build --preset windows-benchmarks
+ctest --preset windows-benchmarks
+```
+
+This runs the unchanged validated write/read/scan workload against the pinned
+original LevelDB. Windows collection is **diagnostic-only**, not a passed
+20x performance-admission experiment: Modern uses copied reads and explicitly
+weak namespace durability, while the reference uses its platform defaults.
+Linux/macOS retain the existing severe-regression gate. Invalid samples or
+nonfinite ratios fail under either policy; report metadata never selects a
+weaker checker mode.
+
+The build directory contains `benchmarks\results-Release.json` (unchanged v1 samples),
+`benchmark_policy-Release.json` (compiler/backend/reference policy), and
+`results-Release.provenance.json` (executed binary/sample/policy SHA-256 binding).
+Keep those same-run artifacts together. Source overrides record actual
+revision and modified/unknown state, not assumed clean pinned identity.
+See [ADR-0067](docs/adr/0067-windows-comparative-benchmark-baseline.md).
+Windows mapped reads, instrumented selected-workload profiling, and CPU
+collection remain explicitly unsupported, separate future work.
 
 ## Development
 
@@ -362,7 +385,7 @@ include torn WAL tails and a real child process exiting without database
 destructors. The Release benchmark verifies all returned data, records three
 same-machine trials against Google LevelDB, and rejects phase medians more
 than 20 times the reference. Its raw report is
-`build/benchmarks/benchmarks/results.json`; this is a severe-regression guard,
+`build/benchmarks/benchmarks/results-Release.json`; this is a severe-regression guard,
 not a throughput SLA.
 
 The `extended-hardening` workflow adds weekly and manually dispatchable

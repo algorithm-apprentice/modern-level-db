@@ -140,5 +140,14 @@ function(modern_leveldb_add_reference)
     "${reference_hardware_patch_sha256}"
     PARENT_SCOPE
   )
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ReferenceIdentity.cmake")
+  modern_leveldb_reference_identity(
+    "${modern_leveldb_reference_SOURCE_DIR}"
+    "${FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_REFERENCE}"
+    reference_revision reference_source reference_dirty
+  )
+  set(MODERN_LEVELDB_REFERENCE_REVISION "${reference_revision}" PARENT_SCOPE)
+  set(MODERN_LEVELDB_REFERENCE_SOURCE_IDENTITY "${reference_source}" PARENT_SCOPE)
+  set(MODERN_LEVELDB_REFERENCE_SOURCE_DIRTY "${reference_dirty}" PARENT_SCOPE)
   set(MODERN_LEVELDB_REFERENCE_HARDWARE_CRC "disabled" PARENT_SCOPE)
 endfunction()

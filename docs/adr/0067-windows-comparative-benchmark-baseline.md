@@ -2,7 +2,8 @@
 
 ## Status and scope
 
-Proposed on 2026-10-08 after native diagnostics PR #103.
+Design accepted by PR #104 on 2026-10-08 after native diagnostics PR #103.
+The ordinary native benchmark slice is implemented.
 This is the final first-release delivery slice,
 `baseline-windows-performance`, in ADR-0064. Independent measurement/storage
 and Windows/build/report-contract reviews precede implementation.
@@ -58,8 +59,8 @@ Subprocess/schema/write failures remain explicit errors.
 
 Keep the benchmark stdout report at schema_version=1:
 entries, trials, and samples for modern/leveldb write/read/scan.
-Generate an adjacent build-owned `benchmark_policy.json` sidecar from actual
-CMake target/backend selection, with a separate policy schema version.
+Generate an adjacent build-owned `benchmark_policy-<configuration>.json`
+sidecar from actual CMake target/backend selection, with a separate policy schema version.
 It is not included in timing and is not a database file.
 
 Required provenance:
@@ -81,16 +82,26 @@ Source overrides must not claim the pinned identity merely because an option
 name says reference. Verify available revision/provenance or mark it external/
 unknown. The already provided matching local revision can be checked during
 validation without committing its path.
+An override's canonical directory must equal the Git worktree root; a nested
+non-Git directory cannot inherit an ancestor checkout's revision or clean state.
 For a git source override, record the actual revision and whether tracked or
 untracked source changes exist; a pinned HEAD with changes is modified/external,
 not clean pinned provenance. An authenticated fallback archive records its
 verified pinned download identity separately from override provenance.
+Refresh this identity on every benchmark build, after the reference target is
+rebuilt, rather than retaining configure-time state. Empty single-configuration
+build types are recorded as `unspecified`; macOS architecture overrides and
+universal target lists are recorded instead of the host architecture.
 
 The trusted runner writes an adjacent run-binding manifest after successful
 execution/validation. It includes SHA-256 identities of the executed binary,
 sample report, and policy sidecar, plus build configuration and expected policy.
 Do not pair a stale sample file with a new build's sidecar and call that
 provenance; only artifacts from the same bound run are published together.
+Use configuration-specific sample and manifest names. Claim the destination
+with an OS-released exclusive lock, so terminating a publisher cannot leave
+stale file-creation ownership that blocks a retry. Validate and hash the same
+captured bytes, and reject changed artifacts before atomically publishing the manifest.
 
 ## Decision 3: Separate Windows baseline collection from performance admission
 
@@ -163,6 +174,32 @@ durability/timing nonclaims. No actionable finding remains from these passes.
 ASCII English, LF/whitespace, fences, local references, DAG ordering, and
 documentation-only scope were checked. This design contains no runtime/gate
 change and claims no new benchmark result.
+
+## Implementation evidence and code review
+
+Native MSVC Release, empty-build-type `unspecified`, and Ninja Multi-Config
+Debug/Release builds passed the checker, reference-provenance, and native
+baseline CTests. Each configuration's binary, samples, and final policy
+matched its manifest SHA-256 values. The 13 checker contracts retain exact
+default-threshold behavior and exercise captured-artifact mutation,
+concurrent publication exclusion, and retry after forced owner termination.
+The interrupted-owner test was observed failing before the OS-lock fix.
+
+An owned reference fixture demonstrated tracked-source rebuild followed by
+policy refresh from clean to modified without CMake reconfiguration.
+Reference contracts also cover untracked changes and nested ignored non-Git
+overrides. Full Windows Debug (708 cases), Release (704 cases), and the
+native extended tier (18 cases) passed. Instrumented Windows profiling
+configuration was rejected by its intended capability guard.
+
+Independent measurement/storage and Windows/build/report-contract code
+reviews, followed by focused closure, resolved byte-snapshot binding,
+override-root identity, stale configure-time provenance, empty and concurrent
+configuration artifacts, macOS target architecture, interrupted publication
+ownership, and documentation paths. Both final static reviews found no
+actionable new defect; execution evidence was collected separately.
+No workload, legacy sample schema, default threshold, or durability claim
+was weakened.
 
 ## References
 

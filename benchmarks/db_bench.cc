@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "modern_leveldb/db.h"
+#include "support/reference_directory.h"
 #include "support/temporary_directory.h"
 
 namespace {
@@ -56,6 +57,9 @@ T Take(modern_leveldb::Result<T> result) {
 modern_leveldb::Options ModernOptions() {
   modern_leveldb::Options options;
   options.create_if_missing = true;
+#if defined(_WIN32)
+  options.allow_weak_namespace_durability = true;
+#endif
   options.write_buffer_size = 64 * 1024;
   options.block_size = 4096;
   options.compression = modern_leveldb::Compression::Snappy;
@@ -241,7 +245,7 @@ int main(int argc, char** argv) {
       }
       records.push_back({std::move(key), std::move(value)});
     }
-    modern_leveldb::test_support::TemporaryDirectory directory;
+    modern_leveldb::test_support::ReferenceTemporaryDirectory directory;
     Samples modern;
     Samples reference;
     std::vector<std::size_t> order(entries);

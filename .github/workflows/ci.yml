@@ -371,8 +371,45 @@ jobs:
         with:
           name: benchmark-results
           path: |
-            build/benchmarks/benchmarks/results.json
+            build/benchmarks/benchmarks/results-*.json
+            build/benchmarks/benchmarks/benchmark_policy-Release.json
             build/benchmarks/Testing/Temporary/
+
+  windows-benchmark:
+    name: ${{ github.event_name == 'push' && 'push / windows-benchmark' || 'windows-benchmark' }}
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ${{ needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true' && 'ubuntu-24.04' || 'windows-latest' }}
+    timeout-minutes: 20
+    env:
+      RUN_FULL_CI: ${{ needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true' }}
+    steps:
+      - name: Acknowledge documentation-only change
+        if: env.RUN_FULL_CI == 'false'
+        run: echo "Documentation-only change; native baseline collection is not required."
+      - uses: actions/checkout@v4
+        if: env.RUN_FULL_CI == 'true'
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: env.RUN_FULL_CI == 'true'
+        with:
+          arch: x64
+      - name: Configure ordinary native baseline
+        if: env.RUN_FULL_CI == 'true'
+        run: cmake --preset windows-benchmarks
+      - name: Build baseline
+        if: env.RUN_FULL_CI == 'true'
+        run: cmake --build --preset windows-benchmarks --parallel 2
+      - name: Validate samples, native policy, and run binding
+        if: env.RUN_FULL_CI == 'true'
+        run: ctest --preset windows-benchmarks
+      - uses: actions/upload-artifact@v4
+        if: always() && env.RUN_FULL_CI == 'true'
+        with:
+          name: windows-benchmark-baseline
+          path: |
+            build/windows-benchmarks/benchmarks/results-*.json
+            build/windows-benchmarks/benchmarks/benchmark_policy-Release.json
+            build/windows-benchmarks/Testing/Temporary/
 
   performance:
     name: ${{ github.event_name == 'push' && 'push / performance' || 'performance' }} (${{ matrix.os }})

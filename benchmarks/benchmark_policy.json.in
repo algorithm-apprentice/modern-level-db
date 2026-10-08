@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "samples_schema_version": 1,
+  "platform": "@CMAKE_SYSTEM_NAME@",
+  "compiler_id": "@CMAKE_CXX_COMPILER_ID@",
+  "compiler_version": "@CMAKE_CXX_COMPILER_VERSION@",
+  "build_configuration": "$<IF:$<BOOL:$<CONFIG>>,$<CONFIG>,unspecified>",
+  "target_architecture": "@BENCHMARK_TARGET_ARCHITECTURE@",
+  "reference_revision": "@MODERN_LEVELDB_REFERENCE_REVISION@",
+  "reference_source": "@MODERN_LEVELDB_REFERENCE_SOURCE_IDENTITY@",
+  "reference_dirty": "@MODERN_LEVELDB_REFERENCE_SOURCE_DIRTY@",
+  "modern_file_access": "@BENCHMARK_MODERN_FILE_ACCESS@",
+  "reference_file_access": "platform_default",
+  "modern_namespace_policy": "@BENCHMARK_NAMESPACE_POLICY@",
+  "sync_wal_creation": true,
+  "workload_writes": "unsynced",
+  "performance_policy": "@BENCHMARK_PERFORMANCE_POLICY@"
+}

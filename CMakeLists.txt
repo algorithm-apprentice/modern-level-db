@@ -155,9 +155,16 @@ if(MODERN_LEVELDB_BUILD_EXTENDED_TESTS)
   endif()
 endif()
 
-if(MODERN_LEVELDB_BUILD_BENCHMARKS OR MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
+if(MODERN_LEVELDB_BUILD_BENCHMARKS)
+  if(NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+     NOT MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+    message(FATAL_ERROR "Ordinary database benchmarks require an admitted native backend")
+  endif()
+endif()
+
+if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
   if(NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(FATAL_ERROR "The database benchmarks and profiling require the POSIX backend")
+    message(FATAL_ERROR "Instrumented profiling requires the POSIX backend")
   endif()
 endif()
 
