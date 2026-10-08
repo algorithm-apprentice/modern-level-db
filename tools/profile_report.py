@@ -1,4 +1,4 @@
-"""Owned-process collection and typed macOS Time Profiler report extraction."""
+"""Owned-process collection plus typed macOS and native Windows profile support."""
 
 from collections import Counter
 from dataclasses import dataclass
@@ -101,6 +101,22 @@ def remember_targets(targets, discovered):
 def stop_owned(process, targets, target_executable, discovery_complete, grace=5):
     # xctrace's launched workload is a direct child in a different process group.
     targets = list(targets)
+    if os.name == "nt":
+        if target_executable is not None:
+            return targets, False, RuntimeError(
+                "Windows target discovery is owned by the native collector"
+            )
+        try:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=grace)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=grace)
+        except Exception as error:
+            return targets, False, error
+        return targets, process.poll() is not None, None
     cleanup_error = None
     target_checks_complete = True
 

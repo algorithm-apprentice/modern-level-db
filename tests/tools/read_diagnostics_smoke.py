@@ -7,7 +7,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
-from run_performance import run_read_diagnostics
+from run_performance import COPIED_FILE_ACCESS, run_read_diagnostics
 
 
 def main():
@@ -32,7 +32,7 @@ def main():
         raise RuntimeError("diagnostic executable accepted a reference-engine case")
     cases = (
         ("modern/readrandom/4096", "default"),
-        ("modern/readmissing/65536", "pread"),
+        ("modern/readmissing/65536", COPIED_FILE_ACCESS),
     )
     for case, file_access in cases:
         output = root / f"{case.replace('/', '-')}-{file_access}"

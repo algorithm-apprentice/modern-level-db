@@ -305,8 +305,35 @@ The mapped comparison produces `results-mapped-Release.json`,
 in the same directory, independently bound to `modern_leveldb_mapped_bench`.
 Do not interpret either access policy as equivalent durability, or every
 eligible table as guaranteed to map.
-Windows instrumented selected-workload profiling and CPU collection remain
-separate future work.
+Selected workloads, fixed-work mutations, read diagnostics, and the owned
+native x64 CPU stack collector are available separately:
+
+```text
+cmake --preset windows-profiling
+cmake --build --preset windows-profiling
+ctest --preset windows-profiling
+```
+
+`tools\run_performance.py --capture-cpu` additionally requires the explicit
+benchmark PDB and collector executable produced by that build.
+The runner snapshots and hashes those files, reconciles the final measured
+epoch with benchmark/completion output, and records CPU-weighted owned stacks.
+The collector launches only its own job-contained workload; it does not attach
+to arbitrary PIDs or start global tracing. Captured-run timings are recording
+evidence, not throughput/speedup measurements. See
+[ADR-0069](docs/adr/0069-native-windows-selected-workload-profiling.md).
+Use an ASCII absolute build/output root for this harness because the pinned
+reference and Google Benchmark command boundary remain narrow on Windows.
+
+```text
+python tools\run_performance.py ^
+  --binary build\windows-profiling\benchmarks\modern_leveldb_performance.exe ^
+  --case modern/readrandom/65536 ^
+  --output build\windows-profile-readrandom ^
+  --capture-cpu ^
+  --native-symbols build\windows-profiling\benchmarks\modern_leveldb_performance.pdb ^
+  --native-collector build\windows-profiling\benchmarks\modern_leveldb_windows_cpu_profile.exe
+```
 
 ## Development
 

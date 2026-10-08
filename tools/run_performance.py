@@ -44,14 +44,21 @@ READ_DIAGNOSTIC_SAMPLE_SEED = 401
 READ_DIAGNOSTIC_SAMPLE_DENOMINATOR = 4_096
 READ_DIAGNOSTIC_SAMPLES = 991
 READ_DIAGNOSTIC_SAMPLE_SCHEDULE = "splitmix64-v1"
-MODERN_FILE_ACCESS_SEMANTICS = "mmap-default-v1"
+COPIED_FILE_ACCESS = "copied" if sys.platform == "win32" else "pread"
+MODERN_FILE_ACCESS_SEMANTICS = (
+    "windows-mmap-default-v1" if sys.platform == "win32" else "mmap-default-v1"
+)
 MODERN_RESULT_OWNERSHIP_SEMANTICS = "reusable-get-v1"
 MODERN_WRITE_BATCH_OWNERSHIP_SEMANTICS = {
     "copying": "const-copy-v1",
     "exclusive": "exclusive-borrow-v1",
 }
 MODERN_WAL_CREATION_SEMANTICS = {
-    "durable": "file-and-directory-before-write-v1",
+    "durable": (
+        "file-and-weak-namespace-before-write-v1"
+        if sys.platform == "win32"
+        else "file-and-directory-before-write-v1"
+    ),
     "leveldb": "pinned-leveldb-v1",
 }
 REFERENCE_HARDWARE_CRC_ROLES = (
@@ -107,6 +114,19 @@ def integer(value, minimum=1):
 
 def number(value, minimum=0):
     return type(value) in (int, float) and math.isfinite(value) and value >= minimum
+
+
+def require_native_ascii_path(path, description):
+    path = Path(path)
+    if sys.platform == "win32":
+        if not path.is_absolute():
+            raise ValueError(f"{description} must be absolute on Windows")
+        try:
+            str(path).encode("ascii")
+        except UnicodeEncodeError as error:
+            raise ValueError(
+                f"{description} must be ASCII for the native reference/harness"
+            ) from error
 
 
 def mutation_specification(case, smoke=False):
@@ -169,18 +189,18 @@ def validate_benchmark(report, case, repetitions, smoke=False, modern_file_acces
     expected_wal_creation = expected_modern_wal_creation(
         engine, workload, modern_wal_creation
     )
-    if modern_file_access not in ("default", "pread"):
+    if modern_file_access not in ("default", COPIED_FILE_ACCESS):
         raise ValueError("unknown Modern file access mode")
     if engine != "modern" and modern_file_access != "default":
         raise ValueError("Modern file access mode requires a Modern case")
-    if modern_file_access == "pread" and workload in MUTATIONS:
-        raise ValueError("Modern pread control requires a read-family case")
-    if reference_file_access not in ("default", "pread"):
+    if modern_file_access == COPIED_FILE_ACCESS and workload in MUTATIONS:
+        raise ValueError("Modern copied control requires a read-family case")
+    if reference_file_access not in ("default", COPIED_FILE_ACCESS):
         raise ValueError("unknown reference file access mode")
     if engine != "leveldb" and reference_file_access != "default":
         raise ValueError("reference file access mode requires a LevelDB case")
-    if reference_file_access == "pread" and workload not in ("readrandom", "readmissing"):
-        raise ValueError("forced pread control requires a LevelDB point-read case")
+    if reference_file_access == COPIED_FILE_ACCESS and workload not in ("readrandom", "readmissing"):
+        raise ValueError("forced copied control requires a LevelDB point-read case")
     if not isinstance(report, dict) or not isinstance(report.get("context"), dict):
         raise ValueError("missing Google Benchmark context")
     context = report["context"]
@@ -232,10 +252,19 @@ def validate_benchmark(report, case, repetitions, smoke=False, modern_file_acces
     if (context.get("reference_pread_control_available") not in ("true", "false")
             or not isinstance(context.get("reference_control_patch_sha256"), str)):
         raise ValueError("invalid reference file-access provenance")
-    if reference_file_access == "pread":
+    if sys.platform == "win32":
+        if (context.get("reference_copied_control_available") not in ("true", "false")
+                or context.get("modern_namespace_policy") != "explicit_weak"):
+            raise ValueError("invalid native Windows performance policy")
+    if reference_file_access == COPIED_FILE_ACCESS:
         patch = context["reference_control_patch_sha256"]
-        if context["reference_pread_control_available"] != "true" or len(patch) != 64:
-            raise ValueError("forced pread control is unavailable or unverified")
+        available = (
+            context.get("reference_copied_control_available")
+            if sys.platform == "win32"
+            else context["reference_pread_control_available"]
+        )
+        if available != "true" or len(patch) != 64:
+            raise ValueError("forced copied control is unavailable or unverified")
     if mutation:
         expected_context = {
             "engine": engine, "workload": workload, "records": str(records),
@@ -409,7 +438,7 @@ def validate_mutation_completion(report, case, specification, smoke):
 def validate_read_diagnostics(report, case, modern_file_access="default"):
     if case not in READ_DIAGNOSTIC_CASES:
         raise ValueError("unsupported read diagnostic case")
-    if modern_file_access not in ("default", "pread"):
+    if modern_file_access not in ("default", COPIED_FILE_ACCESS):
         raise ValueError("unknown Modern file access mode")
     _, workload, records = case_parts(case)
     fields = {
@@ -465,7 +494,7 @@ def validate_read_diagnostics(report, case, modern_file_access="default"):
         if setup_files["mapped"] == 0 or setup_files["disabled"] != 0:
             raise ValueError("default diagnostic did not map its table files")
     elif setup_files["mapped"] != 0 or setup_files["disabled"] == 0:
-        raise ValueError("pread diagnostic did not retain copied table reads")
+        raise ValueError("copied diagnostic did not retain copied table reads")
 
     counters = report["counters"]
     if not isinstance(counters, dict) or set(counters) != set(READ_DIAGNOSTIC_COUNTERS):
@@ -525,7 +554,7 @@ def validate_read_diagnostics(report, case, modern_file_access="default"):
         if totals["copied_read_blocks"] != 0 and fallback_files == 0:
             raise ValueError("default copied blocks have no persisted fallback reason")
     elif totals["mapped_view_blocks"] != 0:
-        raise ValueError("pread diagnostics unexpectedly used mapped block views")
+        raise ValueError("copied diagnostics unexpectedly used mapped block views")
     if totals["validation_entries"] != 0:
         raise ValueError("lazy block diagnostics performed eager entry validation")
     if totals["files_searched"] < totals["sstable_hits"]:
@@ -594,7 +623,7 @@ def validate_read_diagnostics(report, case, modern_file_access="default"):
             if totals["mapped_view_blocks"] == 0 or stages["random_read"]["events"] != 0:
                 raise ValueError("default cache-pressure diagnostics retained copied reads")
         elif totals["random_read_calls"] == 0 or stages["random_read"]["events"] == 0:
-            raise ValueError("pread cache-pressure diagnostics have no random reads")
+            raise ValueError("copied cache-pressure diagnostics have no random reads")
     build = report["build"]
     if not isinstance(build, dict):
         raise ValueError("missing read diagnostic build provenance")
@@ -624,9 +653,19 @@ def read_json(path):
                       object_pairs_hook=reject_duplicate_keys)
 
 
+def read_json_snapshot(path):
+    data = Path(path).read_bytes()
+    return data, json.loads(data, object_pairs_hook=reject_duplicate_keys)
+
+
 def write_json(path, value):
-    Path(path).write_text(json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n",
-                          encoding="utf-8")
+    path = Path(path)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
 
 
 def file_digest(path):
@@ -720,7 +759,8 @@ def validate_build_context(context):
             or context["profile_capture_supported"] not in ("true", "false")
             or context["reference_pread_control_available"] not in ("true", "false")
             or context["read_diagnostics_compiled"] not in ("true", "false")
-            or context["reference_file_access"] not in ("default", "pread", "not_applicable")
+            or context["reference_file_access"]
+               not in ("default", "pread", "copied", "not_applicable")
             or context["reference_hardware_crc"] not in REFERENCE_HARDWARE_CRC_ROLES
             or context["reference_have_crc32c"] not in ("true", "false")
             or context["reference_crc32c_linked"] not in ("true", "false")
@@ -739,6 +779,10 @@ def validate_build_context(context):
                  or context["reference_crc32c_linked"] != "false"
                  or hardware_patch != "not_applicable")):
         raise ValueError("canonical reference reports hardware CRC provenance")
+    if sys.platform == "win32":
+        if (context.get("reference_copied_control_available") not in ("true", "false")
+                or context.get("modern_namespace_policy") != "explicit_weak"):
+            raise ValueError("native Windows build provenance is incomplete")
     flags = " ".join(
         context[field]
         for field in ("c_flags", "cxx_flags", "exe_linker_flags", "static_linker_flags")
@@ -763,6 +807,14 @@ def record_diagnostics(manifest, output):
     ))
     if manifest["mode"] != "cpu_profile":
         return
+    if "collector_sha256" in manifest:
+        manifest["artifacts"]["target_log"] = "benchmark.log"
+        manifest["collector"] = {
+            "name": "modern_leveldb_windows_cpu_profile",
+            "method": "thread-cpu-delta-stackwalk64-v1",
+            "sha256": manifest["collector_sha256"],
+        }
+        return
     manifest["artifacts"]["target_log"] = "target.log"
     manifest["artifacts"]["collector_version_log"] = "collector-version.log"
     version_log = output / "collector-version.log"
@@ -777,10 +829,171 @@ def record_diagnostics(manifest, output):
         raise ValueError("successful capture has no collector version record")
 
 
+def validate_native_profile(profile, epochs, measurement, completion, expected_module):
+    if not isinstance(expected_module, str) or not expected_module:
+        raise ValueError("native profile expected module is missing")
+    normalized_module = Path(expected_module).stem.casefold()
+    required = {
+        "schema_version", "method", "sample_interval_ms", "sample_schedule", "pid", "pdb_matched",
+        "total_cpu_100ns", "attributed_cpu_100ns", "unattributed_cpu_100ns",
+        "stack_observations", "own_frame_observations", "dropped_epoch_changes",
+        "dropped_thread_races", "rejected_foreign_threads", "total_frames",
+        "resolved_frames", "unresolved_frames", "repeated_addresses", "truncated_stacks",
+        "observed_epochs", "stacks",
+    }
+    if not isinstance(profile, dict) or set(profile) != required:
+        raise ValueError("native stack profile has an invalid schema")
+    if (profile["schema_version"] != 2
+            or profile["method"] != "thread-cpu-delta-stackwalk64-v1"
+            or profile["sample_interval_ms"] != 10 or profile["pdb_matched"] is not True
+            or profile["sample_schedule"] != "high-resolution-jitter-5-7-11-13-17-v1"
+            or not integer(profile["pid"])
+            or any(not integer(profile[key], 0) for key in (
+                "total_cpu_100ns", "attributed_cpu_100ns", "unattributed_cpu_100ns",
+                "stack_observations", "own_frame_observations", "dropped_epoch_changes",
+                "dropped_thread_races", "rejected_foreign_threads", "total_frames",
+                "resolved_frames", "unresolved_frames", "repeated_addresses",
+                "truncated_stacks",
+            ))):
+        raise ValueError("native stack profile has invalid metadata")
+    if (not isinstance(profile["observed_epochs"], list)
+            or any(not integer(value) for value in profile["observed_epochs"])
+            or profile["observed_epochs"] != sorted(set(profile["observed_epochs"]))):
+        raise ValueError("native stack profile has invalid observed epochs")
+    if not isinstance(profile["stacks"], list) or not profile["stacks"]:
+        raise ValueError("native stack profile has no stack aggregates")
+    stack_cpu = 0
+    observations = 0
+    attributed_cpu = 0
+    own_observations = 0
+    sampled_by_epoch = {}
+    derived_epochs = set()
+    total_frames = 0
+    resolved_frames = 0
+    unresolved_frames = 0
+    repeated_addresses = 0
+    for stack in profile["stacks"]:
+        if (not isinstance(stack, dict)
+                or set(stack) != {
+                    "epoch", "cpu_100ns", "observations", "attributed", "unwind_status",
+                    "unresolved_frames", "repeated_addresses", "frames"
+                }
+                or not integer(stack["epoch"]) or not integer(stack["cpu_100ns"])
+                or not integer(stack["observations"]) or type(stack["attributed"]) is not bool
+                or stack["unwind_status"] not in ("terminated", "zero_pc")
+                or not integer(stack["unresolved_frames"], 0)
+                or not integer(stack["repeated_addresses"], 0)
+                or not isinstance(stack["frames"], list) or not stack["frames"]):
+            raise ValueError("native profile contains an invalid stack")
+        for frame in stack["frames"]:
+            if (not isinstance(frame, dict)
+                    or set(frame) != {"module", "symbol", "module_offset", "resolved"}
+                    or not isinstance(frame["module"], str) or not frame["module"]
+                    or not isinstance(frame["symbol"], str)
+                    or not integer(frame["module_offset"], 0)
+                    or type(frame["resolved"]) is not bool
+                    or (frame["resolved"] and not frame["symbol"])):
+                raise ValueError("native profile contains an invalid frame")
+        derived_unresolved = sum(not frame["resolved"] for frame in stack["frames"])
+        leaf = stack["frames"][0]
+        expected_attributed = (
+            leaf["resolved"] and Path(leaf["module"]).stem.casefold() == normalized_module
+        )
+        if (stack["unresolved_frames"] != derived_unresolved
+                or stack["attributed"] != expected_attributed):
+            raise ValueError("native stack resolution metadata is inconsistent")
+        stack_cpu += stack["cpu_100ns"]
+        observations += stack["observations"]
+        total_frames += len(stack["frames"]) * stack["observations"]
+        resolved_frames += (
+            sum(frame["resolved"] for frame in stack["frames"]) * stack["observations"]
+        )
+        unresolved_frames += derived_unresolved * stack["observations"]
+        repeated_addresses += stack["repeated_addresses"] * stack["observations"]
+        derived_epochs.add(stack["epoch"])
+        sampled_by_epoch[stack["epoch"]] = (
+            sampled_by_epoch.get(stack["epoch"], 0) + stack["cpu_100ns"]
+        )
+        if stack["attributed"]:
+            attributed_cpu += stack["cpu_100ns"]
+            own_observations += stack["observations"]
+    if (stack_cpu != profile["total_cpu_100ns"]
+            or attributed_cpu != profile["attributed_cpu_100ns"]
+            or stack_cpu - attributed_cpu != profile["unattributed_cpu_100ns"]
+            or observations != profile["stack_observations"]
+            or own_observations != profile["own_frame_observations"]
+            or total_frames != profile["total_frames"]
+            or resolved_frames != profile["resolved_frames"]
+            or unresolved_frames != profile["unresolved_frames"]
+            or resolved_frames + unresolved_frames != total_frames
+            or repeated_addresses != profile["repeated_addresses"]
+            or profile["truncated_stacks"] != 0
+            or sorted(derived_epochs) != profile["observed_epochs"]):
+        raise ValueError("native stack aggregates do not match profile totals")
+    if (stack_cpu <= 0 or attributed_cpu <= 0 or own_observations < 3
+            or attributed_cpu / stack_cpu < 0.1):
+        raise ValueError("native stack profile has insufficient own-code coverage")
+    if (not isinstance(epochs, dict) or set(epochs) != {
+            "schema_version", "pid", "qpc_frequency", "epochs"
+            } or epochs["schema_version"] != 1 or epochs["pid"] != profile["pid"]
+            or not integer(epochs["qpc_frequency"]) or not isinstance(epochs["epochs"], list)
+            or not epochs["epochs"]):
+        raise ValueError("native epoch ledger has an invalid schema")
+    previous = 0
+    epoch_ids = set()
+    epoch_cpu = 0
+    ledger_cpu_by_epoch = {}
+    for epoch in epochs["epochs"]:
+        if (not isinstance(epoch, dict) or set(epoch) != {
+                "id", "expected_iterations", "completed_iterations", "start_qpc",
+                "end_qpc", "cpu_100ns"
+                } or not integer(epoch["id"]) or epoch["id"] <= previous
+                or not integer(epoch["expected_iterations"])
+                or epoch["completed_iterations"] != epoch["expected_iterations"]
+                or not integer(epoch["start_qpc"], 0)
+                or not integer(epoch["end_qpc"], 0) or epoch["end_qpc"] < epoch["start_qpc"]
+                or not integer(epoch["cpu_100ns"], 0)):
+            raise ValueError("native epoch ledger contains an invalid measured interval")
+        previous = epoch["id"]
+        epoch_ids.add(epoch["id"])
+        epoch_cpu += epoch["cpu_100ns"]
+        ledger_cpu_by_epoch[epoch["id"]] = epoch["cpu_100ns"]
+    if (not set(profile["observed_epochs"]).issubset(epoch_ids)
+            or profile["total_cpu_100ns"] > epoch_cpu
+            or any(sampled > ledger_cpu_by_epoch[epoch]
+                   for epoch, sampled in sampled_by_epoch.items())):
+        raise ValueError("native profile CPU/epochs exceed the child ledger")
+    final = epochs["epochs"][-1]
+    final_sampled_cpu = sum(
+        stack["cpu_100ns"] for stack in profile["stacks"] if stack["epoch"] == final["id"]
+    )
+    if (len(measurement["iterations"]) != 1
+            or final["completed_iterations"] != measurement["iterations"][0]
+            or final["id"] not in profile["observed_epochs"]
+            or completion["callback_invocations"] != len(epochs["epochs"])
+            or final["cpu_100ns"] <= 0
+            or final_sampled_cpu / final["cpu_100ns"] < 0.05):
+        raise ValueError("native profile did not cover/reconcile the final measured epoch")
+    return {
+        "method": profile["method"],
+        "sample_interval_ms": profile["sample_interval_ms"],
+        "sample_schedule": profile["sample_schedule"],
+        "final_epoch": final["id"],
+        "total_cpu_100ns": profile["total_cpu_100ns"],
+        "attributed_cpu_100ns": profile["attributed_cpu_100ns"],
+        "attributed_fraction": profile["attributed_cpu_100ns"] / profile["total_cpu_100ns"],
+        "final_epoch_cpu_coverage": final_sampled_cpu / final["cpu_100ns"],
+        "stack_observations": profile["stack_observations"],
+        "dropped_epoch_changes": profile["dropped_epoch_changes"],
+        "dropped_thread_races": profile["dropped_thread_races"],
+    }
+
+
 def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=None,
              min_time=None, timeout=None, modern_file_access="default",
              reference_file_access="default", modern_result_ownership="reusable",
-             modern_write_batch_ownership="copying", modern_wal_creation="durable"):
+             modern_write_batch_ownership="copying", modern_wal_creation="durable",
+             native_collector=None, native_symbols=None):
     engine, workload, _ = case_parts(case)
     expected_result_ownership = expected_modern_result_ownership(
         engine, workload, modern_result_ownership
@@ -791,18 +1004,18 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
     expected_wal_creation = expected_modern_wal_creation(
         engine, workload, modern_wal_creation
     )
-    if modern_file_access not in ("default", "pread"):
+    if modern_file_access not in ("default", COPIED_FILE_ACCESS):
         raise ValueError("unknown Modern file access mode")
     if engine != "modern" and modern_file_access != "default":
         raise ValueError("Modern file access mode requires a Modern case")
-    if modern_file_access == "pread" and workload in MUTATIONS:
-        raise ValueError("Modern pread control requires a read-family case")
-    if reference_file_access not in ("default", "pread"):
+    if modern_file_access == COPIED_FILE_ACCESS and workload in MUTATIONS:
+        raise ValueError("Modern copied control requires a read-family case")
+    if reference_file_access not in ("default", COPIED_FILE_ACCESS):
         raise ValueError("unknown reference file access mode")
     if engine != "leveldb" and reference_file_access != "default":
         raise ValueError("reference file access mode requires a LevelDB case")
-    if reference_file_access == "pread" and workload not in ("readrandom", "readmissing"):
-        raise ValueError("forced pread control requires a LevelDB point-read case")
+    if reference_file_access == COPIED_FILE_ACCESS and workload not in ("readrandom", "readmissing"):
+        raise ValueError("forced copied control requires a LevelDB point-read case")
     mutation = mutation_specification(case, smoke)
     if mutation:
         if repetitions is not None and (not integer(repetitions) or repetitions != 1):
@@ -811,10 +1024,21 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
             raise ValueError("mutable cases have fixed work; --min-time is not supported")
     binary = Path(binary).resolve(strict=True)
     output = Path(output).absolute()
+    require_native_ascii_path(binary, "benchmark binary")
+    require_native_ascii_path(output, "performance output")
     if not binary.is_file():
         raise ValueError("benchmark binary is not a file")
-    if capture_cpu and sys.platform != "darwin":
-        raise ValueError("CPU collection requires macOS Xcode Time Profiler")
+    if capture_cpu and sys.platform not in ("darwin", "win32"):
+        raise ValueError("CPU collection requires a supported native collector")
+    if capture_cpu and sys.platform == "win32":
+        if native_collector is None or native_symbols is None:
+            raise ValueError("native Windows capture requires collector and benchmark PDB arguments")
+        native_collector = Path(native_collector).resolve(strict=True)
+        native_symbols = Path(native_symbols).resolve(strict=True)
+        require_native_ascii_path(native_collector, "native collector")
+        require_native_ascii_path(native_symbols, "benchmark PDB")
+        if not all(path.is_file() for path in (native_collector, native_symbols)):
+            raise ValueError("native Windows capture artifacts must be files")
     if capture_cpu and smoke:
         raise ValueError("a one-iteration smoke run is not a CPU profile")
     repetitions = repetitions if repetitions is not None else (1 if capture_cpu or smoke or mutation else 3)
@@ -892,7 +1116,7 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
         command.append("--smoke")
     started = time.monotonic()
     try:
-        if capture_cpu:
+        if capture_cpu and sys.platform == "darwin":
             snapshot = output / "profile-program"
             shutil.copy2(binary, snapshot)
             if file_digest(snapshot) != manifest["executable_sha256"]:
@@ -904,11 +1128,71 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
                 samples="samples.xml", profile_summary="profile-summary.json",
             )
             profile_report.capture(snapshot, command, output, manifest["commands"], timeout)
+        elif capture_cpu:
+            program_dir = output / "profile-program"
+            collector_dir = output / "profile-collector"
+            program_dir.mkdir()
+            collector_dir.mkdir()
+            snapshot = program_dir / binary.name
+            snapshot_symbols = program_dir / native_symbols.name
+            collector = collector_dir / native_collector.name
+            for source, destination in (
+                    (binary, snapshot), (native_symbols, snapshot_symbols),
+                    (native_collector, collector)):
+                shutil.copy2(source, destination)
+            if file_digest(snapshot) != manifest["executable_sha256"]:
+                raise ValueError("benchmark executable changed while preparing capture")
+            command.append("--profile-markers")
+            manifest["artifacts"].update(
+                executable=str(snapshot.relative_to(output)),
+                symbols=str(snapshot_symbols.relative_to(output)),
+                collector=str(collector.relative_to(output)),
+                native_profile="profile.json", native_epochs="epochs.json",
+            )
+            manifest["symbol_sha256"] = file_digest(snapshot_symbols)
+            manifest["collector_sha256"] = file_digest(collector)
+            original_artifacts = {
+                binary: manifest["executable_sha256"],
+                native_symbols: manifest["symbol_sha256"],
+                native_collector: manifest["collector_sha256"],
+            }
+            captured_artifacts = {
+                snapshot: manifest["executable_sha256"],
+                snapshot_symbols: manifest["symbol_sha256"],
+                collector: manifest["collector_sha256"],
+            }
+            profile_report.run_owned(
+                [
+                    str(collector), "--sample", "--binary", str(snapshot),
+                    "--symbols", str(snapshot_symbols), "--log", str(output / "benchmark.log"),
+                    "--report", str(output / "profile.json"),
+                    "--epochs", str(output / "epochs.json"),
+                    "--timeout-ms", str(max(1, math.ceil(timeout * 1000))), "--",
+                    *command,
+                ],
+                output / "collector.log", timeout + 10, manifest["commands"],
+            )
+            if any(file_digest(path) != expected
+                   for path, expected in captured_artifacts.items()):
+                raise ValueError("native capture artifact changed during execution")
+            if any(file_digest(path) != expected
+                   for path, expected in original_artifacts.items()):
+                raise ValueError("native source capture artifact changed during execution")
         else:
             profile_report.run_owned(
                 [str(binary), *command], output / "benchmark.log", timeout, manifest["commands"]
             )
-        raw = read_json(output / "benchmark.json")
+        artifact_snapshots = {}
+        benchmark_path = output / "benchmark.json"
+        benchmark_bytes, raw = read_json_snapshot(benchmark_path)
+        artifact_snapshots[benchmark_path] = hashlib.sha256(benchmark_bytes).hexdigest()
+        completion_path = output / "completion.json"
+        completion_bytes, completion_report = read_json_snapshot(completion_path)
+        artifact_snapshots[completion_path] = hashlib.sha256(completion_bytes).hexdigest()
+        manifest["artifact_sha256"] = {
+            str(path.relative_to(output)): digest
+            for path, digest in artifact_snapshots.items()
+        }
         manifest["measurement"] = validate_benchmark(
             raw, case, repetitions, smoke=smoke,
             modern_file_access=modern_file_access,
@@ -917,8 +1201,7 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
             modern_write_batch_ownership=modern_write_batch_ownership,
             modern_wal_creation=modern_wal_creation,
         )
-        manifest["completion"] = validate_completion(read_json(output / "completion.json"), case,
-                                                     smoke=smoke)
+        manifest["completion"] = validate_completion(completion_report, case, smoke=smoke)
         context = raw["context"]
         validate_build_context(context)
         manifest["reference_hardware_crc"] = context["reference_hardware_crc"]
@@ -938,7 +1221,7 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
             manifest["compile_commands_sha256"] = file_digest(output / "compile_commands.json")
         else:
             manifest["compile_commands_unavailable"] = True
-        if capture_cpu:
+        if capture_cpu and sys.platform == "darwin":
             if context["profile_capture_supported"] != "true":
                 raise ValueError("benchmark build does not support macOS profile markers")
             summary = profile_report.summarize_trace(
@@ -946,6 +1229,25 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
                 case, manifest["measurement"]["iterations"][0],
             )
             write_json(output / "profile-summary.json", summary)
+        elif capture_cpu:
+            if context["profile_capture_supported"] != "true":
+                raise ValueError("benchmark build does not support native profile epochs")
+            profile_path = output / "profile.json"
+            profile_bytes, profile = read_json_snapshot(profile_path)
+            epoch_path = output / "epochs.json"
+            epoch_bytes, epochs = read_json_snapshot(epoch_path)
+            artifact_snapshots[profile_path] = hashlib.sha256(profile_bytes).hexdigest()
+            artifact_snapshots[epoch_path] = hashlib.sha256(epoch_bytes).hexdigest()
+            manifest["artifact_sha256"].update({
+                str(profile_path.relative_to(output)): artifact_snapshots[profile_path],
+                str(epoch_path.relative_to(output)): artifact_snapshots[epoch_path],
+            })
+            manifest["profile_summary"] = validate_native_profile(
+                profile, epochs,
+                manifest["measurement"], manifest["completion"], snapshot.stem,
+            )
+        if any(file_digest(path) != digest for path, digest in artifact_snapshots.items()):
+            raise ValueError("validated performance artifact changed before publication")
         manifest["status"] = "complete"
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, ET.ParseError) as error:
         manifest["status"] = "failed"
@@ -979,12 +1281,14 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
 def run_read_diagnostics(binary, case, output, timeout=300.0, modern_file_access="default"):
     if case not in READ_DIAGNOSTIC_CASES:
         raise ValueError("unsupported read diagnostic case")
-    if modern_file_access not in ("default", "pread"):
+    if modern_file_access not in ("default", COPIED_FILE_ACCESS):
         raise ValueError("unknown Modern file access mode")
     if not number(timeout) or timeout <= 0:
         raise ValueError("timeout must be positive and finite")
     binary = Path(binary).resolve(strict=True)
     output = Path(output).absolute()
+    require_native_ascii_path(binary, "diagnostic binary")
+    require_native_ascii_path(output, "diagnostic output")
     if not binary.is_file():
         raise ValueError("diagnostic binary is not a file")
     output.mkdir(parents=True, exist_ok=False)
@@ -1074,11 +1378,13 @@ def main():
     parser.add_argument("--case", choices=CASES, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--capture-cpu", action="store_true")
+    parser.add_argument("--native-collector", type=Path)
+    parser.add_argument("--native-symbols", type=Path)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--repetitions", type=int)
     parser.add_argument("--min-time", type=float)
     parser.add_argument("--timeout", type=float)
-    parser.add_argument("--modern-file-access", choices=("default", "pread"),
+    parser.add_argument("--modern-file-access", choices=("default", COPIED_FILE_ACCESS),
                         default="default")
     parser.add_argument("--modern-result-ownership", choices=("reusable", "owning"),
                         default="reusable")
@@ -1086,7 +1392,7 @@ def main():
                         default="copying")
     parser.add_argument("--modern-wal-creation", choices=("durable", "leveldb"),
                         default="durable")
-    parser.add_argument("--reference-file-access", choices=("default", "pread"),
+    parser.add_argument("--reference-file-access", choices=("default", COPIED_FILE_ACCESS),
                         default="default")
     parser.add_argument("--read-diagnostics", action="store_true")
     args = parser.parse_args()
@@ -1109,6 +1415,7 @@ def main():
                 args.repetitions, args.min_time, args.timeout, args.modern_file_access,
                 args.reference_file_access, args.modern_result_ownership,
                 args.modern_write_batch_ownership, args.modern_wal_creation,
+                args.native_collector, args.native_symbols,
             )
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, ET.ParseError) as error:
         print(f"performance run failed: {error}", file=sys.stderr)

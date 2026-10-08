@@ -50,9 +50,25 @@ function(modern_leveldb_add_reference)
     )
   endif()
   set(reference_pread_control FALSE)
+  set(reference_windows_control FALSE)
   set(reference_control_patch
       "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ExposeLevelDbMmapLimit.cmake")
   file(SHA256 "${reference_control_patch}" reference_control_patch_sha256)
+  if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS AND
+     MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM AND
+     NOT FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_REFERENCE)
+    execute_process(
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLEVELDB_SOURCE_DIR=${modern_leveldb_reference_SOURCE_DIR}"
+        -DLEVELDB_CONTROL_PLATFORM=windows
+        -P "${reference_control_patch}"
+      RESULT_VARIABLE patch_status
+    )
+    if(NOT patch_status EQUAL 0)
+      message(FATAL_ERROR "Failed to expose the pinned native LevelDB mmap-limit control")
+    endif()
+    set(reference_windows_control TRUE)
+  endif()
   if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS AND
      (APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux") AND
      NOT FETCHCONTENT_SOURCE_DIR_MODERN_LEVELDB_REFERENCE)
@@ -149,5 +165,6 @@ function(modern_leveldb_add_reference)
   set(MODERN_LEVELDB_REFERENCE_REVISION "${reference_revision}" PARENT_SCOPE)
   set(MODERN_LEVELDB_REFERENCE_SOURCE_IDENTITY "${reference_source}" PARENT_SCOPE)
   set(MODERN_LEVELDB_REFERENCE_SOURCE_DIRTY "${reference_dirty}" PARENT_SCOPE)
+  set(MODERN_LEVELDB_REFERENCE_WINDOWS_MMAP_CONTROL "${reference_windows_control}" PARENT_SCOPE)
   set(MODERN_LEVELDB_REFERENCE_HARDWARE_CRC "disabled" PARENT_SCOPE)
 endfunction()

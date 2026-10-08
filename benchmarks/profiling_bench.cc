@@ -26,6 +26,9 @@
 
 #include "profiling_build.h"
 
+#if MODERN_LEVELDB_WINDOWS_PROFILE_CAPTURE
+#include "windows_profile_workload.h"
+#endif
 #if MODERN_LEVELDB_PROFILE_MARKERS
 #include <os/log.h>
 #include <os/signpost.h>
@@ -33,6 +36,9 @@
 
 #if MODERN_LEVELDB_REFERENCE_PREAD_CONTROL
 #include "util/env_posix_test_helper.h"
+#endif
+#if MODERN_LEVELDB_REFERENCE_WINDOWS_MMAP_CONTROL
+#include "util/env_windows_test_helper.h"
 #endif
 
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
@@ -44,6 +50,9 @@
 namespace modern_leveldb::profiling {
 namespace {
 
+#if MODERN_LEVELDB_WINDOWS_PROFILE_CAPTURE
+windows::Workload NativeProfile;
+#endif
 constexpr std::array<std::string_view, 2> Engines{"modern", "leveldb"};
 constexpr std::array<std::string_view, 4> Workloads{"readrandom", "readmissing", "scan",
                                                     "seek_reuse"};
@@ -151,6 +160,10 @@ struct Arguments {
   std::string modern_write_batch_ownership = "copying";
   std::string modern_wal_creation = "durable";
   std::string reference_file_access = "default";
+  std::string native_control;
+  std::string native_ready;
+  std::string native_proceed;
+  std::filesystem::path native_epochs;
   bool profile = false;
   bool list = false;
   bool help = false;
@@ -169,6 +182,27 @@ Arguments ParseArguments(int argc, char** argv) {
   args.framework.push_back(argv[0]);
   for (int index = 1; index < argc; ++index) {
     const std::string_view option = argv[index];
+#if MODERN_LEVELDB_WINDOWS_PROFILE_CAPTURE
+    if (option == "--native-profile-control" || option == "--native-profile-ready" ||
+        option == "--native-profile-proceed" || option == "--native-profile-epochs") {
+      Require(index + 1 < argc, "native profile option needs a value");
+      const char* value = argv[++index];
+      if (option == "--native-profile-control") {
+        Require(args.native_control.empty(), "duplicate native control");
+        args.native_control = value;
+      } else if (option == "--native-profile-ready") {
+        Require(args.native_ready.empty(), "duplicate native readiness");
+        args.native_ready = value;
+      } else if (option == "--native-profile-proceed") {
+        Require(args.native_proceed.empty(), "duplicate native proceed");
+        args.native_proceed = value;
+      } else {
+        Require(args.native_epochs.empty(), "duplicate native epoch ledger");
+        args.native_epochs = value;
+      }
+      continue;
+    }
+#endif
     if (option == "--case" || option == "--database" || option == "--completion-report" ||
         option == "--diagnostic-report" || option == "--modern-file-access" ||
         option == "--modern-result-ownership" || option == "--modern-write-batch-ownership" ||
@@ -273,14 +307,19 @@ bool UseModernExclusiveWriteBatch = false;
 bool UseModernDurableWalCreation = true;
 
 void ConfigureModernFileAccess(const Case& selected, const Arguments& args) {
+#if defined(_WIN32)
+  Require(args.modern_file_access == "default" || args.modern_file_access == "copied",
+          "--modern-file-access must be default or copied");
+#else
   Require(args.modern_file_access == "default" || args.modern_file_access == "pread",
           "--modern-file-access must be default or pread");
+#endif
   if (selected.engine != "modern") {
     Require(!args.modern_file_access_set,
             "--modern-file-access is valid only for Modern LevelDB cases");
     return;
   }
-  if (args.modern_file_access == "pread") {
+  if (args.modern_file_access != "default") {
     Require(!IsMutable(selected), "Modern pread control requires a read-family case");
     UseModernMmapReads = false;
   }
@@ -329,8 +368,13 @@ void ConfigureModernWalCreation(const Case& selected, const Arguments& args) {
 }
 
 void ConfigureReferenceFileAccess(const Case& selected, const Arguments& args) {
+#if defined(_WIN32)
+  Require(args.reference_file_access == "default" || args.reference_file_access == "copied",
+          "--reference-file-access must be default or copied");
+#else
   Require(args.reference_file_access == "default" || args.reference_file_access == "pread",
           "--reference-file-access must be default or pread");
+#endif
   if (selected.engine != "leveldb") {
     Require(!args.reference_file_access_set,
             "--reference-file-access is valid only for LevelDB cases");
@@ -343,6 +387,8 @@ void ConfigureReferenceFileAccess(const Case& selected, const Arguments& args) {
           "forced LevelDB pread control requires readrandom or readmissing");
 #if MODERN_LEVELDB_REFERENCE_PREAD_CONTROL
   leveldb::EnvPosixTestHelper::SetReadOnlyMMapLimit(0);
+#elif MODERN_LEVELDB_REFERENCE_WINDOWS_MMAP_CONTROL
+  leveldb::EnvWindowsTestHelper::SetReadOnlyMMapLimit(0);
 #else
   Require(false, "forced LevelDB pread control is unavailable in this build");
 #endif
@@ -536,6 +582,9 @@ class Modern final {
   static Database Open(const std::filesystem::path& path) {
     Options options;
     options.create_if_missing = true;
+#if defined(_WIN32)
+    options.allow_weak_namespace_durability = true;
+#endif
     options.write_buffer_size = 64 * 1024;
     options.allow_mmap_reads = UseModernMmapReads;
     options.block_size = 4096;
@@ -630,6 +679,11 @@ class ProfileInterval final {
  public:
   ProfileInterval(bool enabled, const std::string& name, benchmark::State& state)
       : enabled_(enabled), name_(name), state_(state) {
+#if MODERN_LEVELDB_WINDOWS_PROFILE_CAPTURE
+    if (enabled_) {
+      NativeProfile.Begin(state_.max_iterations);
+    }
+#endif
 #if MODERN_LEVELDB_PROFILE_MARKERS
     if (enabled_) {
       log_ = os_log_create("modern_leveldb.profiling", OS_LOG_CATEGORY_POINTS_OF_INTEREST);
@@ -641,6 +695,11 @@ class ProfileInterval final {
 #endif
   }
   ~ProfileInterval() {
+#if MODERN_LEVELDB_WINDOWS_PROFILE_CAPTURE
+    if (enabled_) {
+      NativeProfile.End(state_.iterations());
+    }
+#endif
 #if MODERN_LEVELDB_PROFILE_MARKERS
     if (enabled_) {
       os_signpost_interval_end(log_, identifier_, "workload",
@@ -699,25 +758,25 @@ class Fixture final {
     }
   }
 
-  [[gnu::noinline]] void RunReadRandom(benchmark::State& state) {
+  MODERN_LEVELDB_PROFILE_NOINLINE void RunReadRandom(benchmark::State& state) {
     for (auto ignored : state) {
       static_cast<void>(ignored);
       ReadPresent();
     }
   }
-  [[gnu::noinline]] void RunReadMissing(benchmark::State& state) {
+  MODERN_LEVELDB_PROFILE_NOINLINE void RunReadMissing(benchmark::State& state) {
     for (auto ignored : state) {
       static_cast<void>(ignored);
       ReadMissing();
     }
   }
-  [[gnu::noinline]] void RunScan(benchmark::State& state) {
+  MODERN_LEVELDB_PROFILE_NOINLINE void RunScan(benchmark::State& state) {
     for (auto ignored : state) {
       static_cast<void>(ignored);
       Scan(false);
     }
   }
-  [[gnu::noinline]] void RunSeekReuse(benchmark::State& state) {
+  MODERN_LEVELDB_PROFILE_NOINLINE void RunSeekReuse(benchmark::State& state) {
     for (auto ignored : state) {
       static_cast<void>(ignored);
       Seek();
@@ -842,7 +901,12 @@ class Fixture final {
         std::pair{"reference_requested_revision",
                   std::string_view{"7ee830d02b623e8ffe0b95d59a74db1e58da04c5"}},
         std::pair{"reference_source_override", ReferenceOverride},
-        std::pair{"modern_file_access", std::string_view{UseModernMmapReads ? "default" : "pread"}},
+        std::pair{"modern_file_access",
+#if defined(_WIN32)
+                  std::string_view{UseModernMmapReads ? "default" : "copied"}},
+#else
+                  std::string_view{UseModernMmapReads ? "default" : "pread"}},
+#endif
         std::pair{"modern_result_ownership", std::string_view{"reusable"}},
         std::pair{"modern_result_ownership_semantics", std::string_view{"reusable-get-v1"}},
         std::pair{"modern_write_batch_ownership", std::string_view{"not_applicable"}},
@@ -875,7 +939,10 @@ class Fixture final {
         std::pair{"crc32c_compiled_arm64", Crc32cArm64},
         std::pair{"crc32c_compiled_sse42", Crc32cSse42},
         std::pair{"profile_capture_supported",
-                  std::string_view{MODERN_LEVELDB_PROFILE_MARKERS ? "true" : "false"}},
+                  std::string_view{MODERN_LEVELDB_PROFILE_MARKERS ||
+                                           MODERN_LEVELDB_WINDOWS_PROFILE_CAPTURE
+                                       ? "true"
+                                       : "false"}},
         std::pair{"read_diagnostics_compiled", std::string_view{"true"}},
     };
     for (std::size_t index = 0; index < build.size(); ++index) {
@@ -886,6 +953,11 @@ class Fixture final {
       output << ':';
       WriteJsonString(output, build[index].second);
     }
+#if defined(_WIN32)
+    output << ",\"reference_copied_control_available\":";
+    WriteJsonString(output, MODERN_LEVELDB_REFERENCE_WINDOWS_MMAP_CONTROL ? "true" : "false");
+    output << ",\"modern_namespace_policy\":\"explicit_weak\"";
+#endif
     output << "}}\n";
     output.close();
     Require(output.good(), "failed to write the diagnostic report");
@@ -1258,25 +1330,25 @@ class MutationFixture final {
     }
   }
 
-  [[gnu::noinline]] void RunOverwrite(benchmark::State& state) {
+  MODERN_LEVELDB_PROFILE_NOINLINE void RunOverwrite(benchmark::State& state) {
     for (auto ignored : state) {
       static_cast<void>(ignored);
       workload_.template RunOne<MutationKind::Overwrite>(*database_, batch_);
     }
   }
-  [[gnu::noinline]] void RunWriteBatch(benchmark::State& state) {
+  MODERN_LEVELDB_PROFILE_NOINLINE void RunWriteBatch(benchmark::State& state) {
     for (auto ignored : state) {
       static_cast<void>(ignored);
       workload_.template RunOne<MutationKind::Batch>(*database_, batch_);
     }
   }
-  [[gnu::noinline]] void RunWriteSync(benchmark::State& state) {
+  MODERN_LEVELDB_PROFILE_NOINLINE void RunWriteSync(benchmark::State& state) {
     for (auto ignored : state) {
       static_cast<void>(ignored);
       workload_.template RunOne<MutationKind::Sync>(*database_, batch_);
     }
   }
-  [[gnu::noinline]] void RunMixed50(benchmark::State& state) {
+  MODERN_LEVELDB_PROFILE_NOINLINE void RunMixed50(benchmark::State& state) {
     for (auto ignored : state) {
       static_cast<void>(ignored);
       workload_.template RunOne<MutationKind::Mixed>(*database_, batch_);
@@ -1459,7 +1531,11 @@ std::string_view ModernWalCreation(const Case& selected, const Arguments& args) 
 std::string_view ModernWalCreationSemantics(const Case& selected, const Arguments& args) {
   const std::string_view creation = ModernWalCreation(selected, args);
   if (creation == "durable") {
+#if defined(_WIN32)
+    return "file-and-weak-namespace-before-write-v1";
+#else
     return "file-and-directory-before-write-v1";
+#endif
   }
   if (creation == "leveldb") {
     return "pinned-leveldb-v1";
@@ -1490,7 +1566,11 @@ void AddContext(const Case& selected, const Arguments& args) {
   add("modern_file_access",
       selected.engine == "modern" ? args.modern_file_access : "not_applicable");
   add("modern_file_access_semantics",
+#if defined(_WIN32)
+      selected.engine == "modern" ? "windows-mmap-default-v1" : "not_applicable");
+#else
       selected.engine == "modern" ? "mmap-default-v1" : "not_applicable");
+#endif
   add("modern_result_ownership", ModernResultOwnership(selected, args));
   add("modern_result_ownership_semantics",
       selected.engine == "modern" ? "reusable-get-v1" : "not_applicable");
@@ -1534,6 +1614,11 @@ void AddContext(const Case& selected, const Arguments& args) {
       selected.engine == "leveldb" ? args.reference_file_access : "not_applicable");
   add("reference_pread_control_available",
       MODERN_LEVELDB_REFERENCE_PREAD_CONTROL ? "true" : "false");
+#if defined(_WIN32)
+  add("reference_copied_control_available",
+      MODERN_LEVELDB_REFERENCE_WINDOWS_MMAP_CONTROL ? "true" : "false");
+  add("modern_namespace_policy", "explicit_weak");
+#endif
   add("reference_control_patch_sha256", ReferenceControlPatchSha256);
   add("read_diagnostics_compiled", MODERN_LEVELDB_READ_DIAGNOSTICS ? "true" : "false");
   add("snappy_target", SnappyTarget);
@@ -1551,7 +1636,7 @@ void AddContext(const Case& selected, const Arguments& args) {
   add("crc32c_requested_revision", Crc32cRequestedRevision);
   add("crc32c_compiled_arm64", Crc32cArm64);
   add("crc32c_compiled_sse42", Crc32cSse42);
-#if MODERN_LEVELDB_PROFILE_MARKERS
+#if MODERN_LEVELDB_PROFILE_MARKERS || MODERN_LEVELDB_WINDOWS_PROFILE_CAPTURE
   add("profile_capture_supported", "true");
 #else
   add("profile_capture_supported", "false");
@@ -1606,6 +1691,11 @@ int RunCase(const Case& selected, const Arguments& args) {
   Require(fixture != nullptr, "no workload executed; use --list-cases to list cases");
   fixture->Finish();
   fixture->WriteCompletion(args.completion, invocations);
+#if MODERN_LEVELDB_WINDOWS_PROFILE_CAPTURE
+  if (args.profile) {
+    NativeProfile.Finish();
+  }
+#endif
   benchmark::Shutdown();
   return 0;
 }
@@ -1678,8 +1768,18 @@ int Main(int argc, char** argv) {
           "--smoke requires a mutable case without profile markers");
   Require(!args.database.empty() && !args.completion.empty(),
           "--database and --completion-report are required");
-#if !MODERN_LEVELDB_PROFILE_MARKERS
+#if !MODERN_LEVELDB_PROFILE_MARKERS && !MODERN_LEVELDB_WINDOWS_PROFILE_CAPTURE
   Require(!args.profile, "profile markers require macOS Apple Clang");
+#endif
+#if MODERN_LEVELDB_WINDOWS_PROFILE_CAPTURE
+  if (args.profile) {
+    NativeProfile.Initialize(args.native_control, args.native_ready, args.native_proceed,
+                             args.native_epochs);
+  } else {
+    Require(args.native_control.empty() && args.native_ready.empty() &&
+                args.native_proceed.empty() && args.native_epochs.empty(),
+            "native capture protocol requires profile mode");
+  }
 #endif
   int framework_argc = static_cast<int>(args.framework.size());
   args.framework.push_back(nullptr);

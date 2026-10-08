@@ -163,8 +163,9 @@ if(MODERN_LEVELDB_BUILD_BENCHMARKS)
 endif()
 
 if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
-  if(NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(FATAL_ERROR "Instrumented profiling requires the POSIX backend")
+  if(NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+     NOT MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+    message(FATAL_ERROR "Selected-workload profiling requires an admitted native backend")
   endif()
 endif()
 
@@ -176,6 +177,11 @@ if(MODERN_LEVELDB_BUILD_EXTENDED_TESTS OR MODERN_LEVELDB_BUILD_BENCHMARKS OR
   endif()
   include("${CMAKE_CURRENT_LIST_DIR}/cmake/LevelDbReference.cmake")
   modern_leveldb_add_reference()
+  if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS AND MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+    target_compile_options(modern_leveldb PRIVATE /Zi /Zo)
+    target_compile_options(modern_leveldb_read_diagnostic PRIVATE /Zi /Zo)
+    target_compile_options(leveldb PRIVATE /Zi /Zo)
+  endif()
 endif()
 
 if(MODERN_LEVELDB_BUILD_TESTS AND BUILD_TESTING)

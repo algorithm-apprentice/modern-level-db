@@ -412,6 +412,44 @@ jobs:
             build/windows-benchmarks/benchmarks/benchmark_policy-mapped-Release.json
             build/windows-benchmarks/Testing/Temporary/
 
+  windows-performance:
+    name: ${{ github.event_name == 'push' && 'push / windows-performance' || 'windows-performance' }}
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ${{ needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true' && 'ubuntu-24.04' || 'windows-latest' }}
+    timeout-minutes: 30
+    env:
+      RUN_FULL_CI: ${{ needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true' }}
+    steps:
+      - name: Acknowledge documentation-only change
+        if: env.RUN_FULL_CI == 'false'
+        run: echo "Documentation-only change; native selected-workload profiling is not required."
+      - uses: actions/checkout@v4
+        if: env.RUN_FULL_CI == 'true'
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: env.RUN_FULL_CI == 'true'
+        with:
+          arch: x64
+      - name: Configure native selected workloads
+        if: env.RUN_FULL_CI == 'true'
+        run: cmake --preset windows-profiling
+      - name: Build optimized workloads, diagnostics, and owned collector
+        if: env.RUN_FULL_CI == 'true'
+        run: cmake --build --preset windows-profiling --parallel 2
+      - name: Verify workloads, controls, calibration, epochs, symbols, and cleanup
+        if: env.RUN_FULL_CI == 'true'
+        run: ctest --preset windows-profiling
+      - uses: actions/upload-artifact@v4
+        if: always() && env.RUN_FULL_CI == 'true'
+        with:
+          name: windows-performance-evidence
+          path: |
+            build/windows-profiling/benchmarks/windows-profile-contracts/
+            build/windows-profiling/benchmarks/performance-smoke/
+            build/windows-profiling/benchmarks/performance-mutations/
+            build/windows-profiling/benchmarks/performance-read-diagnostics/
+            build/windows-profiling/Testing/Temporary/
+
   performance:
     name: ${{ github.event_name == 'push' && 'push / performance' || 'performance' }} (${{ matrix.os }})
     needs: changes

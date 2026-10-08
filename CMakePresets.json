@@ -78,6 +78,17 @@
       }
     },
     {
+      "name": "windows-profiling",
+      "displayName": "MSVC x64 Selected Workloads and Native Profiling",
+      "inherits": "windows-release",
+      "binaryDir": "${sourceDir}/build/windows-profiling",
+      "cacheVariables": {
+        "MODERN_LEVELDB_BUILD_TESTS": "OFF",
+        "MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS": "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
       "name": "asan",
       "displayName": "Address and Undefined Behavior Sanitizers",
       "inherits": "compatibility",
@@ -151,6 +162,10 @@
   ],
   "buildPresets": [
     {
+      "name": "windows-profiling",
+      "configurePreset": "windows-profiling"
+    },
+    {
       "name": "windows-benchmarks",
       "configurePreset": "windows-benchmarks"
     },
@@ -204,6 +219,19 @@
     }
   ],
   "testPresets": [
+    {
+      "name": "windows-profiling",
+      "inherits": "required-tests",
+      "configurePreset": "windows-profiling",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "performance"
+        }
+      }
+    },
     {
       "name": "required-tests",
       "hidden": true,

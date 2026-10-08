@@ -1,9 +1,13 @@
 function(modern_leveldb_profile_markers output)
   set(supported 0)
+  set(windows_capture 0)
   if(APPLE AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
     set(supported 1)
+  elseif(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+    set(windows_capture 1)
   endif()
   set("${output}" "${supported}" PARENT_SCOPE)
+  set(MODERN_LEVELDB_WINDOWS_PROFILE_CAPTURE "${windows_capture}" PARENT_SCOPE)
 endfunction()
 
 function(modern_leveldb_add_google_benchmark)

@@ -16,6 +16,9 @@
 #include <utility>
 #include <vector>
 
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+#include "instrumentation/read_diagnostics.h"
+#endif
 #include "platform/mapped_read_limiter.h"
 #include "platform/path.h"
 #include "platform/windows_file_system_internal.h"
@@ -25,6 +28,12 @@ namespace {
 
 constexpr std::size_t WritableBufferSize = 64U * 1'024U;
 constexpr DWORD MetadataSharing = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+void RecordWindowsFileOpen(read_diagnostics::FileOpenReason reason, std::uint64_t bytes) noexcept {
+  read_diagnostics::RecordFileOpen(reason, bytes);
+}
+#endif
 
 std::shared_ptr<MappedReadLimiter> ProcessMmapLimiter() {
   static const auto limiter = std::make_shared<MappedReadLimiter>(sizeof(void*) >= 8 ? 1'000 : 0);
@@ -275,6 +284,11 @@ class WindowsRandomAccessFile final : public RandomAccessFile {
     if (offset > MaximumOffset || request > MaximumOffset - offset) {
       return std::unexpected(Error::InvalidArgument("read range exceeds signed 64-bit offsets"));
     }
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    read_diagnostics::StageScope stage(read_diagnostics::Stage::RandomRead);
+    read_diagnostics::Add(read_diagnostics::Counter::RandomReadCalls);
+    read_diagnostics::Add(read_diagnostics::Counter::RandomReadRequestedBytes, request);
+#endif
     ScopedHandle event(operations_->Event(), operations_);
     if (!event.valid()) {
       return std::unexpected(FileError("create read event", path_, ::GetLastError()));
@@ -308,7 +322,11 @@ class WindowsRandomAccessFile final : public RandomAccessFile {
       }
       return std::unexpected(FileError("complete positioned read", path_, error));
     }
-    return static_cast<std::size_t>(read);
+    const std::size_t result = static_cast<std::size_t>(read);
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    read_diagnostics::Add(read_diagnostics::Counter::RandomReadReturnedBytes, result);
+#endif
+    return result;
   }
 
  private:
@@ -671,10 +689,35 @@ Result<std::unique_ptr<RandomAccessFile>> WindowsFileSystem::OpenRandomAccess(
   const auto copied = [&]() -> Result<std::unique_ptr<RandomAccessFile>> {
     return std::make_unique<WindowsRandomAccessFile>(std::move(*file), path, operations_);
   };
-  if (mmap_limiter_ == nullptr || !expected_size.has_value() || *expected_size == 0 ||
-      *expected_size > std::numeric_limits<std::size_t>::max() ||
-      *expected_size > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
-      !mmap_limiter_->Acquire()) {
+  if (mmap_limiter_ == nullptr) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    RecordWindowsFileOpen(read_diagnostics::FileOpenReason::Disabled, expected_size.value_or(0));
+#endif
+    return copied();
+  }
+  if (!expected_size.has_value()) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    RecordWindowsFileOpen(read_diagnostics::FileOpenReason::MissingExpectedSize, 0);
+#endif
+    return copied();
+  }
+  if (*expected_size == 0) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    RecordWindowsFileOpen(read_diagnostics::FileOpenReason::EmptyFile, 0);
+#endif
+    return copied();
+  }
+  if (*expected_size > std::numeric_limits<std::size_t>::max() ||
+      *expected_size > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    RecordWindowsFileOpen(read_diagnostics::FileOpenReason::SizeUnrepresentable, *expected_size);
+#endif
+    return copied();
+  }
+  if (!mmap_limiter_->Acquire()) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    RecordWindowsFileOpen(read_diagnostics::FileOpenReason::CountBudgetExhausted, *expected_size);
+#endif
     return copied();
   }
   PendingWindowsMapping pending(mmap_limiter_, operations_);
@@ -683,6 +726,9 @@ Result<std::unique_ptr<RandomAccessFile>> WindowsFileSystem::OpenRandomAccess(
     return std::unexpected(FileError("mapped file size", path, ::GetLastError()));
   }
   if (size.QuadPart < 0 || static_cast<std::uint64_t>(size.QuadPart) != *expected_size) {
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+    RecordWindowsFileOpen(read_diagnostics::FileOpenReason::SizeMismatch, *expected_size);
+#endif
     return copied();
   }
   ScopedHandle section(operations_->Mapping(file->get()), operations_);
@@ -705,6 +751,9 @@ Result<std::unique_ptr<RandomAccessFile>> WindowsFileSystem::OpenRandomAccess(
   auto mapped = std::make_unique<WindowsMappedRandomAccessFile>(
       view, static_cast<std::size_t>(*expected_size), mmap_limiter_, operations_);
   pending.Commit();
+#if MODERN_LEVELDB_READ_DIAGNOSTICS
+  RecordWindowsFileOpen(read_diagnostics::FileOpenReason::Mapped, *expected_size);
+#endif
   return mapped;
 }
 

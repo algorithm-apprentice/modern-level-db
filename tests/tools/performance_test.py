@@ -2,6 +2,7 @@ import argparse
 import copy
 import json
 import math
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -11,6 +12,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 from run_performance import (
     CASES,
+    COPIED_FILE_ACCESS,
     FINGERPRINTS,
     MODERN_FILE_ACCESS_SEMANTICS,
     MODERN_RESULT_OWNERSHIP_SEMANTICS,
@@ -31,6 +33,7 @@ from run_performance import (
     source_state,
     validate_benchmark,
     validate_completion,
+    validate_native_profile,
     validate_read_diagnostics,
     expected_modern_result_ownership,
 )
@@ -38,6 +41,10 @@ from run_performance import (
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = None
 REFERENCE_PREAD_CONTROL = None
+FAILING_BINARY = (
+    Path(os.environ["WINDIR"]) / "System32" / "where.exe"
+    if sys.platform == "win32" else Path("/usr/bin/false")
+)
 
 
 def report(case="modern/readrandom/4096", repetitions=3):
@@ -51,7 +58,7 @@ def report(case="modern/readrandom/4096", repetitions=3):
         if engine == "modern" and workload in ("overwrite", "writebatch", "writesync", "mixed50")
         else "not_applicable"
     )
-    return {
+    result = {
         "context": {
             "library_version": "v1.9.5",
             "json_schema_version": 1,
@@ -100,6 +107,10 @@ def report(case="modern/readrandom/4096", repetitions=3):
             for index in range(repetitions)
         ],
     }
+    if sys.platform == "win32":
+        result["context"]["reference_copied_control_available"] = "true"
+        result["context"]["modern_namespace_policy"] = "explicit_weak"
+    return result
 
 
 def completion(case="modern/readrandom/4096"):
@@ -229,11 +240,11 @@ def diagnostic_report(case="modern/readrandom/4096", modern_file_access="default
     if int(records) == 65536:
         for name in ("stored_block_decode", "block_construction"):
             stages[name] = {"events": 1, "total_ns": 10, "mean_ns": 10.0}
-        if modern_file_access == "pread":
+        if modern_file_access == COPIED_FILE_ACCESS:
             stages["random_read"] = {"events": 1, "total_ns": 10, "mean_ns": 10.0}
     build = {
-        "source_directory": "/source",
-        "build_directory": "/build",
+        "source_directory": str((ROOT / "fixture-source").resolve()),
+        "build_directory": str((ROOT / "fixture-build").resolve()),
         "configure_revision": "revision",
         "configure_dirty": "false",
         "build_type": "Release",
@@ -249,8 +260,8 @@ def diagnostic_report(case="modern/readrandom/4096", modern_file_access="default
         "reference_requested_revision": "7ee830d02b623e8ffe0b95d59a74db1e58da04c5",
         "reference_source_override": "",
         "reference_hardware_crc": "disabled",
-        "reference_source": "/reference-source",
-        "reference_binary_directory": "/reference-build",
+        "reference_source": str((ROOT / "fixture-reference-source").resolve()),
+        "reference_binary_directory": str((ROOT / "fixture-reference-build").resolve()),
         "reference_have_crc32c": "false",
         "reference_crc32c_linked": "false",
         "reference_hardware_patch_sha256": "not_applicable",
@@ -266,15 +277,15 @@ def diagnostic_report(case="modern/readrandom/4096", modern_file_access="default
         "reference_control_patch_sha256": "a" * 64,
         "snappy_target": "snappy",
         "snappy_requested_revision": "9c28114a38866f6deeaa826db918293bc28ae410",
-        "snappy_source": "/snappy",
+        "snappy_source": str((ROOT / "fixture-snappy").resolve()),
         "snappy_source_override": "",
         "zstd_target": "zstd",
         "zstd_requested_revision": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
-        "zstd_source": "/zstd",
+        "zstd_source": str((ROOT / "fixture-zstd").resolve()),
         "zstd_source_override": "",
         "crc32c_target": "crc32c",
         "crc32c_provider": "pinned-source",
-        "crc32c_source": "/crc32c",
+        "crc32c_source": str((ROOT / "fixture-crc32c").resolve()),
         "crc32c_source_override": "",
         "crc32c_requested_revision": "2bbb3be42e20a0e6c0f7b39dc07dc863d9ffbc07",
         "crc32c_compiled_arm64": "true",
@@ -282,7 +293,7 @@ def diagnostic_report(case="modern/readrandom/4096", modern_file_access="default
         "profile_capture_supported": "false",
         "read_diagnostics_compiled": "true",
     }
-    return {
+    result = {
         "schema_version": 5,
         "case": case,
         "operations": READ_DIAGNOSTIC_OPERATIONS,
@@ -315,9 +326,21 @@ def diagnostic_report(case="modern/readrandom/4096", modern_file_access="default
         "stages": stages,
         "build": build,
     }
+    if sys.platform == "win32":
+        result["build"]["reference_copied_control_available"] = "true"
+        result["build"]["modern_namespace_policy"] = "explicit_weak"
+    return result
 
 
 class PerformanceReportTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "win32", "native ASCII boundary is Windows-specific")
+    def test_native_runner_rejects_non_ascii_work_roots_before_creation(self):
+        with tempfile.TemporaryDirectory(prefix="modern-ascii-boundary-") as root:
+            output = Path(root) / "\u4e2d"
+            with self.assertRaises(ValueError):
+                run_case(BINARY, "modern/readrandom/4096", output)
+            self.assertFalse(output.exists())
+
     def test_accepts_individual_runs_and_ignores_aggregate_counters(self):
         data = report()
         aggregate = copy.deepcopy(data["benchmarks"][0])
@@ -329,6 +352,109 @@ class PerformanceReportTest(unittest.TestCase):
         self.assertEqual(result["process_cpu_ns_per_iteration"], [100.0] * 3)
         self.assertEqual(result["wall_ns_per_item"], [123.0] * 3)
         self.assertEqual(result["process_cpu_ns_per_item"], [100.0] * 3)
+
+    def test_validates_native_profile_aggregation_and_final_epoch(self):
+        profile = {
+            "schema_version": 2,
+            "method": "thread-cpu-delta-stackwalk64-v1",
+            "sample_interval_ms": 10,
+            "sample_schedule": "high-resolution-jitter-5-7-11-13-17-v1",
+            "pid": 7,
+            "pdb_matched": True,
+            "total_cpu_100ns": 100,
+            "attributed_cpu_100ns": 75,
+            "unattributed_cpu_100ns": 25,
+            "stack_observations": 4,
+            "own_frame_observations": 3,
+            "dropped_epoch_changes": 1,
+            "dropped_thread_races": 2,
+            "rejected_foreign_threads": 1,
+            "total_frames": 4,
+            "resolved_frames": 4,
+            "unresolved_frames": 0,
+            "repeated_addresses": 0,
+            "truncated_stacks": 0,
+            "observed_epochs": [2],
+            "stacks": [
+                {
+                    "epoch": 2, "cpu_100ns": 75, "observations": 3,
+                    "attributed": True, "unwind_status": "terminated",
+                    "unresolved_frames": 0, "repeated_addresses": 0,
+                    "frames": [
+                        {
+                            "module": "program", "symbol": "Hot",
+                            "module_offset": 16, "resolved": True,
+                        }
+                    ],
+                },
+                {
+                    "epoch": 2, "cpu_100ns": 25, "observations": 1,
+                    "attributed": False, "unwind_status": "zero_pc",
+                    "unresolved_frames": 0, "repeated_addresses": 0,
+                    "frames": [
+                        {
+                            "module": "KERNEL32", "symbol": "Wait",
+                            "module_offset": 32, "resolved": True,
+                        }
+                    ],
+                },
+            ],
+        }
+        epochs = {
+            "schema_version": 1, "pid": 7, "qpc_frequency": 10_000_000,
+            "epochs": [
+                {
+                    "id": 1, "expected_iterations": 1, "completed_iterations": 1,
+                    "start_qpc": 1, "end_qpc": 2, "cpu_100ns": 0,
+                },
+                {
+                    "id": 2, "expected_iterations": 10, "completed_iterations": 10,
+                    "start_qpc": 3, "end_qpc": 8, "cpu_100ns": 100,
+                },
+            ],
+        }
+        measured = {"iterations": [10]}
+        done = {"callback_invocations": 2}
+        summary = validate_native_profile(profile, epochs, measured, done, "program")
+        self.assertEqual(summary["final_epoch"], 2)
+        self.assertEqual(summary["attributed_fraction"], 0.75)
+        self.assertEqual(summary["final_epoch_cpu_coverage"], 1.0)
+        for mutate in (
+                "cpu", "epoch", "count", "pdb", "flags", "stacks", "epoch_cpu",
+                "declared_unresolved", "unresolved_leaf", "system_leaf"):
+            changed_profile = copy.deepcopy(profile)
+            changed_epochs = copy.deepcopy(epochs)
+            changed_done = dict(done)
+            if mutate == "cpu":
+                changed_profile["stacks"][0]["cpu_100ns"] = 74
+            elif mutate == "epoch":
+                changed_profile["observed_epochs"] = [1]
+            elif mutate == "count":
+                changed_done["callback_invocations"] = 1
+            elif mutate == "pdb":
+                changed_profile["pdb_matched"] = False
+            elif mutate == "flags":
+                for stack in changed_profile["stacks"]:
+                    stack["attributed"] = False
+            elif mutate == "stacks":
+                changed_profile["stacks"] = None
+            elif mutate == "epoch_cpu":
+                changed_epochs["epochs"][-1]["cpu_100ns"] = 50
+            elif mutate == "declared_unresolved":
+                changed_profile["stacks"][0]["unresolved_frames"] = 1
+            elif mutate == "unresolved_leaf":
+                frame = changed_profile["stacks"][0]["frames"][0]
+                frame["resolved"] = False
+                frame["symbol"] = ""
+                changed_profile["stacks"][0]["unresolved_frames"] = 1
+                changed_profile["resolved_frames"] = 1
+                changed_profile["unresolved_frames"] = 3
+            else:
+                changed_profile["stacks"][0]["frames"][0]["module"] = "KERNEL32"
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                validate_native_profile(
+                    changed_profile, changed_epochs, measured, changed_done, "program"
+                )
 
     def test_normalizes_scan_time_per_record(self):
         data = report("leveldb/scan/65536")
@@ -344,18 +470,23 @@ class PerformanceReportTest(unittest.TestCase):
     def test_validates_reference_file_access_provenance(self):
         data = report("leveldb/readrandom/4096")
         validate_benchmark(data, "leveldb/readrandom/4096", 3)
-        data["context"]["reference_file_access"] = "pread"
+        data["context"]["reference_file_access"] = COPIED_FILE_ACCESS
         validate_benchmark(
-            data, "leveldb/readrandom/4096", 3, reference_file_access="pread"
+            data, "leveldb/readrandom/4096", 3, reference_file_access=COPIED_FILE_ACCESS
         )
-        data["context"]["reference_pread_control_available"] = "false"
+        data["context"][
+            "reference_copied_control_available"
+            if sys.platform == "win32" else "reference_pread_control_available"
+        ] = "false"
         with self.assertRaises(ValueError):
             validate_benchmark(
-                data, "leveldb/readrandom/4096", 3, reference_file_access="pread"
+                data, "leveldb/readrandom/4096", 3,
+                reference_file_access=COPIED_FILE_ACCESS
             )
         with self.assertRaises(ValueError):
             validate_benchmark(
-                report(), "modern/readrandom/4096", 3, reference_file_access="pread"
+                report(), "modern/readrandom/4096", 3,
+                reference_file_access=COPIED_FILE_ACCESS
             )
         data = report()
         data["context"]["read_diagnostics_compiled"] = "true"
@@ -366,15 +497,15 @@ class PerformanceReportTest(unittest.TestCase):
                 report("leveldb/scan/4096"),
                 "leveldb/scan/4096",
                 3,
-                reference_file_access="pread",
+                reference_file_access=COPIED_FILE_ACCESS,
             )
 
     def test_validates_modern_file_access_provenance(self):
         data = report()
         validate_benchmark(data, "modern/readrandom/4096", 3)
-        data["context"]["modern_file_access"] = "pread"
+        data["context"]["modern_file_access"] = COPIED_FILE_ACCESS
         validate_benchmark(
-            data, "modern/readrandom/4096", 3, modern_file_access="pread"
+            data, "modern/readrandom/4096", 3, modern_file_access=COPIED_FILE_ACCESS
         )
         with self.assertRaises(ValueError):
             validate_benchmark(data, "modern/readrandom/4096", 3)
@@ -391,7 +522,7 @@ class PerformanceReportTest(unittest.TestCase):
                 report("leveldb/readrandom/4096"),
                 "leveldb/readrandom/4096",
                 3,
-                modern_file_access="pread",
+                modern_file_access=COPIED_FILE_ACCESS,
             )
 
     def test_validates_modern_result_ownership_provenance(self):
@@ -508,7 +639,7 @@ class PerformanceReportTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "failed"
             with self.assertRaises(subprocess.CalledProcessError):
-                run_case(Path("/usr/bin/false"), "modern/readrandom/4096", output, smoke=True)
+                run_case(FAILING_BINARY, "modern/readrandom/4096", output, smoke=True)
             self.assertFalse((output / "work").exists())
             self.assertTrue((output / "benchmark.log").exists())
             manifest = read_json(output / "manifest.json")
@@ -518,7 +649,7 @@ class PerformanceReportTest(unittest.TestCase):
             sentinel = output / "keep"
             sentinel.write_text("keep")
             with self.assertRaises(FileExistsError):
-                run_case(Path("/usr/bin/false"), "modern/readrandom/4096", output, smoke=True)
+                run_case(FAILING_BINARY, "modern/readrandom/4096", output, smoke=True)
             self.assertEqual(sentinel.read_text(), "keep")
 
     def test_capture_manifest_indexes_collector_version_and_all_command_logs(self):
@@ -554,9 +685,9 @@ class ReadDiagnosticsReportTest(unittest.TestCase):
             diagnostic_report("modern/readmissing/65536"), "modern/readmissing/65536"
         )
         validate_read_diagnostics(
-            diagnostic_report("modern/readmissing/65536", "pread"),
+            diagnostic_report("modern/readmissing/65536", COPIED_FILE_ACCESS),
             "modern/readmissing/65536",
-            modern_file_access="pread",
+            modern_file_access=COPIED_FILE_ACCESS,
         )
 
     def test_rejects_changed_epoch_outcomes_and_normalization(self):
@@ -616,14 +747,14 @@ class ReadDiagnosticsReportTest(unittest.TestCase):
             validate_read_diagnostics(changed, "modern/readmissing/65536")
 
     def test_accepts_completed_short_random_reads(self):
-        changed = diagnostic_report("modern/readmissing/65536", "pread")
+        changed = diagnostic_report("modern/readmissing/65536", COPIED_FILE_ACCESS)
         requested = changed["counters"]["random_read_requested_bytes"]["total"] * 2
         changed["counters"]["random_read_requested_bytes"] = {
             "total": requested,
             "per_get": requested / READ_DIAGNOSTIC_OPERATIONS,
         }
         validate_read_diagnostics(
-            changed, "modern/readmissing/65536", modern_file_access="pread"
+            changed, "modern/readmissing/65536", modern_file_access=COPIED_FILE_ACCESS
         )
 
     def test_runner_preserves_failure_artifacts_and_rejects_existing_output(self):
@@ -631,7 +762,7 @@ class ReadDiagnosticsReportTest(unittest.TestCase):
             output = Path(temporary) / "failed"
             with self.assertRaises(subprocess.CalledProcessError):
                 run_read_diagnostics(
-                    Path("/usr/bin/false"), "modern/readrandom/4096", output
+                    BINARY, "modern/readrandom/4096", output
                 )
             self.assertFalse((output / "work").exists())
             manifest = read_json(output / "manifest.json")
@@ -639,7 +770,7 @@ class ReadDiagnosticsReportTest(unittest.TestCase):
             self.assertEqual(manifest["artifacts"]["command_logs"], ["diagnostics.log"])
             with self.assertRaises(FileExistsError):
                 run_read_diagnostics(
-                    Path("/usr/bin/false"), "modern/readrandom/4096", output
+                    FAILING_BINARY, "modern/readrandom/4096", output
                 )
 
 
@@ -809,7 +940,7 @@ class MutationReportTest(unittest.TestCase):
             output = Path(temporary) / "unused"
             for options in ({"repetitions": 3}, {"min_time": 0.2}):
                 with self.subTest(options=options), self.assertRaises(ValueError):
-                    run_case(Path("/usr/bin/false"), "modern/overwrite/65536", output, **options)
+                    run_case(FAILING_BINARY, "modern/overwrite/65536", output, **options)
                 self.assertFalse(output.exists())
 
     def test_runner_rejects_inapplicable_roles_without_artifacts(self):
@@ -820,7 +951,7 @@ class MutationReportTest(unittest.TestCase):
                 ("leveldb/overwrite/65536", {"modern_wal_creation": "leveldb"}),
             ):
                 with self.subTest(case=case), self.assertRaises(ValueError):
-                    run_case(Path("/usr/bin/false"), case, output, **options)
+                    run_case(FAILING_BINARY, case, output, **options)
                 self.assertFalse(output.exists())
 
 
@@ -943,8 +1074,8 @@ class PerformanceExecutableTest(unittest.TestCase):
         for field in ("crc32c_source", "crc32c_source_override"):
             self.assertIsInstance(context[field], str)
 
-    def test_forced_reference_pread_is_explicit_and_reproducible(self):
-        access = "pread" if REFERENCE_PREAD_CONTROL else "default"
+    def test_forced_reference_copied_access_is_explicit_and_reproducible(self):
+        access = COPIED_FILE_ACCESS if REFERENCE_PREAD_CONTROL else "default"
         result = self.invoke(
             "--case", "leveldb/readmissing/4096",
             "--reference-file-access", access,
@@ -961,13 +1092,16 @@ class PerformanceExecutableTest(unittest.TestCase):
         )
         self.assertEqual(data["context"]["reference_file_access"], access)
         self.assertEqual(
-            data["context"]["reference_pread_control_available"],
+            data["context"][
+                "reference_copied_control_available"
+                if sys.platform == "win32" else "reference_pread_control_available"
+            ],
             str(REFERENCE_PREAD_CONTROL).lower(),
         )
         if not REFERENCE_PREAD_CONTROL:
             unavailable = self.invoke(
                 "--case", "leveldb/readmissing/4096",
-                "--reference-file-access", "pread",
+                "--reference-file-access", COPIED_FILE_ACCESS,
                 "--database", str(self.root / "unavailable-db"),
                 "--completion-report", str(self.root / "unavailable-completion.json"),
             )
@@ -975,17 +1109,17 @@ class PerformanceExecutableTest(unittest.TestCase):
             self.assertFalse((self.root / "unavailable-db").exists())
         rejected = self.invoke(
             "--case", "leveldb/scan/4096",
-            "--reference-file-access", "pread",
+            "--reference-file-access", COPIED_FILE_ACCESS,
             "--database", str(self.root / "scan-db"),
             "--completion-report", str(self.root / "scan-completion.json"),
         )
         self.assertNotEqual(rejected.returncode, 0)
         self.assertFalse((self.root / "scan-db").exists())
 
-    def test_modern_pread_is_explicit_and_read_only(self):
+    def test_modern_copied_control_is_explicit_and_read_only(self):
         result = self.invoke(
             "--case", "modern/readmissing/4096",
-            "--modern-file-access", "pread",
+            "--modern-file-access", COPIED_FILE_ACCESS,
             "--database", str(self.root / "db"),
             "--completion-report", str(self.root / "completion.json"),
             "--benchmark_min_time=1x", "--benchmark_repetitions=1",
@@ -995,13 +1129,13 @@ class PerformanceExecutableTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         data = read_json(self.root / "benchmark.json")
         validate_benchmark(
-            data, "modern/readmissing/4096", 1, modern_file_access="pread"
+            data, "modern/readmissing/4096", 1, modern_file_access=COPIED_FILE_ACCESS
         )
-        self.assertEqual(data["context"]["modern_file_access"], "pread")
+        self.assertEqual(data["context"]["modern_file_access"], COPIED_FILE_ACCESS)
 
         rejected = self.invoke(
             "--case", "modern/overwrite/65536",
-            "--modern-file-access", "pread",
+            "--modern-file-access", COPIED_FILE_ACCESS,
             "--database", str(self.root / "write-db"),
             "--completion-report", str(self.root / "write-completion.json"),
         )

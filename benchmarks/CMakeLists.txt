@@ -144,6 +144,10 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
     modern_leveldb_performance PRIVATE modern_leveldb::modern_leveldb leveldb benchmark::benchmark
   )
   modern_leveldb_set_project_warnings(modern_leveldb_performance PRIVATE)
+  if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+    target_compile_options(modern_leveldb_performance PRIVATE /Zi /Zo)
+    target_link_options(modern_leveldb_performance PRIVATE /DEBUG:FULL /INCREMENTAL:NO)
+  endif()
 
   add_executable(modern_leveldb_read_diagnostics profiling_bench.cc)
   target_include_directories(
@@ -158,25 +162,62 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
     PRIVATE modern_leveldb_read_diagnostic leveldb benchmark::benchmark
   )
   modern_leveldb_set_project_warnings(modern_leveldb_read_diagnostics PRIVATE)
+  if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+    target_compile_options(modern_leveldb_read_diagnostics PRIVATE /Zi /Zo)
+    target_link_options(modern_leveldb_read_diagnostics PRIVATE /DEBUG:FULL /INCREMENTAL:NO)
+
+    add_executable(modern_leveldb_windows_cpu_profile windows_cpu_profile.cc)
+    target_compile_features(modern_leveldb_windows_cpu_profile PRIVATE cxx_std_23)
+    target_include_directories(
+      modern_leveldb_windows_cpu_profile PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    target_link_libraries(modern_leveldb_windows_cpu_profile PRIVATE Dbghelp Psapi)
+    modern_leveldb_set_project_warnings(modern_leveldb_windows_cpu_profile PRIVATE)
+    target_compile_options(modern_leveldb_windows_cpu_profile PRIVATE /Zi /Zo)
+    target_link_options(
+      modern_leveldb_windows_cpu_profile PRIVATE /DEBUG:FULL /INCREMENTAL:NO
+    )
+
+    add_executable(modern_leveldb_windows_profile_calibration windows_profile_calibration.cc)
+    target_compile_features(modern_leveldb_windows_profile_calibration PRIVATE cxx_std_23)
+    target_include_directories(
+      modern_leveldb_windows_profile_calibration PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    modern_leveldb_set_project_warnings(
+      modern_leveldb_windows_profile_calibration PRIVATE
+    )
+    target_compile_options(modern_leveldb_windows_profile_calibration PRIVATE /Zi /Zo)
+    target_link_options(
+      modern_leveldb_windows_profile_calibration PRIVATE /DEBUG:FULL /INCREMENTAL:NO
+    )
+  endif()
 
   add_test(
     NAME performance.contracts
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/performance_test.py"
       --binary "$<TARGET_FILE:modern_leveldb_performance>"
-      --reference-pread-control "${MODERN_LEVELDB_REFERENCE_PREAD_CONTROL}"
+      --reference-pread-control
+        "$<IF:$<BOOL:${MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM}>,${MODERN_LEVELDB_REFERENCE_WINDOWS_MMAP_CONTROL},${MODERN_LEVELDB_REFERENCE_PREAD_CONTROL}>"
   )
   add_test(
     NAME performance.profile_parser
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/profile_report_test.py"
   )
-  add_test(
-    NAME performance.process_control
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/profile_process_test.py"
-  )
-  add_test(
-    NAME performance.write_parity_contracts
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/write_parity_test.py"
-  )
+  set(performance_contract_tests performance.contracts performance.profile_parser)
+  if(NOT MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+    add_test(
+      NAME performance.process_control
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/profile_process_test.py"
+    )
+    add_test(
+      NAME performance.write_parity_contracts
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/write_parity_test.py"
+    )
+    list(APPEND
+      performance_contract_tests
+      performance.process_control performance.write_parity_contracts
+    )
+  endif()
   add_test(
     NAME performance.smoke
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/performance_smoke.py"
@@ -201,10 +242,24 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
       --output "${CMAKE_CURRENT_BINARY_DIR}/performance-read-diagnostics"
   )
   set_tests_properties(
-    performance.contracts performance.profile_parser performance.process_control
-    performance.write_parity_contracts performance.mutation_stream
+    ${performance_contract_tests} performance.mutation_stream
     PROPERTIES LABELS performance TIMEOUT 120
   )
+  if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+    add_test(
+      NAME performance.windows_profile
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/windows_profile_test.py"
+        --collector "$<TARGET_FILE:modern_leveldb_windows_cpu_profile>"
+        --calibration "$<TARGET_FILE:modern_leveldb_windows_profile_calibration>"
+        --calibration-pdb "$<TARGET_PDB_FILE:modern_leveldb_windows_profile_calibration>"
+        --performance "$<TARGET_FILE:modern_leveldb_performance>"
+        --performance-pdb "$<TARGET_PDB_FILE:modern_leveldb_performance>"
+        --output "${CMAKE_CURRENT_BINARY_DIR}/windows-profile-contracts"
+    )
+    set_tests_properties(
+      performance.windows_profile PROPERTIES LABELS performance TIMEOUT 240
+    )
+  endif()
   set_tests_properties(
     performance.smoke performance.mutations performance.read_diagnostics
     PROPERTIES LABELS performance TIMEOUT 600
@@ -235,6 +290,13 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
       -P "${PROJECT_SOURCE_DIR}/tests/cmake/reject_reference.cmake"
   )
   add_test(
+    NAME performance.reference_control_patch
+    COMMAND "${CMAKE_COMMAND}"
+      "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+      "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/reference-control-contract"
+      -P "${PROJECT_SOURCE_DIR}/tests/cmake/reference_control.cmake"
+  )
+  add_test(
     NAME performance.reference_provider
     COMMAND "${CMAKE_COMMAND}"
       "-DCONSUMER_SOURCE_DIR=${PROJECT_SOURCE_DIR}/tests/cmake/reference_provider"
@@ -247,7 +309,8 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
   )
   set_tests_properties(
     performance.capture_capabilities performance.dependency_declaration
-    performance.reference_declaration performance.reference_provider
+    performance.reference_declaration performance.reference_control_patch
+    performance.reference_provider
     PROPERTIES LABELS performance TIMEOUT 120
   )
 endif()

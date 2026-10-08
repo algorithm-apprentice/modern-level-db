@@ -2,8 +2,10 @@
 
 ## Status and scope
 
-Proposed after native-reference mapped-read PR #107. Independent measurement/
-storage and Windows/process/symbol design reviews precede implementation.
+Design accepted and merged by PR #108 on 2026-10-08 after native-reference
+mapped-read PR #107. The native selected-workload/profiling slice is
+implemented. Independent measurement/storage and Windows/process/symbol
+design and code reviews gate sequential delivery.
 
 Complete `implement-windows-profiling` from ADR-0064. Reuse existing selected
 workloads, exact correctness/completion checks, explicit ownership/file-access/
@@ -47,9 +49,15 @@ __declspec(noinline), while existing GNU/Clang attributes remain unchanged.
 Modern Windows uses explicit weak namespace consent and its default mapped
 path. Expose `copied`, not a falsely named Windows pread syscall, as the native
 copied control. Preserve existing POSIX default/pread controls and semantics.
-The pinned Windows reference's existing pre-initialization mmap-limit helper
-can select an explicit copied control without patching the reference source.
-Unavailable controls fail rather than silently selecting a different policy.
+The pinned Windows pre-initialization mmap-limit helper is private. As in the
+existing POSIX control, expose only its declaration in an authenticated
+build-owned archive and record the control-patch digest; do not change the
+reference algorithm or fabricate its friend test class to bypass access.
+External source overrides remain untouched and advertise that copied control
+as unavailable. Unavailable controls fail rather than silently selecting a
+different policy. The declaration visibility patch does not change the
+default mapped policy, but its digest remains recorded in those artifacts.
+Use a separate unpatched build when an unmodified reference artifact is needed.
 
 Use existing explicit reusable/owning Get and copying/exclusive batch controls.
 For write-parity comparisons, select the existing `leveldb` WAL-creation
@@ -123,7 +131,11 @@ its outcome is partial or failed rather than complete.
 
 ## Decision 4: Report CPU-weighted stack sampling honestly
 
-Sample at a declared bounded interval (initially 10 ms). Query owned-thread
+Sample with a declared high-resolution deterministic jitter schedule averaging
+approximately 10 ms (initially 5, 7, 11, 13 and 17 ms). Use an owned
+high-resolution waitable timer instead of scheduler-quantized Sleep. This
+avoids locking every observation to one near-periodic workload phase while
+remaining reproducible. Query owned-thread
 CPU times, suspend briefly, capture CONTEXT, walk a bounded number of x64
 frames with StackWalk64, and resume on every path. DbgHelp operations run on
 one collector thread. Do not allocate or run helper code inside the child.
@@ -150,6 +162,11 @@ CPU with the child's epoch ledger and publish those coverage fractions.
 Choose and review acceptance bounds from that evidence; insufficient or aliased
 final-epoch coverage produces a partial/non-success result. Recording a symbol
 or positive delta alone is not calibration or full-profile admission.
+The initial evidence-backed gate requires at least three own-leaf observations,
+10% own-code attributed sampled CPU, and sampled CPU covering at least 5% of
+the final epoch's child process CPU. Calibration additionally requires at
+least 50% own attribution for pure hot work, 10% for both alternating phases,
+and wait CPU no more than 20% of pure-hot CPU under equal duration.
 
 Recording perturbs the workload; capture timings are never throughput or
 speedup evidence. Run ordinary benchmarks separately for performance decisions.
@@ -237,6 +254,72 @@ thread ownership before queries or suspension. The DAG now includes mapping.
 Focused follow-ups by both personas reported no remaining high-confidence
 blocker. Implementation still must collect calibration/reconciliation evidence;
 design clearance is not proof that capture works or measurements are accurate.
+
+## Implementation evidence and code review
+
+The admitted MSVC Release harness executes all existing read and fixed-work
+write/mixed cases for Modern and the pinned reference. Native access controls
+are named `default` and `copied`; external reference overrides remain
+unmodified and reject their unavailable private copied control. An
+authenticated build-owned archive exposes only that helper declaration and
+records the patch digest. Direct proof exercised the copied control while the
+owner-provided original checkout remained clean at the pinned revision.
+
+The collector atomically job-contains its owned child before first execution,
+inherits only log/control handles, validates opened-thread ownership, and
+reconciles every callback/final iteration with an atomic child epoch ledger.
+It hashes benchmark, benchmark PDB and collector snapshots, validates the
+loaded benchmark PDB, publishes schema-2 module-relative stacks without
+absolute addresses, derives all CPU/frame/epoch totals during validation, and
+binds benchmark/completion/profile/ledger bytes in the manifest.
+
+The final native performance selection contains 12 nonempty tests. It passes
+41 shared report/runner contracts and five real collector contracts in
+addition to all selected read workloads, fixed-work mutation streams,
+mapped/copied diagnostics, calibration, CMake capabilities and dependency
+isolation. The authenticated archive build also passes the forced reference
+copied-control contract.
+The final integration rerun also passes 718 native Debug cases, 714 Release
+cases, and all 18 extended model/compatibility/process-recovery cases.
+
+Initial fixed-period sampling was rejected by evidence: a 9 ms hot/1 ms wait
+calibration phase received positive CPU deltas on wait leaves. An owned
+high-resolution timer with the deterministic 5/7/11/13/17 ms schedule then
+passed optimized pure-hot, pure-wait, alternating and phase-offset runs under
+the reviewed bounds. Final validation also rejects truncated walks, unresolved
+or wrong-module attributed leaves, impossible aggregate counters, per-epoch
+CPU overruns, sparse final coverage, stale/foreign threads, mismatched symbols,
+artifact mutation, readiness timeout and missing cleanup.
+
+Same-machine selected-workload results at 65,536 records compared Modern with
+the pinned Windows reference under recorded equivalent policies:
+
+| Workload | Modern/reference wall ratio |
+|---|---:|
+| readrandom | 1.116x |
+| readmissing | 1.127x |
+| scan | 0.898x |
+| retained seek | 1.237x |
+| overwrite | 0.610x |
+| writebatch, public copying | 0.614x |
+| writebatch, exclusive control | 0.635x |
+| writesync | 0.991x |
+| mixed 50/50 | 0.833x |
+
+Read profiles showed Modern process CPU no greater than the reference, with
+the expected block decode/comparator/cache paths. Modern writebatch used
+substantially less sampled CPU. Sync-write stack capture correctly produced
+non-success because file-flush waiting had insufficient own CPU attribution;
+its separate ordinary timing remained near parity. These local observations
+show no evidence for another speculative read/write algorithm change. They
+are not a universal performance SLA or production-readiness claim.
+
+Independent measurement/storage and Win32/process/symbol code personas found
+and closed impossible aggregate acceptance, unbound raw artifacts, calibration
+coverage, duplicate/absolute unwind output, exited-thread races, unverified
+collector-PDB claims and benchmark-module attribution. Focused closure and
+runtime validation are recorded separately; no threshold, workload, persistent
+format, namespace guarantee or POSIX collection contract was weakened.
 
 ## References
 

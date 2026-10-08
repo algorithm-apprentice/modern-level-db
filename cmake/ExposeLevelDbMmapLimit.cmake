@@ -2,9 +2,16 @@ if(NOT DEFINED LEVELDB_SOURCE_DIR)
   message(FATAL_ERROR "LEVELDB_SOURCE_DIR is required")
 endif()
 
-set(header "${LEVELDB_SOURCE_DIR}/util/env_posix_test_helper.h")
+if(NOT DEFINED LEVELDB_CONTROL_PLATFORM)
+  set(LEVELDB_CONTROL_PLATFORM posix)
+endif()
+if(NOT LEVELDB_CONTROL_PLATFORM STREQUAL "posix" AND
+   NOT LEVELDB_CONTROL_PLATFORM STREQUAL "windows")
+  message(FATAL_ERROR "Unsupported LevelDB control platform")
+endif()
+set(header "${LEVELDB_SOURCE_DIR}/util/env_${LEVELDB_CONTROL_PLATFORM}_test_helper.h")
 if(NOT EXISTS "${header}")
-  message(FATAL_ERROR "Pinned LevelDB POSIX test helper is missing: ${header}")
+  message(FATAL_ERROR "Pinned LevelDB test helper is missing: ${header}")
 endif()
 
 file(READ "${header}" contents)

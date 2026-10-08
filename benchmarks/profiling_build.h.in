@@ -5,6 +5,14 @@
 
 #cmakedefine01 MODERN_LEVELDB_PROFILE_MARKERS
 #cmakedefine01 MODERN_LEVELDB_REFERENCE_PREAD_CONTROL
+#cmakedefine01 MODERN_LEVELDB_REFERENCE_WINDOWS_MMAP_CONTROL
+#cmakedefine01 MODERN_LEVELDB_WINDOWS_PROFILE_CAPTURE
+
+#if defined(_MSC_VER)
+#define MODERN_LEVELDB_PROFILE_NOINLINE __declspec(noinline)
+#else
+#define MODERN_LEVELDB_PROFILE_NOINLINE [[gnu::noinline]]
+#endif
 
 namespace modern_leveldb::profiling {
 
