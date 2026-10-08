@@ -9,6 +9,11 @@ bounded GPT-5.6 Sol implementation review found one corruption-precedence
 issue; a regression now preserves an earlier malformed internal-key error
 when a later reachable table block is also corrupt.
 
+[ADR-0066](0066-native-windows-diagnostic-command.md) extends the command to
+admitted native Windows builds with wide argv and borrowed synchronous output
+handles. Its output schema, offline/read-only limits, and corruption behavior
+remain unchanged; POSIX-only command descriptions below are historical scope.
+
 ## Context
 
 Modern LevelDB already owns strict decoders for its LevelDB-compatible

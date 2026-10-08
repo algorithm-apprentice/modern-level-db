@@ -21,8 +21,10 @@ option(MODERN_LEVELDB_BUILD_EXTENDED_TESTS "Build model, compatibility, and cras
 option(MODERN_LEVELDB_BUILD_FUZZERS "Build coverage-guided libFuzzer targets" OFF)
 option(MODERN_LEVELDB_BUILD_BENCHMARKS "Build the comparative database benchmark" OFF)
 option(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS "Build the selected-workload profiling harness" OFF)
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/WindowsBackend.cmake")
 set(MODERN_LEVELDB_BUILD_TOOLS_DEFAULT OFF)
-if(PROJECT_IS_TOP_LEVEL AND (APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+if(PROJECT_IS_TOP_LEVEL AND
+   (APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux" OR MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM))
   set(MODERN_LEVELDB_BUILD_TOOLS_DEFAULT ON)
 endif()
 option(
@@ -33,7 +35,6 @@ option(
 unset(MODERN_LEVELDB_BUILD_TOOLS_DEFAULT)
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompilerWarnings.cmake")
-include("${CMAKE_CURRENT_LIST_DIR}/cmake/WindowsBackend.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/CompressionDependencies.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/Crc32cDependency.cmake")
 find_package(Threads REQUIRED)
@@ -103,7 +104,9 @@ function(modern_leveldb_add_library target)
     )
     target_compile_definitions("${target}" PRIVATE MODERN_LEVELDB_HAVE_POSIX_FILE_SYSTEM)
   elseif(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
-    target_sources("${target}" PRIVATE src/platform/windows_file_system.cc)
+    target_sources(
+      "${target}" PRIVATE src/platform/windows_file_system.cc src/diagnostics/windows_output.cc
+    )
     target_compile_definitions("${target}" PRIVATE MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
   endif()
   target_compile_features("${target}" PUBLIC cxx_std_23)
@@ -173,8 +176,9 @@ if(MODERN_LEVELDB_BUILD_TESTS AND BUILD_TESTING)
 endif()
 
 if(MODERN_LEVELDB_BUILD_TOOLS)
-  if(NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(FATAL_ERROR "Modern LevelDB command-line tools require the POSIX backend")
+  if(NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+     NOT MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+    message(FATAL_ERROR "Modern LevelDB command-line tools require an admitted native backend")
   endif()
   add_subdirectory(tools)
 endif()

@@ -13,6 +13,10 @@ namespace modern_leveldb {
                                     FileSystem& file_system, WritableFile& output,
                                     WritableFile& errors);
 
+[[nodiscard]] int RunNativeDiagnosticTool(std::span<const std::filesystem::path> arguments,
+                                          FileSystem& file_system, WritableFile& output,
+                                          WritableFile& errors);
+
 }  // namespace modern_leveldb
 
 #endif  // MODERN_LEVELDB_DIAGNOSTICS_DUMP_COMMAND_H_

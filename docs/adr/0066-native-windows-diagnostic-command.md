@@ -2,8 +2,9 @@
 
 ## Status and scope
 
-Proposed on 2026-10-08 after Windows verification PR #101.
-This is the design gate for `implement-windows-diagnostics` in ADR-0064.
+Design accepted by PR #102 on 2026-10-08 after Windows verification PR #101.
+The native diagnostic slice is implemented. This records the design gate
+for `implement-windows-diagnostics` in ADR-0064.
 Independent diagnostic-contract and Win32/Unicode/output reviews precede
 implementation and sequential merge.
 
@@ -172,6 +173,40 @@ No actionable finding remains from these bounded design passes.
 ASCII English, LF/whitespace, fences, local references, DAG ordering and the
 exact two-file documentation-only scope were checked. No production/runtime
 validation is claimed by this design PR.
+
+## Implementation evidence
+
+The internal native-path entry point and existing narrow entry share one
+execution implementation. Windows wmain retains native wide path identity;
+the copied filesystem and borrowed synchronous sinks use native APIs.
+Capability admission is computed before standalone tool defaults, and
+subprojects still acquire no tool or Python dependency by default.
+
+Windows tools configuration was observed failing under the original guard;
+three native command/output cases failed against stubs before implementation.
+Native sink tests then verified full short writes, deterministic zero/absent
+errors despite stale last-error state, terminal markers without OS-handle
+close, and actual kernel closed-pipe errors. The native pipe oracle accounts
+for ERROR_BROKEN_PIPE and ERROR_NO_DATA without changing reported provenance.
+
+The real command's raw-byte test dumps closed native WAL, MANIFEST, and SST
+files under ordinary Unicode and explicit extended paths, verifies exact
+0/1/2 return codes and LF bytes, compares file redirection against pipe capture,
+closes all stdout readers before a failed write, and compares filenames plus
+input digests before/after. Output capture stays outside the fixture directory.
+
+MSVC /W4 /WX passed all 707 Debug unit/consumer/tool cases and 690 Release
+unit/tool cases. A fresh admitted Windows standalone configuration also
+verified the tool defaults ON without relying on a previous option cache.
+These are offline decoder/output checks, not online backup or whole-file
+corruption certification.
+
+Independent diagnostic-contract and native-platform code reviews closed
+without remaining actionable issues. The platform reviewer identified a
+closed-reader launch race in the raw CLI test: the pipe reader now closes
+before launch, with only the writer passed and owned timeout cleanup checked.
+The project-test opt-out now also gates fixture/Python acquisition, verified
+by a consumer configuration that failed before that gate repair.
 
 ## References
 

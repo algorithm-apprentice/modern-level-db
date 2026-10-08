@@ -98,7 +98,10 @@ if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
   modern_leveldb_set_project_warnings(modern_leveldb_windows_lock_child PRIVATE)
   target_sources(
     modern_leveldb_unit_tests
-    PRIVATE unit/platform/windows_file_system_test.cc unit/engine/database_windows_test.cc
+    PRIVATE
+      unit/platform/windows_file_system_test.cc
+      unit/engine/database_windows_test.cc
+      unit/diagnostics/windows_output_test.cc
   )
   target_compile_definitions(
     modern_leveldb_unit_tests
@@ -209,18 +212,16 @@ gtest_discover_tests(
   PROPERTIES LABELS unit TIMEOUT 10
 )
 
+set(consumer_scenarios
+  module_shadow default_tests tests_disabled gtest_options dependency_targets
+  crc32c_parent_target dependency_parent_values dependency_shared_only windows_arm64ec_rejected
+)
+if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux" OR MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+  list(APPEND consumer_scenarios tools_without_project_tests)
+endif()
 foreach(
   scenario
-  IN ITEMS
-    module_shadow
-    default_tests
-    tests_disabled
-    gtest_options
-    dependency_targets
-    crc32c_parent_target
-    dependency_parent_values
-    dependency_shared_only
-    windows_arm64ec_rejected
+  IN LISTS consumer_scenarios
 )
   add_test(
     NAME "cmake.${scenario}"
@@ -239,6 +240,7 @@ foreach(
   )
   set_tests_properties("cmake.${scenario}" PROPERTIES LABELS cmake TIMEOUT 120)
 endforeach()
+unset(consumer_scenarios)
 
 add_test(
   NAME cmake.required_tests

@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <optional>
@@ -160,6 +161,44 @@ TEST(DumpCommandTest, StopsWhenTheErrorStreamFails) {
   CommandOutput command_output;
   CommandOutput command_errors(0);
   EXPECT_EQ(RunCommand({"unknown", "file"}, file_system, command_output, command_errors), 1);
+}
+
+TEST(NativeCommandTest, PreservesHelpUsageAndValidatesOptionsBeforeReads) {
+  MemoryFileSystem file_system;
+  CommandOutput output;
+  CommandOutput errors;
+  const std::array<std::filesystem::path, 1> help{std::filesystem::path{"--help"}};
+  EXPECT_EQ(RunNativeDiagnosticTool(help, file_system, output, errors), 0);
+  EXPECT_EQ(output.text(), "Usage: modern_leveldb_tool dump FILE...\n");
+  for (const auto& arguments :
+       {std::vector<std::filesystem::path>{}, std::vector<std::filesystem::path>{"dump"},
+        std::vector<std::filesystem::path>{"unknown", "file"},
+        std::vector<std::filesystem::path>{"dump", "000001.log", "-bad"}}) {
+    const auto operations = file_system.operations().size();
+    EXPECT_EQ(RunNativeDiagnosticTool(arguments, file_system, output, errors), 2);
+    EXPECT_EQ(file_system.operations().size(), operations);
+  }
+}
+
+TEST(NativeCommandTest, SharesInputErrorContinuationAndOutputFailurePrecedence) {
+  MemoryFileSystem file_system;
+  WriteLog(file_system, "000001.log");
+  CommandOutput output;
+  CommandOutput errors;
+  const std::array<std::filesystem::path, 3> arguments{std::filesystem::path{"dump"},
+                                                       std::filesystem::path{"missing/000002.log"},
+                                                       std::filesystem::path{"000001.log"}};
+  EXPECT_EQ(RunNativeDiagnosticTool(arguments, file_system, output, errors), 1);
+  EXPECT_NE(output.text().find("key='a' value='1'"), std::string::npos);
+  EXPECT_NE(errors.text().find("not_found:"), std::string::npos);
+  CommandOutput failed_output(0);
+  CommandOutput unused_errors;
+  const std::array<std::filesystem::path, 2> valid{std::filesystem::path{"dump"},
+                                                   std::filesystem::path{"000001.log"}};
+  EXPECT_EQ(RunNativeDiagnosticTool(valid, file_system, failed_output, unused_errors), 1);
+  CommandOutput unused_output;
+  CommandOutput failed_errors(0);
+  EXPECT_EQ(RunNativeDiagnosticTool(arguments, file_system, unused_output, failed_errors), 1);
 }
 
 }  // namespace

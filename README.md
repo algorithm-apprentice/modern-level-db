@@ -180,7 +180,7 @@ are required.
 
 ## Inspecting storage files
 
-Top-level Linux/macOS builds also produce a read-only diagnostic tool:
+Top-level admitted Linux/macOS/Windows builds also produce a read-only diagnostic tool:
 
 ```bash
 ./build/dev-debug/tools/modern_leveldb_tool --help
@@ -200,6 +200,10 @@ Use it only on files from a closed database, a stable fixture, or a consistent
 offline copy. Do not redirect stdout onto an input or any database file.
 Output can contain sensitive application keys and values. Set
 `MODERN_LEVELDB_BUILD_TOOLS=OFF` to omit the executable.
+On Windows, use `build\windows-debug\tools\modern_leveldb_tool.exe dump FILE...`.
+The wide command entry point preserves native Unicode/extended paths and
+writes exact escaped ASCII/LF bytes to borrowed synchronous standard handles.
+No ANSI code-page conversion or text-mode CRLF translation is used.
 
 ## Windows database support
 
@@ -261,7 +265,8 @@ writable ASCII absolute directory. Modern-only recovery tests include Unicode
 paths. The child tests
 verify process-only failure while Windows stays running; they are not
 power-loss evidence. See [ADR-0065](docs/adr/0065-windows-recovery-and-compatibility-verification.md).
-The Windows dump command and benchmarks remain separate delivery slices.
+The Windows dump command is available with the same offline/read-only
+contract; comparative benchmarks remain the next delivery slice.
 
 ## Development
 
