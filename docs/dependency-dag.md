@@ -119,7 +119,7 @@ it does not defer lower-level validation.
 | `integrate-windows-database` | Explicit public weak-namespace opt-in, owned backend, native disk tests, Unicode-safe recovery, Windows CI | `implement-windows-filesystem`, `implement-public-api` | ADR-0064, integration implemented |
 | `verify-windows-compatibility-crash` | Windows process/lock helpers, model/golden/differential tiers and native recovery evidence | `integrate-windows-database`, `build-compatibility-harness` | ADR-0065, implemented |
 | `implement-windows-diagnostics` | Native Unicode CLI and checked Windows output adapter | `implement-windows-filesystem`, `implement-storage-file-diagnostics` | ADR-0066, implemented |
-| `baseline-windows-performance` | Copied-read Windows workloads, private reference build, portable process execution | `integrate-windows-database`, `verify-windows-compatibility-crash` | ADR-0064, proposed |
+| `baseline-windows-performance` | Copied-read Windows workloads, private reference build, portable process execution | `integrate-windows-database`, `verify-windows-compatibility-crash` | ADR-0067, proposed |
 | `implement-windows-mapped-reads` | Optional bounded mapped views with verified lifetime, cleanup, and copied-read fallback | `baseline-windows-performance`, `implement-table-cache` | ADR-0064 roadmap only; separate mapping ADR required |
 | `implement-windows-profiling` | Supported Windows collector and owned-process/report contracts | `baseline-windows-performance` | ADR-0064 roadmap only; separate profiling ADR required |
 
