@@ -7,6 +7,10 @@
 temporary shared source captures with typed mutex-protected read pins and
 writes into caller-owned reusable output.
 
+[ADR-0064](0064-windows-filesystem-and-delivery.md) adds owned x64/MSVC Windows
+opening with explicit weak-namespace consent and pre-mutation volume/path
+checks. The POSIX-only default described below is the original platform scope.
+
 ## Context
 
 Every part of a database now exists on its own: recovery

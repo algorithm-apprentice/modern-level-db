@@ -4,10 +4,10 @@
 
 Design accepted and merged by PR #97 on 2026-10-08.
 
-The native filesystem slice is implemented with copied reads, explicit
-namespace consent, resolved-volume preflight, and native/fault contract
-tests. It is not yet the owned public database backend: database integration,
-extended recovery tests, diagnostics, and benchmarks remain sequential slices.
+The native filesystem slice was merged by PR #98 with copied reads, explicit
+namespace consent, resolved-volume preflight, and native/fault contract tests.
+Database integration now selects that backend through the public opt-in.
+Extended recovery tests, diagnostics, and benchmarks remain sequential slices.
 No strict Windows namespace durability guarantee has been added.
 
 Independent design reviews precede owner review. Production implementation
@@ -18,10 +18,10 @@ The independent design reviews and focused closure pass below are complete.
 Each implementation slice still requires its independent code reviews and
 green validation before merge.
 
-## Context and current callers
+## Initial context and callers
 
-Portable components already build in the Windows Debug/Release CI matrix.
-However, `DatabaseEngine::Open` creates only a default `PosixFileSystem`.
+At design time, portable components already built in the Windows Debug/Release
+CI matrix. `DatabaseEngine::Open` created only a default `PosixFileSystem`.
 Without an injected internal filesystem, Windows returns `NotSupported`;
 the public API has no filesystem injection facility. The current Windows
 public test verifies that rejection, not a working disk database.
@@ -138,7 +138,6 @@ mature libraries' no-op directory syncs do not independently prove it.
 Propose one narrowly named public option:
 
 ```cpp
-// Proposed addition to Options; not present until the integration PR.
 bool allow_weak_namespace_durability = false;
 ```
 
@@ -190,10 +189,10 @@ process-exit test or a directory FlushFileBuffers call alone.
 - Unsynced acknowledged writes may be lost even after process-only failure.
   Failure after partial I/O may leave bytes on disk; Result is not rollback.
 
-The implementation updates the option comments, README example, public
-contract, and current ADR-0011 platform summary together. The present
-native-filesystem slice does not yet add the public option or change default
-database opening behavior.
+The integration updates the option comments, README example, public contract,
+and current ADR-0011 platform summary together. The public option is appended
+to preserve the legacy aggregate member order; default Windows rejection and
+all POSIX durability behavior remain unchanged.
 
 ## Decision 3: Implement the existing filesystem contracts
 
@@ -557,6 +556,38 @@ capability repair. Native MSVC /W4 /WX validation then passed all 31 Windows
 contract cases, 669 Debug unit/consumer cases, and 653 Release unit cases.
 The repaired callback fixture also passed 100 repeated runs. These are file
 and process-lifetime checks, not real Windows power-loss evidence.
+
+## Database integration implementation record
+
+The owned native filesystem is prepared once before engine construction.
+Successful Windows preflight freezes the resolved absolute directory; an
+injected filesystem bypasses this owned-backend policy and retains its caller
+contract. The public consent option is appended to the existing aggregate.
+POSIX preparation has no recoverable failure path; only non-POSIX builds
+compile the typed preparation-error guard.
+
+Recovery and cleanup parse native ASCII basenames directly, ignoring foreign
+Unicode entries without a code-page conversion. Error paths use shared checked
+UTF-8 rendering. Real MSVC tests first reproduced missing-default rejection
+for opted-in public opens, then code-page exceptions in Unicode recovery and
+error reporting before those boundaries were repaired.
+
+Portable public facade, engine, WAL, and copied-SST cases now run on each
+admitted native backend. POSIX mmap/truncation-specific cases stay separately
+selected. New native cases verify every-open consent, strict rejection without
+mutation, native Unicode and relative-path freezing, actual compaction with
+snapshot/iterator pins, and failed-recovery orphan number reuse with a surviving
+reader. Releasing that reader permits recovery without losing acknowledged
+data. An existing facade fixture now retains one ByteView for its iterator
+range; MSVC Debug had rejected two distinct temporary views.
+
+The actual Windows presets passed 690 Debug unit/consumer cases and 674
+Release unit cases under /W4 /WX. The nonempty/empty CTest fixture exercises
+both new Windows presets as well as the previous presets. No real OS-crash
+or power-loss guarantee is inferred from these results.
+
+Independent storage/ownership and Win32/Unicode/build/public-compatibility
+code reviews found no remaining actionable issue in this integration slice.
 
 ## References
 

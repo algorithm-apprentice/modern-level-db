@@ -135,7 +135,7 @@ pages, table metadata, and memtables lie outside a simple hard-memory claim.
 | MultiGet and iterator bounds | Useful application-facing extensions, but first establish a concrete caller and common-snapshot/comparator semantics |
 | Live checkpoint/backup | Requires a consistent file/WAL boundary; not a primitive in the pinned LevelDB DB API |
 | Lossy repair | Large correctness/data-loss contract; an inspector and corruption exercises provide a safer first step |
-| Windows database filesystem | A substantial platform/durability project; portable components already build, but database opening currently needs the POSIX backend |
+| Windows database filesystem | Native x64/MSVC copied-read opening with explicit weak-namespace consent; strict namespace durability and Windows mappings remain unsupported |
 | Transactions, column families, merge operators | Expand the storage model and are explicit current non-goals |
 | TTL and range deletion | Add visibility/retention semantics, not just convenience methods |
 | Parallel compaction or asynchronous writes | Introduce scheduling, ordering, resource, and shutdown complexity before a measured need |

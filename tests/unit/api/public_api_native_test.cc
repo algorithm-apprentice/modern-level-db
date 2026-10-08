@@ -40,8 +40,16 @@ class TemporaryDatabaseDirectory {
   std::filesystem::path path_;
 };
 
-Options CreatingOptions() {
+Options OpeningOptions() {
   Options options;
+#if defined(_WIN32)
+  options.allow_weak_namespace_durability = true;
+#endif
+  return options;
+}
+
+Options CreatingOptions() {
+  Options options = OpeningOptions();
   options.create_if_missing = true;
   return options;
 }
@@ -115,7 +123,7 @@ TEST(PublicDatabaseTest, WritesReadsDeletesBatchesAndReopens) {
     ASSERT_TRUE(database.Delete(AsBytes("missing")).has_value());
   }
 
-  Result<Database> reopened = Database::Open(Options(), directory.path());
+  Result<Database> reopened = Database::Open(OpeningOptions(), directory.path());
   ASSERT_TRUE(reopened.has_value()) << reopened.error().ToString();
   const auto value = reopened->Get(AsBytes("b"));
   ASSERT_TRUE(value.has_value() && value->has_value());
@@ -137,7 +145,8 @@ TEST(PublicDatabaseTest, ReusesCallerOutputAndLeavesItUnchangedWhenAbsent) {
 
   std::vector<std::byte> output;
   output.reserve(64);
-  output.assign(AsBytes("sentinel").begin(), AsBytes("sentinel").end());
+  const ByteView sentinel = AsBytes("sentinel");
+  output.assign(sentinel.begin(), sentinel.end());
   const std::size_t capacity = output.capacity();
   const std::byte* const storage = output.data();
 
@@ -147,7 +156,8 @@ TEST(PublicDatabaseTest, ReusesCallerOutputAndLeavesItUnchangedWhenAbsent) {
   EXPECT_EQ(output.capacity(), capacity);
   EXPECT_EQ(output.data(), storage);
 
-  output.assign(AsBytes("unchanged").begin(), AsBytes("unchanged").end());
+  const ByteView unchanged_bytes = AsBytes("unchanged");
+  output.assign(unchanged_bytes.begin(), unchanged_bytes.end());
   const std::vector<std::byte> unchanged = output;
   const Result<bool> missing = database.Get(AsBytes("missing"), output);
   ASSERT_TRUE(missing.has_value());
@@ -392,14 +402,15 @@ TEST(PublicDatabaseTest, ChildHandlesKeepTheEngineAlive) {
     ASSERT_TRUE(created.has_value()) << created.error().ToString();
     iterator.emplace(std::move(*created));
   }
-  const Result<Database> iterator_locked = Database::Open(Options(), iterator_directory.path());
+  const Result<Database> iterator_locked =
+      Database::Open(OpeningOptions(), iterator_directory.path());
   ASSERT_FALSE(iterator_locked.has_value());
   EXPECT_EQ(iterator_locked.error().code(), ErrorCode::Busy);
   ASSERT_TRUE(iterator->SeekToFirst().has_value());
   ASSERT_TRUE(iterator->valid());
   EXPECT_EQ(Text(iterator->value()), "1");
   iterator.reset();
-  EXPECT_TRUE(Database::Open(Options(), iterator_directory.path()).has_value());
+  EXPECT_TRUE(Database::Open(OpeningOptions(), iterator_directory.path()).has_value());
 
   TemporaryDatabaseDirectory snapshot_directory;
   std::optional<Snapshot> snapshot;
@@ -410,11 +421,12 @@ TEST(PublicDatabaseTest, ChildHandlesKeepTheEngineAlive) {
     ASSERT_TRUE(created.has_value()) << created.error().ToString();
     snapshot.emplace(std::move(*created));
   }
-  const Result<Database> snapshot_locked = Database::Open(Options(), snapshot_directory.path());
+  const Result<Database> snapshot_locked =
+      Database::Open(OpeningOptions(), snapshot_directory.path());
   ASSERT_FALSE(snapshot_locked.has_value());
   EXPECT_EQ(snapshot_locked.error().code(), ErrorCode::Busy);
   snapshot.reset();
-  EXPECT_TRUE(Database::Open(Options(), snapshot_directory.path()).has_value());
+  EXPECT_TRUE(Database::Open(OpeningOptions(), snapshot_directory.path()).has_value());
 }
 
 TEST(PublicDatabaseTest, ValidatesOptionsAndRetainsTheComparator) {
@@ -507,7 +519,7 @@ TEST(PublicDatabaseTest, WritesAndReopensEveryCompressionMode) {
       ASSERT_TRUE(opened->Put(AsBytes("trigger"), AsBytes("1")).has_value());
     }
 
-    Result<Database> reopened = Database::Open(Options(), directory.path());
+    Result<Database> reopened = Database::Open(OpeningOptions(), directory.path());
     ASSERT_TRUE(reopened.has_value()) << reopened.error().ToString();
     const auto value = reopened->Get(AsBytes("large"));
     ASSERT_TRUE(value.has_value() && value->has_value());

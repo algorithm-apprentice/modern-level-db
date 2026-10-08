@@ -41,9 +41,14 @@ struct Options {
   Compression compression = Compression::Snappy;
   // Used only by Zstd; LevelDB supports levels -5 through 22.
   int zstd_compression_level = 1;
-  // Syncs the initial empty WAL and each new WAL's directory entry before it
-  // accepts writes. Set false to match LevelDB's creation durability.
+  // Syncs the initial empty WAL and requests the backend's namespace barrier
+  // before accepting writes. Windows' explicit weak-namespace mode cannot
+  // persist directory entries. Set false to match LevelDB's creation policy.
   bool sync_wal_creation = true;
+  // Required by the owned Windows backend, whose directory entries are not
+  // durably synchronized. File Sync still flushes bytes, but OS crash/power
+  // loss may lose names and acknowledged writes. POSIX behavior is unchanged.
+  bool allow_weak_namespace_durability = false;
 };
 
 struct ReadOptions {

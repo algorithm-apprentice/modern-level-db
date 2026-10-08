@@ -87,6 +87,24 @@ TEST(FileNamesTest, RoundTripsEveryGeneratedName) {
   ExpectParsed(LockFileName(directory).filename().string(), FileType::Lock, 0);
 }
 
+TEST(FileNamesTest, ParsesNativeAsciiLeavesWithoutNarrowingUnicodeDirectories) {
+  const std::filesystem::path directory{u8"\u6570\u636e-\U0001f4be"};
+  for (const std::uint64_t number : {std::uint64_t{1}, MaxNumber}) {
+    for (const auto& path :
+         {LogFileName(directory, number), TableFileName(directory, number),
+          DescriptorFileName(directory, number), TempFileName(directory, number)}) {
+      const auto parsed = ParseNativeFileName(path);
+      ASSERT_TRUE(parsed.has_value());
+      EXPECT_EQ(parsed->number, number);
+    }
+  }
+  EXPECT_EQ(ParseNativeFileName(CurrentFileName(directory))->type, FileType::Current);
+  EXPECT_FALSE(
+      ParseNativeFileName(directory / std::filesystem::path{u8"\U0001f4be.log"}).has_value());
+  EXPECT_FALSE(ParseNativeFileName(std::string(100, 'x')).has_value());
+  EXPECT_FALSE(ParseNativeFileName({}).has_value());
+}
+
 TEST(FileNamesTest, RejectsLevelDbErrorCases) {
   constexpr std::array<std::string_view, 21> Names{
       "",
@@ -119,22 +137,14 @@ TEST(FileNamesTest, RejectsLevelDbErrorCases) {
 
 TEST(FileNamesTest, RejectsNamesLevelDbAcceptsButNeverGenerates) {
   constexpr std::array<std::string_view, 16> Names{
-      "100.log",
-      "0.log",
-      "000000.log",
-      "0000100.log",
-      "01000000.ldb",
-      "018446744073709551615.log",
-      "MANIFEST-2",
-      "MANIFEST-000000",
-      "+00100.log",
-      " 000100.log",
-      "000100.log ",
-      "000100.sst",
-      "LOG",
-      "LOG.old",
-      "db/000100.log",
-      "000100.log.dbtmp",
+      "100.log",       "0.log",
+      "000000.log",    "0000100.log",
+      "01000000.ldb",  "018446744073709551615.log",
+      "MANIFEST-2",    "MANIFEST-000000",
+      "+00100.log",    " 000100.log",
+      "000100.log ",   "000100.sst",
+      "LOG",           "LOG.old",
+      "db/000100.log", "000100.log.dbtmp",
   };
 
   for (const std::string_view name : Names) {

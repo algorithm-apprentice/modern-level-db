@@ -156,7 +156,7 @@ Both can increase resource use without copying the entire database.
 | [`memtable.cc`](../../src/memory/memtable.cc) | Packed entries, lookup, and checked/trusted insertion |
 | [`database.cc`](../../src/engine/database.cc) | `CommitWrite`, `GetSnapshot`, and `ReleaseSnapshot` |
 | [`memtable_test.cc`](../../tests/unit/memory/memtable_test.cc) | Visibility and deletion examples |
-| [`public_api_posix_test.cc`](../../tests/unit/api/public_api_posix_test.cc) | Snapshot and child-handle lifetimes |
+| [`public_api_native_test.cc`](../../tests/unit/api/public_api_native_test.cc) | Snapshot and child-handle lifetimes |
 
 For design history, read [ADR-0015](../adr/0015-concurrent-skiplist.md),
 [ADR-0017](../adr/0017-arena-backed-memtable.md), and the memory invariants

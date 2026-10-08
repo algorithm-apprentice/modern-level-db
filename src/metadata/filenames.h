@@ -41,6 +41,9 @@ struct ParsedFileName {
 // generators are recognized, so every parsed name regenerates to the same path.
 [[nodiscard]] std::optional<ParsedFileName> ParseFileName(std::string_view file_name) noexcept;
 
+// Classifies a native path's final component without locale-dependent narrowing.
+[[nodiscard]] std::optional<ParsedFileName> ParseNativeFileName(const std::filesystem::path& path);
+
 [[nodiscard]] std::string CurrentFileContents(std::uint64_t descriptor_number);
 [[nodiscard]] Result<std::uint64_t> ParseCurrentFileContents(std::string_view contents);
 

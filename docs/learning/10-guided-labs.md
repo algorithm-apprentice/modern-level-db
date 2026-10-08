@@ -9,8 +9,11 @@ result from the implementation. Passing commands alone do not complete a lab.
 
 Use a C++23-capable toolchain, CMake, Ninja, and the prerequisites in the
 root [README](../../README.md).
-Database-based labs require the current Linux/macOS POSIX backend; portable
-format and memory components can also be studied on other build platforms.
+Database-based labs use the Linux/macOS POSIX backend or the admitted
+x64/MSVC Windows backend with explicit weak-namespace consent. Read the
+Windows guarantee boundary in the root README before opting in. On Windows,
+use the `windows-debug` preset from an initialized x64 developer environment;
+portable format and memory components remain available on other platforms.
 Run these once from the repository root:
 
 ```bash

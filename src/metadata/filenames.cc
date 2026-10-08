@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 
 #include "modern_leveldb/base/result.h"
 
@@ -91,8 +92,7 @@ std::filesystem::path LogFileName(const std::filesystem::path& directory, std::u
   return directory / NumberedName(number, LogSuffix);
 }
 
-std::filesystem::path TableFileName(const std::filesystem::path& directory,
-                                    std::uint64_t number) {
+std::filesystem::path TableFileName(const std::filesystem::path& directory, std::uint64_t number) {
   assert(number > 0);
   return directory / NumberedName(number, TableSuffix);
 }
@@ -133,6 +133,24 @@ std::optional<ParsedFileName> ParseFileName(std::string_view file_name) noexcept
     }
   }
   return std::nullopt;
+}
+
+std::optional<ParsedFileName> ParseNativeFileName(const std::filesystem::path& path) {
+  const std::filesystem::path leaf = path.filename();
+  const auto& native = leaf.native();
+  std::array<char, DescriptorPrefix.size() + MaximumDigits> ascii{};
+  if (native.size() > ascii.size()) {
+    return std::nullopt;
+  }
+  using UnsignedCharacter = std::make_unsigned_t<std::filesystem::path::value_type>;
+  for (std::size_t index = 0; index < native.size(); ++index) {
+    const auto value = static_cast<UnsignedCharacter>(native[index]);
+    if (value > 127U) {
+      return std::nullopt;
+    }
+    ascii[index] = static_cast<char>(value);
+  }
+  return ParseFileName(std::string_view(ascii.data(), native.size()));
 }
 
 std::string CurrentFileContents(std::uint64_t descriptor_number) {

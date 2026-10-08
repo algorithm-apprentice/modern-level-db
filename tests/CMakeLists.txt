@@ -69,11 +69,18 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(
     modern_leveldb_unit_tests
     PRIVATE
-      unit/engine/database_posix_test.cc
       unit/diagnostics/posix_output_test.cc
       unit/platform/posix_file_system_test.cc
       unit/table/table_posix_test.cc
-      unit/wal/wal_io_posix_test.cc
+  )
+endif()
+if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux" OR MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+  target_sources(
+    modern_leveldb_unit_tests
+    PRIVATE
+      unit/engine/database_native_test.cc
+      unit/table/table_native_test.cc
+      unit/wal/wal_io_native_test.cc
   )
 else()
   target_sources(
@@ -88,7 +95,8 @@ if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
   target_link_libraries(modern_leveldb_windows_lock_child PRIVATE modern_leveldb::modern_leveldb)
   modern_leveldb_set_project_warnings(modern_leveldb_windows_lock_child PRIVATE)
   target_sources(
-    modern_leveldb_unit_tests PRIVATE unit/platform/windows_file_system_test.cc
+    modern_leveldb_unit_tests
+    PRIVATE unit/platform/windows_file_system_test.cc unit/engine/database_windows_test.cc
   )
   target_compile_definitions(
     modern_leveldb_unit_tests
@@ -146,11 +154,14 @@ add_executable(
   modern_leveldb_public_api_tests
   unit/api/public_api_test.cc
 )
-if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+  target_sources(modern_leveldb_public_api_tests PRIVATE unit/api/public_api_windows_test.cc)
+endif()
+if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux" OR MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
   target_sources(
     modern_leveldb_public_api_tests
     PRIVATE
-      unit/api/public_api_posix_test.cc
+      unit/api/public_api_native_test.cc
   )
 else()
   target_sources(

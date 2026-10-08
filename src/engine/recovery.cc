@@ -21,6 +21,7 @@
 #include "metadata/version.h"
 #include "metadata/version_edit.h"
 #include "modern_leveldb/base/bytes.h"
+#include "platform/path.h"
 
 namespace modern_leveldb {
 namespace {
@@ -61,8 +62,8 @@ Status PrepareDirectory(FileSystem& file_system, const std::filesystem::path& di
     return {};
   }
   if (!options.create_if_missing) {
-    return std::unexpected(
-        Error::InvalidArgument("database directory does not exist: " + directory.string()));
+    return std::unexpected(Error::InvalidArgument(
+        "database directory does not exist: " + PathUtf8(directory).value_or("<unrepresentable>")));
   }
   return file_system.CreateDirectory(directory);
 }
@@ -77,8 +78,8 @@ Result<std::unique_ptr<VersionSet>> OpenVersions(FileSystem& file_system,
   }
   if (!*exists) {
     if (!options.create_if_missing) {
-      return std::unexpected(
-          Error::InvalidArgument("database does not exist: " + directory.string()));
+      return std::unexpected(Error::InvalidArgument(
+          "database does not exist: " + PathUtf8(directory).value_or("<unrepresentable>")));
     }
     // The directory's entry must be durable, even if an earlier attempt
     // created the directory.
@@ -89,7 +90,8 @@ Result<std::unique_ptr<VersionSet>> OpenVersions(FileSystem& file_system,
     return VersionSet::Create(file_system, directory, comparator);
   }
   if (options.error_if_exists) {
-    return std::unexpected(Error::InvalidArgument("database exists: " + directory.string()));
+    return std::unexpected(Error::InvalidArgument(
+        "database exists: " + PathUtf8(directory).value_or("<unrepresentable>")));
   }
   return VersionSet::Recover(file_system, directory, comparator);
 }
@@ -106,7 +108,7 @@ Result<std::vector<std::uint64_t>> SelectLogs(FileSystem& file_system,
   std::set<std::uint64_t> tables;
   std::vector<std::uint64_t> logs;
   for (const std::filesystem::path& name : *names) {
-    const std::optional<ParsedFileName> parsed = ParseFileName(name.string());
+    const std::optional<ParsedFileName> parsed = ParseNativeFileName(name);
     if (!parsed.has_value()) {
       continue;
     }
@@ -121,8 +123,9 @@ Result<std::vector<std::uint64_t>> SelectLogs(FileSystem& file_system,
   for (std::uint32_t level = 0; level < NumLevels; ++level) {
     for (const Version::File& file : versions.current()->files(level)) {
       if (!tables.contains(file->number)) {
-        return std::unexpected(Error::Corruption("table file is missing: " +
-                                                 TableFileName(directory, file->number).string()));
+        return std::unexpected(Error::Corruption(
+            "table file is missing: " +
+            PathUtf8(TableFileName(directory, file->number)).value_or("<unrepresentable>")));
       }
     }
   }

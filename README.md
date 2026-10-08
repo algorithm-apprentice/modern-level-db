@@ -55,10 +55,10 @@ maintenance state while keeping engine and child-handle lifetimes safe. The
 canonical MVP implementation also includes reproducible model,
 upstream compatibility, power-loss, sanitizer, fuzz, and benchmark gates.
 
-An internal x64/MSVC Windows filesystem now provides copied reads, native
-locks, Unicode/long paths, and an explicit weak namespace policy. It is not
-yet selected by public database opening; Windows database integration follows
-the accepted [sequential delivery design](docs/adr/0064-windows-filesystem-and-delivery.md).
+The x64/MSVC Windows backend provides copied reads, native locks, Unicode/long
+paths, and real database opening through an explicit weak namespace opt-in.
+Its guarantees and remaining delivery slices are recorded in
+[ADR-0064](docs/adr/0064-windows-filesystem-and-delivery.md).
 
 ## Goals
 
@@ -200,6 +200,51 @@ Use it only on files from a closed database, a stable fixture, or a consistent
 offline copy. Do not redirect stdout onto an input or any database file.
 Output can contain sensitive application keys and values. Set
 `MODERN_LEVELDB_BUILD_TOOLS=OFF` to omit the executable.
+
+## Windows database support
+
+Windows 10/11 desktop, native x64 MSVC, and local fixed NTFS volumes are
+supported with copied reads. ARM64/ARM64EC, other toolchains, network storage,
+other filesystems, and mapped reads are not admitted by this first backend.
+Native wide paths, including Chinese/non-BMP names and long paths, are used
+without ANSI code-page conversion. Ordinary DOS path components ending in a
+dot or space are rejected; explicitly extended paths retain literal semantics.
+
+Opening requires consent on every open, including reopening:
+
+```cpp
+modern_leveldb::Options options;
+options.create_if_missing = true;
+options.allow_weak_namespace_durability = true;
+auto opened = modern_leveldb::Database::Open(options, std::filesystem::path{u8"example-db"});
+```
+
+**This opts into weaker namespace durability, not POSIX-equivalent power-loss
+safety.** Synchronous writes still flush file bytes before acknowledgement,
+but no ordinary-privilege directory-entry persistence barrier is claimed.
+OS crash or power loss may lose database filenames and acknowledged data or
+prevent recovery. Keep the default `false` when that limitation is unacceptable:
+Windows opening returns `NotSupported` before creating or locking the database.
+`sync_wal_creation = false` does not waive the consent requirement. POSIX and
+explicit internal filesystems retain their existing contracts.
+
+For builds, use an **x64 Native Tools Command Prompt** and Windows-native
+CMake/Ninja. Visual Studio's bundled CMake is suitable; an MSYS-built CMake
+can fail Windows SDK resource compilation in shared-codec consumers.
+
+```text
+cmake --preset windows-debug
+cmake --build --preset windows-debug
+ctest --preset windows-debug
+cmake --preset windows-release
+cmake --build --preset windows-release
+ctest --preset windows-release
+```
+
+The Windows presets require the initialized developer environment; they are
+not Linux/macOS presets and do not carry GCC coverage or sanitizer flags.
+Extended crash/compatibility tests, the Windows dump command, and benchmarks
+are separate sequential delivery slices, not yet enabled by this integration.
 
 ## Development
 

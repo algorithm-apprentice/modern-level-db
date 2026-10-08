@@ -347,17 +347,16 @@ failures may throw according to ADR-0004.
 
 ## POSIX backend scope
 
-The first implementation supports Linux and macOS. POSIX sources and tests are
-compiled only on CMake `UNIX` platforms. Windows continues to compile the
-portable interfaces but has no native backend until a future requirement and
-ADR define one.
+The first implementation supported Linux and macOS. POSIX sources and tests
+remain selected only for those admitted platforms. Windows initially compiled
+only portable interfaces; ADR-0064 supplies the later native backend.
 
 [ADR-0064](0064-windows-filesystem-and-delivery.md), accepted by PR #97, adds
 an internal x64/MSVC Windows backend with copied reads and an explicit
 weak-namespace policy rather than silently treating a Windows no-op as POSIX
-directory synchronization. The native filesystem exists, but public database
-integration remains a separate slice; default Windows opening still returns
-NotSupported. POSIX durability guarantees are unchanged.
+directory synchronization. Public Windows opening now requires explicit
+`allow_weak_namespace_durability` consent; default opening still returns
+NotSupported before database mutation. POSIX durability guarantees are unchanged.
 
 The initial backend does not add:
 

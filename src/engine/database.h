@@ -56,13 +56,15 @@ struct DatabaseEngineOptions {
   TableBuilderOptions table_options{};
   // Without one, the database owns an 8 MiB block cache.
   BlockCache* block_cache = nullptr;
-  // Without them, the database uses the POSIX file system, a serial executor,
-  // and the system clock. Each must outlive the database. An executor must
+  // Without them, the database uses its admitted native file system, a serial
+  // executor, and the system clock. Each must outlive the database. An executor must
   // queue tasks without running them in Schedule, and must eventually run
   // every task it accepts while the database is open.
   FileSystem* file_system = nullptr;
   BackgroundExecutor* executor = nullptr;
   Clock* clock = nullptr;
+  // Applies only to the owned Windows backend, never to an injected filesystem.
+  bool allow_weak_namespace_durability = false;
 };
 
 // Returns the options clipped to LevelDB's ranges: max_open_files to 74
@@ -110,7 +112,8 @@ class DatabaseEngine final {
   [[nodiscard]] static Result<std::unique_ptr<DatabaseEngine>> Open(
       DatabaseEngineOptions options, std::filesystem::path directory);
 
-  DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options, std::filesystem::path directory);
+  DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options, std::filesystem::path directory,
+                 std::unique_ptr<FileSystem> owned_file_system);
   DatabaseEngine(const DatabaseEngine&) = delete;
   DatabaseEngine& operator=(const DatabaseEngine&) = delete;
   DatabaseEngine(DatabaseEngine&&) = delete;

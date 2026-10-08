@@ -30,6 +30,8 @@
 #include "metadata/version_edit.h"
 #if defined(MODERN_LEVELDB_HAVE_POSIX_FILE_SYSTEM)
 #include "platform/posix_file_system.h"
+#elif defined(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+#include "platform/windows_file_system.h"
 #endif
 
 namespace modern_leveldb {
@@ -41,14 +43,25 @@ constexpr std::size_t NonTableFiles = 10;
 // The block cache that a database owns when it is given none.
 constexpr std::size_t DefaultBlockCacheSize = std::size_t{8} << 20U;
 
-std::unique_ptr<FileSystem> OwnedFileSystem(const DatabaseEngineOptions& options) {
+Result<std::unique_ptr<FileSystem>> PrepareOwnedFileSystem(const DatabaseEngineOptions& options,
+                                                           std::filesystem::path& directory) {
   if (options.file_system != nullptr) {
-    return nullptr;
+    return std::unique_ptr<FileSystem>{};
   }
 #if defined(MODERN_LEVELDB_HAVE_POSIX_FILE_SYSTEM)
+  static_cast<void>(directory);
   return std::make_unique<PosixFileSystem>(options.allow_mmap_reads);
+#elif defined(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+  auto file_system = std::make_unique<WindowsFileSystem>(options.allow_weak_namespace_durability);
+  auto prepared = file_system->PrepareDatabaseDirectory(directory);
+  if (!prepared.has_value()) {
+    return std::unexpected(prepared.error());
+  }
+  directory = std::move(*prepared);
+  return std::unique_ptr<FileSystem>(std::move(file_system));
 #else
-  return nullptr;
+  static_cast<void>(directory);
+  return std::unexpected(Error::NotSupported("this platform has no default file system"));
 #endif
 }
 
@@ -146,15 +159,15 @@ DatabaseEngineOptions SanitizeOptions(DatabaseEngineOptions options) {
 
 Result<std::unique_ptr<DatabaseEngine>> DatabaseEngine::Open(DatabaseEngineOptions options,
                                                              std::filesystem::path directory) {
+  auto file_system = PrepareOwnedFileSystem(options, directory);
 #if !defined(MODERN_LEVELDB_HAVE_POSIX_FILE_SYSTEM)
-  // Only the POSIX backend exists (ADR-0011), so elsewhere the caller gives
-  // the file system.
-  if (options.file_system == nullptr) {
-    return std::unexpected(Error::NotSupported("this platform has no default file system"));
+  if (!file_system.has_value()) {
+    return std::unexpected(file_system.error());
   }
 #endif
   options = SanitizeOptions(std::move(options));
-  auto database = std::make_unique<DatabaseEngine>(PrivateTag(), options, std::move(directory));
+  auto database = std::make_unique<DatabaseEngine>(PrivateTag(), options, std::move(directory),
+                                                   std::move(*file_system));
   const Status recovered = database->Recover(options);
   if (!recovered.has_value()) {
     return std::unexpected(recovered.error());
@@ -163,8 +176,9 @@ Result<std::unique_ptr<DatabaseEngine>> DatabaseEngine::Open(DatabaseEngineOptio
 }
 
 DatabaseEngine::DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options,
-                               std::filesystem::path directory)
-    : owned_file_system_(OwnedFileSystem(options)),
+                               std::filesystem::path directory,
+                               std::unique_ptr<FileSystem> owned_file_system)
+    : owned_file_system_(std::move(owned_file_system)),
       owned_block_cache_(OwnedBlockCache(options)),
       owned_clock_(OwnedClock(options)),
       write_buffer_size_(options.write_buffer_size),
@@ -666,7 +680,7 @@ void DatabaseEngine::RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock) {
   }
   std::vector<std::filesystem::path> obsolete;
   for (const std::filesystem::path& child : *children) {
-    const std::optional<ParsedFileName> parsed = ParseFileName(child.filename().string());
+    const std::optional<ParsedFileName> parsed = ParseNativeFileName(child);
     if (!parsed.has_value()) {
       continue;
     }

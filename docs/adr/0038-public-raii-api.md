@@ -8,6 +8,11 @@ Accepted
 removes synchronous per-call database-state/snapshot-registration shared
 copies. Returned iterators and snapshots retain the existing shared lifetime.
 
+[ADR-0064](0064-windows-filesystem-and-delivery.md) appends the explicit
+Windows weak-namespace consent option and admits the native x64/MSVC backend.
+The option defaults to false; POSIX behavior and child-handle ownership remain
+unchanged. Earlier POSIX-only platform descriptions below are historical.
+
 ## Context
 
 The engine in ADR-0037 now implements opening, recovery, writes, reads,
