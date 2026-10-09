@@ -57,6 +57,15 @@
       "compatibility": "preserve-path-and-anchors"
     },
     {
+      "glob": "docs/reference/*.md",
+      "class": "user-reference",
+      "lifecycle": "current",
+      "owner_node": "docs-user-reference",
+      "destination": "same-path",
+      "disposition": "create",
+      "compatibility": "stable-reference-paths"
+    },
+    {
       "glob": "docs/learning/*.md",
       "class": "learning",
       "lifecycle": "current",
@@ -85,11 +94,6 @@
     }
   ],
   "future_roots": [
-    {
-      "glob": "docs/reference/*.md",
-      "class": "user-reference",
-      "owner_node": "docs-user-reference"
-    },
     {
       "glob": "docs/development/*.md",
       "class": "development-reference",

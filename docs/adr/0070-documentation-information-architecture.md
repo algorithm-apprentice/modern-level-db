@@ -2,9 +2,10 @@
 
 ## Status and scope
 
-Proposed after the complete 88-file professional documentation audit on
-2026-10-09. This design is the first node in the documentation-remediation
-DAG. Broad rewrites do not begin until this ADR is reviewed and merged.
+Design accepted and merged by PR #111 on 2026-10-09 after the complete
+88-file professional documentation audit. This design is the first node in
+the documentation-remediation DAG; dependent migration proceeds through
+separate sequential PRs.
 
 The audit found no P1 blocker and strong baseline formatting, safety language,
 learning progression, and later-ADR outcomes. It also found current guidance

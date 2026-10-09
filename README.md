@@ -88,6 +88,7 @@ completed sequential delivery record are documented in
 
 ## Architecture
 
+- [Current user reference](docs/reference/README.md)
 - [Guided learning path: concepts, code tours, and hands-on labs](docs/learning/README.md)
 - [LevelDB architecture analysis](docs/architecture.md)
 - [Implementation dependency DAG](docs/dependency-dag.md)
@@ -104,14 +105,20 @@ Link `modern_leveldb::modern_leveldb` and include the public facade:
 
 modern_leveldb::Options options;
 options.create_if_missing = true;
+#if defined(_WIN32)
+// Required for the admitted native Windows backend. This does not provide
+// POSIX-equivalent namespace durability.
+options.allow_weak_namespace_durability = true;
+#endif
 // Snappy is the default. Compression::None and Compression::Zstd are also
 // available; Zstd levels -5 through 22 are accepted.
 // Read-only mappings are the default on admitted POSIX and Windows backends.
 // Mapped storage faults can terminate via POSIX SIGBUS or a Windows in-page
 // exception instead of returning typed I/O. Set false to force copied reads.
 // options.allow_mmap_reads = false;
-// New WAL files are durably created by default. Set false only to match
-// LevelDB's weaker WAL-creation durability behavior.
+// The initial empty WAL is synced and its namespace barrier is requested
+// before it accepts writes. Later WAL rotation requests the namespace barrier.
+// Windows weak mode has no POSIX-equivalent directory persistence barrier.
 // options.sync_wal_creation = false;
 auto opened = modern_leveldb::Database::Open(options, "example-db");
 if (!opened.has_value()) {
