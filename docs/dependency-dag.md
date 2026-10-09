@@ -2,63 +2,19 @@
 
 ## Purpose
 
-Modern LevelDB is implemented as a directed acyclic graph of independently
-verifiable modules. Dependency edges represent compile-time or semantic
-prerequisites, not scheduling preferences.
+Modern LevelDB was delivered as a directed acyclic graph of independently
+verifiable delivery nodes. Edges in this document represent implementation or
+documentation prerequisites, not the current compile-time module graph.
 
 Only one implementation node is developed at a time. Independent ready nodes
 remain pending until the current node is complete.
 
-## Layer graph
+## Architecture boundary
 
-Arrows point from a dependent layer to a prerequisite layer.
-
-```mermaid
-flowchart TD
-  API[api]
-  DIAGNOSTICS[diagnostics]
-  ENGINE[engine]
-  METADATA[metadata]
-  TABLE[table]
-  MEMORY[memory]
-  FORMAT[format]
-  PLATFORM[platform]
-  BASE[base]
-  INSTRUMENTATION[instrumentation]
-
-  API --> ENGINE
-  API -. read profiling .-> INSTRUMENTATION
-  DIAGNOSTICS --> METADATA
-  DIAGNOSTICS --> TABLE
-  DIAGNOSTICS --> WAL
-  DIAGNOSTICS --> FORMAT
-  DIAGNOSTICS --> PLATFORM
-  DIAGNOSTICS --> BASE
-  ENGINE --> METADATA
-  ENGINE --> TABLE
-  ENGINE --> MEMORY
-  ENGINE --> FORMAT
-  ENGINE --> PLATFORM
-  ENGINE -. read profiling .-> INSTRUMENTATION
-  METADATA --> TABLE
-  METADATA --> FORMAT
-  METADATA --> PLATFORM
-  TABLE --> FORMAT
-  TABLE --> PLATFORM
-  TABLE --> BASE
-  TABLE -. read profiling .-> INSTRUMENTATION
-  MEMORY --> FORMAT
-  MEMORY --> BASE
-  FORMAT --> BASE
-  FORMAT -. read profiling .-> INSTRUMENTATION
-  PLATFORM --> BASE
-  PLATFORM -. read profiling .-> INSTRUMENTATION
-```
-
-The optional `instrumentation` leaf uses only the standard library. Dashed
-edges exist only in the separately compiled read-diagnostic library, not the
-ordinary library. Storage-file `diagnostics` remains a high-level decoder
-consumer, distinct from profiling collection.
+The implemented module/layer graph is maintained in
+[architecture.md](architecture.md). This document owns delivery nodes,
+prerequisites, canonical execution order, and completion state. It does not
+duplicate the current source-module graph.
 
 ## Nodes and direct dependencies
 
@@ -136,8 +92,8 @@ design gate and independent implementation reviews.
 |---|---|---|---|
 | `docs-information-architecture` | Audience map, document taxonomy, sources of truth, status/supersession rules, migration DAG, and quality boundaries | None | ADR-0070, implemented by PR #111 |
 | `docs-user-reference` | Current prerequisites, consumption, API/options, platform/durability, and diagnostic reference | `docs-information-architecture` | Implemented by PR #112 |
-| `docs-development-reference` | Current build/test/CI/benchmark/profiling procedures and schema/provenance reference | `docs-information-architecture` | Implemented |
-| `docs-architecture-refresh` | Current module graph, dependency edges, source layout, and implementation-order history | `docs-information-architecture` | ADR-0070 plan |
+| `docs-development-reference` | Current build/test/CI/benchmark/profiling procedures and schema/provenance reference | `docs-information-architecture` | Implemented by PR #113 |
+| `docs-architecture-refresh` | Current module graph, dependency edges, source layout, and implementation-order history | `docs-information-architecture` | Implemented |
 | `docs-adr-governance` | ADR index, lifecycle metadata, supersession notes, immutable evidence links, and unique anchors | `docs-information-architecture` | ADR-0070 plan |
 | `docs-quality-automation` | Link/anchor/heading/fence/encoding/preset/index and command-smoke documentation gates | `docs-user-reference`, `docs-development-reference`, `docs-architecture-refresh`, `docs-adr-governance` | ADR-0070 plan |
 | `docs-learning-cross-platform` | Executable lab paths, current POSIX/Windows behavior, and indexed decision links | `docs-user-reference`, `docs-development-reference`, `docs-architecture-refresh`, `docs-adr-governance`, `docs-quality-automation` | ADR-0070 plan |

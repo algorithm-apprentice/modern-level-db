@@ -4,8 +4,8 @@
 
 This document separates the original LevelDB implementation into logical
 components, describes the important runtime flows, identifies dependency
-problems that should not be reproduced, and defines the target architecture for
-Modern LevelDB.
+problems that should not be reproduced, and defines the current architecture
+of Modern LevelDB.
 
 The reference source analyzed for this document is Google LevelDB
 `7ee830d02b623e8ffe0b95d59a74db1e58da04c5`.
@@ -195,39 +195,107 @@ are not layered:
 These are not literal include cycles, but they prevent directory boundaries
 from expressing a stable dependency direction.
 
-## Target architecture
+## Current Modern LevelDB architecture
 
 Modern LevelDB uses the following dependency layers. A module may depend on
-modules in lower layers and, in dependency-DAG order, on modules in its own
-layer, but never on a module in a higher layer.
+modules in lower layers and on explicitly documented peers, but never on a
+higher layer.
 
 | Layer | Modules | Responsibility |
 |---|---|---|
-| 0 | `base`, `instrumentation` | Byte views, errors, results, coding, checksums, hashing, assertions; optional standard-library-only profiling collection |
-| 1 | `platform` | Filesystem, files, locking, clock, executor, logging |
-| 2 | `format` | Internal keys, WAL records, block/SST formats, MANIFEST records |
-| 3 | `wal`, `memory` | WAL stream I/O; arena, skip list, write batch, memtable |
-| 4 | `table` | Blocks, filters, SST reader/writer |
-| 5 | `metadata` | Filenames, versions, version edits, version set |
+| 0 | `base`, `instrumentation` | Byte views, errors, results, coding, comparators, checksums, hashing; optional standard-library-only profiling collection |
+| 1 | `cache`, `platform` | Generic sharded cache; filesystem, files, locking, clock, and executor |
+| 2 | `format` | Internal keys, write-batch encoding, and WAL physical-record encoding |
+| 3 | `wal`, `memory` | WAL stream I/O; arena, skip list, and memtable |
+| 4 | `table` | Block/SST formats, filters, compression, SST reader/writer, block cache values |
+| 5 | `metadata` | Filenames, immutable versions, version edits, version set and MANIFEST persistence |
 | 6 | `engine` | Table cache, recovery, read/write paths, flush, compaction, snapshots, DB state |
-| 7 | `api`, `diagnostics` | Public RAII facade; read-only storage-file diagnostics and tool support |
+| 7 | `api`, `diagnostics` | Public RAII facade; read-only storage-file diagnostics, native output, and tool support |
+
+### Implemented module graph
+
+Arrows point from a dependent module to a direct prerequisite. Dashed
+instrumentation edges exist only in the separately compiled read-diagnostic
+library; the ordinary library compiles those hooks out.
+
+```mermaid
+flowchart TD
+  API[api]
+  DIAGNOSTICS[diagnostics]
+  ENGINE[engine]
+  METADATA[metadata]
+  TABLE[table]
+  WAL[wal]
+  MEMORY[memory]
+  FORMAT[format]
+  CACHE[cache]
+  PLATFORM[platform]
+  BASE[base]
+  INSTRUMENTATION[instrumentation]
+
+  API --> ENGINE
+  API --> TABLE
+  API --> FORMAT
+  API --> BASE
+  API -. read profiling .-> INSTRUMENTATION
+
+  DIAGNOSTICS --> METADATA
+  DIAGNOSTICS --> TABLE
+  DIAGNOSTICS --> WAL
+  DIAGNOSTICS --> FORMAT
+  DIAGNOSTICS --> PLATFORM
+  DIAGNOSTICS --> BASE
+
+  ENGINE --> METADATA
+  ENGINE --> TABLE
+  ENGINE --> WAL
+  ENGINE --> MEMORY
+  ENGINE --> FORMAT
+  ENGINE --> CACHE
+  ENGINE --> PLATFORM
+  ENGINE --> BASE
+  ENGINE -. read profiling .-> INSTRUMENTATION
+
+  METADATA --> WAL
+  METADATA --> FORMAT
+  METADATA --> PLATFORM
+  METADATA --> BASE
+
+  TABLE --> CACHE
+  TABLE --> FORMAT
+  TABLE --> PLATFORM
+  TABLE --> BASE
+  TABLE -. read profiling .-> INSTRUMENTATION
+
+  WAL --> FORMAT
+  WAL --> PLATFORM
+  WAL --> BASE
+  MEMORY --> FORMAT
+  MEMORY --> BASE
+  FORMAT --> BASE
+  FORMAT -. read profiling .-> INSTRUMENTATION
+  CACHE --> BASE
+  PLATFORM --> BASE
+  PLATFORM -. read profiling .-> INSTRUMENTATION
+```
 
 ### Required dependency rules
 
 1. The public API is a facade and is never included by lower layers.
 2. Format modules are pure encoders and decoders and perform no filesystem I/O.
 3. Platform modules know nothing about LSM concepts.
-4. Table modules depend on internal-key comparison through `format`, not on the
+4. Cache and platform primitives remain below formats/tables/engine policy.
+5. Table modules depend on internal-key comparison through `format`, not on the
    DB engine.
-5. Metadata modules describe immutable LSM state; orchestration remains in
+6. Metadata modules describe immutable LSM state; orchestration remains in
    `engine`.
-6. Background execution is injected through an interface and does not own DB
+7. Background execution is injected through an interface and does not own DB
    policy.
-7. Owning raw pointers are forbidden. Borrowed references must be explicit in
+8. Owning raw pointers are forbidden. Borrowed references must be explicit in
    API contracts.
-8. Each persistent transition has a documented synchronization order and a
+9. Each persistent transition has a documented synchronization order and a
    fault-injection test.
-9. Diagnostics depend on existing decoders, never on the engine or public API,
+10. Diagnostics depend on existing decoders, never on the engine or public API,
    and never mutate database files.
 
 `instrumentation` is a leaf used only by compile-time-enabled read-profiling
@@ -236,10 +304,11 @@ engine, platform, or decoder dependency. The ordinary library compiles those
 hooks out. It is not the layer-seven storage-file `diagnostics` module; see
 [ADR-0063](adr/0063-audit-contract-and-validation-repairs.md).
 
-## Planned source layout
+## Current source layout
 
 ```text
 include/modern_leveldb/
+  base/
   database_state.h
   db.h
   iterator.h
@@ -247,7 +316,10 @@ include/modern_leveldb/
   snapshot.h
   write_batch.h
 src/
+  api/
   base/
+  cache/
+  diagnostics/
   platform/
   format/
   instrumentation/
@@ -256,18 +328,26 @@ src/
   table/
   metadata/
   engine/
-  diagnostics/
 tests/
-  unit/
-  model/
+  cmake/
   compatibility/
   crash/
+  extended/
+  model/
+  support/
+  tools/
+  unit/
 fuzz/
 benchmarks/
+cmake/
 tools/
 docs/
   adr/
+  development/
+  learning/
+  reference/
 ```
 
-The complete implementation order is defined in
-[`dependency-dag.md`](dependency-dag.md).
+The historical implementation and current remediation order are defined in
+[`dependency-dag.md`](dependency-dag.md). That document owns delivery-node
+dependencies; this document owns the current module graph.
