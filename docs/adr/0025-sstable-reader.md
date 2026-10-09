@@ -251,4 +251,4 @@ reader.
 - [Google LevelDB table reader](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/table/table.cc)
 - [Google LevelDB two-level iterator](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/table/two_level_iterator.cc)
 - [Google LevelDB lookup callback](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/version_set.cc)
-- [RocksDB block-based table reader](https://github.com/facebook/rocksdb/blob/main/table/block_based/block_based_table_reader.cc)
+- [RocksDB block-based table reader](https://github.com/facebook/rocksdb/blob/928527b86951a91367415b0023306735e8f0961b/table/block_based/block_based_table_reader.cc)

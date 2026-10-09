@@ -301,6 +301,6 @@ unmodified LevelDB.
 
 - [Google LevelDB MemTable](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/memtable.cc)
 - [Google LevelDB LookupKey](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/dbformat.h)
-- [RocksDB MemTable](https://github.com/facebook/rocksdb/blob/main/db/memtable.h)
-- [RocksDB skip-list representation](https://github.com/facebook/rocksdb/blob/main/memtable/skiplistrep.cc)
+- [RocksDB MemTable](https://github.com/facebook/rocksdb/blob/928527b86951a91367415b0023306735e8f0961b/db/memtable.h)
+- [RocksDB skip-list representation](https://github.com/facebook/rocksdb/blob/928527b86951a91367415b0023306735e8f0961b/memtable/skiplistrep.cc)
 - [Pebble arena skip list](https://github.com/cockroachdb/pebble/blob/master/internal/arenaskl/skl.go)

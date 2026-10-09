@@ -1,6 +1,9 @@
 # ADR-0033: Memtable Flush
 
 - Status: Accepted
+- Amended by: [ADR-0060](0060-leveldb-write-path-parity.md) refines trusted
+  internal table-building work and shutdown rechecks. The level-selection
+  decision in this ADR remains current.
 - Date: 2026-09-24
 
 ## Context
@@ -201,4 +204,4 @@ at levels 0, 1, and 2 and every reason to stop.
 
 - [Google LevelDB `DBImpl::CompactMemTable` and `WriteLevel0Table`](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/db_impl.cc)
 - [Google LevelDB `Version::PickLevelForMemTableOutput`](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/version_set.cc)
-- [RocksDB `FlushJob`](https://github.com/facebook/rocksdb/blob/main/db/flush_job.cc)
+- [RocksDB `FlushJob`](https://github.com/facebook/rocksdb/blob/928527b86951a91367415b0023306735e8f0961b/db/flush_job.cc)

@@ -243,4 +243,4 @@ and at the last sequence also with LevelDB's own iterator.
 - [Google LevelDB two-level iterator](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/table/two_level_iterator.cc)
 - [Google LevelDB `DBIter`](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/db_iter.cc)
 - [Google LevelDB `Version::AddIterators`](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/version_set.cc)
-- [RocksDB `DBIter`](https://github.com/facebook/rocksdb/blob/main/db/db_iter.cc)
+- [RocksDB `DBIter`](https://github.com/facebook/rocksdb/blob/928527b86951a91367415b0023306735e8f0961b/db/db_iter.cc)

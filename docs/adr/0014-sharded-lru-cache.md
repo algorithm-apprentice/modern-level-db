@@ -228,4 +228,4 @@ the table/block callers and benchmarks exist.
 
 - [Google LevelDB cache interface](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/include/leveldb/cache.h)
 - [Google LevelDB sharded LRU implementation](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/util/cache.cc)
-- [RocksDB cache options](https://github.com/facebook/rocksdb/blob/main/include/rocksdb/cache.h)
+- [RocksDB cache options](https://github.com/facebook/rocksdb/blob/928527b86951a91367415b0023306735e8f0961b/include/rocksdb/cache.h)

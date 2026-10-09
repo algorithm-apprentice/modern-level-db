@@ -229,4 +229,4 @@ unmodified LevelDB in both directions.
 - [Google LevelDB version edit](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/version_edit.h)
 - [Google LevelDB version edit implementation](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/version_edit.cc)
 - [Google LevelDB version edit tests](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/version_edit_test.cc)
-- [RocksDB version edit](https://github.com/facebook/rocksdb/blob/main/db/version_edit.h)
+- [RocksDB version edit](https://github.com/facebook/rocksdb/blob/928527b86951a91367415b0023306735e8f0961b/db/version_edit.h)

@@ -174,4 +174,4 @@ files byte for byte.
 - [Google LevelDB table builder](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/table/table_builder.cc)
 - [Google LevelDB flush](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/builder.cc)
 - [Google LevelDB compaction output](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/db_impl.cc)
-- [RocksDB block-based table builder](https://github.com/facebook/rocksdb/blob/main/table/block_based/block_based_table_builder.cc)
+- [RocksDB block-based table builder](https://github.com/facebook/rocksdb/blob/928527b86951a91367415b0023306735e8f0961b/table/block_based/block_based_table_builder.cc)

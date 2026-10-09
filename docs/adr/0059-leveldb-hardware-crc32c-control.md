@@ -157,7 +157,7 @@ in both:
 
 This is eight cases, 48 fresh processes.
 
-### Modern versus hardware-enabled LevelDB
+### Cross-engine measurement matrix
 
 From the hardware-enabled candidate executable, compare Modern with its
 hardware-enabled LevelDB adapter for the same eight cases and protocol.
@@ -268,7 +268,7 @@ The 4,096-record differences are small and inconsistent, as expected for a
 cache-fit workload. Hardware CRC materially improves all stabilized
 65,536-record aggregates, by 7.55% through 16.16%.
 
-### Modern versus hardware-enabled LevelDB
+### Measured Modern versus hardware-enabled LevelDB
 
 Positive delta means Modern is slower.
 

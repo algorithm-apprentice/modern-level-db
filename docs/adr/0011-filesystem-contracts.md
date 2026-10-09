@@ -405,7 +405,7 @@ the POSIX implementation still guards those paths explicitly.
 
 - [Google LevelDB `Env`](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/include/leveldb/env.h)
 - [Google LevelDB POSIX backend](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/util/env_posix.cc)
-- [RocksDB `FileSystem`](https://github.com/facebook/rocksdb/blob/main/include/rocksdb/file_system.h)
+- [RocksDB `FileSystem`](https://github.com/facebook/rocksdb/blob/928527b86951a91367415b0023306735e8f0961b/include/rocksdb/file_system.h)
 - [SQLite VFS](https://www.sqlite.org/vfs.html)
 - [POSIX `fsync`/`fdatasync`](https://man7.org/linux/man-pages/man2/fsync.2.html)
 - [POSIX `rename`](https://man7.org/linux/man-pages/man2/rename.2.html)

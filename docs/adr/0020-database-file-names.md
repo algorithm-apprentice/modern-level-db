@@ -206,4 +206,4 @@ results for canonical names with unmodified LevelDB.
 - [Google LevelDB file names](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/filename.h)
 - [Google LevelDB file-name implementation](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/filename.cc)
 - [Google LevelDB file-name tests](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/filename_test.cc)
-- [RocksDB file names](https://github.com/facebook/rocksdb/blob/main/file/filename.h)
+- [RocksDB file names](https://github.com/facebook/rocksdb/blob/928527b86951a91367415b0023306735e8f0961b/file/filename.h)

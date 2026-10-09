@@ -853,7 +853,7 @@ and +14.45% CPU for `overwrite`, -0.93% wall and +1.58% CPU for `writesync`,
 and +4.39% wall and +7.01% CPU for `mixed50`. These are observed
 stronger-WAL-durability ratios, not causal estimates.
 
-#### Decision
+#### Final admission decision
 
 Accept the completed write-path parity implementation. Correctness,
 compatibility, crash, sanitizer, compiler, coverage, benchmark-contract, and

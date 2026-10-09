@@ -1,6 +1,10 @@
 # ADR-0016: Write Batch Format and Reader
 
 - Status: Accepted
+- Amended by: [ADR-0060](0060-leveldb-write-path-parity.md) replaces the
+  private vector-backed representation with string-backed storage and trusted
+  owned iteration. The persistent batch encoding decided here remains
+  current.
 - Date: 2026-09-23
 
 ## Context
@@ -227,4 +231,4 @@ LevelDB. Normal tests remain self-contained.
 - [Google LevelDB write batch API](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/include/leveldb/write_batch.h)
 - [Google LevelDB write batch format](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/write_batch.cc)
 - [Google LevelDB write batch tests](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/write_batch_test.cc)
-- [RocksDB write batch API](https://github.com/facebook/rocksdb/blob/main/include/rocksdb/write_batch.h)
+- [RocksDB write batch API](https://github.com/facebook/rocksdb/blob/928527b86951a91367415b0023306735e8f0961b/include/rocksdb/write_batch.h)

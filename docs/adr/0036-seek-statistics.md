@@ -220,4 +220,4 @@ ADR-0034's tested `PickCompaction`.
 
 - [Google LevelDB `Version::Get`, `UpdateStats`, and `RecordReadSample`](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/version_set.cc)
 - [Google LevelDB `DBIter::ParseKey`](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/db_iter.cc)
-- [RocksDB 3.2.0 release notes](https://github.com/facebook/rocksdb/blob/main/HISTORY.md)
+- [RocksDB 3.2.0 release notes](https://github.com/facebook/rocksdb/blob/928527b86951a91367415b0023306735e8f0961b/HISTORY.md)

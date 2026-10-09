@@ -488,6 +488,6 @@ selection, cache redesign, output ownership, and prefetch separate.
 - [ADR-0049 point-read attribution and retained baseline](0049-leveldb-style-point-read-baseline.md)
 - [Pinned LevelDB POSIX files](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/util/env_posix.cc)
 - [Pinned LevelDB stored-block reading](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/table/format.cc)
-- [RocksDB `allow_mmap_reads`](https://github.com/facebook/rocksdb/blob/main/include/rocksdb/options.h)
+- [RocksDB `allow_mmap_reads`](https://github.com/facebook/rocksdb/blob/928527b86951a91367415b0023306735e8f0961b/include/rocksdb/options.h)
 - [POSIX `mmap`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/mmap.html)
 - [Linux `mmap(2)`](https://man7.org/linux/man-pages/man2/mmap.2.html)
