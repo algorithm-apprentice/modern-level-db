@@ -130,6 +130,20 @@ explicit weak namespace consent; it does not enable strict default opening or
 change POSIX durability guarantees. Each high-risk slice retained its own
 design gate and independent implementation reviews.
 
+## Documentation-system remediation
+
+| Node | Deliverable | Direct dependencies | Decision |
+|---|---|---|---|
+| `docs-information-architecture` | Audience map, document taxonomy, sources of truth, status/supersession rules, migration DAG, and quality boundaries | None | ADR-0070, proposed |
+| `docs-user-reference` | Current prerequisites, consumption, API/options, platform/durability, and diagnostic reference | `docs-information-architecture` | ADR-0070 plan |
+| `docs-development-reference` | Current build/test/CI/benchmark/profiling procedures and schema/provenance reference | `docs-information-architecture` | ADR-0070 plan |
+| `docs-architecture-refresh` | Current module graph, dependency edges, source layout, and implementation-order history | `docs-information-architecture` | ADR-0070 plan |
+| `docs-adr-governance` | ADR index, lifecycle metadata, supersession notes, immutable evidence links, and unique anchors | `docs-information-architecture` | ADR-0070 plan |
+| `docs-quality-automation` | Link/anchor/heading/fence/encoding/preset/index and command-smoke documentation gates | `docs-user-reference`, `docs-development-reference`, `docs-architecture-refresh`, `docs-adr-governance` | ADR-0070 plan |
+| `docs-learning-cross-platform` | Executable lab paths, current POSIX/Windows behavior, and indexed decision links | `docs-user-reference`, `docs-development-reference`, `docs-architecture-refresh`, `docs-adr-governance`, `docs-quality-automation` | ADR-0070 plan |
+| `docs-readme-rewrite` | Concise project entry point and routing to authoritative guides | `docs-user-reference`, `docs-development-reference`, `docs-architecture-refresh`, `docs-learning-cross-platform`, `docs-adr-governance`, `docs-quality-automation` | ADR-0070 plan |
+| `docs-final-editorial-review` | Multi-audience professional review and closure of the rebuilt documentation system | All preceding documentation nodes | ADR-0070 plan |
+
 ## Canonical topological order
 
 The DAG allows more than one valid topological sort. The project uses this

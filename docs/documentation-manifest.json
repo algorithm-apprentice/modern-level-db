@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "matching": "first-match",
+  "rules": [
+    {
+      "path": "README.md",
+      "class": "entry-point",
+      "lifecycle": "current",
+      "owner_node": "docs-readme-rewrite",
+      "destination": "README.md",
+      "disposition": "rewrite",
+      "compatibility": "preserve-root-entry"
+    },
+    {
+      "path": "docs/architecture.md",
+      "class": "architecture",
+      "lifecycle": "current",
+      "owner_node": "docs-architecture-refresh",
+      "destination": "docs/architecture.md",
+      "disposition": "rewrite",
+      "compatibility": "preserve-path-and-anchors-where-practical"
+    },
+    {
+      "path": "docs/dependency-dag.md",
+      "class": "delivery-dag",
+      "lifecycle": "current",
+      "owner_node": "docs-architecture-refresh",
+      "destination": "docs/dependency-dag.md",
+      "disposition": "rewrite",
+      "compatibility": "preserve-path"
+    },
+    {
+      "path": "docs/code-style.md",
+      "class": "development-reference",
+      "lifecycle": "current",
+      "owner_node": "docs-development-reference",
+      "destination": "docs/development/code-style.md",
+      "disposition": "move",
+      "compatibility": "retain-current-path-pointer"
+    },
+    {
+      "path": "docs/profiling-design.md",
+      "class": "historical-handoff",
+      "lifecycle": "historical",
+      "owner_node": "docs-development-reference",
+      "destination": "docs/profiling-design.md",
+      "disposition": "retain-with-current-reference",
+      "compatibility": "preserve-path-and-anchors"
+    },
+    {
+      "path": "docs/write-profiling-design.md",
+      "class": "historical-handoff",
+      "lifecycle": "historical",
+      "owner_node": "docs-development-reference",
+      "destination": "docs/write-profiling-design.md",
+      "disposition": "retain-with-current-reference",
+      "compatibility": "preserve-path-and-anchors"
+    },
+    {
+      "glob": "docs/learning/*.md",
+      "class": "learning",
+      "lifecycle": "current",
+      "owner_node": "docs-learning-cross-platform",
+      "destination": "same-path",
+      "disposition": "rewrite",
+      "compatibility": "preserve-path-and-lesson-numbers"
+    },
+    {
+      "path": "docs/adr/README.md",
+      "class": "decision-index",
+      "lifecycle": "current",
+      "owner_node": "docs-adr-governance",
+      "destination": "docs/adr/README.md",
+      "disposition": "create",
+      "compatibility": "stable-index-path"
+    },
+    {
+      "glob": "docs/adr/*.md",
+      "class": "decision-record",
+      "lifecycle": "historical",
+      "owner_node": "docs-adr-governance",
+      "destination": "same-path",
+      "disposition": "retain",
+      "compatibility": "preserve-path; metadata-and-outcome-may-change"
+    }
+  ],
+  "future_roots": [
+    {
+      "glob": "docs/reference/*.md",
+      "class": "user-reference",
+      "owner_node": "docs-user-reference"
+    },
+    {
+      "glob": "docs/development/*.md",
+      "class": "development-reference",
+      "owner_node": "docs-development-reference"
+    }
+  ]
+}
