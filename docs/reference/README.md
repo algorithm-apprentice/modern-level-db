@@ -29,8 +29,8 @@ Public headers are the compile-time API contract:
 
 The [architecture guide](../architecture.md) explains implementation
 boundaries. The [learning path](../learning/README.md) teaches the engine.
-The [ADR index](../adr/) contains decision history; until its dedicated index
-is delivered, use the numbered files in that directory.
+The [ADR index](../adr/README.md) contains decision history, outcomes,
+amendments, and current-reference links.
 
 ## Safety summary
 
