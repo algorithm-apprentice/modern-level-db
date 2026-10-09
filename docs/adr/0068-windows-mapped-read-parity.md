@@ -1,5 +1,7 @@
 # ADR-0068: Windows Mapped-Read Reference Parity
 
+- Status: Implemented
+
 ## Status and scope
 
 Design accepted and merged by PR #106 on 2026-10-08 after the copied-read

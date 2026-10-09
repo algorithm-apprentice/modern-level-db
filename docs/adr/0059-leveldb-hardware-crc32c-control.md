@@ -1,5 +1,7 @@
 # ADR-0059: Pinned LevelDB Hardware CRC32C Control
 
+- Status: Measurement-only
+
 ## Status
 
 Completed measurement-only control. Bounded GPT-5.6 Sol review required an

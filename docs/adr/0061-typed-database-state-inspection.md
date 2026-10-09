@@ -1,5 +1,7 @@
 # ADR-0061: Typed Database State Inspection
 
+- Status: Implemented
+
 ## Status
 
 Implemented by PR #92 after design PR #91.

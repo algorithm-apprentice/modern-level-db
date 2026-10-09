@@ -1,5 +1,7 @@
 # ADR-0063: Audit Contract and Validation Repairs
 
+- Status: Implemented
+
 ## Status
 
 Implemented as one sequential maintenance slice. The design was recorded

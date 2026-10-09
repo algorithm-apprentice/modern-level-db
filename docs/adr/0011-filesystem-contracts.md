@@ -1,8 +1,9 @@
 # ADR-0011: Filesystem Contracts and POSIX Backend
 
-- Status: Accepted; amended on 2026-09-23 to remove `SequentialFile::Skip`
+- Status: Accepted
+- Lifecycle note: Amended on 2026-09-23 to remove `SequentialFile::Skip`
   after [ADR-0018](0018-wal-stream-io.md) rejected initial-offset WAL reads,
-  its only planned caller
+  its only planned caller.
 - Date: 2026-09-22
 
 [ADR-0050](0050-posix-mmap-table-reads.md) added an optional exact borrowed

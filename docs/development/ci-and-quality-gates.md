@@ -38,6 +38,10 @@ anchors, balanced language-tagged fences, UTF-8/LF/final-newline format,
 privacy-sensitive paths and addresses, immutable-evidence policy, manifest
 classification, and complete ADR index metadata.
 
+Manifest `current`/`historical` values describe document retention, not ADR
+decision outcomes. Each numbered ADR's exact `- Status:` field is the
+decision-lifecycle authority and must match the derived ADR index.
+
 Current documents additionally validate configure/build/test presets, CMake
 targets, Python entry points, generated artifact paths, and versioned report
 schemas against repository sources. Historical ADRs and handoff documents do

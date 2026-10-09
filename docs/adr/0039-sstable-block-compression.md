@@ -1,5 +1,7 @@
 # ADR-0039: SSTable Block Compression
 
+- Status: Accepted
+
 ## Status
 
 Accepted

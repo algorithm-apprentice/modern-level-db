@@ -1,5 +1,7 @@
 # ADR-0057: Pinned LevelDB Version and Output Parity
 
+- Status: Implemented
+
 ## Status
 
 Implemented. The design review completed the read-pin acquisition and

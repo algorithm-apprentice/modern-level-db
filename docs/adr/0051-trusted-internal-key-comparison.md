@@ -1,5 +1,7 @@
 # ADR-0051: Trusted Internal-Key Comparison
 
+- Status: Rejected
+
 ## Status
 
 Experiment completed; the candidate failed admission and was not committed.

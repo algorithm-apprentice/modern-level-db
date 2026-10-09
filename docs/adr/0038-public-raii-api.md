@@ -1,5 +1,7 @@
 # ADR-0038: Public RAII Database API
 
+- Status: Accepted
+
 ## Status
 
 Accepted

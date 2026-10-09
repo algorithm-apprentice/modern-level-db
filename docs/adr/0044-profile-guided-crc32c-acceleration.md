@@ -1,5 +1,7 @@
 # ADR-0044: Profile-Guided CRC32C Acceleration
 
+- Status: Accepted
+
 ## Status
 
 Accepted. Design-only PR #42 was merged before implementation; the candidate

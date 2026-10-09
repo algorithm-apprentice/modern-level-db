@@ -109,6 +109,43 @@ class DocumentationCheckTest(unittest.TestCase):
             "user-reference/current, not decision-record/historical",
         )
 
+    def test_manifest_lifecycle_is_document_retention_not_decision_status(self):
+        repository = self.copy_repository()
+        manifest_path = repository / "docs" / "documentation-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["lifecycle_dimension"]["name"] = "decision-status"
+        self.write(manifest_path, json.dumps(manifest, indent=2) + "\n")
+        self.assert_has(
+            self.messages(repository),
+            "manifest lifecycle_dimension must define document retention separately "
+            "from ADR decision status",
+        )
+
+    def test_adr_status_is_exact_and_matches_the_index(self):
+        repository = self.copy_repository()
+        first = repository / "docs" / "adr" / "0001-ground-up-cpp23-reimplementation.md"
+        self.write(
+            first,
+            first.read_text(encoding="utf-8").replace(
+                "- Status: Accepted", "- Status: Accepted; implemented", 1
+            ),
+        )
+        index = repository / "docs" / "adr" / "README.md"
+        lines = index.read_text(encoding="utf-8").splitlines()
+        lines = [
+            line.replace("| Compatibility | Accepted |", "| Compatibility | Rejected |")
+            if line.startswith("| [ADR-0002:") else line
+            for line in lines
+        ]
+        self.write(index, "\n".join(lines) + "\n")
+        messages = self.messages(repository)
+        self.assert_has(messages, "ADR status must contain exactly one allowed lifecycle label")
+        self.assert_has(
+            messages,
+            "ADR index lifecycle Rejected does not match "
+            "0002-leveldb-format-compatibility.md status Accepted",
+        )
+
     def test_reports_stale_current_commands_and_targets(self):
         repository = self.copy_repository()
         getting_started = repository / "docs" / "reference" / "getting-started.md"

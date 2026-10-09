@@ -1,5 +1,7 @@
 # ADR-0043: Profile-Guided Bytewise Comparison
 
+- Status: Rejected
+
 ## Status
 
 Experiment completed; the candidate was rejected by its admission criteria.

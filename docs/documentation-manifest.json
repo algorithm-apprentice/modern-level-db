@@ -1,6 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "matching": "first-match",
+  "lifecycle_dimension": {
+    "name": "document-retention",
+    "current": "normative current documentation",
+    "historical": "retained decision or research history; not a decision-status label",
+    "adr_decision_status": "the exact - Status field near the top of each numbered ADR"
+  },
   "rules": [
     {
       "path": "README.md",

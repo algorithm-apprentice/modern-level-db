@@ -1,5 +1,7 @@
 # ADR-0042: Benchmark and Profiling Foundation
 
+- Status: Accepted
+
 ## Status
 
 Accepted

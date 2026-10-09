@@ -1,5 +1,7 @@
 # ADR-0060: LevelDB Write-Path Parity
 
+- Status: Implemented
+
 ## Status
 
 The design was accepted by

@@ -1,5 +1,7 @@
 # ADR-0040: Compatibility, Crash, and Fuzz Harness
 
+- Status: Accepted
+
 ## Status
 
 Accepted

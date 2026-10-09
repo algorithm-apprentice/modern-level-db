@@ -1,5 +1,7 @@
 # ADR-0045: Fixed-Work Write and Mixed Profiling
 
+- Status: Accepted
+
 ## Status
 
 Accepted. Design-only PR #44 was reviewed and merged before implementation.

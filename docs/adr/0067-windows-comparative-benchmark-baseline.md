@@ -1,5 +1,7 @@
 # ADR-0067: Windows Comparative Benchmark Baseline
 
+- Status: Implemented
+
 ## Status and scope
 
 Design accepted by PR #104 on 2026-10-08 after native diagnostics PR #103.

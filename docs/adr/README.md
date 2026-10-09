@@ -11,6 +11,12 @@ Lifecycle labels follow
 An accepted ADR can also name later amendments without making the complete
 decision obsolete.
 
+The documentation manifest uses `current` and `historical` for
+**document-retention lifecycle**. A historical decision record is retained
+history; that manifest value does not mean its decision was rejected or
+superseded. The exact `- Status:` field near the top of each ADR is the sole
+decision-lifecycle authority and must match this index.
+
 For current operational behavior, use the linked
 [user reference](../reference/README.md),
 [development guide](../development/README.md), and

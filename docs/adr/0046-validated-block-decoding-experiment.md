@@ -1,5 +1,7 @@
 # ADR-0046: Invariant-Based Decoding of Validated Blocks
 
+- Status: Superseded
+
 ## Status
 
 Historical accepted experiment; its block implementation is superseded by

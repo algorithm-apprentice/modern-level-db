@@ -47,6 +47,12 @@ MANIFEST_FIELDS = {
     "disposition",
     "compatibility",
 }
+MANIFEST_LIFECYCLE_DIMENSION = {
+    "name": "document-retention",
+    "current": "normative current documentation",
+    "historical": "retained decision or research history; not a decision-status label",
+    "adr_decision_status": "the exact - Status field near the top of each numbered ADR",
+}
 EXPECTED_MANIFEST_RULES = {
     ("path", "README.md"): ("entry-point", "current"),
     ("path", "docs/architecture.md"): ("architecture", "current"),
@@ -69,6 +75,9 @@ HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*$")
 FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})(.*)$")
 ADR_FILE = re.compile(r"^(\d{4})-[a-z0-9][a-z0-9-]*\.md$")
 ADR_TITLE = re.compile(r"^# ADR-(\d{4}): (.+)$")
+ADR_STATUS = re.compile(
+    r"^- Status: (Proposed|Accepted|Implemented|Measurement-only|Rejected|Superseded)$"
+)
 ADR_INDEX_ROW = re.compile(
     r"^\| \[ADR-(\d{4}): ([^]]+)\]\((\d{4}-[^)]+\.md)\)"
     r" \| ([^|]+) \| ([^|]+) \|"
@@ -541,10 +550,18 @@ def inspect_manifest(root, document_paths, findings):
     if not isinstance(manifest, dict):
         add_finding(findings, relative_path, 1, "manifest root must be an object")
         return {}
-    if manifest.get("schema_version") != 1:
-        add_finding(findings, relative_path, 1, "manifest schema_version must be 1")
+    if manifest.get("schema_version") != 2:
+        add_finding(findings, relative_path, 1, "manifest schema_version must be 2")
     if manifest.get("matching") != "first-match":
         add_finding(findings, relative_path, 1, "manifest matching must be 'first-match'")
+    if manifest.get("lifecycle_dimension") != MANIFEST_LIFECYCLE_DIMENSION:
+        add_finding(
+            findings,
+            relative_path,
+            1,
+            "manifest lifecycle_dimension must define document retention separately "
+            "from ADR decision status",
+        )
     rules = manifest.get("rules")
     if not isinstance(rules, list) or not rules:
         add_finding(findings, relative_path, 1, "manifest rules must be a nonempty array")
@@ -672,13 +689,27 @@ def inspect_adrs(root, documents, classifications, findings):
         if number != match.group(1):
             add_finding(findings, relative_path, 1,
                         "ADR title number does not match its filename")
-        if not any(
-            line.startswith("- Status:") or line in {"## Status", "## Status and scope"}
-            for line in lines[1:12]
-        ):
+        status_lines = [
+            (number_at, line)
+            for number_at, line in enumerate(lines[1:12], 2)
+            if line.startswith("- Status:")
+        ]
+        status = None
+        if len(status_lines) != 1:
             add_finding(findings, relative_path, 2,
-                        "ADR canonical status block is missing near the title")
-        records.append((path.name, number, title.group(2), relative_path))
+                        "ADR requires exactly one canonical - Status field near the title")
+        else:
+            status_match = ADR_STATUS.fullmatch(status_lines[0][1])
+            if status_match is None:
+                add_finding(
+                    findings,
+                    relative_path,
+                    status_lines[0][0],
+                    "ADR status must contain exactly one allowed lifecycle label",
+                )
+            else:
+                status = status_match.group(1)
+        records.append((path.name, number, title.group(2), relative_path, status))
         numbers[number] += 1
         titles[title.group(2)] += 1
     for number, count in numbers.items():
@@ -725,6 +756,14 @@ def inspect_adrs(root, documents, classifications, findings):
         if lifecycle.strip() not in ALLOWED_LIFECYCLES:
             add_finding(findings, index_path, line,
                         f"ADR index has invalid lifecycle label: {lifecycle.strip()}")
+        elif record[4] is not None and lifecycle.strip() != record[4]:
+            add_finding(
+                findings,
+                index_path,
+                line,
+                f"ADR index lifecycle {lifecycle.strip()} does not match "
+                f"{target} status {record[4]}",
+            )
     if classifications.get(index_path, {}).get("class") != "decision-index":
         add_finding(findings, index_path, 1,
                     "ADR index must be classified as decision-index")

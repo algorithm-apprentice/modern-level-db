@@ -1,5 +1,7 @@
 # ADR-0048: Documentation-Only CI Routing
 
+- Status: Accepted
+
 ## Status
 
 Accepted. Design-only PR #50 was reviewed and merged before implementation.

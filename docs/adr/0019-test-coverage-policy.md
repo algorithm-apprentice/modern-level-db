@@ -1,6 +1,7 @@
 # ADR-0019: Test Coverage Policy
 
-- Status: Accepted; implemented by PR #13
+- Status: Accepted
+- Implemented by: PR #13
 - Date: 2026-09-23
 
 ## Context

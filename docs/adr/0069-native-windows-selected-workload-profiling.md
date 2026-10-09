@@ -1,5 +1,7 @@
 # ADR-0069: Native Windows Selected-Workload Profiling
 
+- Status: Implemented
+
 ## Status and scope
 
 Design accepted and merged by PR #108 on 2026-10-08 after native-reference

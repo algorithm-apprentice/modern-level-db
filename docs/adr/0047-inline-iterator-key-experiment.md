@@ -1,5 +1,7 @@
 # ADR-0047: Inline Block-Iterator Key Reconstruction
 
+- Status: Rejected
+
 ## Status
 
 Experiment completed; the candidate failed admission and was not committed.

@@ -1,5 +1,7 @@
 # ADR-0066: Native Windows Diagnostic Command
 
+- Status: Implemented
+
 ## Status and scope
 
 Design accepted by PR #102 on 2026-10-08 after Windows verification PR #101.

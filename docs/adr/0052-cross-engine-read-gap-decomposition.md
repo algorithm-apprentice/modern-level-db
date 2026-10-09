@@ -1,5 +1,7 @@
 # ADR-0052: Cross-Engine Point-Read Gap Decomposition
 
+- Status: Superseded
+
 ## Status
 
 Superseded before tooling implementation by

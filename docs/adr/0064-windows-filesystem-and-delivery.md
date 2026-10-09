@@ -1,5 +1,7 @@
 # ADR-0064: Windows Filesystem and Sequential Delivery
 
+- Status: Implemented
+
 ## Status
 
 Design accepted and merged by PR #97 on 2026-10-08.

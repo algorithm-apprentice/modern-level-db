@@ -1,5 +1,7 @@
 # ADR-0053: Pinned LevelDB Read-Path Parity Baseline
 
+- Status: Implemented
+
 ## Status
 
 Completed. Milestones 1-4 merged the intrusive cache, block-iterator,

@@ -1,5 +1,7 @@
 # ADR-0054: Pinned LevelDB Cache Parity
 
+- Status: Implemented
+
 ## Status
 
 Implemented by PR #66 after design PR #64 and amendment PR #65.

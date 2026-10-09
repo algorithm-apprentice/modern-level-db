@@ -1,5 +1,7 @@
 # ADR-0056: Pinned LevelDB Table and Mapped-Block Parity
 
+- Status: Implemented
+
 ## Status
 
 Implemented by PR #70. Bounded GPT-5.6 Sol review added the independent

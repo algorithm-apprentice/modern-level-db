@@ -1,5 +1,7 @@
 # ADR-0050: POSIX Mmap-Backed Table Reads
 
+- Status: Accepted
+
 ## Status
 
 Accepted. Design PR #56 merged before the separately reviewed and measured

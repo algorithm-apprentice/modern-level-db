@@ -1,5 +1,7 @@
 # ADR-0062: Read-Only Storage File Diagnostics
 
+- Status: Implemented
+
 ## Status
 
 Implemented by PR #94 after design PR #93.

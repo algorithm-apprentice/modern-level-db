@@ -1,5 +1,7 @@
 # ADR-0049: LevelDB-Style Point-Read Baseline
 
+- Status: Accepted
+
 ## Status
 
 Accepted. Design PR #52 and diagnostic-tooling PR #53 merged before the

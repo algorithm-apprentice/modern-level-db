@@ -1,5 +1,7 @@
 # ADR-0055: Pinned LevelDB Block-Iterator Parity
 
+- Status: Implemented
+
 ## Status
 
 Implemented. Design PR #67 completed bounded GPT-5.6 Sol review before

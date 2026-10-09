@@ -1,5 +1,7 @@
 # ADR-0065: Windows Recovery and Compatibility Verification
 
+- Status: Implemented
+
 ## Status and scope
 
 Design accepted and merged by PR #100 on 2026-10-08 after database integration

@@ -1,5 +1,7 @@
 # ADR-0070: Documentation Information Architecture
 
+- Status: Accepted
+
 ## Status and scope
 
 Design accepted and merged by PR #111 on 2026-10-09 after the complete
@@ -342,6 +344,31 @@ coverage, lifecycle rules, class-specific gates, finding map, evidence table,
 and dependency graph. It found one final vocabulary mismatch: the manifest
 used `create` for the future ADR index while the disposition list omitted it.
 The list now includes `create`; no actionable design finding remains.
+
+## Final documentation-system review
+
+On 2026-10-09, three independent audience passes reviewed the completed
+documentation system:
+
+- the user/onboarding pass found no actionable hierarchy, safety, API,
+  platform, command-continuity, or learning-path issue;
+- the contributor pass found no actionable preset, target, CI, architecture,
+  current/historical authority, or maintenance issue;
+- the decision-governance pass confirmed complete index coverage, links,
+  immutable evidence, and privacy, but found two lifecycle ambiguities.
+
+The lifecycle findings are closed. Every numbered ADR now has one exact
+machine-readable `- Status:` label that matches the derived index. Manifest
+`current`/`historical` values are explicitly defined as document-retention
+lifecycle, separate from ADR decision status. The dependency-free checker
+and its mutation tests enforce both invariants.
+
+The final validation also passed the complete documentation/routing gates,
+the documented native Windows Debug configure/build/test path, all focused
+Windows learning selectors, the external snapshot consumer, offline
+diagnostics, and native read-diagnostics command. POSIX command syntax and
+machine contracts passed static validation; retained Linux/macOS CI jobs
+remain their execution authority.
 
 ## References
 

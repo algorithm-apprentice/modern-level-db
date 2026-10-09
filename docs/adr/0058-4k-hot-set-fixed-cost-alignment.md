@@ -1,5 +1,7 @@
 # ADR-0058: 4 KiB Hot-Set Fixed-Cost Alignment
 
+- Status: Implemented
+
 ## Status
 
 Accepted outcome. The amended one-sided gate treats pinned LevelDB as a

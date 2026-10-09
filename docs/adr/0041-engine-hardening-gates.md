@@ -1,5 +1,7 @@
 # ADR-0041: Engine Hardening Gates
 
+- Status: Accepted
+
 ## Status
 
 Accepted
