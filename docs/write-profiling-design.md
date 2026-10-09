@@ -1,5 +1,10 @@
 # Write Profiling Research and Implementation Handoff
 
+> **Historical handoff:** This document retains the original fixed-work write
+> profiling design and parity evidence. Current commands, controls, and schema
+> versions are documented in
+> [development/benchmarking-and-profiling.md](development/benchmarking-and-profiling.md).
+
 This document implements the decisions in
 [ADR-0045](adr/0045-fixed-work-write-profiling.md). It extends the existing
 profiling harness, not the engine or its public API.
@@ -309,7 +314,11 @@ Normal final means the first 1,024 write-order keys at generation 2 for
 Smoke final means the first one or 32 write-order keys at generation 2,
 with all others at generation 1.
 
-## Schema-2 completion contract
+## Historical schema-2 completion contract
+
+Schema 2 was the original mutable completion contract. The current retained
+mutable completion schema is version 3; see the development profiling guide
+and executable validators. This section remains as implementation history.
 
 The complete flat object contains exactly the following fields. No missing
 or extra fields, duplicate JSON keys, booleans masquerading as integers,

@@ -1,9 +1,14 @@
 # Profiling Research and Implementation Plan
 
+> **Historical handoff:** This document records the original profiling
+> research and implementation design. The current build, workload, schema,
+> diagnostics, and CPU-capture procedures are maintained in
+> [development/benchmarking-and-profiling.md](development/benchmarking-and-profiling.md).
+
 ## Purpose and boundary
 
-This is the implementation handoff for [ADR-0042](adr/0042-benchmark-profiling-foundation.md).
-It resolves tool and measurement behavior before the infrastructure is built.
+This was the implementation handoff for [ADR-0042](adr/0042-benchmark-profiling-foundation.md).
+It resolved tool and measurement behavior before the infrastructure was built.
 It is not an optimization patch, a new benchmark framework, or a replacement
 for ADR-0041's existing regression gate.
 

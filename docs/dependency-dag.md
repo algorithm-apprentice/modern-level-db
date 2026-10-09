@@ -135,8 +135,8 @@ design gate and independent implementation reviews.
 | Node | Deliverable | Direct dependencies | Decision |
 |---|---|---|---|
 | `docs-information-architecture` | Audience map, document taxonomy, sources of truth, status/supersession rules, migration DAG, and quality boundaries | None | ADR-0070, implemented by PR #111 |
-| `docs-user-reference` | Current prerequisites, consumption, API/options, platform/durability, and diagnostic reference | `docs-information-architecture` | Implemented |
-| `docs-development-reference` | Current build/test/CI/benchmark/profiling procedures and schema/provenance reference | `docs-information-architecture` | ADR-0070 plan |
+| `docs-user-reference` | Current prerequisites, consumption, API/options, platform/durability, and diagnostic reference | `docs-information-architecture` | Implemented by PR #112 |
+| `docs-development-reference` | Current build/test/CI/benchmark/profiling procedures and schema/provenance reference | `docs-information-architecture` | Implemented |
 | `docs-architecture-refresh` | Current module graph, dependency edges, source layout, and implementation-order history | `docs-information-architecture` | ADR-0070 plan |
 | `docs-adr-governance` | ADR index, lifecycle metadata, supersession notes, immutable evidence links, and unique anchors | `docs-information-architecture` | ADR-0070 plan |
 | `docs-quality-automation` | Link/anchor/heading/fence/encoding/preset/index and command-smoke documentation gates | `docs-user-reference`, `docs-development-reference`, `docs-architecture-refresh`, `docs-adr-governance` | ADR-0070 plan |

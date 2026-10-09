@@ -89,6 +89,7 @@ completed sequential delivery record are documented in
 ## Architecture
 
 - [Current user reference](docs/reference/README.md)
+- [Current development guide](docs/development/README.md)
 - [Guided learning path: concepts, code tours, and hands-on labs](docs/learning/README.md)
 - [LevelDB architecture analysis](docs/architecture.md)
 - [Implementation dependency DAG](docs/dependency-dag.md)

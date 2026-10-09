@@ -31,12 +31,21 @@
     },
     {
       "path": "docs/code-style.md",
+      "class": "compatibility-pointer",
+      "lifecycle": "current",
+      "owner_node": "docs-development-reference",
+      "destination": "docs/code-style.md",
+      "disposition": "retain",
+      "compatibility": "retain-current-path-pointer"
+    },
+    {
+      "glob": "docs/development/*.md",
       "class": "development-reference",
       "lifecycle": "current",
       "owner_node": "docs-development-reference",
-      "destination": "docs/development/code-style.md",
-      "disposition": "move",
-      "compatibility": "retain-current-path-pointer"
+      "destination": "same-path",
+      "disposition": "create",
+      "compatibility": "stable-development-paths"
     },
     {
       "path": "docs/profiling-design.md",
@@ -93,11 +102,5 @@
       "compatibility": "preserve-path; metadata-and-outcome-may-change"
     }
   ],
-  "future_roots": [
-    {
-      "glob": "docs/development/*.md",
-      "class": "development-reference",
-      "owner_node": "docs-development-reference"
-    }
-  ]
+  "future_roots": []
 }
