@@ -97,7 +97,7 @@ design gate and independent implementation reviews.
 | `docs-adr-governance` | ADR index, lifecycle metadata, supersession notes, immutable evidence links, and unique anchors | `docs-information-architecture` | Implemented by PR #115 |
 | `docs-quality-automation` | Link/anchor/heading/fence/encoding/preset/index and command-smoke documentation gates | `docs-user-reference`, `docs-development-reference`, `docs-architecture-refresh`, `docs-adr-governance` | Implemented by PR #116 |
 | `docs-learning-cross-platform` | Executable lab paths, current POSIX/Windows behavior, and indexed decision links | `docs-user-reference`, `docs-development-reference`, `docs-architecture-refresh`, `docs-adr-governance`, `docs-quality-automation` | Implemented by PR #117 |
-| `docs-readme-rewrite` | Concise project entry point and routing to authoritative guides | `docs-user-reference`, `docs-development-reference`, `docs-architecture-refresh`, `docs-learning-cross-platform`, `docs-adr-governance`, `docs-quality-automation` | Implemented |
+| `docs-readme-rewrite` | Concise project entry point and routing to authoritative guides | `docs-user-reference`, `docs-development-reference`, `docs-architecture-refresh`, `docs-learning-cross-platform`, `docs-adr-governance`, `docs-quality-automation` | Implemented by PR #118 |
 | `docs-final-editorial-review` | Multi-audience professional review and closure of the rebuilt documentation system | All preceding documentation nodes | ADR-0070 plan |
 
 ## Canonical topological order
