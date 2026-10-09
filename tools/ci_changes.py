@@ -13,7 +13,7 @@ def documentation_only(paths):
     if not paths:
         return False
     for path in paths:
-        if path == "README.md":
+        if path in ("README.md", "docs/documentation-manifest.json"):
             continue
         if (not path.startswith("docs/") or not path.endswith(".md")
                 or any(part in ("", ".", "..") for part in path.split("/"))):

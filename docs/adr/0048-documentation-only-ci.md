@@ -4,6 +4,12 @@
 
 Accepted. Design-only PR #50 was reviewed and merged before implementation.
 
+The documentation quality automation implemented after
+[ADR-0070](0070-documentation-information-architecture.md) adds
+`docs/documentation-manifest.json` to the allowlist and runs the complete
+dependency-free documentation gate before routing. The event comparison,
+fail-safe fallback, and required-check behavior decided here remain current.
+
 ## Context
 
 ADR-0005 already separates fast unit feedback from expensive integration,

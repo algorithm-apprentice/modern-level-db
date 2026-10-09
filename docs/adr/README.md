@@ -109,9 +109,13 @@ decision context and evidence available when each change was made.
 
 ## Historical upstream-link provenance
 
-Twenty-four ADRs originally linked to mutable RocksDB `main` pages
-without recording the upstream revision reviewed at decision time. On
-2026-10-09, this governance pass pinned those links to RocksDB commit
-`928527b86951a91367415b0023306735e8f0961b`, the verified `main` revision at
-maintenance time. This makes the retained links immutable; it does not claim
-that this revision was the original review baseline.
+Twenty-five ADRs originally contained 33 mutable upstream links without
+recording the revision reviewed at decision time. On 2026-10-09, maintenance
+passes pinned those links to the then-verified branch revisions:
+
+- RocksDB `main`: `928527b86951a91367415b0023306735e8f0961b`;
+- Pebble `master`: `e0818dd07ec580eb229e8291b4eefdb135cd5a55`;
+- YCSB `master`: `66302f301b13f60d4bcb2f29f478586bb1d6f2e0`.
+
+This makes the retained links immutable; it does not claim that these
+revisions were the original review baselines.

@@ -8,10 +8,11 @@ change is documentation-only.
 
 ## Documentation-only routing
 
-Changes containing only `README.md` and Markdown files under `docs/` run the
-routing/contracts job and explicit acknowledgement paths instead of compiling
-every product tier. A changed source, CMake, workflow, script, JSON manifest,
-or unknown path selects full CI.
+Changes containing only `README.md`, `docs/documentation-manifest.json`, and
+Markdown files under `docs/` run the routing/documentation-contracts job and
+explicit acknowledgement paths instead of compiling every product tier. A
+changed source, CMake, workflow, script, other JSON file, or unknown path
+selects full CI.
 
 The routing classifier must fail safe:
 
@@ -20,6 +21,45 @@ The routing classifier must fail safe:
 - pull requests use the complete branch diff;
 - renames include both paths;
 - unusual filenames remain NUL-delimited.
+
+## Documentation quality gate
+
+The dependency-free checker applies objective rules to the complete
+documentation corpus on every pull request and push:
+
+```console
+python3 tests/tools/ci_changes_test.py
+python3 tests/tools/check_documentation_test.py
+python3 tools/check_documentation.py
+```
+
+Common checks cover local links and anchors, heading hierarchy and duplicate
+anchors, balanced language-tagged fences, UTF-8/LF/final-newline format,
+privacy-sensitive paths and addresses, immutable-evidence policy, manifest
+classification, and complete ADR index metadata.
+
+Current documents additionally validate configure/build/test presets, CMake
+targets, Python entry points, generated artifact paths, and versioned report
+schemas against repository sources. Historical ADRs and handoff documents do
+not have to use current commands or schemas, but they still receive all common
+structural, metadata, privacy, and link checks.
+
+Platform execution remains in the existing product jobs:
+
+| Documented procedure | Retained CI execution |
+|---|---|
+| POSIX and Windows Debug build/test; storage diagnostics | `unit` Linux/macOS/Windows matrix |
+| POSIX compatibility/model/crash | `compatibility` |
+| Windows compatibility/cross-open/process recovery | `windows-compatibility` |
+| POSIX ordinary benchmark | `benchmark` |
+| Windows ordinary benchmark | `windows-benchmark` |
+| POSIX selected workloads and profiling contracts | `performance` Linux/macOS matrix |
+| Windows selected workloads, diagnostics, calibration, symbols, and cleanup | `windows-performance` |
+
+The checker verifies that each primary procedure remains documented and that
+its mapped workflow job retains the corresponding command or platform marker.
+Documentation-only acknowledgements do not claim those platform commands ran
+for the documentation change.
 
 ## Product matrix
 

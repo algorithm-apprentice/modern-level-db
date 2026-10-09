@@ -15,7 +15,9 @@ import ci_changes
 class DocumentationPathsTest(unittest.TestCase):
     def test_accepts_only_the_nonempty_documentation_allowlist(self):
         for paths in (
-            ["README.md"], ["docs/code-style.md", "docs/adr/0048-documentation-only-ci.md"],
+            ["README.md"], ["docs/documentation-manifest.json"],
+            ["README.md", "docs/documentation-manifest.json", "docs/reference/README.md"],
+            ["docs/code-style.md", "docs/adr/0048-documentation-only-ci.md"],
             ["docs/nested/space and\nnewline.md", "docs/unicode-\u03bb.md"],
         ):
             with self.subTest(paths=paths):
@@ -23,7 +25,7 @@ class DocumentationPathsTest(unittest.TestCase):
         for path in (
             "src/table/block.cc", "tests/unit/table/block_test.cc", "tests/fixture.md",
             "CMakeLists.txt", ".github/workflows/ci.yml", "docs/tool.py", "README.MD",
-            "docs/readme.MD", "docs/../src/example.md", "docs//example.md",
+            "docs/readme.MD", "docs/other.json", "docs/../src/example.md", "docs//example.md",
             "/docs/example.md", "./README.md", "docs.md",
         ):
             with self.subTest(path=path):
@@ -79,7 +81,12 @@ class GitChangeScopeTest(unittest.TestCase):
         cls.docs_renamed = cls.commit()
         cls.git("rm", "--quiet", "README.md")
         cls.docs_deleted = cls.commit()
-        cls.write("docs/space and\nnewline.md", "unusual filename")
+        cls.unusual_document = (
+            "docs/space and unicode-\u03bb.md"
+            if os.name == "nt" else
+            "docs/space and\nnewline.md"
+        )
+        cls.write(cls.unusual_document, "unusual filename")
         cls.unusual_docs = cls.commit()
         (cls.repository / "tools").mkdir()
         cls.git("mv", "docs/nested/renamed.md", "tools/example.py")
@@ -161,7 +168,7 @@ class GitChangeScopeTest(unittest.TestCase):
 
     def test_unusual_git_filename_is_not_split_into_multiple_paths(self):
         paths = self.paths("push", self.push(self.docs_deleted, self.unusual_docs))
-        self.assertEqual(paths, ["docs/space and\nnewline.md"])
+        self.assertEqual(paths, [self.unusual_document])
 
     def test_empty_diff_does_not_enable_fast_path(self):
         paths = self.paths("push", self.push(self.base, self.base))

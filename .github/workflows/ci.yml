@@ -20,6 +20,10 @@ jobs:
           fetch-depth: 0
       - name: Check change-routing contracts
         run: python3 tests/tools/ci_changes_test.py
+      - name: Check documentation-gate contracts
+        run: python3 tests/tools/check_documentation_test.py
+      - name: Validate documentation
+        run: python3 tools/check_documentation.py
       - name: Classify changed paths
         id: classify
         run: python3 tools/ci_changes.py

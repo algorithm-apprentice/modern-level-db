@@ -207,6 +207,6 @@ belongs to this change.
 - [Google Benchmark user guide](https://google.github.io/benchmark/user_guide.html)
 - [Pinned LevelDB workloads](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/benchmarks/db_bench.cc)
 - [RocksDB benchmarking concepts](https://github.com/facebook/rocksdb/wiki/Benchmarking-tools)
-- [YCSB workload A](https://github.com/brianfrankcooper/YCSB/blob/master/workloads/workloada)
+- [YCSB workload A](https://github.com/brianfrankcooper/YCSB/blob/66302f301b13f60d4bcb2f29f478586bb1d6f2e0/workloads/workloada)
 - [ADR-0042 read measurement contract](0042-benchmark-profiling-foundation.md)
 - [ADR-0044 completed checksum optimization](0044-profile-guided-crc32c-acceleration.md)
