@@ -159,7 +159,9 @@ every step.
 The current owned-batch implementation stores its bytes in `std::string`.
 Its mutators preserve a valid private representation, so the commit path
 can use `OpenTrusted` without rescanning external data.
-Early ADR-0016 described vector storage; ADR-0060 records this later change.
+Early [ADR-0016](../adr/0016-write-batch-format.md) described vector storage;
+[ADR-0060](../adr/0060-leveldb-write-path-parity.md) records this later
+change.
 
 "Trusted" never means "bytes from disk are probably fine." It means a
 specific caller has already established the required invariant and

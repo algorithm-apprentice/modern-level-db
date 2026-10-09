@@ -76,7 +76,7 @@ Asynchronous data can be absent.
 
 The harness also uses retained batch markers so later overwrites cannot
 erase all evidence of an earlier acknowledged batch.
-This model does not simulate arbitrary sector tearing, mmap faults, or all
+This model does not simulate arbitrary sector tearing, mapped-file faults, or all
 storage reorderings.
 
 ## Fuzzing and sanitizers
@@ -97,12 +97,20 @@ pre-alpha engine suitable for important production data.
 
 ## Practical test tiers
 
-Run commands from the repository root:
+Run commands from the repository root. On Linux/macOS:
 
 ```bash
 cmake --preset dev-debug
 cmake --build --preset dev-debug
 ctest --preset dev-debug -L unit
+```
+
+From an initialized x64 MSVC developer environment on Windows:
+
+```powershell
+cmake --preset windows-debug
+cmake --build --preset windows-debug
+ctest --preset windows-debug -L unit
 ```
 
 For a learning question, prefer a narrow selector after that build:
@@ -111,20 +119,26 @@ For a learning question, prefer a narrow selector after that build:
 ctest --preset dev-debug -L unit -R 'InternalKeyTest|MemTableTest'
 ```
 
+```powershell
+ctest --preset windows-debug -L unit -R 'InternalKeyTest|MemTableTest'
+```
+
 The remaining presets are separate, optional study sessions:
 
-| Preset | What to study |
-|---|---|
-| `release` | Behavior with optimization and Debug assertions removed |
-| `compatibility` | Model, upstream compatibility, and crash tiers |
-| `asan` | Address/undefined-behavior instrumentation with correctness tiers |
-| `tsan` | Race instrumentation with unit/model tiers |
-| `fuzz` | Bounded corpus replay and fuzz smoke campaigns |
-| `benchmarks` | Comparative severe-regression guard |
-| `profiling` | Selected workloads, diagnostics, and profiling contracts |
-| `coverage` | GCC instrumentation and changed-code coverage evidence |
+| Linux/macOS preset | Windows preset | What to study |
+|---|---|---|
+| `release` | `windows-release` | Behavior with optimization and Debug assertions removed |
+| `compatibility` | `windows-compatibility` | Model, upstream compatibility, cross-open, and crash/process tiers |
+| `asan` | Not admitted | Address/undefined-behavior instrumentation with correctness tiers |
+| `tsan` | Not admitted | Race instrumentation with unit/model tiers |
+| `fuzz` | Not admitted | Bounded corpus replay and fuzz smoke campaigns |
+| `benchmarks` | `windows-benchmarks` | Comparative severe-regression guard and native diagnostic baseline |
+| `profiling` | `windows-profiling` | Selected workloads, diagnostics, and profiling contracts |
+| `coverage` | Not admitted | GCC instrumentation and changed-code coverage evidence |
 
-See the root [README](../../README.md) for prerequisites and full commands.
+See [building and testing](../development/building-and-testing.md) and
+[benchmarking and profiling](../development/benchmarking-and-profiling.md)
+for prerequisites, complete commands, and platform boundaries.
 Do not start with every slow tier before understanding a small contract.
 
 Changed-code coverage is a gate, not a correctness oracle.
@@ -200,7 +214,8 @@ not a performance SLA.
 Read [ADR-0040](../adr/0040-compatibility-and-crash-harness.md),
 [ADR-0041](../adr/0041-engine-hardening-gates.md),
 [ADR-0045](../adr/0045-fixed-work-write-profiling.md), and
-the [profiling design](../profiling-design.md).
+the current
+[benchmarking and profiling guide](../development/benchmarking-and-profiling.md).
 Rejected experiments are also useful: they show why a plausible local
 optimization is not automatically an accepted end-to-end improvement.
 
@@ -209,7 +224,8 @@ optimization is not automatically an accepted end-to-end improvement.
 1. Why does cross-opening database files add evidence beyond comparing Gets?
 2. Why must a crash simulator freeze later cleanup?
 3. Why cannot mutable calibration simply reuse the read benchmark's loop?
-4. Can the production `mixed50` regression in ADR-0060 be called a speedup?
+4. Can the production `mixed50` regression in
+   [ADR-0060](../adr/0060-leveldb-write-path-parity.md) be called a speedup?
 
 <details>
 <summary>Answers</summary>

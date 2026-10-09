@@ -7,25 +7,40 @@ result from the implementation. Passing commands alone do not complete a lab.
 
 ## Setup and safety
 
-Use a C++23-capable toolchain, CMake, Ninja, and the prerequisites in the
-root [README](../../README.md).
-Database-based labs use the Linux/macOS POSIX backend or the admitted
-x64/MSVC Windows backend with explicit weak-namespace consent. Read the
-Windows guarantee boundary in the root README before opting in. On Windows,
-use the `windows-debug` preset from an initialized x64 developer environment;
-portable format and memory components remain available on other platforms.
-Run these once from the repository root:
+Use the prerequisites in the current
+[getting-started guide](../reference/getting-started.md). Database-based labs
+use the Linux/macOS POSIX backend or the admitted x64/MSVC Windows backend.
+Read [platform support and durability](../reference/platform-support-and-durability.md)
+before accepting the weaker Windows namespace guarantee.
+
+Keep two locations distinct:
+
+- `REPO_ROOT`: this repository; every preset and CTest command runs here.
+- `LEARNING_SCRATCH`: an external disposable consumer directory used only by
+  Lab 2 and the database inspected again in Lab 9.
+
+On Linux/macOS, initialize and build from the repository root:
 
 ```bash
+export REPO_ROOT="/absolute/path/to/modern-level-db"
+cd "$REPO_ROOT"
 cmake --preset dev-debug
 cmake --build --preset dev-debug
 ```
 
-All CTest commands below run from that root.
-For focused selection, `ctest --preset dev-debug -N -R 'pattern'` lists
-matching tests without executing them.
-The consumer demo is the one section whose commands run in a separate
-scratch directory.
+On Windows, start an initialized x64 MSVC PowerShell and run:
+
+```powershell
+$env:REPO_ROOT = 'C:\absolute\path\to\modern-level-db'
+Set-Location $env:REPO_ROOT
+cmake --preset windows-debug
+cmake --build --preset windows-debug
+```
+
+Every focused test block below shows both preset forms. Add `-N` before the
+selector to list matching tests without executing them. The Lab 2 consumer
+commands use explicit source/build/database paths, so they do not silently
+change the working directory required by later repository commands.
 
 Use only disposable directories. Do not truncate, replace, or edit files of
 an open database. Use existing fault-injection tests for corruption/crash
@@ -40,8 +55,11 @@ Predict what happens if the count becomes three or the final key is removed.
 
 Then run:
 
-```bash
+```console
+# Linux/macOS
 ctest --preset dev-debug -L unit -R 'CodingTest|InternalKeyTest|WriteBatch'
+# Windows
+ctest --preset windows-debug -L unit -R 'CodingTest|InternalKeyTest|WriteBatch'
 ```
 
 Open [`write_batch_test.cc`](../../tests/unit/format/write_batch_test.cc)
@@ -129,6 +147,10 @@ int main(int argc, char* argv[]) {
   ml::Options options;
   options.create_if_missing = true;
   options.error_if_exists = true;
+#if defined(_WIN32)
+  // Required for every owned native Windows open.
+  options.allow_weak_namespace_durability = true;
+#endif
   auto opened = ml::Database::Open(options, std::filesystem::path(argv[1]));
   if (!opened.has_value()) {
     std::cerr << opened.error().ToString() << '\n';
@@ -155,19 +177,41 @@ if(NOT DEFINED MODERN_LEVELDB_SOURCE_DIR)
 endif()
 
 set(MODERN_LEVELDB_BUILD_TESTS OFF)
+set(MODERN_LEVELDB_BUILD_TOOLS OFF)
 add_subdirectory("${MODERN_LEVELDB_SOURCE_DIR}" modern-leveldb)
 add_executable(learning_demo learning_demo.cc)
 target_link_libraries(learning_demo PRIVATE modern_leveldb::modern_leveldb)
 ```
 
-Run from the scratch consumer directory, replacing the repository path:
+Set the scratch location, create the two files above there, and build without
+changing the repository command context. On Linux/macOS:
 
 ```bash
-cmake -S . -B build -G Ninja \
-  -DMODERN_LEVELDB_SOURCE_DIR=/absolute/path/to/modern-leveldb
-cmake --build build
-./build/learning_demo ./lesson-db-01
+export LEARNING_SCRATCH="/absolute/path/to/modern-leveldb-learning"
+export LEARNING_DB="$LEARNING_SCRATCH/lesson-db-01"
+mkdir -p "$LEARNING_SCRATCH"
+cmake -S "$LEARNING_SCRATCH" -B "$LEARNING_SCRATCH/build" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DMODERN_LEVELDB_SOURCE_DIR="$REPO_ROOT"
+cmake --build "$LEARNING_SCRATCH/build"
+"$LEARNING_SCRATCH/build/learning_demo" "$LEARNING_DB"
 ```
+
+On Windows:
+
+```powershell
+$env:LEARNING_SCRATCH = 'C:\absolute\path\to\modern-leveldb-learning'
+$env:LEARNING_DB = Join-Path $env:LEARNING_SCRATCH 'lesson-db-01'
+New-Item -ItemType Directory -Force $env:LEARNING_SCRATCH | Out-Null
+cmake -S $env:LEARNING_SCRATCH -B "$env:LEARNING_SCRATCH\build" -G Ninja `
+  -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
+  "-DMODERN_LEVELDB_SOURCE_DIR=$env:REPO_ROOT"
+cmake --build "$env:LEARNING_SCRATCH\build"
+& "$env:LEARNING_SCRATCH\build\learning_demo.exe" $env:LEARNING_DB
+```
+
+Use Visual Studio's bundled CMake if another distribution shadows it in
+`PATH`; the supported Windows boundary requires native MSVC, not MinGW.
 
 Expected output:
 
@@ -175,14 +219,23 @@ Expected output:
 snapshot=red; latest=absent
 ```
 
-For another run, choose a new database path.
+For another run, choose a new database path. Keep `LEARNING_DB` pointing to
+the closed first database if you plan to inspect it in Lab 9.
 The demo checks logical visibility; its default async writes do not
-establish a power-loss durability guarantee.
+establish a power-loss durability guarantee. The Windows opt-in admits the
+platform's documented weak namespace boundary; it does not strengthen it.
 
-Back in the repository, study the related public contracts:
+Return explicitly to the repository root and study the related public
+contracts:
 
 ```bash
+cd "$REPO_ROOT"
 ctest --preset dev-debug -L unit -R '^PublicDatabaseTest\.'
+```
+
+```powershell
+Set-Location $env:REPO_ROOT
+ctest --preset windows-debug -L unit -R '^PublicDatabaseTest\.'
 ```
 
 **Completion:** explain why destroying the Snapshot handle cannot invalidate
@@ -195,9 +248,11 @@ Before running anything, sketch a batch fragmented across two WAL blocks.
 Predict the result when its Last fragment is missing.
 Predict the different result of a complete fragment with a bad checksum.
 
-```bash
-ctest --preset dev-debug -L unit \
-  -R 'WalReaderTest.*Truncated|WalReaderTest.*Checksum|RecoveryTest.*SkipsDamaged'
+```console
+# Linux/macOS
+ctest --preset dev-debug -L unit -R 'WalReaderTest.*Truncated|WalReaderTest.*Checksum|RecoveryTest.*SkipsDamaged'
+# Windows
+ctest --preset windows-debug -L unit -R 'WalReaderTest.*Truncated|WalReaderTest.*Checksum|RecoveryTest.*SkipsDamaged'
 ```
 
 Read the relevant tests in
@@ -221,8 +276,11 @@ Assume all are queued before A builds its group and all fit size limits.
 Predict the first group.
 Then draw the same sequence with A changed to sync.
 
-```bash
+```console
+# Linux/macOS
 ctest --preset dev-debug -L unit -R 'WriteQueueTest|CommitGroupTest'
+# Windows
+ctest --preset windows-debug -L unit -R 'WriteQueueTest|CommitGroupTest'
 ```
 
 Read `BuildGroup` and
@@ -240,9 +298,11 @@ Use the versions `105, 101, 99, 70` with oldest snapshot 100 from
 Mark every kept/dropped entry before examining the code.
 Then consider a tombstone at 101 with an older value in a lower level.
 
-```bash
-ctest --preset dev-debug -L unit \
-  -R '^CompactionTest\.DropsOnlyEntriesThatNoSnapshotReads$'
+```console
+# Linux/macOS
+ctest --preset dev-debug -L unit -R '^CompactionTest\.DropsOnlyEntriesThatNoSnapshotReads$'
+# Windows
+ctest --preset windows-debug -L unit -R '^CompactionTest\.DropsOnlyEntriesThatNoSnapshotReads$'
 ```
 
 Read that test and `BaseLevel::IsBaseLevelForKey` in
@@ -256,24 +316,30 @@ lower-level-overlap rule. "Deleted means garbage" is not a sufficient answer.
 Predict whether an old cache handle stays valid after its key is replaced.
 Predict whether pinned entries can exceed configured capacity.
 
-```bash
-ctest --preset dev-debug -L unit \
-  -R 'ShardedLruCacheTest\.(ReplacementKeepsOldHandleAlive|PinnedEntriesMayExceedCapacity)'
+```console
+# Linux/macOS
+ctest --preset dev-debug -L unit -R 'ShardedLruCacheTest\.(ReplacementKeepsOldHandleAlive|PinnedEntriesMayExceedCapacity)'
+# Windows
+ctest --preset windows-debug -L unit -R 'ShardedLruCacheTest\.(ReplacementKeepsOldHandleAlive|PinnedEntriesMayExceedCapacity)'
 ```
 
 Read [`sharded_lru_cache_test.cc`](../../tests/unit/cache/sharded_lru_cache_test.cc).
 Draw two lifetimes: membership in the cache and ownership through a handle.
 
 **Completion:** explain why an eviction budget is not a process-wide hard
-memory limit, and identify the owner of an uncompressed mmap block.
+memory limit, and identify the owner of an uncompressed mapped block.
 
 ## Lab 7: observe LSM and maintenance state
 
-Read [lessons 03, 06, and 07](README.md), then run:
+Read [lesson 03](03-memory-and-mvcc.md),
+[lesson 06](06-reads-and-iterators.md), and
+[lesson 07](07-writes-and-compaction.md), then run:
 
-```bash
-ctest --preset dev-debug -L unit \
-  -R 'DatabaseTest\.(ReportsPublishedStateAndExplicitSnapshots|ReportsImmutableAndProtectedFlushState)|PublicDatabaseTest\.(ReportsOwningDatabaseStateAndRetainedSnapshotRegistration|DatabaseStateOutlivesItsDatabase)'
+```console
+# Linux/macOS
+ctest --preset dev-debug -L unit -R 'DatabaseTest\.(ReportsPublishedStateAndExplicitSnapshots|ReportsImmutableAndProtectedFlushState)|PublicDatabaseTest\.(ReportsOwningDatabaseStateAndRetainedSnapshotRegistration|DatabaseStateOutlivesItsDatabase)'
+# Windows
+ctest --preset windows-debug -L unit -R 'DatabaseTest\.(ReportsPublishedStateAndExplicitSnapshots|ReportsImmutableAndProtectedFlushState)|PublicDatabaseTest\.(ReportsOwningDatabaseStateAndRetainedSnapshotRegistration|DatabaseStateOutlivesItsDatabase)'
 ```
 
 Follow `Database::GetState` into `DatabaseEngine::GetState`.
@@ -310,14 +376,23 @@ or background-progress percentage.
 ## Lab 8: inspect read costs, not just elapsed time
 
 This is optional and more expensive than the focused unit labs.
-Build the profiling preset:
+Build the platform profiling preset from `REPO_ROOT`.
+On Linux/macOS:
 
 ```bash
 cmake --preset profiling
 cmake --build --preset profiling
 ```
 
+On Windows:
+
+```powershell
+cmake --preset windows-profiling
+cmake --build --preset windows-profiling
+```
+
 Collect a read diagnostic report, not a throughput score:
+Each run requires a new output directory.
 
 ```bash
 python3 tools/run_performance.py \
@@ -327,44 +402,81 @@ python3 tools/run_performance.py \
   --output build/learning/readrandom-diagnostics-01
 ```
 
+```powershell
+python tools\run_performance.py `
+  --binary build\windows-profiling\benchmarks\modern_leveldb_read_diagnostics.exe `
+  --case modern/readrandom/65536 `
+  --read-diagnostics `
+  --output build\learning\windows-readrandom-diagnostics-01
+```
+
 Find table/block cache counters, mapped/copied block counters, decoded
 entries, and sampled stage timings.
-For a second comparison, use a distinct output directory and add
-`--modern-file-access pread`.
+For a second comparison, use a distinct output directory and add the copied
+control: `--modern-file-access pread` on POSIX or
+`--modern-file-access copied` on Windows.
 Do not combine diagnostic mode with smoke, repetition, or CPU-capture flags.
 
 **Completion:** explain why block-cache misses alone do not count physical
-device reads, why compressed mmap blocks still need owned output, and why
+device reads, why compressed mapped blocks still need owned output, and why
 inclusive sampled stage durations should not be summed.
-Use [the profiling guide](../profiling-design.md) before interpreting speed.
+Use the current
+[benchmarking and profiling guide](../development/benchmarking-and-profiling.md)
+before interpreting speed.
 
 ## Lab 9: inspect persistent files without treating text as a backup
 
-Build the normal Debug preset, which produces the tool on Linux/macOS:
+Build the normal Debug preset, which produces the native tool.
+Run from `REPO_ROOT`; if this is a new shell, restore the variables from the
+setup section and return to that directory first.
+On Linux/macOS:
 
 ```bash
 cmake --build --preset dev-debug
 ./build/dev-debug/tools/modern_leveldb_tool --help
 ```
 
+On Windows:
+
+```powershell
+cmake --build --preset windows-debug
+& .\build\windows-debug\tools\modern_leveldb_tool.exe --help
+```
+
 Run its focused format tests:
 
-```bash
-ctest --preset dev-debug -L unit \
-  -R 'DumpFileTest|DumpCommandTest|PosixOutputTest'
+```console
+# Linux/macOS
+ctest --preset dev-debug -L unit -R 'DumpFileTest|DumpCommandTest|PosixOutputTest'
+# Windows
+ctest --preset windows-debug -L unit -R 'DumpFileTest|DumpCommandTest|WindowsOutputTest|NativeDumpCommandTest'
 ```
 
-Then choose one canonical file from a **closed disposable database**, such as
-the database created in Lab 2:
+Then choose one canonical file from the **closed disposable database** stored
+in `LEARNING_DB` by Lab 2.
+
+On Linux/macOS:
 
 ```bash
-ls lesson-db-01
-./build/dev-debug/tools/modern_leveldb_tool dump \
-  lesson-db-01/MANIFEST-000001
+ls "$LEARNING_DB"
+MANIFEST_PATH=$(printf '%s\n' "$LEARNING_DB"/MANIFEST-* | head -n 1)
+test -f "$MANIFEST_PATH"
+./build/dev-debug/tools/modern_leveldb_tool dump "$MANIFEST_PATH"
 ```
 
-Use the actual MANIFEST/log/table names printed by `ls`; file numbers depend
-on the database's history. The output connects:
+On Windows:
+
+```powershell
+Get-ChildItem $env:LEARNING_DB
+$manifest = Get-ChildItem $env:LEARNING_DB -Filter 'MANIFEST-*' |
+  Select-Object -First 1
+if ($null -eq $manifest) { throw 'No MANIFEST file found' }
+& .\build\windows-debug\tools\modern_leveldb_tool.exe dump $manifest.FullName
+```
+
+The commands discover the actual MANIFEST name because file numbers depend
+on the database's history. Repeat with a log or table file from the same
+closed directory. The output connects:
 
 ```text
 WAL record       -> write batch operations and assigned sequences

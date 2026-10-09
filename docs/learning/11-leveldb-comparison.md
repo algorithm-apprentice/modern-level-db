@@ -23,10 +23,11 @@ Modern is not missing the basic LSM pipeline:
 | Snapshots and bidirectional iteration | Yes | Yes, with RAII child lifetimes |
 | WAL, MANIFEST, CURRENT, SSTable formats | Yes | Compatible core formats with golden/differential tests |
 | Bloom filters | Yes, configurable policy | Yes, optional built-in Bloom configuration |
-| None/Snappy/Zstd block compression | Yes | Yes |
+| None/Snappy block compression | Yes | Yes |
+| Zstd block compression | Yes | Yes |
 | Leveled and seek-triggered compaction | Yes | Yes |
 | Concurrent API callers and grouped writes | Yes | Yes |
-| Table/block caches and POSIX mapped reads | Yes | Yes, with an explicit copied-read option |
+| Table/block caches and native mapped reads | Yes | Yes on admitted POSIX and Windows backends, with an explicit copied-read option |
 | Public state/properties | Formatted string `GetProperty` | Typed owning `DatabaseState` snapshot; no arbitrary property strings |
 | Storage-file diagnostics | `DumpFile` and `leveldbutil dump` | Versioned `modern_leveldb_tool dump` for WAL, MANIFEST, and SSTable files |
 | Approximate disk usage by key range | `GetApproximateSizes` | Not exposed |
@@ -142,8 +143,9 @@ pages, table metadata, and memtables lie outside a simple hard-memory claim.
 | SQL, replication, remote storage | Change the product category rather than illuminate this small embedded engine |
 
 For performance work, prefer a measured, bounded investigation.
-The retained production `mixed50` regression in ADR-0060 is an example of a
-valid research question, not a reason to invent another feature or discard
+The retained production `mixed50` regression in
+[ADR-0060](../adr/0060-leveldb-write-path-parity.md) is an example of a valid
+research question, not a reason to invent another feature or discard
 unfavorable measurements.
 
 ## A useful next-step sequence
@@ -166,4 +168,4 @@ before adding a capability.
 - [Modern options](../../include/modern_leveldb/options.h)
 - [Internal engine and existing flush barrier](../../src/engine/database.h)
 - [Existing read diagnostics](../../src/instrumentation/read_diagnostics.h)
-- [Goals and non-goals](../../README.md)
+- [Platform support and durability](../reference/platform-support-and-durability.md)

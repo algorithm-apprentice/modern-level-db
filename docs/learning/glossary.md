@@ -34,7 +34,7 @@ systems.
 | LSM tree | Storage model combining logged writes, ordered memory state, immutable tables, and background merging | [01](01-the-engine-map.md) |
 | MANIFEST | WAL-framed metadata edits identifying live tables, counters, and related state | [04](04-wal-and-recovery.md) |
 | Memtable | Arena-backed ordered index of internal entries in memory | [03](03-memory-and-mvcc.md) |
-| mmap | Kernel-backed file mapping; avoids some copying but can fault on storage access | [05](05-tables-filters-and-caches.md) |
+| Mapped file | Kernel-backed immutable file view (`mmap` on POSIX, file mapping on Windows); avoids some copying but can fault on storage access | [05](05-tables-filters-and-caches.md) |
 | MVCC | Multi-version concurrency control: readers select history through a visibility boundary | [03](03-memory-and-mvcc.md) |
 | Pin | Retention preventing a source/cache value from being reclaimed during use | [05](05-tables-filters-and-caches.md), [08](08-cpp-ownership-errors-and-concurrency.md) |
 | RAII | Resource lifetime tied to an owner whose destructor performs cleanup | [08](08-cpp-ownership-errors-and-concurrency.md) |

@@ -195,8 +195,8 @@ An unchecked helper is not justified merely because a check was expensive.
 Conversely, repeatedly checking an impossible state in every comparison
 does not automatically provide meaningful safety.
 
-The registry in ADR-0060 is a useful advanced exercise in making those
-arguments explicit.
+The registry in [ADR-0060](../adr/0060-leveldb-write-path-parity.md) is a
+useful advanced exercise in making those arguments explicit.
 
 ## Source tour
 
@@ -211,7 +211,7 @@ arguments explicit.
 
 Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),
 [ADR-0038](../adr/0038-public-raii-api.md), and
-[code style](../code-style.md) for the project's contracts.
+[code style](../development/code-style.md) for the project's contracts.
 
 ## Self-check
 

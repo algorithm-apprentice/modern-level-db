@@ -157,10 +157,11 @@ the cache also matter. The public facade currently creates an internal
 `fill_cache=false` avoids admitting newly read data blocks.
 It does not disable existing cache hits, the table cache, or the OS cache.
 
-## mmap and borrowed blocks
+## Mapped files and borrowed blocks
 
-On supported POSIX systems, default table reads can use an exact-size
-immutable mapping.
+On supported native platforms, default table reads can use an exact-size
+immutable mapping: POSIX uses `mmap`, while Windows uses
+`CreateFileMappingW` and `MapViewOfFile`.
 An uncompressed mapped block can borrow its file bytes instead of copying
 them. Such a block is not independently admitted to the block cache;
 the table/file lifetime protects it.
@@ -168,8 +169,9 @@ the table/file lifetime protects it.
 Compressed mapped blocks still need owned decompressed output and can be
 cached. Copied uncompressed blocks also have owned storage.
 
-mmap avoids a copy, not page faults or all I/O.
-Mapped storage faults can terminate the process with `SIGBUS`.
+Mapping avoids a copy, not page faults or all I/O.
+POSIX storage faults can terminate the process with `SIGBUS`; Windows mapped
+access can fail through the operating system's in-page/access-fault path.
 `allow_mmap_reads=false` selects copied reads when typed read errors are
 required. External modification or truncation of live database files is
 unsupported.
@@ -195,7 +197,7 @@ Follow with [ADR-0022](../adr/0022-sstable-block-format.md),
 1. Why does increasing the restart interval potentially slow a seek?
 2. Can a Bloom "possibly present" result prove that a key exists?
 3. Why can a pinned cache entry survive erasure?
-4. Does an mmap read necessarily come from RAM without a storage access?
+4. Does a mapped read necessarily come from RAM without a storage access?
 
 <details>
 <summary>Answers</summary>

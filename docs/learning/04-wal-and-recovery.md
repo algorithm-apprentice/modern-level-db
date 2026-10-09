@@ -23,6 +23,13 @@ These guarantees assume the supported filesystem and storage honor their
 synchronization contracts. They are not protection against arbitrary device
 failure or malicious modification.
 
+On the supported POSIX boundary, directory synchronization provides the
+namespace barrier used by the strict durability model below. Native Windows
+opening requires explicit weak-namespace consent: file-content flushes remain
+real, but directory/name persistence cannot claim the POSIX-equivalent
+guarantee. See
+[platform support and durability](../reference/platform-support-and-durability.md).
+
 ## Append, Flush, Sync, Close
 
 The filesystem interface distinguishes these operations:
@@ -33,7 +40,7 @@ The filesystem interface distinguishes these operations:
 | `Flush` | Push application-buffered bytes toward the operating system |
 | `Sync` | Request durable file contents through the backend |
 | `Close` | Release the file handle; not a substitute for durability |
-| `SyncDirectory` | Make directory namespace changes durable |
+| `SyncDirectory` | Request durable namespace changes where the backend supports that guarantee |
 
 A durable file's contents and a durable name for that file are separate
 requirements. Renaming a synced temporary file to `CURRENT` is not the
@@ -42,7 +49,8 @@ same as durably recording that rename.
 `WriteOptions::sync` controls the WAL data barrier for a write.
 `Options::sync_wal_creation` protects WAL creation names by default,
 including the initial WAL setup. It does not make every asynchronous write
-equivalent to `sync=true`.
+equivalent to `sync=true`, and it does not strengthen the admitted Windows
+namespace guarantee.
 
 ## The write-ahead rule
 
@@ -99,7 +107,9 @@ Two compatibility details are worth noticing:
 
 The current fragmenter uses a streaming cursor, not a vector of all
 fragments. Its payload views borrow the unchanged batch bytes.
-ADR-0060 supersedes the original fragment-vector mechanism in ADR-0013.
+[ADR-0060](../adr/0060-leveldb-write-path-parity.md) supersedes the original
+fragment-vector mechanism in
+[ADR-0013](../adr/0013-wal-record-format.md).
 
 ## EOF, corruption, and I/O error are different
 
@@ -131,7 +141,8 @@ The MANIFEST uses WAL framing, but its payloads are `VersionEdit` records:
 file additions/deletions, log numbers, sequence counters, comparator
 identity, and compaction pointers.
 
-Installing a flush or compaction requires:
+Under the strict POSIX durability model, installing a flush or compaction
+requires:
 
 ```text
 write and sync output tables
@@ -141,8 +152,10 @@ write and sync output tables
     -> old files become eligible for cleanup
 ```
 
-Modern performs the output-directory barrier before the durable MANIFEST
-installation. Pending-output tracking protects those files while the
+Modern performs the output-directory operation before the durable MANIFEST
+installation. On POSIX this is the strict namespace barrier. On native
+Windows it preserves the ordering without upgrading the explicitly weak
+namespace guarantee. Pending-output tracking protects those files while the
 database mutex is released for slow work.
 
 When selecting a new MANIFEST, `CURRENT` is installed through:
@@ -152,7 +165,9 @@ write temporary CURRENT contents -> Sync -> Close
     -> rename to CURRENT -> SyncDirectory
 ```
 
-The file named by `CURRENT` must already be durable.
+The selected MANIFEST contents must already be durable. Under the strict
+model, its directory name must be durable too. Native Windows retains the
+sequence but not an equivalent power-loss claim for the rename.
 
 ## Think through crash points
 

@@ -11,6 +11,10 @@ self-check questions with answers.
 
 The project is pre-alpha. Use disposable databases for every experiment;
 never use important data or modify files belonging to an open database.
+Use the current [getting-started guide](../reference/getting-started.md) for
+toolchain prerequisites and
+[platform support and durability](../reference/platform-support-and-durability.md)
+before running filesystem-backed examples.
 
 ## What you need first
 
@@ -32,7 +36,7 @@ not a complete C++ or operating-systems textbook.
 | [02. Bytes and formats](02-bytes-and-formats.md) | How are operations represented? | Fixed-width integers, varints, internal keys, batches, and validation boundaries |
 | [03. Memory and MVCC](03-memory-and-mvcc.md) | How can old and new values coexist? | Arenas, skip lists, sequence visibility, snapshots, and tombstones |
 | [04. WAL and recovery](04-wal-and-recovery.md) | What survives a crash? | WAL framing, file versus directory durability, MANIFEST installation, and recovery |
-| [05. Tables, filters, and caches](05-tables-filters-and-caches.md) | How are sorted bytes read efficiently? | Prefix compression, restart points, Bloom filters, block compression, caching, and mmap |
+| [05. Tables, filters, and caches](05-tables-filters-and-caches.md) | How are sorted bytes read efficiently? | Prefix compression, restart points, Bloom filters, block compression, caching, and mapped files |
 | [06. Reads and iterators](06-reads-and-iterators.md) | How does the engine find the visible value? | Read-source order, level selection, merging, seek semantics, and iterator lifetimes |
 | [07. Writes and compaction](07-writes-and-compaction.md) | How does the engine keep making progress? | Group commit, flushes, compaction selection, version retention, and backpressure |
 | [08. C++ and concurrency](08-cpp-ownership-errors-and-concurrency.md) | What makes the implementation safe? | Ownership, explicit errors, publication, locks, condition variables, and shutdown |
@@ -61,8 +65,10 @@ only after you understand the ordinary execution paths.
 
 Do not read all ADRs in numerical order as your introduction. Early ADRs
 describe historical implementation stages; later decisions, especially
-ADR-0053 and ADR-0060, supersede some mechanisms. Current headers and tests
-describe the current contract. An ADR explains the decision and its history.
+[ADR-0053](../adr/0053-leveldb-read-path-parity.md) and
+[ADR-0060](../adr/0060-leveldb-write-path-parity.md), supersede some
+mechanisms. Current headers, tests, and reference documents describe the
+current contract. An ADR explains the decision and its history.
 
 ## The recurring example
 
@@ -82,19 +88,24 @@ Applications do not choose these sequence numbers; the engine assigns them.
 
 ## Knowledge-to-code map
 
+Use the [ADR index](../adr/README.md) to search decisions by topic and
+lifecycle. The direct record links below are useful starting points, not a
+replacement for the current reference documents.
+
 | Area | Start here | Decisions to read after the lesson |
 |---|---|---|
-| Public behavior and ownership | [`include/modern_leveldb/db.h`](../../include/modern_leveldb/db.h), [`src/api/api_internal.h`](../../src/api/api_internal.h) | ADR-0004, ADR-0038 |
-| Binary representation | [`src/format/`](../../src/format), [`src/base/`](../../src/base) | ADR-0007, ADR-0012, ADR-0013, ADR-0016, ADR-0021 |
-| In-memory indexing | [`src/memory/`](../../src/memory) | ADR-0008, ADR-0015, ADR-0017, ADR-0060 |
-| Files and durability | [`src/platform/file_system.h`](../../src/platform/file_system.h), [`src/wal/`](../../src/wal) | ADR-0011, ADR-0018, ADR-0027, ADR-0029 |
-| Sorted tables and caching | [`src/table/`](../../src/table), [`src/cache/`](../../src/cache) | ADR-0022 through ADR-0026, ADR-0039, ADR-0054 through ADR-0056 |
-| Engine policy | [`src/engine/`](../../src/engine), [`src/metadata/`](../../src/metadata) | ADR-0030 through ADR-0037, ADR-0053, ADR-0060 |
-| Engineering evidence | [`tests/`](../../tests), [`fuzz/`](../../fuzz), [`benchmarks/`](../../benchmarks) | ADR-0005, ADR-0019, ADR-0040 through ADR-0045, ADR-0052 |
+| Public behavior and ownership | [`include/modern_leveldb/db.h`](../../include/modern_leveldb/db.h), [`src/api/api_internal.h`](../../src/api/api_internal.h) | [ADR-0004](../adr/0004-errors-ownership-and-runtime.md), [ADR-0038](../adr/0038-public-raii-api.md) |
+| Binary representation | [`src/format/`](../../src/format), [`src/base/`](../../src/base) | [ADR-0007](../adr/0007-checksum-and-hash-contracts.md), [ADR-0012](../adr/0012-internal-key-format.md), [ADR-0013](../adr/0013-wal-record-format.md), [ADR-0016](../adr/0016-write-batch-format.md), [ADR-0021](../adr/0021-manifest-version-edits.md) |
+| In-memory indexing | [`src/memory/`](../../src/memory) | [ADR-0008](../adr/0008-monotonic-arena.md), [ADR-0015](../adr/0015-concurrent-skiplist.md), [ADR-0017](../adr/0017-arena-backed-memtable.md), [ADR-0060](../adr/0060-leveldb-write-path-parity.md) |
+| Files and durability | [`src/platform/file_system.h`](../../src/platform/file_system.h), [`src/wal/`](../../src/wal) | [ADR-0011](../adr/0011-filesystem-contracts.md), [ADR-0018](../adr/0018-wal-stream-io.md), [ADR-0027](../adr/0027-version-set.md), [ADR-0029](../adr/0029-database-recovery.md) |
+| Sorted tables and caching | [`src/table/`](../../src/table), [`src/cache/`](../../src/cache) | [ADR-0022](../adr/0022-sstable-block-format.md) through [ADR-0026](../adr/0026-table-cache.md), [ADR-0039](../adr/0039-sstable-block-compression.md), [ADR-0054](../adr/0054-leveldb-cache-parity.md) through [ADR-0056](../adr/0056-leveldb-table-mmap-parity.md) |
+| Engine policy | [`src/engine/`](../../src/engine), [`src/metadata/`](../../src/metadata) | [ADR-0030](../adr/0030-point-reads.md) through [ADR-0037](../adr/0037-database-engine.md), [ADR-0053](../adr/0053-leveldb-read-path-parity.md), [ADR-0060](../adr/0060-leveldb-write-path-parity.md) |
+| Engineering evidence | [`tests/`](../../tests), [`fuzz/`](../../fuzz), [`benchmarks/`](../../benchmarks) | [ADR-0005](../adr/0005-test-driven-development.md), [ADR-0019](../adr/0019-test-coverage-policy.md), [ADR-0040](../adr/0040-compatibility-and-crash-harness.md) through [ADR-0045](../adr/0045-fixed-work-write-profiling.md), [ADR-0052](../adr/0052-cross-engine-read-gap-decomposition.md) |
 
-Use the [ADR directory](../adr) to look up those decisions.
-The [architecture](../architecture.md), [dependency DAG](../dependency-dag.md),
-and [code style](../code-style.md) remain the authoritative project guides.
+The [architecture](../architecture.md),
+[development guides](../development/README.md), and
+[code style](../development/code-style.md) remain the authoritative project
+guides.
 
 ## Completion checkpoint
 
