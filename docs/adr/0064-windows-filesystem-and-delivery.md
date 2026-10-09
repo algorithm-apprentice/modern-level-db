@@ -7,7 +7,10 @@ Design accepted and merged by PR #97 on 2026-10-08.
 The native filesystem slice was merged by PR #98 with copied reads, explicit
 namespace consent, resolved-volume preflight, and native/fault contract tests.
 Database integration now selects that backend through the public opt-in.
-Extended recovery tests, diagnostics, and benchmarks remain sequential slices.
+The sequential recovery, diagnostics, benchmark, mapped-read and native
+profiling slices were subsequently delivered by PRs #101, #103, #105, #107
+and #109 under ADRs 0065 through 0069. This ADR is now the completed delivery
+record rather than an open roadmap.
 No strict Windows namespace durability guarantee has been added.
 
 Independent design reviews precede owner review. Production implementation
@@ -253,9 +256,11 @@ The request, event, and caller buffer remain alive until terminal completion;
 no error path returns with I/O still referencing them. There is no shared
 file-position seek and no event pool or cancellation API in the first slice.
 
-TryReadView initially returns nullopt. allow_mmap_reads remains a permission,
-not a promise that every backend maps. Windows uses copied reads even when
-the existing option is true; false continues to force copied reads.
+In this initial filesystem slice, TryReadView returns nullopt and Windows uses
+copied reads even when allow_mmap_reads is true. ADR-0068 later supersedes that
+initial access policy with the pinned-LevelDB-aligned mapped default and shared
+1,000-file limiter. The option remains a permission rather than a promise that
+every eligible file maps; false still forces copied reads.
 
 Use the existing 64 KiB writer policy. Append loops over bounded WriteFile
 requests, advances by the actual byte count, and treats zero progress as Io.
@@ -378,11 +383,11 @@ and acceptance criteria, not approval to implement everything in one PR.
 |---|---|
 | 1. Native filesystem | Windows backend plus real-file contract/failure tests, strict rejection and explicit weak-mode directory tests; no public database enablement |
 | 2. Database integration | Public opt-in, owned backend/preflight, Unicode-safe recovery/cleanup, disk WAL/table/API/engine tests, Windows CI; all existing POSIX behavior retained |
-| 3. Compatibility and crash harness | Enable portable extended tiers separately; Windows child-process recovery and lock tests, seeded models, golden and bidirectional original-LevelDB cross-open |
-| 4. Diagnostic command | Borrowed Windows stdout/stderr adapter, Unicode CLI input, exact ASCII output, redirected file/pipe failures, existing read-only dump contract |
-| 5. Benchmark baseline | Windows copied-read workloads and original-LevelDB comparison with explicit platform/namespace policies; no unsupported CPU capture claims |
-| 6. Optional mapped reads | Separate design, baseline comparison, view lifetime/resource/fallback/removal tests; keep copied-read opt-out |
-| 7. Optional profiling | Separate design for Windows collection and owned-process lifecycle, symbol provenance and timeout cleanup |
+| 3. Compatibility and crash harness | Implemented by PR #101 under ADR-0065: native child-process recovery/lock tests, models, golden and bidirectional original-LevelDB cross-open |
+| 4. Diagnostic command | Implemented by PR #103 under ADR-0066: checked Windows output, Unicode CLI input, exact ASCII output and read-only dump contracts |
+| 5. Benchmark baseline | Implemented by PR #105 under ADR-0067: copied-control comparison, explicit policies and bound diagnostic artifacts |
+| 6. Mapped reads | Implemented by PR #107 under ADR-0068: pinned-LevelDB-aligned default mappings, shared limiter, copied control and lifecycle/removal tests |
+| 7. Native profiling | Implemented by PR #109 under ADR-0069: selected workloads, owned CPU collector, symbol/epoch/report provenance and timeout cleanup |
 
 Core engine opening in strict Windows mode fails before any disk mutation;
 slice 2 must prove this for both an absent and existing database. No public
@@ -480,8 +485,9 @@ The first release gains explicitly opted-in Windows databases without
 altering formats or pretending to provide POSIX namespace durability.
 The public boolean is the only proposed API addition; it is justified by
 an existing stronger default contract and applies only where needed.
-Strict default Windows opening, real power-loss parity, mappings, tools,
-and profiling are not all solved by the first backend PR.
+Strict default Windows opening and real power-loss parity are not solved by the
+first backend or subsequent delivery. Tools, mappings and profiling were
+deliberately delivered later under ADRs 0066, 0068 and 0069.
 
 Owner review must approve the weak-mode boundary and sequential slices before
 production work begins. If that boundary is unacceptable, retain Windows

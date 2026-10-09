@@ -115,7 +115,7 @@ it does not defer lower-level validation.
 |---|---|---|---|
 | `implement-database-state-inspection` | Typed owning snapshot of LSM and maintenance state | `implement-public-api`, `implement-db-compactions` | ADR-0061, complete |
 | `implement-storage-file-diagnostics` | Read-only WAL, MANIFEST, and SSTable dump operation and POSIX tool | `implement-filenames`, `implement-write-batch`, `implement-wal-io`, `implement-version-edit`, `implement-sstable-reader` | ADR-0062, complete |
-| `implement-windows-filesystem` | Native copied-read filesystem with explicit strict/weak namespace policy and Windows contract tests | `implement-platform-fs` | ADR-0064, native slice implemented |
+| `implement-windows-filesystem` | Native filesystem base with copied fallback, explicit strict/weak namespace policy and Windows contract tests | `implement-platform-fs` | ADR-0064, native slice implemented |
 | `integrate-windows-database` | Explicit public weak-namespace opt-in, owned backend, native disk tests, Unicode-safe recovery, Windows CI | `implement-windows-filesystem`, `implement-public-api` | ADR-0064, integration implemented |
 | `verify-windows-compatibility-crash` | Windows process/lock helpers, model/golden/differential tiers and native recovery evidence | `integrate-windows-database`, `build-compatibility-harness` | ADR-0065, implemented |
 | `implement-windows-diagnostics` | Native Unicode CLI and checked Windows output adapter | `implement-windows-filesystem`, `implement-storage-file-diagnostics` | ADR-0066, implemented |
@@ -124,11 +124,11 @@ it does not defer lower-level validation.
 | `implement-windows-profiling` | Native selected workloads, owned CPU-weighted stack collector and checked process/symbol/report contracts | `baseline-windows-performance`, `implement-windows-mapped-reads` | ADR-0069, implemented |
 
 The [Windows delivery design](adr/0064-windows-filesystem-and-delivery.md)
-was accepted by PR #97. Windows database integration requires explicit weak
-namespace consent and does not enable strict default opening or change POSIX
-durability guarantees.
-Later high-risk slices retain their own design gates; only one implementation
-PR advances at a time.
+was accepted by PR #97, and every listed Windows node was delivered
+sequentially through PR #109. Windows database integration still requires
+explicit weak namespace consent; it does not enable strict default opening or
+change POSIX durability guarantees. Each high-risk slice retained its own
+design gate and independent implementation reviews.
 
 ## Canonical topological order
 

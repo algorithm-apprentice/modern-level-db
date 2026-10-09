@@ -10,6 +10,10 @@ random-access view and the first bounded POSIX mmap implementation.
 [ADR-0056](0056-leveldb-table-mmap-parity.md) makes mmap the 64-bit POSIX
 default, uses a count-only 1,000-map budget, and retains copied `Read` as the
 explicit opt-out and fallback.
+[ADR-0064](0064-windows-filesystem-and-delivery.md) implements the same
+interfaces for admitted native Windows with an explicit weak namespace policy;
+[ADR-0068](0068-windows-mapped-read-parity.md) later aligns its mapped default,
+1,000-map limiter and copied control with the pinned Windows reference.
 
 ## Context
 

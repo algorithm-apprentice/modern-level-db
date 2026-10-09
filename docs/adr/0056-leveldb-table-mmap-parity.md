@@ -11,6 +11,9 @@ Bounded implementation review removed `noexcept` from constructors that may
 initialize the process limiter and added mandatory
 `modern_file_access_semantics=mmap-default-v1` throughput provenance so old
 pread-default binaries cannot be accepted as current default-mmap runs.
+[ADR-0068](0068-windows-mapped-read-parity.md) subsequently applies the same
+borrowed-block ownership and copied-control model to admitted native Windows,
+while preserving this ADR's POSIX-specific acquisition and fault evidence.
 
 ## Context
 

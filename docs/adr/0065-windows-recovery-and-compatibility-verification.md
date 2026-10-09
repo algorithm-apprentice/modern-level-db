@@ -13,7 +13,9 @@ The slice completes `verify-windows-compatibility-crash` from
 [ADR-0064](0064-windows-filesystem-and-delivery.md). It enables the existing
 model, golden, differential, and deterministic fault tiers on the admitted
 native backend, and supplies Windows process-only crash tests.
-Diagnostics, benchmarks, mappings, and CPU capture remain separate slices.
+At this design point, diagnostics, benchmarks, mappings, and CPU capture remain
+separate slices. They were subsequently delivered under ADRs 0066 through 0069
+without changing this recovery slice's durability claims.
 
 ## Current evidence and prior art
 

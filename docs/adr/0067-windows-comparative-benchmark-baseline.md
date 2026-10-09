@@ -152,7 +152,8 @@ fail before adding that mode. Required exit evidence:
   even beside diagnostic sidecar metadata; provenance never selects a policy.
 - Native runtime stdout remains valid version-1 JSON and native sidecar
   matches actual compiler/backend/reference selection and policy.
-- Windows profiling/instrumented capture remains explicitly unsupported.
+- This baseline PR keeps Windows profiling/instrumented capture explicitly
+  unsupported; ADR-0069 subsequently delivers it as a separate owned collector.
 - Existing POSIX benchmark, profiling, coverage, sanitizer, fuzz, and
   compatibility checks stay green; no threshold or report gate is disabled.
 - Independent measurement/storage and Win32/build/report-contract reviewers
@@ -161,7 +162,8 @@ fail before adding that mode. Required exit evidence:
 The first release is complete only after the design, native filesystem,
 opted-in database, extended recovery/compatibility, diagnostic command,
 and ordinary benchmark slices are verified and persistent on main.
-Mappings and CPU profiling remain explicitly separate future goals.
+Mappings and CPU profiling remain explicitly separate goals for this baseline;
+they were subsequently delivered by ADR-0068/PR #107 and ADR-0069/PR #109.
 
 ## Design review record
 

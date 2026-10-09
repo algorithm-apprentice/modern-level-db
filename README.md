@@ -55,9 +55,11 @@ maintenance state while keeping engine and child-handle lifetimes safe. The
 canonical MVP implementation also includes reproducible model,
 upstream compatibility, power-loss, sanitizer, fuzz, and benchmark gates.
 
-The x64/MSVC Windows backend provides copied reads, native locks, Unicode/long
-paths, and real database opening through an explicit weak namespace opt-in.
-Its guarantees and remaining delivery slices are recorded in
+The x64/MSVC Windows backend provides LevelDB-aligned read-only mappings with
+an explicit copied-read control, native locks, Unicode/long paths, diagnostics,
+comparative benchmarks, and owned selected-workload profiling. Real database
+opening requires an explicit weak namespace opt-in. Its guarantees and
+completed sequential delivery record are documented in
 [ADR-0064](docs/adr/0064-windows-filesystem-and-delivery.md).
 
 ## Goals
@@ -91,7 +93,7 @@ Its guarantees and remaining delivery slices are recorded in
 - [Implementation dependency DAG](docs/dependency-dag.md)
 - [Architecture decision records](docs/adr/)
 - [Benchmark and profiling design and usage](docs/profiling-design.md)
-- [Windows filesystem contracts and delivery roadmap](docs/adr/0064-windows-filesystem-and-delivery.md)
+- [Windows filesystem contracts and delivery record](docs/adr/0064-windows-filesystem-and-delivery.md)
 
 ## Using the library
 
@@ -104,9 +106,9 @@ modern_leveldb::Options options;
 options.create_if_missing = true;
 // Snappy is the default. Compression::None and Compression::Zstd are also
 // available; Zstd levels -5 through 22 are accepted.
-// POSIX mmap table reads are the default. Mapped storage faults can terminate
-// with SIGBUS instead of returning a typed I/O error. Set false to force
-// copied reads and typed read errors.
+// Read-only mappings are the default on admitted POSIX and Windows backends.
+// Mapped storage faults can terminate via POSIX SIGBUS or a Windows in-page
+// exception instead of returning typed I/O. Set false to force copied reads.
 // options.allow_mmap_reads = false;
 // New WAL files are durably created by default. Set false only to match
 // LevelDB's weaker WAL-creation durability behavior.
@@ -174,9 +176,9 @@ case-insensitive comparators, or equivalent keys can be reported missing.
 
 One database process exclusively owns an open database directory. External
 modification, replacement, or truncation of live database files is
-unsupported. Default POSIX mmap reads may also deliver an in-contract storage
-fault as `SIGBUS`; set `allow_mmap_reads = false` when typed `Io` read errors
-are required.
+unsupported. Default mapped reads may also deliver an in-contract storage
+fault as POSIX `SIGBUS` or a Windows in-page exception; set
+`allow_mmap_reads = false` when typed `Io` read errors are required.
 
 ## Inspecting storage files
 
