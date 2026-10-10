@@ -585,7 +585,7 @@ completed implementation is eligible for measurement, run:
 Required regressions include:
 
 - aliased Put/Delete source views;
-- self-append and count overflow;
+- self-append and practical fixed32 count behavior;
 - exclusive-batch sequence restoration after success, returned error, thrown
   prepare, thrown commit, and multi-writer grouping;
 - unchanged const `Write` behavior, function references, and copying;

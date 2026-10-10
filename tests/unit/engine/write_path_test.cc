@@ -107,19 +107,6 @@ TEST(InsertBatchTest, TrustedOwnedBatchAddsEntriesWithoutRevalidation) {
     EXPECT_EQ(Lookup(memtable, "b", 21), "<deleted>");
 }
 
-TEST(PrepareGroupTest, SetsTheSequenceWithinItsRange) {
-    EncodedWriteBatch group = Batch({{"a", "1"}, {"b", "2"}, {"c", "3"}});
-
-    PrepareGroup(group, 5);
-    EXPECT_EQ(group.sequence(), 5U);
-    PrepareGroup(group, MaxSequenceNumber - 2);
-    EXPECT_EQ(group.sequence(), MaxSequenceNumber - 2);
-
-    EncodedWriteBatch empty;
-    PrepareGroup(empty, MaxSequenceNumber);
-    EXPECT_EQ(empty.sequence(), MaxSequenceNumber);
-}
-
 class CommitGroupTest : public testing::Test {
 protected:
     std::unique_ptr<WalWriter> OpenLog() {
@@ -141,7 +128,7 @@ protected:
 TEST_F(CommitGroupTest, LogsSyncsAndInserts) {
     const auto log = OpenLog();
     EncodedWriteBatch group = Batch({{"a", "1"}, {"b", "2"}});
-    PrepareGroup(group, 7);
+    group.SetSequence(7);
 
     std::size_t start = file_system_.operations().size();
     ASSERT_TRUE(CommitGroup(group, false, *log, memtable_).has_value());
@@ -151,7 +138,7 @@ TEST_F(CommitGroupTest, LogsSyncsAndInserts) {
     EXPECT_EQ(Lookup(memtable_, "b", 8), "2");
 
     EncodedWriteBatch synced = Batch({{"c", "3"}});
-    PrepareGroup(synced, 9);
+    synced.SetSequence(9);
     start = file_system_.operations().size();
     ASSERT_TRUE(CommitGroup(synced, true, *log, memtable_).has_value());
     EXPECT_EQ(Operations(start).back(), "sync 000005.log");
@@ -180,7 +167,7 @@ TEST_F(CommitGroupTest, InsertsNothingAfterALogFailure) {
         MemTable memtable(BytewiseComparator());
         const auto log = OpenLog();
         EncodedWriteBatch group = Batch({{"a", "1"}});
-        PrepareGroup(group, 3);
+        group.SetSequence(3);
         file_system_.FailOperation(file_system_.operations().size() + failing,
                                    Error::Io("injected failure"));
 

@@ -7,7 +7,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <utility>
 
 #include "base/coding_internal.h"
@@ -125,25 +124,8 @@ void EncodedWriteBatch::Append(const EncodedWriteBatch& source) {
         return;
     }
 
-    const ByteView source_records = source.encoded().subspan(WriteBatchHeaderSize);
-    std::string stable_records;
-    std::string_view records = AsStringView(source_records);
-    if (this == &source) {
-        stable_records.assign(records);
-        records = stable_records;
-    }
-    AppendRecords(records, source_count);
-}
-
-void EncodedWriteBatch::AppendTrusted(const EncodedWriteBatch& source) {
-    assert(this != &source);
-    const std::uint32_t source_count = source.count();
-    if (source_count == 0) {
-        return;
-    }
-
-    const std::string_view records = AsStringView(source.encoded().subspan(WriteBatchHeaderSize));
-    AppendRecords(records, source_count);
+    encoded_.append(source.encoded_, WriteBatchHeaderSize, std::string::npos);
+    SetCount(count() + source_count);
 }
 
 void EncodedWriteBatch::AppendRecord(ValueKind kind, ByteView key, ByteView value) {
@@ -183,11 +165,6 @@ SequenceNumber EncodedWriteBatch::sequence() const noexcept {
 
 std::uint32_t EncodedWriteBatch::count() const noexcept {
     return DecodeFixed32(encoded().subspan<CountOffset, sizeof(std::uint32_t)>());
-}
-
-void EncodedWriteBatch::AppendRecords(std::string_view records, std::uint32_t count) {
-    encoded_.append(records.data(), records.size());
-    SetCount(this->count() + count);
 }
 
 void EncodedWriteBatch::SetCount(std::uint32_t count) noexcept {

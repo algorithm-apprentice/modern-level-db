@@ -75,8 +75,6 @@ public:
     void Put(ByteView key, ByteView value);
     void Delete(ByteView key);
     void Append(const EncodedWriteBatch& source);
-    // WriteQueue uses this for distinct owned batches bounded by its group-size policy.
-    void AppendTrusted(const EncodedWriteBatch& source);
     // Requires the complete batch sequence interval to fit the internal-key trailer.
     void SetSequence(SequenceNumber sequence) noexcept;
     void Clear() noexcept;
@@ -87,7 +85,6 @@ public:
 
 private:
     void AppendRecord(ValueKind kind, ByteView key, ByteView value);
-    void AppendRecords(std::string_view records, std::uint32_t count);
     void SetCount(std::uint32_t count) noexcept;
 
     std::string encoded_;

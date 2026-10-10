@@ -64,11 +64,10 @@ Change:
 - **The steps are separate from the queue.** LevelDB's `Write` makes room,
   commits, and records errors in one function. Here the queue calls a prepare
   function and a commit function that the engine provides, and
-  `PrepareGroup` and `CommitGroup` perform the checks and the log and
-  memtable steps, so each is tested on its own.
+  `CommitGroup` performs the log and memtable steps, so it is tested on its own.
 - **Owned batches use the same practical limits as LevelDB.** The group already
-  contains structurally valid records; `PrepareGroup` assigns its reserved
-  sequence without rescanning maximum-integer policies. Recovery still checks
+  contains structurally valid records; the engine assigns its reserved sequence
+  without rescanning maximum-integer policies. Recovery still checks
   external record structure before replay, and MemTable insertion asserts the
   reserved sequence/kind invariant.
 - **Exceptions release the queue.** If making room, building the group, or
@@ -89,7 +88,6 @@ Add `src/engine/write_path.{h,cc}`:
 ```cpp
 Status InsertBatch(WriteBatchReader& batch, MemTable& memtable);
 
-Status PrepareGroup(EncodedWriteBatch& group, SequenceNumber first_sequence);
 Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log,
                    MemTable& memtable);
 
@@ -109,12 +107,6 @@ class WriteQueue final {
 
 - `InsertBatch` adds the remaining entries of the batch to the memtable with
   their sequences and returns the memtable's first error.
-- `PrepareGroup` sets the group's sequence to `first_sequence`. It returns
-  `InvalidArgument`, changing nothing, if an entry would take a sequence
-  above `MaxSequenceNumber`, or if a key is longer than the memtable accepts,
-  which needs a key over 4 GiB. It performs no I/O. A group fails together,
-  so such a batch also fails the writes grouped with it; both cases need
-  2^56 writes or a key over 4 GiB.
 - `CommitGroup` appends a prepared group to the log, syncs the log if `sync`
   is set, and then inserts the group into the memtable, which cannot fail for
   a prepared group whose sequences the version set allocated. It returns the
@@ -137,16 +129,14 @@ class WriteQueue final {
   group with `Aborted`, removes itself, wakes the next writer, and rethrows.
 - The group is a batch that the queue owns and reuses; `commit` may change it,
   such as by setting its sequence. It starts from sequence zero whatever
-  sequences the callers' batches hold, so appending a batch to it fails only
-  if the count overflows, which the size limit prevents.
+  sequences the callers' batches hold.
 - `size` returns the number of queued writers, including the one at the
   front, and requires the lock.
 - The queue is neither copyable nor movable. `prepare` and `commit` must not
   call `Write`.
 
-The engine's commit function computes the next sequence and calls
-`PrepareGroup` with the mutex held; a failure there has written nothing. It
-then calls `CommitGroup` with the mutex released. With the mutex held again,
+The engine's commit function computes and assigns the next sequence with the
+mutex held, then calls `CommitGroup` with the mutex released. With the mutex held again,
 it treats any error or exception from `CommitGroup` as a permanent error that
 stops later writes, because the log's state is unknown, and otherwise raises
 the last sequence by the group's count, so that readers see the group only
@@ -163,8 +153,8 @@ after it is in the memtable, as LevelDB does.
 Unit tests cover:
 
 - `InsertBatch` numbering, values, and deletions.
-- `PrepareGroup` and sequence exhaustion, and `CommitGroup` through an
-  in-memory file system: the log record and sync, the memtable entries, and a
+- sequence assignment and `CommitGroup` through an in-memory file system: the
+  log record and sync, the memtable entries, and a
   failure at every file operation, after which nothing is inserted.
 - `WriteQueue` with scripted prepare and commit functions and gates instead
   of sleeps: writers that queue while the front writer prepares join its

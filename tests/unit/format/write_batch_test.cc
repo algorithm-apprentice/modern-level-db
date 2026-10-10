@@ -146,22 +146,6 @@ TEST(WriteBatchReaderTest, IteratesBorrowedEntriesWithAssignedSequences) {
     EXPECT_FALSE(reader.Next().has_value());
 }
 
-TEST(WriteBatchTest, TrustedAppendMatchesCheckedAppendForDistinctOwnedBatches) {
-    EncodedWriteBatch source;
-    source.Put(AsBytes("a"), AsBytes("1"));
-    source.Delete(AsBytes("b"));
-    const std::vector<std::byte> source_before = Materialize(source.encoded());
-    EncodedWriteBatch checked;
-    EncodedWriteBatch trusted;
-
-    checked.Append(source);
-    trusted.AppendTrusted(source);
-    const EncodedWriteBatch empty;
-    trusted.AppendTrusted(empty);
-    EXPECT_EQ(Materialize(trusted.encoded()), Materialize(checked.encoded()));
-    EXPECT_EQ(Materialize(source.encoded()), source_before);
-}
-
 TEST(WriteBatchReaderTest, TrustedReaderUsesAnOwnedBatchWithoutRevalidation) {
     EncodedWriteBatch batch;
     batch.SetSequence(77);

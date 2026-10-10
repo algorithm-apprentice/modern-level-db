@@ -27,9 +27,6 @@ namespace modern_leveldb {
 // is reserved and whose internal keys are unique in the memtable.
 void InsertBatchTrusted(WriteBatchReader& batch, MemTable& memtable);
 
-// Sets the valid owned group's reserved sequence interval.
-void PrepareGroup(EncodedWriteBatch& group, SequenceNumber first_sequence) noexcept;
-
 // Appends a prepared group to the log, syncs the log if asked, and inserts the
 // group into the memtable. Returns the log's first error, which the log writer
 // keeps. Only one writer at a time may call it for a memtable.
