@@ -77,6 +77,32 @@ documentation gate for the new ADR index entry and live examples. Require
 the existing cross-platform PR checks before merging. No new formatter
 dependency, CI job, or test framework is needed for this convention change.
 
+### Whitespace-aware coverage comparison
+
+The first PR run passed all build, unit, compatibility, sanitizer, fuzz,
+benchmark, and profiling checks, but the coverage comparison treated
+indentation-only changes as modified production code. That pulled unrelated
+legacy gaps into a gate intended for changed behavior. The GCC 13 report
+identified 174 missing lines in the ordinary diff; diff-cover's existing
+`--ignore-whitespace` option reduced that to two lines.
+
+Amend [ADR-0019](0019-test-coverage-policy.md) to use this supported option in
+the existing diff-cover invocation. Keep GCC 13, the full coverage report,
+branch coverage, all test jobs, and the 100% changed-code threshold unchanged.
+The option ignores whitespace-only line changes, not added or rewritten
+statements; line wrapping can still produce changed lines. It is not a proof
+of semantic equivalence, so significant-token comparison and ordinary review
+remain necessary for this mechanical migration.
+
+The remaining two lines are the existing `PosixWritableFile::WriteAll`
+zero-progress error, newly wrapped under four-space indentation. A nonempty
+POSIX file write returning zero has no deterministic unit-test trigger or
+injectable syscall seam. Add one explicitly justified exclusion region around
+that error construction, following the existing
+`PosixOutputFile::Append` zero-write exclusion. Preserve the runtime check,
+diagnostic, and all ordinary successful/error paths; do not backfill unrelated
+legacy tests or introduce a syscall-interposition framework for this migration.
+
 ## Consequences
 
 - Four-space indentation gives nested control flow a wider visual separation.

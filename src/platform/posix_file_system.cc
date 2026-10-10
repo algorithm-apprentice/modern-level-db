@@ -538,8 +538,10 @@ private:
                 return std::unexpected(FileError("write", path_, errno));
             }
             if (written == 0) {
+                // GCOVR_EXCL_START: nonempty POSIX write returned zero; no injectable syscall seam
                 return std::unexpected(
                     Error::Io("write made no progress for '" + PathText(path_) + "'"));
+                // GCOVR_EXCL_STOP
             }
             data = data.subspan(static_cast<std::size_t>(written));
         }

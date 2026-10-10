@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Implemented by: PR #13
+- Amended by: [ADR-0071](0071-four-space-cpp-formatting.md) for whitespace-aware diff coverage
 - Date: 2026-09-23
 
 ## Context

@@ -50,7 +50,7 @@ decision context and evidence available when each change was made.
 
 | ADR | Topic | Lifecycle | Implementation / outcome | Supersession / current reference |
 |---|---|---|---|---|
-| [ADR-0019: Test Coverage Policy](0019-test-coverage-policy.md) | Quality gates | Accepted | Establishes changed-code coverage policy | [CI and quality gates](../development/ci-and-quality-gates.md) |
+| [ADR-0019: Test Coverage Policy](0019-test-coverage-policy.md) | Quality gates | Accepted | Establishes changed-code coverage policy | [ADR-0071](0071-four-space-cpp-formatting.md); [CI and quality gates](../development/ci-and-quality-gates.md) |
 | [ADR-0020: Database File Names](0020-database-file-names.md) | Storage layout | Accepted | Implements LevelDB-compatible names and parsing | [Storage diagnostics](../reference/storage-diagnostics.md) |
 | [ADR-0021: MANIFEST Version Edits](0021-manifest-version-edits.md) | MANIFEST format | Accepted | Implements version-edit encoding | [Current architecture](../architecture.md) |
 | [ADR-0022: SSTable Block Format](0022-sstable-block-format.md) | SSTable format | Accepted | Implements block encoding and decoding | [ADR-0055](0055-leveldb-block-iterator-parity.md) |
