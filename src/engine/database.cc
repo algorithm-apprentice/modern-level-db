@@ -338,7 +338,7 @@ Result<bool> DatabaseEngine::Get(ByteView key, std::vector<std::byte>& value,
             read = LookupValue(sources.memtable(), sources.immutable(), sources.version(),
                                table_cache_, comparator_, lookup_key, value, seek,
                                ReadOptionsFor(options));
-        } catch (...) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 GCC misses the covered exception edge
+        } catch (...) {
             lock.lock();
             throw;
         }
