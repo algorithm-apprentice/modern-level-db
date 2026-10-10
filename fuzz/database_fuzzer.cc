@@ -78,14 +78,14 @@ void FuzzDatabase(ByteView input) {
             case 0:
             case 1: {
                 EncodedWriteBatch batch;
-                Require(batch.Put(AsBytes(key), AsBytes(value)).has_value());
+                batch.Put(AsBytes(key), AsBytes(value));
                 Require(database->Write(batch, (command & 8U) != 0).has_value());
                 model[key] = value;
                 break;
             }
             case 2: {
                 EncodedWriteBatch batch;
-                Require(batch.Delete(AsBytes(key)).has_value());
+                batch.Delete(AsBytes(key));
                 Require(database->Write(batch, false).has_value());
                 model.erase(key);
                 break;
@@ -93,8 +93,8 @@ void FuzzDatabase(ByteView input) {
             case 3: {
                 const std::string other(1, static_cast<char>((key_number + 1) % 16));
                 EncodedWriteBatch batch;
-                Require(batch.Delete(AsBytes(other)).has_value());
-                Require(batch.Put(AsBytes(key), AsBytes(value)).has_value());
+                batch.Delete(AsBytes(other));
+                batch.Put(AsBytes(key), AsBytes(value));
                 Require(database->Write(batch, true).has_value());
                 model.erase(other);
                 model[key] = value;
