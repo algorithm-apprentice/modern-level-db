@@ -769,6 +769,44 @@ TEST(WindowsFileSystemTest, RejectsInvalidPathsAndClassifiesMissingFiles) {
     EXPECT_EQ(file_system.ListDirectory(missing).error().code(), ErrorCode::NotFound);
 }
 
+TEST(WindowsFileSystemTest, DefaultFactoryRejectsMissingConsentWithoutChangingDirectory) {
+    TemporaryDirectory directory;
+    auto path = directory.path() / "new-db";
+    const auto original = path;
+
+    const auto rejected = CreateDefaultFileSystem(path, false, true);
+
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().code(), ErrorCode::NotSupported);
+    EXPECT_EQ(path, original);
+    EXPECT_FALSE(std::filesystem::exists(path));
+}
+
+TEST(WindowsFileSystemTest, DefaultFactoryPreparesDirectoryAndPreservesMmapPolicy) {
+    TemporaryDirectory directory;
+    for (const bool allow_mmap_reads : {false, true}) {
+        auto path = directory.path() / (allow_mmap_reads ? "mapped" : "copied");
+        auto created = CreateDefaultFileSystem(path, true, allow_mmap_reads);
+        ASSERT_TRUE(created.has_value()) << created.error().ToString();
+        ASSERT_NE(created->get(), nullptr);
+        EXPECT_TRUE(path.is_absolute());
+        EXPECT_FALSE(std::filesystem::exists(path));
+        auto& file_system = **created;
+        ASSERT_TRUE(file_system.CreateDirectory(path).has_value());
+        auto file = file_system.OpenWritable(path / "data");
+        ASSERT_TRUE(file.has_value()) << file.error().ToString();
+        ASSERT_TRUE((*file)->Append(AsBytes("value")).has_value());
+        ASSERT_TRUE((*file)->Close().has_value());
+        auto reader = file_system.OpenRandomAccess(path / "data", 5);
+        ASSERT_TRUE(reader.has_value()) << reader.error().ToString();
+        const auto view = (*reader)->TryReadView(0, 5);
+        EXPECT_EQ(view.has_value(), allow_mmap_reads);
+        if (view.has_value()) {
+            EXPECT_EQ(AsStringView(*view), "value");
+        }
+    }
+}
+
 TEST(WindowsFileSystemTest, StrictNamespaceConsentFailsBeforeCreatingADatabase) {
     TemporaryDirectory directory;
     const auto path = directory.path() / "new-db";

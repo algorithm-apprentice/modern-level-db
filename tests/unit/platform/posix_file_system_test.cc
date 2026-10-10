@@ -57,6 +57,16 @@ private:
     std::filesystem::path path_;
 };
 
+TEST(PosixFileSystemTest, DefaultFactoryLeavesDirectoryUnchangedWithoutRequiringConsent) {
+    for (const bool allow_mmap_reads : {false, true}) {
+        std::filesystem::path directory("relative-db");
+        auto created = CreateDefaultFileSystem(directory, false, allow_mmap_reads);
+        ASSERT_TRUE(created.has_value()) << created.error().ToString();
+        EXPECT_NE(created->get(), nullptr);
+        EXPECT_EQ(directory, std::filesystem::path("relative-db"));
+    }
+}
+
 void WriteFixture(const std::filesystem::path& path, ByteView data) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     ASSERT_TRUE(output.is_open());

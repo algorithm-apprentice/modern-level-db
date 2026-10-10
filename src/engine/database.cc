@@ -28,18 +28,14 @@
 #include "metadata/filenames.h"
 #include "metadata/version.h"
 #include "metadata/version_edit.h"
-#if defined(MODERN_LEVELDB_HAVE_POSIX_FILE_SYSTEM)
-#include "platform/posix_file_system.h"
-#elif defined(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
-#include "platform/windows_file_system.h"
-#endif
+#include "platform/file_system.h"
 
 namespace modern_leveldb {
 namespace {
 
-// LevelDB's kNumNonTableCacheFiles: files other than tables that the database
-// keeps open.
-constexpr std::size_t NonTableFiles = 10;
+// LevelDB's kNumNonTableCacheFiles: reserve this many open-file budget slots
+// for non-table files before sizing the table cache, not an actual file count.
+constexpr std::size_t ReservedNonTableFileCount = 10;
 // The block cache that a database owns when it is given none.
 constexpr std::size_t DefaultBlockCacheSize = std::size_t{8} << 20U;
 
@@ -48,22 +44,8 @@ Result<std::unique_ptr<FileSystem>> PrepareOwnedFileSystem(const DatabaseEngineO
     if (options.file_system != nullptr) {
         return std::unique_ptr<FileSystem>{};
     }
-#if defined(MODERN_LEVELDB_HAVE_POSIX_FILE_SYSTEM)
-    static_cast<void>(directory);
-    return std::make_unique<PosixFileSystem>(options.allow_mmap_reads);
-#elif defined(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
-    auto file_system = std::make_unique<WindowsFileSystem>(options.allow_weak_namespace_durability,
-                                                           options.allow_mmap_reads);
-    auto prepared = file_system->PrepareDatabaseDirectory(directory);
-    if (!prepared.has_value()) {
-        return std::unexpected(prepared.error());
-    }
-    directory = std::move(*prepared);
-    return std::unique_ptr<FileSystem>(std::move(file_system));
-#else
-    static_cast<void>(directory);
-    return std::unexpected(Error::NotSupported("this platform has no default file system"));
-#endif
+    return CreateDefaultFileSystem(directory, options.allow_weak_namespace_durability,
+                                   options.allow_mmap_reads);
 }
 
 std::unique_ptr<BlockCache> OwnedBlockCache(const DatabaseEngineOptions& options) {
@@ -148,7 +130,7 @@ const Version& DatabaseEngine::ReadSources::version() const noexcept { return ve
 
 DatabaseEngineOptions SanitizeOptions(DatabaseEngineOptions options) {
     options.max_open_files =
-        std::clamp<std::size_t>(options.max_open_files, 64 + NonTableFiles, 50000);
+        std::clamp<std::size_t>(options.max_open_files, 64 + ReservedNonTableFileCount, 50000);
     options.write_buffer_size = std::clamp<std::size_t>(
         options.write_buffer_size, std::size_t{64} << 10U, std::size_t{1} << 30U);
     options.max_file_size = std::clamp<std::uint64_t>(
@@ -160,20 +142,18 @@ DatabaseEngineOptions SanitizeOptions(DatabaseEngineOptions options) {
 
 Result<std::unique_ptr<DatabaseEngine>> DatabaseEngine::Open(DatabaseEngineOptions options,
                                                              std::filesystem::path directory) {
-    auto file_system = PrepareOwnedFileSystem(options, directory);
-#if !defined(MODERN_LEVELDB_HAVE_POSIX_FILE_SYSTEM)
-    if (!file_system.has_value()) {
-        return std::unexpected(file_system.error());
-    }
-#endif
-    options = SanitizeOptions(std::move(options));
-    auto database = std::make_unique<DatabaseEngine>(PrivateTag(), options, std::move(directory),
-                                                     std::move(*file_system));
-    const Status recovered = database->Recover(options);
-    if (!recovered.has_value()) {
-        return std::unexpected(recovered.error());
-    }
-    return database;
+    return PrepareOwnedFileSystem(options, directory)
+        .and_then([&](std::unique_ptr<FileSystem> file_system)
+                      -> Result<std::unique_ptr<DatabaseEngine>> {
+            options = SanitizeOptions(std::move(options));
+            auto database = std::make_unique<DatabaseEngine>(
+                PrivateTag(), options, std::move(directory), std::move(file_system));
+            const Status recovered = database->Recover(options);
+            if (!recovered.has_value()) {
+                return std::unexpected(recovered.error());
+            }
+            return database;
+        });
 }
 
 DatabaseEngine::DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options,
@@ -192,7 +172,7 @@ DatabaseEngine::DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options,
       comparator_(*options.comparator),
       table_cache_(*file_system_, directory_, comparator_,
                    ReadTableOptions(options, owned_block_cache_.get()),
-                   options.max_open_files - NonTableFiles),
+                   options.max_open_files - ReservedNonTableFileCount),
       owned_executor_(OwnedExecutor(options)),
       executor_(options.executor != nullptr ? options.executor : owned_executor_.get()) {}
 

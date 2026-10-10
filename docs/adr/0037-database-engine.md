@@ -58,11 +58,18 @@ sizes, repair, destroying databases, or several processes sharing one.
 Adopt `DBImpl`:
 
 - **Options** are sanitized when a database opens: `max_open_files` to 74
-  through 50,000, with ten kept for other files; `write_buffer_size` to 64 KiB
-  through 1 GiB; `max_file_size` to 1 MiB through 1 GiB; and `block_size` to
-  1 KiB through 4 MiB. Without a block cache, the database owns an 8 MiB one.
+  through 50,000, with `ReservedNonTableFileCount` (10) open-file budget slots
+  reserved for non-table files before sizing the table cache. This is a
+  reservation, not a count of actual open files. `write_buffer_size` is clipped
+  to 64 KiB through 1 GiB; `max_file_size` to 1 MiB through 1 GiB; and
+  `block_size` to 1 KiB through 4 MiB. Without a block cache, the database owns
+  an 8 MiB one.
 - **Opening** recovers the database, starts an empty memtable, removes
-  obsolete files, and schedules background work if any is needed.
+  obsolete files, and schedules background work if any is needed. Default
+  filesystem selection and platform-specific directory preparation are
+  encapsulated by `CreateDefaultFileSystem` in the platform layer; the engine
+  uses only the `FileSystem` interface. An injected filesystem bypasses the
+  default factory and retains its own policy.
 - **Writes** queue in `DBImpl::Write`. The front writer makes room, then
   numbers its group from the last sequence plus one, writes and optionally
   syncs the log and inserts the group into the memtable with the mutex

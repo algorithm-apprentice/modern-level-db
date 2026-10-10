@@ -80,6 +80,7 @@ set(
     src/metadata/version_edit.cc
     src/metadata/version_set.cc
     src/platform/clock.cc
+    src/platform/file_system.cc
     src/platform/path.cc
     src/platform/serial_executor.cc
     src/table/block.cc
