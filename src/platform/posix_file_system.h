@@ -21,9 +21,6 @@ public:
     PosixFileSystem();
     explicit PosixFileSystem(bool allow_mmap_reads);
     explicit PosixFileSystem(std::shared_ptr<MappedReadLimiter> mmap_budget) noexcept;
-    // Creates an isolated mmap budget for tests.
-    [[nodiscard]] static std::shared_ptr<MappedReadLimiter> NewMmapBudgetForTesting(
-        std::size_t maximum_mappings);
 
     [[nodiscard]] Result<std::unique_ptr<SequentialFile>> OpenSequential(
         const std::filesystem::path& path) override;

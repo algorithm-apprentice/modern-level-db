@@ -4,15 +4,15 @@
 #include <atomic>
 #include <cassert>
 #include <cstddef>
+#include <limits>
+#include <new>
 
 namespace modern_leveldb {
 
 class MappedReadLimiter final {
 public:
-    explicit MappedReadLimiter(std::ptrdiff_t maximum_mappings) noexcept
-        : maximum_mappings_(maximum_mappings), available_(maximum_mappings) {
-        assert(maximum_mappings >= 0);
-    }
+    explicit MappedReadLimiter(std::size_t maximum_mappings)
+        : maximum_mappings_(CheckedCount(maximum_mappings)), available_(maximum_mappings_) {}
 
     [[nodiscard]] bool Acquire() noexcept {
         const std::ptrdiff_t previous = available_.fetch_sub(1, std::memory_order_relaxed);
@@ -32,6 +32,15 @@ public:
     }
 
 private:
+    // Failed acquisition briefly decrements below zero before restoring the slot,
+    // so every admitted count must fit the signed atomic domain.
+    [[nodiscard]] static std::ptrdiff_t CheckedCount(std::size_t count) {
+        if (count > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max())) {
+            throw std::bad_array_new_length();
+        }
+        return static_cast<std::ptrdiff_t>(count);
+    }
+
     [[maybe_unused]] const std::ptrdiff_t maximum_mappings_;
     std::atomic<std::ptrdiff_t> available_;
 };

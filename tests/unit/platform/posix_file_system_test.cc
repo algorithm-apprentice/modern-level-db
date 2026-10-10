@@ -17,6 +17,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <new>
 #include <set>
 #include <string>
@@ -25,6 +26,7 @@
 
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
+#include "platform/mapped_read_limiter.h"
 
 namespace modern_leveldb {
 namespace {
@@ -272,7 +274,7 @@ TEST(PosixFileSystemTest, MappedRandomReadsExposeStableExactViews) {
     ASSERT_TRUE(copied_file.has_value());
     EXPECT_FALSE((*copied_file)->TryReadView(10, 64).has_value());
 
-    PosixFileSystem mapped(PosixFileSystem::NewMmapBudgetForTesting(4));
+    PosixFileSystem mapped(std::make_shared<MappedReadLimiter>(4));
     auto mapped_file = mapped.OpenRandomAccess(path, expected.size());
     ASSERT_TRUE(mapped_file.has_value());
     const std::optional<ByteView> view = (*mapped_file)->TryReadView(10, 64);
@@ -313,7 +315,7 @@ TEST(PosixFileSystemTest, MmapCountBudgetIsSharedAndReleased) {
     WriteFixture(first_path, AsBytes("abc"));
     WriteFixture(second_path, AsBytes("def"));
 
-    const auto count_budget = PosixFileSystem::NewMmapBudgetForTesting(1);
+    const auto count_budget = std::make_shared<MappedReadLimiter>(1);
     PosixFileSystem first_file_system(count_budget);
     PosixFileSystem second_file_system(count_budget);
     auto first = first_file_system.OpenRandomAccess(first_path, 3);
@@ -327,14 +329,14 @@ TEST(PosixFileSystemTest, MmapCountBudgetIsSharedAndReleased) {
     ASSERT_TRUE(after_count_release.has_value());
     EXPECT_TRUE((*after_count_release)->TryReadView(0, 3).has_value());
 
-    EXPECT_THROW(static_cast<void>(PosixFileSystem::NewMmapBudgetForTesting(
-                     std::numeric_limits<std::size_t>::max())),
+    EXPECT_THROW(static_cast<void>(
+                     std::make_shared<MappedReadLimiter>(std::numeric_limits<std::size_t>::max())),
                  std::bad_array_new_length);
 }
 
 TEST(PosixFileSystemTest, MmapFallsBackForEmptyAndMismatchedFiles) {
     TemporaryDirectory directory;
-    PosixFileSystem file_system(PosixFileSystem::NewMmapBudgetForTesting(4));
+    PosixFileSystem file_system(std::make_shared<MappedReadLimiter>(4));
     const auto empty_path = directory.path() / "empty";
     const auto changed_path = directory.path() / "changed";
     WriteFixture(empty_path, {});
@@ -356,7 +358,7 @@ TEST(PosixFileSystemTest, MmapFallsBackForEmptyAndMismatchedFiles) {
 
 TEST(PosixFileSystemTest, MappedFileRemainsReadableAfterUnlink) {
     TemporaryDirectory directory;
-    PosixFileSystem file_system(PosixFileSystem::NewMmapBudgetForTesting(1));
+    PosixFileSystem file_system(std::make_shared<MappedReadLimiter>(1));
     const auto path = directory.path() / "unlinked";
     WriteFixture(path, AsBytes("mapped contents"));
     auto opened = file_system.OpenRandomAccess(path, 15);
