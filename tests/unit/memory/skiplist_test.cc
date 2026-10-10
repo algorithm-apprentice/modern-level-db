@@ -246,11 +246,15 @@ TEST(SkipListTest, StoresArenaBackedBinaryViews) {
     };
 
     const ByteView alpha = allocate_key(std::string_view("a\0x", 3));
+    const ByteView between = allocate_key(std::string_view("a\0y", 3));
     const ByteView beta = allocate_key(std::string_view("b\0y", 3));
+    const ByteView after = allocate_key("z");
     ASSERT_TRUE(list.Insert(beta));
     ASSERT_TRUE(list.Insert(alpha));
     EXPECT_FALSE(list.Insert(alpha));
     EXPECT_TRUE(list.Contains(beta));
+    EXPECT_FALSE(list.Contains(between));
+    EXPECT_FALSE(list.Contains(after));
 
     SkipList<ByteView, ByteViewCompare>::Iterator iterator(list);
     iterator.SeekToFirst();
@@ -341,6 +345,15 @@ TEST(SkipListTest, ConcurrentReadersObserveOnlyInitializedOrderedNodes) {
     }
     EXPECT_TRUE(list.Contains(MakeConcurrentKey(0)));
     EXPECT_TRUE(list.Contains(MakeConcurrentKey(Modulus)));
+    EXPECT_FALSE(list.Insert(MakeConcurrentKey(0)));
+
+    std::uint64_t missing = 1;
+    while (missing < Modulus && list.Contains(MakeConcurrentKey(missing))) {
+        ++missing;
+    }
+    ASSERT_LT(missing, Modulus);
+    EXPECT_FALSE(list.Contains(MakeConcurrentKey(missing)));
+    EXPECT_FALSE(list.Contains(MakeConcurrentKey(Modulus + 1U)));
     EXPECT_GT(arena.memory_usage(), 0U);
 }
 
