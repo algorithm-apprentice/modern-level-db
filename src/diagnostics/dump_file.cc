@@ -271,7 +271,7 @@ Status DumpTable(FileSystem& file_system, const std::filesystem::path& path,
     std::optional<Error> first;
     Status moved = iterator.SeekToFirst();
     while (moved.has_value() && iterator.valid()) {
-        const Result<ParsedInternalKey> parsed = ParseInternalKey(iterator.key());
+        const Result<InternalKeyView> parsed = ParseInternalKey(iterator.key());
         std::string line;
         if (!parsed.has_value()) {
             line = "bad_key encoded='";

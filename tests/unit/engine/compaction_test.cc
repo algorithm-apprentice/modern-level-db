@@ -65,7 +65,7 @@ std::vector<std::byte> Encoded(const InternalKey& key) {
 
 // Describes an entry as "key@sequence=value" or "key@sequence deleted".
 std::string Describe(ByteView internal_key, ByteView value, bool with_value) {
-    const Result<ParsedInternalKey> parsed = ParseInternalKey(internal_key);
+    const Result<InternalKeyView> parsed = ParseInternalKey(internal_key);
     EXPECT_TRUE(parsed.has_value());
     std::string text =
         std::string(AsStringView(parsed->user_key)) + "@" + std::to_string(parsed->sequence);

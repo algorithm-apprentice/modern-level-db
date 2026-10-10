@@ -1308,10 +1308,9 @@ TEST_F(TableTest, MatchesAnOrderedModel) {
             // The lookup finds the first entry at or after the target if it has the
             // target's user key.
             const auto lookup = Get(*table, user, sequence);
-            const auto parsed =
-                first < entries.size()
-                    ? ParseInternalKey(entries[first].key)
-                    : Result<ParsedInternalKey>(std::unexpected(Error::NotFound("")));
+            const auto parsed = first < entries.size()
+                                    ? ParseInternalKey(entries[first].key)
+                                    : Result<InternalKeyView>(std::unexpected(Error::NotFound("")));
             if (parsed.has_value() && AsStringView(parsed->user_key) == user) {
                 ASSERT_TRUE(lookup.has_value()) << user << "@" << sequence;
                 EXPECT_EQ(lookup->kind, parsed->kind);

@@ -31,14 +31,14 @@ enum class ValueKind : std::uint8_t {
 
 inline constexpr ValueKind SeekValueKind = ValueKind::Value;
 
-// Borrows the encoded input; parsing does not retain or copy user_key storage.
-struct ParsedInternalKey {
+// Decoded view over borrowed encoded bytes; user_key never owns its storage.
+struct InternalKeyView {
     ByteView user_key;
     SequenceNumber sequence;
     ValueKind kind;
 };
 
-[[nodiscard]] Result<ParsedInternalKey> ParseInternalKey(ByteView encoded);
+[[nodiscard]] Result<InternalKeyView> ParseInternalKey(ByteView encoded);
 
 // Owns a seek target in both length-prefixed memtable and internal-key forms.
 // Views borrow this object; reacquire them after a move (inline storage can relocate).
@@ -89,16 +89,14 @@ public:
 
     [[nodiscard]] ByteView encoded() const noexcept { return encoded_; }
     [[nodiscard]] ByteView user_key() const noexcept;
-    [[nodiscard]] SequenceNumber sequence() const noexcept { return sequence_; }
-    [[nodiscard]] ValueKind kind() const noexcept { return kind_; }
+    [[nodiscard]] SequenceNumber sequence() const noexcept;
+    [[nodiscard]] ValueKind kind() const noexcept;
 
 private:
-    InternalKey(std::vector<std::byte> encoded, SequenceNumber sequence, ValueKind kind)
-        : encoded_(std::move(encoded)), sequence_(sequence), kind_(kind) {}
+    explicit InternalKey(std::vector<std::byte> encoded) : encoded_(std::move(encoded)) {}
 
+    [[nodiscard]] std::uint64_t trailer() const noexcept;
     std::vector<std::byte> encoded_;
-    SequenceNumber sequence_;
-    ValueKind kind_;
 };
 
 class InternalKeyComparator final : public Comparator {

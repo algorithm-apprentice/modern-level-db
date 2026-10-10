@@ -338,7 +338,7 @@ public:
                                 },
                             .sample =
                                 [this](ByteView internal_key) {
-                                    const ParsedInternalKey parsed =
+                                    const InternalKeyView parsed =
                                         ParseInternalKey(internal_key).value();
                                     samples_.push_back(std::string(AsStringView(parsed.user_key)) +
                                                        "@" + std::to_string(parsed.sequence));

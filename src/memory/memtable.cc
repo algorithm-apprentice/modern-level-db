@@ -194,7 +194,7 @@ ByteView MemTable::Iterator::key() const { return DecodeEntry(iterator_.key()).i
 ByteView MemTable::Iterator::value() const { return DecodeEntry(iterator_.key()).value; }
 
 Status MemTable::Iterator::Seek(ByteView internal_key) {
-    const Result<ParsedInternalKey> parsed = ParseInternalKey(internal_key);
+    const Result<InternalKeyView> parsed = ParseInternalKey(internal_key);
     if (!parsed.has_value()) {
         return std::unexpected(parsed.error());
     }

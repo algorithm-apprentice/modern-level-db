@@ -85,19 +85,19 @@ inline constexpr ValueKind SeekValueKind = ValueKind::Value;
 The numeric enum values and trailer size are persistent format constants and
 must not change.
 
-### Borrowed parsed representation
+### Borrowed decoded view
 
 ```cpp
-struct ParsedInternalKey {
+struct InternalKeyView {
   ByteView user_key;
   SequenceNumber sequence;
   ValueKind kind;
 };
 
-Result<ParsedInternalKey> ParseInternalKey(ByteView encoded);
+Result<InternalKeyView> ParseInternalKey(ByteView encoded);
 ```
 
-`ParsedInternalKey::user_key` borrows from the encoded input. Parsing does not
+`InternalKeyView::user_key` borrows from the encoded input. Parsing does not
 allocate or modify input.
 
 - Inputs shorter than eight bytes return `Corruption`.
@@ -120,10 +120,11 @@ class InternalKey {
 };
 ```
 
-`InternalKey` owns a `std::vector<std::byte>` and is copyable and movable as a
-normal metadata value. It has no default invalid state and no mutating setter.
-Returned byte views remain valid until the key is destroyed, moved from, or
-assigned.
+`InternalKey` owns only the canonical encoded `std::vector<std::byte>` and is
+copyable and movable as a normal metadata value. Its accessors derive the user
+key, sequence, and kind from those bytes instead of caching a second logical
+representation. It has no default invalid state and no mutating setter. Returned
+byte views remain valid until the key is destroyed, moved from, or assigned.
 
 `Create` rejects sequence numbers above `MaxSequenceNumber` and invalid enum
 values with `InvalidArgument`. `Decode` validates before copying and reports

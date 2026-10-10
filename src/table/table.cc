@@ -116,7 +116,7 @@ Status ValidateIndex(const Block& index, std::uint64_t blocks_end, bool trusted_
         [&](ByteView key,                        // GCOVR_EXCL_LINE: GCC 13 misses lambda invocation
             ByteView encoded_value) -> Status {  // GCOVR_EXCL_LINE: GCC 13 misses invocation
         if (trusted_internal_keys) {
-            const Result<ParsedInternalKey> parsed = ParseInternalKey(key);
+            const Result<InternalKeyView> parsed = ParseInternalKey(key);
             if (!parsed.has_value()) {
                 return std::unexpected(parsed.error());
             }
@@ -294,7 +294,7 @@ Result<TableLookupKind> Table::Get(const LookupKey& key, std::vector<std::byte>&
     if (!entry.valid()) {
         return TableLookupKind::Missing;
     }
-    const Result<ParsedInternalKey> parsed = ParseInternalKey(entry.key());
+    const Result<InternalKeyView> parsed = ParseInternalKey(entry.key());
     if (!parsed.has_value()) {
         return std::unexpected(parsed.error());
     }
@@ -404,7 +404,7 @@ Status Table::Iterator::SeekToLast() {
 
 Status Table::Iterator::Seek(ByteView target) {
     if (table_->block_key_format_ == BlockKeyFormat::Internal) {
-        const Result<ParsedInternalKey> parsed = ParseInternalKey(target);
+        const Result<InternalKeyView> parsed = ParseInternalKey(target);
         if (!parsed.has_value()) {
             return Fail(parsed.error());
         }

@@ -134,7 +134,7 @@ Status DbIterator::Prev() {
                 saved_value_.clear();
                 return {};
             }
-            const Result<ParsedInternalKey> parsed = ParseInternalKey(internal_->key());
+            const Result<InternalKeyView> parsed = ParseInternalKey(internal_->key());
             if (!parsed.has_value()) {
                 return Fail(parsed.error());
             }
@@ -150,7 +150,7 @@ Status DbIterator::Prev() {
 // While skipping, saved_key_ holds the user key whose entries are skipped.
 Status DbIterator::FindNextUserEntry(bool skipping) {
     while (internal_->valid()) {
-        const Result<ParsedInternalKey> parsed = ParseInternalKey(internal_->key());
+        const Result<InternalKeyView> parsed = ParseInternalKey(internal_->key());
         if (!parsed.has_value()) {
             return Fail(parsed.error());
         }
@@ -180,7 +180,7 @@ Status DbIterator::FindNextUserEntry(bool skipping) {
 Status DbIterator::FindPrevUserEntry() {
     ValueKind kind = ValueKind::Deletion;
     while (internal_->valid()) {
-        const Result<ParsedInternalKey> parsed = ParseInternalKey(internal_->key());
+        const Result<InternalKeyView> parsed = ParseInternalKey(internal_->key());
         if (!parsed.has_value()) {
             return Fail(parsed.error());
         }
