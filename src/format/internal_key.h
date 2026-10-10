@@ -44,7 +44,10 @@ struct ParsedInternalKey {
 // Views borrow this object; reacquire them after a move (inline storage can relocate).
 class LookupKey final {
 public:
+    // The user key follows the persistent uint32 length representation.
     [[nodiscard]] static Result<LookupKey> Create(ByteView user_key, SequenceNumber sequence);
+    // DatabaseEngine supplies a published sequence and practical user-key length.
+    [[nodiscard]] static LookupKey CreateTrusted(ByteView user_key, SequenceNumber sequence);
 
     LookupKey(const LookupKey&) = delete;
     LookupKey& operator=(const LookupKey&) = delete;

@@ -4,7 +4,6 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <span>
 #include <vector>
 
@@ -17,9 +16,6 @@
 
 namespace modern_leveldb {
 namespace {
-
-constexpr std::size_t MaximumLength =
-    static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max());
 
 struct EntryView {
     ByteView internal_key;
@@ -77,18 +73,10 @@ ValueKind DecodeValueKind(ByteView internal_key) noexcept {
                                   0xffU);
 }
 
-bool TryAddSize(std::size_t& total, std::size_t value) noexcept {
-    if (value > std::numeric_limits<std::size_t>::max() - total) {
-        return false;
-    }
-    total += value;
-    return true;
-}
-
 std::size_t TrustedEncodedSize(ByteView key, ByteView value) noexcept {
     const std::size_t internal_key_size = key.size() + InternalKeyTrailerSize;
-    return VarintLength(internal_key_size) + internal_key_size + VarintLength(value.size()) +
-           value.size();
+    return VarintLength(static_cast<std::uint32_t>(internal_key_size)) + internal_key_size +
+           VarintLength(static_cast<std::uint32_t>(value.size())) + value.size();
 }
 
 const std::byte* EncodeEntry(Arena& arena, SequenceNumber sequence, ValueKind kind, ByteView key,
@@ -150,22 +138,8 @@ Status MemTable::Add(SequenceNumber sequence, ValueKind kind, ByteView key, Byte
         return std::unexpected(Error::InvalidArgument("memtable value kind is unsupported"));
     }
 
-    if (key.size() > MaximumLength - InternalKeyTrailerSize) {
-        return std::unexpected(Error::InvalidArgument("memtable internal key exceeds uint32"));
-    }
-    if (value.size() > MaximumLength) {
-        return std::unexpected(Error::InvalidArgument("memtable value exceeds uint32"));
-    }
-
-    const std::size_t internal_key_size = key.size() + InternalKeyTrailerSize;
-    std::size_t encoded_size = VarintLength(internal_key_size);
-    if (!TryAddSize(encoded_size, internal_key_size) ||
-        !TryAddSize(encoded_size, VarintLength(value.size())) ||
-        !TryAddSize(encoded_size, value.size())) {
-        return std::unexpected(Error::InvalidArgument("memtable entry is too large"));
-    }
-
-    const std::byte* const entry = EncodeEntry(arena_, sequence, kind, key, value, encoded_size);
+    const std::byte* const entry =
+        EncodeEntry(arena_, sequence, kind, key, value, TrustedEncodedSize(key, value));
     if (!table_.Insert(entry)) {
         return std::unexpected(Error::InvalidArgument("memtable internal key already exists"));
     }
@@ -175,8 +149,6 @@ Status MemTable::Add(SequenceNumber sequence, ValueKind kind, ByteView key, Byte
 void MemTable::AddTrusted(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value) {
     assert(sequence <= MaxSequenceNumber);
     assert(IsValidValueKind(kind));
-    assert(key.size() <= MaximumLength - InternalKeyTrailerSize);
-    assert(value.size() <= MaximumLength);
     const std::byte* const entry =
         EncodeEntry(arena_, sequence, kind, key, value, TrustedEncodedSize(key, value));
     table_.InsertTrusted(entry);
@@ -222,32 +194,22 @@ ByteView MemTable::Iterator::key() const { return DecodeEntry(iterator_.key()).i
 ByteView MemTable::Iterator::value() const { return DecodeEntry(iterator_.key()).value; }
 
 Status MemTable::Iterator::Seek(ByteView internal_key) {
-    if (internal_key.size() > MaximumLength) {
-        return std::unexpected(Error::InvalidArgument("memtable seek key exceeds uint32"));
-    }
     const Result<ParsedInternalKey> parsed = ParseInternalKey(internal_key);
     if (!parsed.has_value()) {
         return std::unexpected(parsed.error());
     }
 
-    const std::size_t prefix_size = VarintLength(internal_key.size());
-    if (internal_key.size() > std::numeric_limits<std::size_t>::max() - prefix_size) {
-        return std::unexpected(Error::InvalidArgument("memtable seek representation is too large"));
-    }
     SeekEncoded(internal_key);
     return {};
 }
 
 void MemTable::Iterator::SeekTrusted(ByteView internal_key) {
-    assert(internal_key.size() <= MaximumLength);
     assert(ParseInternalKey(internal_key).has_value());
-    assert(internal_key.size() <=
-           std::numeric_limits<std::size_t>::max() - VarintLength(internal_key.size()));
     SeekEncoded(internal_key);
 }
 
 void MemTable::Iterator::SeekEncoded(ByteView internal_key) {
-    const std::size_t prefix_size = VarintLength(internal_key.size());
+    const std::size_t prefix_size = VarintLength(static_cast<std::uint32_t>(internal_key.size()));
     seek_key_.resize(prefix_size + internal_key.size());
     MutableByteView output(seek_key_);
     EncodeVarint32Trusted(output, static_cast<std::uint32_t>(internal_key.size()));

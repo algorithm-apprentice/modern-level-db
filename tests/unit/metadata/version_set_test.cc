@@ -475,7 +475,7 @@ TEST_F(VersionSetTest, RuntimeApplyReacquiresTheLockAfterFailureAndException) {
         auto set = Create();
         ASSERT_NE(set, nullptr);
         VersionEdit invalid;
-        ASSERT_TRUE(invalid.SetComparatorName("other").has_value());
+        invalid.SetComparatorName("other");
         std::mutex mutex;
         std::unique_lock lock(mutex);
 
@@ -665,7 +665,7 @@ TEST_F(VersionSetTest, RejectsInvalidEditsWithoutWriting) {
     const std::uint64_t next = set->NewFileNumber() + 1;
 
     VersionEdit other_comparator;
-    ASSERT_TRUE(other_comparator.SetComparatorName("other").has_value());
+    other_comparator.SetComparatorName("other");
     ExpectInvalid(*set, other_comparator);
     VersionEdit older_log;
     older_log.SetLogNumber(log - 1);
@@ -695,7 +695,7 @@ TEST_F(VersionSetTest, RejectsInvalidEditsWithoutWriting) {
     EXPECT_EQ(file_system_.operations().size(), operations);
     EXPECT_EQ(StateOf(*set), before);
     VersionEdit same_comparator;
-    ASSERT_TRUE(same_comparator.SetComparatorName("leveldb.BytewiseComparator").has_value());
+    same_comparator.SetComparatorName("leveldb.BytewiseComparator");
     EXPECT_TRUE(set->LogAndApply(same_comparator).has_value());
 }
 
@@ -829,7 +829,7 @@ TEST_F(VersionSetTest, RejectsCorruptManifests) {
     ExpectRecoveryError(ErrorCode::Corruption);
 
     VersionEdit other_comparator = Counters(2);
-    ASSERT_TRUE(other_comparator.SetComparatorName("other").has_value());
+    other_comparator.SetComparatorName("other");
     WriteDatabase({other_comparator});
     ExpectRecoveryError(ErrorCode::InvalidArgument);
 

@@ -62,7 +62,7 @@ VersionEdit Snapshot(const Comparator& user_comparator,
                      std::span<const std::optional<InternalKey>, NumLevels> compact_pointers,
                      const Version& version) {
     VersionEdit snapshot;
-    Expect(snapshot.SetComparatorName(user_comparator.Name()));
+    snapshot.SetComparatorName(user_comparator.Name());
     for (std::uint32_t level = 0; level < NumLevels; ++level) {
         if (compact_pointers[level].has_value()) {
             Expect(snapshot.AddCompactPointer(level, *compact_pointers[level]));

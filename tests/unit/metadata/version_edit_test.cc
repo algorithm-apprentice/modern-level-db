@@ -174,7 +174,7 @@ TEST(VersionEditTest, EncodesEveryFieldInLevelDbOrder) {
     ASSERT_TRUE(edit.SetNextFileNumber(7).has_value());
     edit.SetPrevLogNumber(4);
     edit.SetLogNumber(5);
-    ASSERT_TRUE(edit.SetComparatorName("cmp").has_value());
+    edit.SetComparatorName("cmp");
 
     // clang-format off
     EXPECT_EQ(edit.Encode(),
@@ -209,7 +209,7 @@ TEST(VersionEditTest, RoundTripsEveryField) {
         ASSERT_TRUE(edit.RemoveFile(4, Big + 700 + index).has_value());
         ASSERT_TRUE(edit.AddCompactPointer(index, Key("x", Big + 900 + index)).has_value());
     }
-    ASSERT_TRUE(edit.SetComparatorName("foo").has_value());
+    edit.SetComparatorName("foo");
     edit.SetLogNumber(Big + 100);
     edit.SetPrevLogNumber(Big + 99);
     ASSERT_TRUE(edit.SetNextFileNumber(Big + 200).has_value());
@@ -249,7 +249,7 @@ TEST(VersionEditTest, RoundTripsBoundaryValues) {
     constexpr std::uint64_t MaxNumber = std::numeric_limits<std::uint64_t>::max();
 
     VersionEdit edit;
-    ASSERT_TRUE(edit.SetComparatorName("").has_value());
+    edit.SetComparatorName("");
     edit.SetLogNumber(0);
     edit.SetPrevLogNumber(0);
     ASSERT_TRUE(edit.SetNextFileNumber(MaxNumber).has_value());
@@ -271,8 +271,8 @@ TEST(VersionEditTest, RoundTripsBoundaryValues) {
 
 TEST(VersionEditTest, LaterScalarValuesReplaceEarlierOnes) {
     VersionEdit edit;
-    ASSERT_TRUE(edit.SetComparatorName("old").has_value());
-    ASSERT_TRUE(edit.SetComparatorName("new").has_value());
+    edit.SetComparatorName("old");
+    edit.SetComparatorName("new");
     edit.SetLogNumber(1);
     edit.SetLogNumber(2);
     edit.SetPrevLogNumber(3);
@@ -294,13 +294,12 @@ TEST(VersionEditTest, LaterScalarValuesReplaceEarlierOnes) {
 TEST(VersionEditTest, ComparatorNameMayAliasTheCurrentName) {
     const std::string name = std::string(64, 'n') + "suffix";
     VersionEdit edit;
-    ASSERT_TRUE(edit.SetComparatorName(name).has_value());
+    edit.SetComparatorName(name);
 
-    ASSERT_TRUE(edit.SetComparatorName(*edit.comparator_name()).has_value());
+    edit.SetComparatorName(*edit.comparator_name());
     EXPECT_EQ(edit.comparator_name(), name);
 
-    ASSERT_TRUE(
-        edit.SetComparatorName(std::string_view(*edit.comparator_name()).substr(8)).has_value());
+    edit.SetComparatorName(std::string_view(*edit.comparator_name()).substr(8));
     EXPECT_EQ(edit.comparator_name(), name.substr(8));
 }
 
@@ -454,7 +453,7 @@ TEST(VersionEditTest, EveryTruncatedPrefixDecodesExactlyOrReportsCorruption) {
     VersionEdit edit;
     std::set<std::size_t> field_boundaries = {0};
     const auto record_boundary = [&] { field_boundaries.insert(edit.Encode().size()); };
-    ASSERT_TRUE(edit.SetComparatorName("comparator").has_value());
+    edit.SetComparatorName("comparator");
     record_boundary();
     edit.SetLogNumber(300);
     record_boundary();

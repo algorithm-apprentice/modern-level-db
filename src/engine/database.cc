@@ -334,13 +334,9 @@ Result<bool> DatabaseEngine::Get(ByteView key, std::vector<std::byte>& value,
         std::optional<SeekCharge> seek;
         lock.unlock();
         try {
-            Result<LookupKey> lookup_key = LookupKey::Create(key, sequence);
-            if (!lookup_key.has_value()) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs a key over 4 GiB
-                lock.lock();                // GCOVR_EXCL_LINE: needs a key over 4 GiB
-                return std::unexpected(std::move(lookup_key).error());  // GCOVR_EXCL_LINE: >4 GiB
-            }
+            LookupKey lookup_key = LookupKey::CreateTrusted(key, sequence);
             read = LookupValue(sources.memtable(), sources.immutable(), sources.version(),
-                               table_cache_, comparator_, *lookup_key, value, seek,
+                               table_cache_, comparator_, lookup_key, value, seek,
                                ReadOptionsFor(options));
         } catch (...) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 GCC misses the covered exception edge
             lock.lock();

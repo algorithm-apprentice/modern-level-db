@@ -46,11 +46,11 @@ struct NewFile {
 };
 
 // One MANIFEST record: changes to the live table files and database counters.
-// Mutators reject values that the format or later readers cannot represent, so
-// every edit is encodable.
+// Callers provide uint32-representable field lengths; mutators validate semantic
+// constraints, so every accepted edit is encodable.
 class VersionEdit final {
 public:
-    [[nodiscard]] Status SetComparatorName(std::string_view name);
+    void SetComparatorName(std::string_view name);
     void SetLogNumber(std::uint64_t number) noexcept { log_number_ = number; }
     void SetPrevLogNumber(std::uint64_t number) noexcept { prev_log_number_ = number; }
     [[nodiscard]] Status SetNextFileNumber(std::uint64_t number);

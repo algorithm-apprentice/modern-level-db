@@ -24,9 +24,9 @@ public:
     WriteBatch& operator=(WriteBatch&& source) noexcept;
     ~WriteBatch();
 
-    // Empty keys/values are valid; Delete is distinct from Put with an empty value.
-    // Fallible operations reject a moved-from batch. Clear is a no-op and
-    // ApproximateSize returns zero in that state.
+    // Empty keys/values are valid; lengths follow the persistent uint32 representation.
+    // Delete is distinct from Put with an empty value. Fallible operations reject a
+    // moved-from batch. Clear is a no-op and ApproximateSize returns zero in that state.
     [[nodiscard]] Status Put(ByteView key, ByteView value);
     [[nodiscard]] Status Delete(ByteView key);
     [[nodiscard]] Status Append(const WriteBatch& source);

@@ -4,7 +4,6 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -80,18 +79,14 @@ Result<LookupKey> LookupKey::Create(ByteView user_key, SequenceNumber sequence) 
     if (sequence > MaxSequenceNumber) {
         return std::unexpected(Error::InvalidArgument("lookup key sequence exceeds 56 bits"));
     }
+    return CreateTrusted(user_key, sequence);
+}
 
-    constexpr std::size_t MaximumLength =
-        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max());
-    if (user_key.size() > MaximumLength - InternalKeyTrailerSize) {
-        return std::unexpected(Error::InvalidArgument("lookup key exceeds uint32 length"));
-    }
-
+LookupKey LookupKey::CreateTrusted(ByteView user_key, SequenceNumber sequence) {
+    assert(sequence <= MaxSequenceNumber);
     const std::size_t internal_key_size = user_key.size() + InternalKeyTrailerSize;
-    const std::size_t prefix_size = VarintLength(internal_key_size);
-    if (internal_key_size > std::numeric_limits<std::size_t>::max() - prefix_size) {
-        return std::unexpected(Error::InvalidArgument("lookup key representation is too large"));
-    }
+    const auto encoded_internal_key_size = static_cast<std::uint32_t>(internal_key_size);
+    const std::size_t prefix_size = VarintLength(encoded_internal_key_size);
     const std::size_t encoded_size = prefix_size + internal_key_size;
 
     LookupKey result;
@@ -102,7 +97,7 @@ Result<LookupKey> LookupKey::Create(ByteView user_key, SequenceNumber sequence) 
     result.internal_key_offset_ = prefix_size;
 
     MutableByteView output(result.data(), encoded_size);
-    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(internal_key_size));
+    EncodeVarint32Trusted(output, encoded_internal_key_size);
     std::ranges::copy(user_key, output.begin());
     output = output.subspan(user_key.size());
     EncodeFixed64(
