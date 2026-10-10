@@ -13,10 +13,7 @@ MutableByteView Arena::Allocate(std::size_t bytes) {
         return {};
     }
     if (bytes <= bytes_remaining_) {
-        std::byte* result = allocation_pointer_;
-        allocation_pointer_ += bytes;
-        bytes_remaining_ -= bytes;
-        return {result, bytes};
+        return {AllocateFromCurrentBlock(bytes), bytes};
     }
     return {AllocateFallback(bytes), bytes};
 }
@@ -36,9 +33,7 @@ MutableByteView Arena::AllocateAligned(std::size_t bytes) {
     }
 
     if (padding <= bytes_remaining_ && bytes <= bytes_remaining_ - padding) {
-        std::byte* result = allocation_pointer_ + padding;
-        allocation_pointer_ += padding + bytes;
-        bytes_remaining_ -= padding + bytes;
+        std::byte* result = AllocateFromCurrentBlock(bytes, padding);
         assert(reinterpret_cast<std::uintptr_t>(result) % Alignment == 0U);
         return {result, bytes};
     }
@@ -46,6 +41,16 @@ MutableByteView Arena::AllocateAligned(std::size_t bytes) {
     std::byte* result = AllocateFallback(bytes);
     assert(reinterpret_cast<std::uintptr_t>(result) % Alignment == 0U);
     return {result, bytes};
+}
+
+std::byte* Arena::AllocateFromCurrentBlock(std::size_t bytes, std::size_t padding) noexcept {
+    assert(allocation_pointer_ != nullptr);
+    assert(padding <= bytes_remaining_);
+    assert(bytes <= bytes_remaining_ - padding);
+    std::byte* result = allocation_pointer_ + padding;
+    allocation_pointer_ += padding + bytes;
+    bytes_remaining_ -= padding + bytes;
+    return result;
 }
 
 std::byte* Arena::AllocateFallback(std::size_t bytes) {
@@ -57,11 +62,7 @@ std::byte* Arena::AllocateFallback(std::size_t bytes) {
 
     allocation_pointer_ = AllocateBlock(BlockSize);
     bytes_remaining_ = BlockSize;
-
-    std::byte* result = allocation_pointer_;
-    allocation_pointer_ += bytes;
-    bytes_remaining_ -= bytes;
-    return result;
+    return AllocateFromCurrentBlock(bytes);
 }
 
 std::byte* Arena::AllocateBlock(std::size_t bytes) {

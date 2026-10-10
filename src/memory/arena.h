@@ -38,6 +38,8 @@ private:
     static constexpr std::size_t BlockSize = 4U * 1'024U;
     static constexpr std::size_t DedicatedAllocationThreshold = BlockSize / 4U;
 
+    [[nodiscard]] std::byte* AllocateFromCurrentBlock(std::size_t bytes,
+                                                      std::size_t padding = 0) noexcept;
     [[nodiscard]] std::byte* AllocateFallback(std::size_t bytes);
     [[nodiscard]] std::byte* AllocateBlock(std::size_t bytes);
 
