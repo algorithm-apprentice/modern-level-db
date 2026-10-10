@@ -158,10 +158,7 @@ Status Database::Put(ByteView key, ByteView value, const WriteOptions& options) 
         return std::unexpected(MovedFromDatabase("Put"));
     }
     EncodedWriteBatch batch;
-    const Status added = batch.Put(key, value);
-    if (!added.has_value()) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs over 4 GiB
-        return added;          // GCOVR_EXCL_LINE: needs a key or value over 4 GiB
-    }
+    batch.PutTrusted(key, value);
     return state->engine().Write(batch, options.sync);
 }
 
@@ -171,10 +168,7 @@ Status Database::Delete(ByteView key, const WriteOptions& options) {
         return std::unexpected(MovedFromDatabase("Delete"));
     }
     EncodedWriteBatch batch;
-    const Status added = batch.Delete(key);
-    if (!added.has_value()) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs over 4 GiB
-        return added;          // GCOVR_EXCL_LINE: needs a key over 4 GiB
-    }
+    batch.DeleteTrusted(key);
     return state->engine().Write(batch, options.sync);
 }
 

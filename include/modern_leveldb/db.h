@@ -38,9 +38,10 @@ public:
     Database& operator=(Database&& source) noexcept;
     ~Database();
 
-    // Input bytes are borrowed during the call and copied into the write batch.
-    // A failure does not prove the update is absent after recovery: WAL bytes may
-    // already have reached storage. Request sync for the backend's data barrier.
+    // Input bytes are borrowed during the call and copied into the write batch;
+    // key/value lengths follow its persistent uint32 representation. A failure does
+    // not prove the update is absent after recovery: WAL bytes may already have
+    // reached storage. Request sync for the backend's data barrier.
     [[nodiscard]] Status Put(ByteView key, ByteView value, const WriteOptions& options = {});
     [[nodiscard]] Status Delete(ByteView key, const WriteOptions& options = {});
     // Atomically publishes all batch operations. Copies the batch, so the caller

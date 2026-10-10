@@ -1,10 +1,8 @@
 #include "metadata/version_edit.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -29,15 +27,6 @@ enum class Tag : std::uint32_t {
     NewFile = 7,
     PrevLogNumber = 9,
 };
-
-constexpr std::size_t MaximumFieldSize =
-    static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max());
-
-// GCOVR_EXCL_START: only fields larger than 4 GiB reach this function
-std::unexpected<Error> FieldTooLarge(std::string_view field) {
-    return std::unexpected(Error::InvalidArgument(std::string(field) + " exceeds uint32 length"));
-}
-// GCOVR_EXCL_STOP
 
 std::unexpected<Error> Malformed(std::string_view field) {
     return std::unexpected(Error::Corruption("malformed version edit " + std::string(field)));
@@ -102,13 +91,7 @@ void AppendField(std::vector<std::byte>& output, ByteView value) {
 
 }  // namespace
 
-Status VersionEdit::SetComparatorName(std::string_view name) {
-    if (name.size() > MaximumFieldSize) {         // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs over 4 GiB
-        return FieldTooLarge("comparator name");  // GCOVR_EXCL_LINE: needs over 4 GiB
-    }
-    comparator_name_ = std::string(name);
-    return {};
-}
+void VersionEdit::SetComparatorName(std::string_view name) { comparator_name_ = std::string(name); }
 
 Status VersionEdit::SetNextFileNumber(std::uint64_t number) {
     if (number == 0) {
@@ -133,9 +116,6 @@ Status VersionEdit::AddCompactPointer(std::uint32_t level, InternalKey key) {
     if (!IsValidInternalKey(key)) {
         return std::unexpected(Error::InvalidArgument("compact pointer key is malformed"));
     }
-    if (key.encoded().size() > MaximumFieldSize) {    // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 over 4 GiB
-        return FieldTooLarge("compact pointer key");  // GCOVR_EXCL_LINE: needs over 4 GiB
-    }
     compact_pointers_.push_back(CompactPointer{.level = level, .key = std::move(key)});
     return {};
 }
@@ -149,11 +129,6 @@ Status VersionEdit::AddFile(std::uint32_t level, FileMetadata file) {
     }
     if (!IsValidInternalKey(file.smallest) || !IsValidInternalKey(file.largest)) {
         return std::unexpected(Error::InvalidArgument("new file key is malformed"));
-    }
-    const std::size_t longest_key =
-        std::max(file.smallest.encoded().size(), file.largest.encoded().size());
-    if (longest_key > MaximumFieldSize) {      // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs over 4 GiB
-        return FieldTooLarge("new file key");  // GCOVR_EXCL_LINE: needs over 4 GiB
     }
     new_files_.push_back(NewFile{.level = level, .file = std::move(file)});
     return {};

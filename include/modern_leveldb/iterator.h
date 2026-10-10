@@ -28,8 +28,9 @@ public:
     [[nodiscard]] ByteView key() const noexcept;
     [[nodiscard]] ByteView value() const noexcept;
 
-    // Seeks establish a position; Seek chooses the first user key >= its target.
-    // A failed move leaves the iterator invalid. A later seek can start over.
+    // Seeks establish a position; Seek chooses the first user key >= its target,
+    // whose length follows the database key representation. A failed move leaves
+    // the iterator invalid. A later seek can start over.
     [[nodiscard]] Status SeekToFirst();
     [[nodiscard]] Status SeekToLast();
     [[nodiscard]] Status Seek(ByteView key);

@@ -165,7 +165,7 @@ std::uint64_t FilterBlockOffset(const std::vector<std::byte>& table) {
 }
 
 void PopulateEveryManifestField(VersionEdit& edit) {
-    ASSERT_TRUE(edit.SetComparatorName("cmp'\n").has_value());
+    edit.SetComparatorName("cmp'\n");
     edit.SetLogNumber(2);
     edit.SetPrevLogNumber(1);
     ASSERT_TRUE(edit.SetNextFileNumber(7).has_value());

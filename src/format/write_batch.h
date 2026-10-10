@@ -58,8 +58,9 @@ private:
     std::uint32_t index_ = 0;
 };
 
-// Owns bytes whose mutators preserve a fully decodable batch. The write queue
-// temporarily assigns its hidden sequence and restores it before returning.
+// Owns bytes whose mutators preserve a fully decodable batch for caller-provided
+// uint32-representable key/value lengths. The write queue temporarily assigns its
+// hidden sequence and restores it before returning.
 class EncodedWriteBatch final {
 public:
     EncodedWriteBatch();
@@ -73,6 +74,9 @@ public:
     // Inputs are copied and must not refer to this batch's private encoding.
     [[nodiscard]] Status Put(ByteView key, ByteView value);
     [[nodiscard]] Status Delete(ByteView key);
+    // Fresh public Database operations use these after establishing count/sequence capacity.
+    void PutTrusted(ByteView key, ByteView value);
+    void DeleteTrusted(ByteView key);
     [[nodiscard]] Status Append(const EncodedWriteBatch& source);
     // WriteQueue uses this for distinct owned batches after bounding group size/count.
     void AppendTrusted(const EncodedWriteBatch& source);
@@ -84,7 +88,7 @@ public:
     [[nodiscard]] ByteView encoded() const noexcept { return AsBytes(encoded_); }
 
 private:
-    [[nodiscard]] Status AppendRecord(ValueKind kind, ByteView key, ByteView value);
+    void AppendRecord(ValueKind kind, ByteView key, ByteView value);
     [[nodiscard]] Status ValidateAdditionalRecords(std::uint32_t additional) const;
     void AppendRecords(std::string_view records, std::uint32_t count);
     void SetCount(std::uint32_t count) noexcept;

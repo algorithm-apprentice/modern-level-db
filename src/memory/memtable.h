@@ -54,6 +54,7 @@ public:
     MemTable& operator=(MemTable&&) = delete;
     ~MemTable() = default;
 
+    // Caller-provided key/value lengths follow the persistent uint32 representation.
     [[nodiscard]] Status Add(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value);
     // Requires an owned-batch entry with representable lengths, a reserved sequence,
     // and a unique internal key, as supplied by InsertBatchTrusted.
