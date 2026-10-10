@@ -256,11 +256,15 @@ class DatabaseEngine final {
   the input iterator and the compaction are destroyed before obsolete-file
   cleanup. A trivial move makes no file obsolete, so it runs no cleanup, as
   in LevelDB.
-- Making room adds LevelDB's level-0 triggers, `Level0SlowdownWritesTrigger`
-  (8) and `Level0StopWritesTrigger` (12): a writer that is not forced sleeps
-  one millisecond through the clock with the mutex released, once per write,
-  while level 0 has at least 8 files, and a writer that needs a switch waits
-  for background work while level 0 has at least 12.
+- Making room adds LevelDB's level-0 file-count thresholds,
+  `WriteDelayLevel0FileCountThreshold` (8) and
+  `WriteStallLevel0FileCountThreshold` (12), corresponding to upstream
+  `kL0_SlowdownWritesTrigger` and `kL0_StopWritesTrigger`: a writer that is not
+  forced sleeps one millisecond through the clock with the mutex released,
+  once per `MakeRoomForWrite` call, while the current version has at least 8
+  level-0 table files. A writer that needs a memtable switch waits for
+  background work while that count is at least 12; writes that still have
+  room can proceed.
 - Seek charges follow ADR-0036, and `SeekStatistics::Retain` runs after
   every version the engine installs. `Get` charges its read's version with
   the mutex held after the read; an iterator's samples charge the version

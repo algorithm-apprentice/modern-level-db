@@ -256,7 +256,7 @@ Status DatabaseEngine::MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool
         if (background_error_.has_value()) {
             return BackgroundError();
         }
-        if (allow_delay && level0_files >= Level0SlowdownWritesTrigger) {
+        if (allow_delay && level0_files >= WriteDelayLevel0FileCountThreshold) {
             // Near the stop, each write waits a little once rather than a few
             // writes waiting long, and the compaction gets the time.
             lock.unlock();
@@ -268,7 +268,7 @@ Status DatabaseEngine::MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool
         if (!force && memtable_->memory_usage() <= write_buffer_size_) {
             return {};
         }
-        if (immutable_ != nullptr || level0_files >= Level0StopWritesTrigger) {
+        if (immutable_ != nullptr || level0_files >= WriteStallLevel0FileCountThreshold) {
             background_finished_.wait(lock);
             continue;
         }

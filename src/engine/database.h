@@ -33,12 +33,14 @@
 
 namespace modern_leveldb {
 
-// LevelDB's kL0_SlowdownWritesTrigger: while level 0 has at least this many
-// files, each write first sleeps a millisecond once.
-inline constexpr std::size_t Level0SlowdownWritesTrigger = 8;
-// LevelDB's kL0_StopWritesTrigger: while level 0 has at least this many files,
-// a write that needs a new memtable waits for background work.
-inline constexpr std::size_t Level0StopWritesTrigger = 12;
+// LevelDB's kL0_SlowdownWritesTrigger: when the current version has at least
+// this many level-0 table files, a non-forced MakeRoomForWrite call first
+// sleeps a millisecond once.
+inline constexpr std::size_t WriteDelayLevel0FileCountThreshold = 8;
+// LevelDB's kL0_StopWritesTrigger: when the current version has at least this
+// many level-0 table files, a write that needs a new memtable waits for
+// background work. Writes that still have room can proceed.
+inline constexpr std::size_t WriteStallLevel0FileCountThreshold = 12;
 
 struct DatabaseEngineOptions {
     // Must outlive the database.
