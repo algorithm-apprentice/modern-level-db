@@ -30,36 +30,13 @@ std::uint64_t PackTrailer(SequenceNumber sequence, ValueKind kind) noexcept {
     return (sequence << 8U) | static_cast<std::uint8_t>(kind);
 }
 
-// Only arena entries encoded by EncodeEntry (or a constructed lookup prefix)
-// reach these helpers; their validated lengths and stable storage bound reads.
-std::uint32_t DecodeVarint32Unchecked(const std::byte*& input) noexcept {
-    std::uint32_t value = 0;
-    std::size_t shift = 0;
-    while (true) {
-        const unsigned int byte = std::to_integer<unsigned int>(*input);
-        ++input;
-        value |= static_cast<std::uint32_t>(byte & 0x7fU) << shift;
-        if ((byte & 0x80U) == 0U) {
-            return value;
-        }
-        shift += 7U;
-    }
-}
-
-ByteView DecodeLengthPrefixedUnchecked(const std::byte*& input) noexcept {
-    const std::uint32_t length = DecodeVarint32Unchecked(input);
-    const ByteView value(input, length);
-    input += length;
-    return value;
-}
-
 ByteView DecodeInternalKey(const std::byte* entry) noexcept {
-    return DecodeLengthPrefixedUnchecked(entry);
+    return ConsumeLengthPrefixedTrusted(entry);
 }
 
 EntryView DecodeEntry(const std::byte* entry) noexcept {
-    const ByteView internal_key = DecodeLengthPrefixedUnchecked(entry);
-    const ByteView value = DecodeLengthPrefixedUnchecked(entry);
+    const ByteView internal_key = ConsumeLengthPrefixedTrusted(entry);
+    const ByteView value = ConsumeLengthPrefixedTrusted(entry);
     return {
         .internal_key = internal_key,
         .value = value,
@@ -93,9 +70,7 @@ const std::byte* EncodeEntry(Arena& arena, SequenceNumber sequence, ValueKind ki
         PackTrailer(sequence, kind));
     output = output.subspan(InternalKeyTrailerSize);
 
-    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(value.size()));
-    std::ranges::copy(value, output.begin());
-    output = output.subspan(value.size());
+    EncodeLengthPrefixedTrusted(output, value);
     assert(output.empty());
     return entry;
 }
@@ -212,9 +187,7 @@ void MemTable::Iterator::SeekEncoded(ByteView internal_key) {
     const std::size_t prefix_size = VarintLength(static_cast<std::uint32_t>(internal_key.size()));
     seek_key_.resize(prefix_size + internal_key.size());
     MutableByteView output(seek_key_);
-    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(internal_key.size()));
-    std::ranges::copy(internal_key, output.begin());
-    output = output.subspan(internal_key.size());
+    EncodeLengthPrefixedTrusted(output, internal_key);
     assert(output.empty());
     iterator_.Seek(seek_key_.data());
 }
