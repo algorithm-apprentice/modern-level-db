@@ -156,9 +156,11 @@ public:
     [[nodiscard]] Status WaitForBackgroundWork();
 
 private:
+    // Pins sources across unlocked reads. Construction and destruction require
+    // the caller to hold the engine's mutex_.
     class ReadSources final {
     public:
-        ReadSources(DatabaseEngine& engine, std::unique_lock<std::mutex>& lock) noexcept;
+        explicit ReadSources(DatabaseEngine& engine) noexcept;
         ReadSources(const ReadSources&) = delete;
         ReadSources& operator=(const ReadSources&) = delete;
         ~ReadSources();
@@ -169,7 +171,6 @@ private:
 
     private:
         DatabaseEngine* engine_;
-        [[maybe_unused]] std::unique_lock<std::mutex>* lock_;
         std::optional<MemTable::ReadPin> memtable_;
         std::optional<MemTable::ReadPin> immutable_;
         std::optional<VersionSet::ReadPin> version_;

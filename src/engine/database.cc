@@ -98,10 +98,7 @@ Result<std::uint64_t> LevelFileBytes(std::span<const Version::File> files, std::
 }  // namespace
 
 // GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
-DatabaseEngine::ReadSources::ReadSources(DatabaseEngine& engine,
-                                         std::unique_lock<std::mutex>& lock) noexcept
-    : engine_(&engine), lock_(&lock) {
-    assert(lock_->owns_lock());
+DatabaseEngine::ReadSources::ReadSources(DatabaseEngine& engine) noexcept : engine_(&engine) {
     memtable_.emplace(engine.memtable_->PinRead());
     if (engine.immutable_ != nullptr) {
         immutable_.emplace(engine.immutable_->PinRead());
@@ -110,7 +107,6 @@ DatabaseEngine::ReadSources::ReadSources(DatabaseEngine& engine,
 }
 
 DatabaseEngine::ReadSources::~ReadSources() {
-    assert(lock_->owns_lock());
     version_.reset();
     immutable_.reset();
     memtable_.reset();
@@ -334,7 +330,7 @@ Result<bool> DatabaseEngine::Get(ByteView key, std::vector<std::byte>& value,
         options.snapshot.has_value() ? *options.snapshot : versions_->last_sequence();
     Result<bool> read;
     {
-        ReadSources sources(*this, lock);
+        ReadSources sources(*this);
         std::optional<SeekCharge> seek;
         lock.unlock();
         try {
