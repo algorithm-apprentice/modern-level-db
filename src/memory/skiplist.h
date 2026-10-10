@@ -24,6 +24,8 @@ concept ArenaCompatibleSkipListKey =
 // The comparator, arena, and list must outlive all traversals. Compare must support
 // concurrent calls; its borrowed state is not protected by the link atomics.
 // Any storage referenced by a Key must also remain alive and unchanged.
+// Map-like callers use a pointer or handle Key whose referenced record contains
+// both the logical key and value; the SkipList itself is an ordered set of Keys.
 // See docs/learning/08-cpp-ownership-errors-and-concurrency.md.
 template <ArenaCompatibleSkipListKey Key, typename Compare>
 class SkipList final {
@@ -33,12 +35,7 @@ private:
 
 public:
     explicit SkipList(const Compare& compare, Arena& arena)
-        : compare_(compare), arena_(arena), head_(NewNode(Key{}, MaxHeight)) {
-        static_assert(std::is_trivially_destructible_v<Link>);
-        static_assert(alignof(Link) <= Arena::Alignment);
-        static_assert(sizeof(Link) % alignof(Link) == 0);
-        static_assert(alignof(Node) <= Arena::Alignment);
-    }
+        : compare_(compare), arena_(arena), head_(NewNode(Key{}, MaxHeight)) {}
 
     SkipList(Compare&&, Arena&) = delete;
     SkipList(const Compare&&, Arena&) = delete;
@@ -155,10 +152,17 @@ private:
         const Key key;
     };
 
+    // Nodes and their variable-height trailing links are constructed in Arena
+    // storage and reclaimed without individual destruction.
+    static_assert(std::is_trivially_destructible_v<Link>);
+    static_assert(alignof(Link) <= Arena::Alignment);
+    static_assert(sizeof(Link) % alignof(Link) == 0);
+    static_assert(alignof(Node) <= Arena::Alignment);
+    static_assert((alignof(Link) & (alignof(Link) - 1U)) == 0U);
+
     static constexpr std::size_t LinksOffset() noexcept {
         // Variable-height links follow the fixed node, aligned and constructed
         // separately. Trivial destruction permits whole-arena reclamation.
-        static_assert((alignof(Link) & (alignof(Link) - 1U)) == 0U);
         return (sizeof(Node) + alignof(Link) - 1U) & ~(alignof(Link) - 1U);
     }
 
