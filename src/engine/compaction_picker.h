@@ -21,28 +21,28 @@ inline constexpr std::uint32_t Level0CompactionTrigger = 4;
 // The level that most needs compaction and how much: at least 1 means that the
 // level is full.
 struct CompactionScore {
-  std::uint32_t level;
-  double score;
+    std::uint32_t level;
+    double score;
 };
 
 // A file whose seek budget ran out, in the version whose read found it.
 struct SeekCompaction {
-  std::uint32_t level;
-  Version::File file;
+    std::uint32_t level;
+    Version::File file;
 };
 
 // A compaction of files of `level` with the files of the next level that
 // overlap them. The version holds every file, so the files stay live.
 struct Compaction {
-  std::uint32_t level;
-  std::shared_ptr<const Version> version;
-  // The files of `level` and of `level + 1`, each in its level's order.
-  std::array<std::vector<Version::File>, 2> inputs;
-  // The files of `level + 2` that overlap the inputs, in order.
-  std::vector<Version::File> grandparents;
-  // The largest internal key of the inputs of `level`, where the level's next
-  // size compaction starts.
-  InternalKey compact_pointer;
+    std::uint32_t level;
+    std::shared_ptr<const Version> version;
+    // The files of `level` and of `level + 1`, each in its level's order.
+    std::array<std::vector<Version::File>, 2> inputs;
+    // The files of `level + 2` that overlap the inputs, in order.
+    std::vector<Version::File> grandparents;
+    // The largest internal key of the inputs of `level`, where the level's next
+    // size compaction starts.
+    InternalKey compact_pointer;
 };
 
 // Returns LevelDB's best level and score for levels 0 to NumLevels - 2, as its

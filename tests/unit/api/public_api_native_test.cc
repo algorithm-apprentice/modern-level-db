@@ -20,511 +20,511 @@ namespace modern_leveldb {
 namespace {
 
 class TemporaryDatabaseDirectory {
- public:
-  TemporaryDatabaseDirectory()
-      : path_(std::filesystem::temp_directory_path() /
-              ("modern-leveldb-public-api-" +
-               std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()))) {}
+public:
+    TemporaryDatabaseDirectory()
+        : path_(std::filesystem::temp_directory_path() /
+                ("modern-leveldb-public-api-" +
+                 std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()))) {}
 
-  TemporaryDatabaseDirectory(const TemporaryDatabaseDirectory&) = delete;
-  TemporaryDatabaseDirectory& operator=(const TemporaryDatabaseDirectory&) = delete;
+    TemporaryDatabaseDirectory(const TemporaryDatabaseDirectory&) = delete;
+    TemporaryDatabaseDirectory& operator=(const TemporaryDatabaseDirectory&) = delete;
 
-  ~TemporaryDatabaseDirectory() {
-    std::error_code error;
-    std::filesystem::remove_all(path_, error);
-  }
+    ~TemporaryDatabaseDirectory() {
+        std::error_code error;
+        std::filesystem::remove_all(path_, error);
+    }
 
-  [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
+    [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
 
- private:
-  std::filesystem::path path_;
+private:
+    std::filesystem::path path_;
 };
 
 Options OpeningOptions() {
-  Options options;
+    Options options;
 #if defined(_WIN32)
-  options.allow_weak_namespace_durability = true;
+    options.allow_weak_namespace_durability = true;
 #endif
-  return options;
+    return options;
 }
 
 Options CreatingOptions() {
-  Options options = OpeningOptions();
-  options.create_if_missing = true;
-  return options;
+    Options options = OpeningOptions();
+    options.create_if_missing = true;
+    return options;
 }
 
 std::string Text(ByteView value) { return std::string(AsStringView(value)); }
 
 template <typename T>
 void ExpectInvalid(Result<T> result) {
-  ASSERT_FALSE(result.has_value());
-  EXPECT_EQ(result.error().code(), ErrorCode::InvalidArgument);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code(), ErrorCode::InvalidArgument);
 }
 
 class TrackingComparator final : public Comparator {
- public:
-  explicit TrackingComparator(std::shared_ptr<std::atomic<bool>> destroyed)
-      : destroyed_(std::move(destroyed)) {}
+public:
+    explicit TrackingComparator(std::shared_ptr<std::atomic<bool>> destroyed)
+        : destroyed_(std::move(destroyed)) {}
 
-  ~TrackingComparator() override { destroyed_->store(true); }
+    ~TrackingComparator() override { destroyed_->store(true); }
 
-  [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override {
-    return BytewiseComparator().Compare(left, right);
-  }
+    [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override {
+        return BytewiseComparator().Compare(left, right);
+    }
 
-  [[nodiscard]] std::string_view Name() const noexcept override {
-    return "modern-leveldb.test.TrackingComparator";
-  }
+    [[nodiscard]] std::string_view Name() const noexcept override {
+        return "modern-leveldb.test.TrackingComparator";
+    }
 
-  void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const override {
-    BytewiseComparator().FindShortestSeparator(start, limit);
-  }
+    void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const override {
+        BytewiseComparator().FindShortestSeparator(start, limit);
+    }
 
-  void FindShortSuccessor(std::vector<std::byte>& key) const override {
-    BytewiseComparator().FindShortSuccessor(key);
-  }
+    void FindShortSuccessor(std::vector<std::byte>& key) const override {
+        BytewiseComparator().FindShortSuccessor(key);
+    }
 
- private:
-  std::shared_ptr<std::atomic<bool>> destroyed_;
+private:
+    std::shared_ptr<std::atomic<bool>> destroyed_;
 };
 
 TEST(PublicDatabaseTest, WritesReadsDeletesBatchesAndReopens) {
-  TemporaryDatabaseDirectory directory;
-  {
-    Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
-    ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
-    Database database = std::move(*opened);
-
-    ASSERT_TRUE(database.Put(AsBytes("a"), AsBytes("1")).has_value());
-    WriteBatch batch;
-    ASSERT_TRUE(batch.Put(AsBytes("b"), AsBytes("2")).has_value());
-    ASSERT_TRUE(batch.Delete(AsBytes("a")).has_value());
-    WriteOptions write_options{.sync = true};
-    const std::size_t batch_size = batch.ApproximateSize();
-    ASSERT_TRUE(database.Write(batch, write_options).has_value());
-    EXPECT_EQ(batch.ApproximateSize(), batch_size);
-
-    WriteBatch exclusive;
-    ASSERT_TRUE(exclusive.Put(AsBytes("c"), AsBytes("3")).has_value());
-    const std::size_t exclusive_size = exclusive.ApproximateSize();
-    ASSERT_TRUE(database.WriteExclusive(exclusive).has_value());
-    EXPECT_EQ(exclusive.ApproximateSize(), exclusive_size);
-
-    const auto deleted = database.Get(AsBytes("a"));
-    ASSERT_TRUE(deleted.has_value());
-    EXPECT_FALSE(deleted->has_value());
-    const auto value = database.Get(AsBytes("b"));
-    ASSERT_TRUE(value.has_value() && value->has_value());
-    EXPECT_EQ(Text(**value), "2");
-    const auto exclusive_value = database.Get(AsBytes("c"));
-    ASSERT_TRUE(exclusive_value.has_value() && exclusive_value->has_value());
-    EXPECT_EQ(Text(**exclusive_value), "3");
-    ASSERT_TRUE(database.Delete(AsBytes("missing")).has_value());
-  }
-
-  Result<Database> reopened = Database::Open(OpeningOptions(), directory.path());
-  ASSERT_TRUE(reopened.has_value()) << reopened.error().ToString();
-  const auto value = reopened->Get(AsBytes("b"));
-  ASSERT_TRUE(value.has_value() && value->has_value());
-  EXPECT_EQ(Text(**value), "2");
-  const auto exclusive_value = reopened->Get(AsBytes("c"));
-  ASSERT_TRUE(exclusive_value.has_value() && exclusive_value->has_value());
-  EXPECT_EQ(Text(**exclusive_value), "3");
-}
-
-TEST(PublicDatabaseTest, ReusesCallerOutputAndLeavesItUnchangedWhenAbsent) {
-  TemporaryDatabaseDirectory directory;
-  Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
-  ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
-  Database database = std::move(*opened);
-  ASSERT_TRUE(database.Put(AsBytes("value"), AsBytes("stored")).has_value());
-  ASSERT_TRUE(database.Put(AsBytes("deleted"), AsBytes("old")).has_value());
-  ASSERT_TRUE(database.Delete(AsBytes("deleted")).has_value());
-  ASSERT_TRUE(database.Put(AsBytes("empty"), {}).has_value());
-
-  std::vector<std::byte> output;
-  output.reserve(64);
-  const ByteView sentinel = AsBytes("sentinel");
-  output.assign(sentinel.begin(), sentinel.end());
-  const std::size_t capacity = output.capacity();
-  const std::byte* const storage = output.data();
-
-  const Result<bool> found = database.Get(AsBytes("value"), output);
-  ASSERT_TRUE(found.has_value() && *found);
-  EXPECT_EQ(Text(output), "stored");
-  EXPECT_EQ(output.capacity(), capacity);
-  EXPECT_EQ(output.data(), storage);
-
-  const ByteView unchanged_bytes = AsBytes("unchanged");
-  output.assign(unchanged_bytes.begin(), unchanged_bytes.end());
-  const std::vector<std::byte> unchanged = output;
-  const Result<bool> missing = database.Get(AsBytes("missing"), output);
-  ASSERT_TRUE(missing.has_value());
-  EXPECT_FALSE(*missing);
-  EXPECT_EQ(output, unchanged);
-  EXPECT_EQ(output.capacity(), capacity);
-
-  const Result<bool> deleted = database.Get(AsBytes("deleted"), output);
-  ASSERT_TRUE(deleted.has_value());
-  EXPECT_FALSE(*deleted);
-  EXPECT_EQ(output, unchanged);
-
-  const Result<bool> empty = database.Get(AsBytes("empty"), output);
-  ASSERT_TRUE(empty.has_value() && *empty);
-  EXPECT_TRUE(output.empty());
-  EXPECT_EQ(output.capacity(), capacity);
-
-  const auto owning = database.Get(AsBytes("value"));
-  ASSERT_TRUE(owning.has_value() && owning->has_value());
-  EXPECT_EQ(Text(**owning), "stored");
-
-  Result<Snapshot> snapshot = database.GetSnapshot();
-  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().ToString();
-  ASSERT_TRUE(database.Put(AsBytes("value"), AsBytes("new")).has_value());
-  ReadOptions snapshot_read{.snapshot = &*snapshot};
-  const Result<bool> old = database.Get(AsBytes("value"), output, snapshot_read);
-  ASSERT_TRUE(old.has_value() && *old);
-  EXPECT_EQ(Text(output), "stored");
-}
-
-TEST(PublicDatabaseTest, IteratesAndSeeksInBothDirections) {
-  TemporaryDatabaseDirectory directory;
-  Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
-  ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
-  Database database = std::move(*opened);
-  ASSERT_TRUE(database.Put(AsBytes("a"), AsBytes("1")).has_value());
-  ASSERT_TRUE(database.Put(AsBytes("c"), AsBytes("3")).has_value());
-  ASSERT_TRUE(database.Put(AsBytes("b"), AsBytes("2")).has_value());
-
-  Result<Iterator> created = database.NewIterator();
-  ASSERT_TRUE(created.has_value()) << created.error().ToString();
-  Iterator iterator = std::move(*created);
-  EXPECT_FALSE(iterator.valid());
-  ASSERT_TRUE(iterator.SeekToFirst().has_value());
-  ASSERT_TRUE(iterator.valid());
-  EXPECT_EQ(Text(iterator.key()), "a");
-  EXPECT_EQ(Text(iterator.value()), "1");
-  ASSERT_TRUE(iterator.Next().has_value());
-  EXPECT_EQ(Text(iterator.key()), "b");
-  ASSERT_TRUE(iterator.Seek(AsBytes("bb")).has_value());
-  EXPECT_EQ(Text(iterator.key()), "c");
-  ASSERT_TRUE(iterator.SeekToLast().has_value());
-  EXPECT_EQ(Text(iterator.key()), "c");
-  ASSERT_TRUE(iterator.Prev().has_value());
-  EXPECT_EQ(Text(iterator.key()), "b");
-}
-
-TEST(PublicDatabaseTest, IteratorRetainsItsSnapshotAfterTheSnapshotHandleIsDestroyed) {
-  TemporaryDatabaseDirectory directory;
-  Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
-  ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
-  Database database = std::move(*opened);
-  ASSERT_TRUE(database.Put(AsBytes("a"), AsBytes("old")).has_value());
-
-  Result<Iterator> created = [&] {
-    Result<Snapshot> snapshot = database.GetSnapshot();
-    EXPECT_TRUE(snapshot.has_value());
-    if (!snapshot.has_value()) {
-      return Result<Iterator>(std::unexpected(snapshot.error()));
-    }
-    ReadOptions options{.snapshot = &*snapshot};
-    return database.NewIterator(options);
-  }();
-  ASSERT_TRUE(created.has_value()) << created.error().ToString();
-  ASSERT_TRUE(database.Put(AsBytes("a"), AsBytes("new")).has_value());
-
-  Iterator iterator = std::move(*created);
-  ASSERT_TRUE(iterator.SeekToFirst().has_value());
-  ASSERT_TRUE(iterator.valid());
-  EXPECT_EQ(Text(iterator.key()), "a");
-  EXPECT_EQ(Text(iterator.value()), "old");
-}
-
-TEST(PublicDatabaseTest, ReportsOwningDatabaseStateAndRetainedSnapshotRegistration) {
-  TemporaryDatabaseDirectory directory;
-  Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
-  ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
-  Database database = std::move(*opened);
-
-  Result<DatabaseState> initial = database.GetState();
-  ASSERT_TRUE(initial.has_value()) << initial.error().ToString();
-  EXPECT_EQ(initial->last_sequence, 0U);
-  EXPECT_EQ(initial->snapshot_count, 0U);
-  EXPECT_FALSE(initial->oldest_snapshot_sequence.has_value());
-  EXPECT_EQ(initial->write_queue_depth, 0U);
-  EXPECT_GT(initial->mutable_memtable_bytes, 0U);
-  EXPECT_FALSE(initial->immutable_memtable_bytes.has_value());
-  EXPECT_EQ(initial->protected_output_count, 0U);
-  EXPECT_FALSE(initial->background_work_scheduled);
-  EXPECT_FALSE(initial->sticky_error.has_value());
-  for (const DatabaseLevelState& level : initial->levels) {
-    EXPECT_EQ(level.file_count, 0U);
-    EXPECT_EQ(level.file_bytes, 0U);
-  }
-
-  const std::string large(5000, 'v');
-  ASSERT_TRUE(database.Put(AsBytes("a"), AsBytes(large)).has_value());
-  Result<DatabaseState> written = database.GetState();
-  ASSERT_TRUE(written.has_value()) << written.error().ToString();
-  EXPECT_EQ(written->last_sequence, 1U);
-  EXPECT_GT(written->mutable_memtable_bytes, initial->mutable_memtable_bytes);
-
-  std::optional<Iterator> retained_iterator;
-  {
-    Result<Snapshot> snapshot = database.GetSnapshot();
-    ASSERT_TRUE(snapshot.has_value()) << snapshot.error().ToString();
-    Result<DatabaseState> snapshotted = database.GetState();
-    ASSERT_TRUE(snapshotted.has_value()) << snapshotted.error().ToString();
-    EXPECT_EQ(snapshotted->snapshot_count, 1U);
-    EXPECT_EQ(snapshotted->oldest_snapshot_sequence, 1U);
-
-    ReadOptions options{.snapshot = &*snapshot};
-    Result<Iterator> iterator = database.NewIterator(options);
-    ASSERT_TRUE(iterator.has_value()) << iterator.error().ToString();
-    retained_iterator.emplace(std::move(*iterator));
-  }
-
-  Result<DatabaseState> retained = database.GetState();
-  ASSERT_TRUE(retained.has_value()) << retained.error().ToString();
-  EXPECT_EQ(retained->snapshot_count, 1U);
-  EXPECT_EQ(retained->oldest_snapshot_sequence, 1U);
-  retained_iterator.reset();
-
-  Result<DatabaseState> released = database.GetState();
-  ASSERT_TRUE(released.has_value()) << released.error().ToString();
-  EXPECT_EQ(released->snapshot_count, 0U);
-  EXPECT_FALSE(released->oldest_snapshot_sequence.has_value());
-
-  const DatabaseState saved = *released;
-  ASSERT_TRUE(database.Put(AsBytes("b"), AsBytes("later")).has_value());
-  Result<DatabaseState> later = database.GetState();
-  ASSERT_TRUE(later.has_value()) << later.error().ToString();
-  EXPECT_EQ(later->last_sequence, 2U);
-  EXPECT_EQ(saved.last_sequence, 1U);
-  EXPECT_GT(saved.mutable_memtable_bytes, 0U);
-}
-
-TEST(PublicDatabaseTest, DatabaseStateOutlivesItsDatabase) {
-  TemporaryDatabaseDirectory directory;
-  DatabaseState saved;
-  {
-    Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
-    ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
-    ASSERT_TRUE(opened->Put(AsBytes("a"), AsBytes("1")).has_value());
-    Result<DatabaseState> state = opened->GetState();
-    ASSERT_TRUE(state.has_value()) << state.error().ToString();
-    saved = *state;
-  }
-
-  EXPECT_EQ(saved.last_sequence, 1U);
-  EXPECT_GT(saved.mutable_memtable_bytes, 0U);
-  EXPECT_FALSE(saved.sticky_error.has_value());
-}
-
-TEST(PublicDatabaseTest, RejectsForeignAndMovedFromHandles) {
-  TemporaryDatabaseDirectory first_directory;
-  TemporaryDatabaseDirectory second_directory;
-  Result<Database> first_opened = Database::Open(CreatingOptions(), first_directory.path());
-  Result<Database> second_opened = Database::Open(CreatingOptions(), second_directory.path());
-  ASSERT_TRUE(first_opened.has_value()) << first_opened.error().ToString();
-  ASSERT_TRUE(second_opened.has_value()) << second_opened.error().ToString();
-  Database first = std::move(*first_opened);
-  Database second = std::move(*second_opened);
-
-  Result<Snapshot> snapshot = first.GetSnapshot();
-  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().ToString();
-  ReadOptions foreign{.snapshot = &*snapshot};
-  const auto foreign_read = second.Get(AsBytes("a"), foreign);
-  ASSERT_FALSE(foreign_read.has_value());
-  EXPECT_EQ(foreign_read.error().code(), ErrorCode::InvalidArgument);
-  const auto foreign_iterator = second.NewIterator(foreign);
-  ASSERT_FALSE(foreign_iterator.has_value());
-  EXPECT_EQ(foreign_iterator.error().code(), ErrorCode::InvalidArgument);
-
-  Snapshot retained = std::move(*snapshot);
-  ReadOptions moved_snapshot{.snapshot = &*snapshot};
-  const auto moved_read = first.Get(AsBytes("a"), moved_snapshot);
-  ASSERT_FALSE(moved_read.has_value());
-  EXPECT_EQ(moved_read.error().code(), ErrorCode::InvalidArgument);
-
-  Database moved = std::move(first);
-  ExpectInvalid(first.Put(AsBytes("a"), AsBytes("1")));
-  ExpectInvalid(first.Delete(AsBytes("a")));
-  WriteBatch valid_batch;
-  ExpectInvalid(first.Write(valid_batch));
-  ExpectInvalid(first.WriteExclusive(valid_batch));
-  ExpectInvalid(first.Get(AsBytes("a")));
-  ExpectInvalid(first.NewIterator());
-  ExpectInvalid(first.GetSnapshot());
-  ExpectInvalid(first.GetState());
-
-  Result<Iterator> iterator = moved.NewIterator();
-  ASSERT_TRUE(iterator.has_value()) << iterator.error().ToString();
-  Iterator retained_iterator = std::move(*iterator);
-  EXPECT_FALSE(iterator->valid());
-  ExpectInvalid(iterator->SeekToFirst());
-  ExpectInvalid(iterator->SeekToLast());
-  ExpectInvalid(iterator->Seek(AsBytes("a")));
-  ExpectInvalid(iterator->Next());
-  ExpectInvalid(iterator->Prev());
-
-  Result<Iterator> assigned_source = moved.NewIterator();
-  Result<Iterator> assigned_target = moved.NewIterator();
-  ASSERT_TRUE(assigned_source.has_value() && assigned_target.has_value());
-  *assigned_target = std::move(*assigned_source);
-  EXPECT_FALSE(assigned_source->valid());
-
-  Result<Snapshot> snapshot_source = moved.GetSnapshot();
-  Result<Snapshot> snapshot_target = moved.GetSnapshot();
-  ASSERT_TRUE(snapshot_source.has_value() && snapshot_target.has_value());
-  *snapshot_target = std::move(*snapshot_source);
-
-  Database assigned = std::move(second);
-  assigned = std::move(moved);
-
-  WriteBatch moved_batch_source;
-  WriteBatch moved_batch = std::move(moved_batch_source);
-  ExpectInvalid(assigned.Write(moved_batch_source));
-  ExpectInvalid(assigned.WriteExclusive(moved_batch_source));
-  EXPECT_TRUE(assigned.Write(moved_batch).has_value());
-  EXPECT_TRUE(assigned.WriteExclusive(moved_batch).has_value());
-}
-
-TEST(PublicDatabaseTest, ChildHandlesKeepTheEngineAlive) {
-  TemporaryDatabaseDirectory iterator_directory;
-  std::optional<Iterator> iterator;
-  {
-    Result<Database> opened = Database::Open(CreatingOptions(), iterator_directory.path());
-    ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
-    ASSERT_TRUE(opened->Put(AsBytes("a"), AsBytes("1")).has_value());
-    Result<Iterator> created = opened->NewIterator();
-    ASSERT_TRUE(created.has_value()) << created.error().ToString();
-    iterator.emplace(std::move(*created));
-  }
-  const Result<Database> iterator_locked =
-      Database::Open(OpeningOptions(), iterator_directory.path());
-  ASSERT_FALSE(iterator_locked.has_value());
-  EXPECT_EQ(iterator_locked.error().code(), ErrorCode::Busy);
-  ASSERT_TRUE(iterator->SeekToFirst().has_value());
-  ASSERT_TRUE(iterator->valid());
-  EXPECT_EQ(Text(iterator->value()), "1");
-  iterator.reset();
-  EXPECT_TRUE(Database::Open(OpeningOptions(), iterator_directory.path()).has_value());
-
-  TemporaryDatabaseDirectory snapshot_directory;
-  std::optional<Snapshot> snapshot;
-  {
-    Result<Database> opened = Database::Open(CreatingOptions(), snapshot_directory.path());
-    ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
-    Result<Snapshot> created = opened->GetSnapshot();
-    ASSERT_TRUE(created.has_value()) << created.error().ToString();
-    snapshot.emplace(std::move(*created));
-  }
-  const Result<Database> snapshot_locked =
-      Database::Open(OpeningOptions(), snapshot_directory.path());
-  ASSERT_FALSE(snapshot_locked.has_value());
-  EXPECT_EQ(snapshot_locked.error().code(), ErrorCode::Busy);
-  snapshot.reset();
-  EXPECT_TRUE(Database::Open(OpeningOptions(), snapshot_directory.path()).has_value());
-}
-
-TEST(PublicDatabaseTest, ValidatesOptionsAndRetainsTheComparator) {
-  TemporaryDatabaseDirectory invalid_directory;
-  Options invalid = CreatingOptions();
-  invalid.block_restart_interval = 0;
-  const Result<Database> rejected = Database::Open(invalid, invalid_directory.path());
-  ASSERT_FALSE(rejected.has_value());
-  EXPECT_EQ(rejected.error().code(), ErrorCode::InvalidArgument);
-  EXPECT_FALSE(std::filesystem::exists(invalid_directory.path()));
-
-  for (const Compression compression :
-       {static_cast<Compression>(-1), static_cast<Compression>(3)}) {
-    SCOPED_TRACE(static_cast<int>(compression));
     TemporaryDatabaseDirectory directory;
-    Options invalid_compression = CreatingOptions();
-    invalid_compression.compression = compression;
-    const Result<Database> result = Database::Open(invalid_compression, directory.path());
-    ASSERT_FALSE(result.has_value());
-    EXPECT_EQ(result.error().code(), ErrorCode::InvalidArgument);
-    EXPECT_FALSE(std::filesystem::exists(directory.path()));
-  }
-
-  for (const int level : {-6, 23}) {
-    SCOPED_TRACE(level);
-    TemporaryDatabaseDirectory directory;
-    Options invalid_level = CreatingOptions();
-    invalid_level.compression = Compression::Zstd;
-    invalid_level.zstd_compression_level = level;
-    const Result<Database> result = Database::Open(invalid_level, directory.path());
-    ASSERT_FALSE(result.has_value());
-    EXPECT_EQ(result.error().code(), ErrorCode::InvalidArgument);
-    EXPECT_FALSE(std::filesystem::exists(directory.path()));
-  }
-
-  TemporaryDatabaseDirectory comparator_directory;
-  auto destroyed = std::make_shared<std::atomic<bool>>(false);
-  auto comparator = std::make_shared<TrackingComparator>(destroyed);
-  std::weak_ptr<const Comparator> retained = comparator;
-  Options options = CreatingOptions();
-  options.comparator = comparator;
-  Result<Database> opened = Database::Open(std::move(options), comparator_directory.path());
-  ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
-  comparator.reset();
-  EXPECT_FALSE(retained.expired());
-  ASSERT_TRUE(opened->Put(AsBytes("a"), AsBytes("1")).has_value());
-  opened = std::unexpected(Error::Aborted("release the database"));
-  EXPECT_TRUE(retained.expired());
-  EXPECT_TRUE(destroyed->load());
-}
-
-TEST(PublicDatabaseTest, WiresBloomFiltersIntoWrittenTables) {
-  TemporaryDatabaseDirectory directory;
-  Options options = CreatingOptions();
-  options.write_buffer_size = 1;
-  options.block_restart_interval = 4;
-  options.bloom_bits_per_key = 10;
-  {
-    Result<Database> opened = Database::Open(options, directory.path());
-    ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
-    const std::string large(std::size_t{70} << 10U, 'v');
-    ASSERT_TRUE(opened->Put(AsBytes("large"), AsBytes(large)).has_value());
-    ASSERT_TRUE(opened->Put(AsBytes("trigger"), AsBytes("1")).has_value());
-  }
-
-  options.create_if_missing = false;
-  Result<Database> reopened = Database::Open(options, directory.path());
-  ASSERT_TRUE(reopened.has_value()) << reopened.error().ToString();
-  const auto value = reopened->Get(AsBytes("large"));
-  ASSERT_TRUE(value.has_value() && value->has_value());
-  EXPECT_EQ(value->value().size(), std::size_t{70} << 10U);
-}
-
-TEST(PublicDatabaseTest, WritesAndReopensEveryCompressionMode) {
-  for (const Compression compression :
-       {Compression::None, Compression::Snappy, Compression::Zstd}) {
-    SCOPED_TRACE(static_cast<int>(compression));
-    TemporaryDatabaseDirectory directory;
-    Options options = CreatingOptions();
-    options.write_buffer_size = 1;
-    options.compression = compression;
-    if (compression == Compression::Zstd) {
-      options.zstd_compression_level = -5;
-    }
     {
-      Result<Database> opened = Database::Open(options, directory.path());
-      ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
-      const std::string large(std::size_t{70} << 10U, 'v');
-      ASSERT_TRUE(opened->Put(AsBytes("large"), AsBytes(large)).has_value());
-      ASSERT_TRUE(opened->Put(AsBytes("trigger"), AsBytes("1")).has_value());
+        Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
+        ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+        Database database = std::move(*opened);
+
+        ASSERT_TRUE(database.Put(AsBytes("a"), AsBytes("1")).has_value());
+        WriteBatch batch;
+        ASSERT_TRUE(batch.Put(AsBytes("b"), AsBytes("2")).has_value());
+        ASSERT_TRUE(batch.Delete(AsBytes("a")).has_value());
+        WriteOptions write_options{.sync = true};
+        const std::size_t batch_size = batch.ApproximateSize();
+        ASSERT_TRUE(database.Write(batch, write_options).has_value());
+        EXPECT_EQ(batch.ApproximateSize(), batch_size);
+
+        WriteBatch exclusive;
+        ASSERT_TRUE(exclusive.Put(AsBytes("c"), AsBytes("3")).has_value());
+        const std::size_t exclusive_size = exclusive.ApproximateSize();
+        ASSERT_TRUE(database.WriteExclusive(exclusive).has_value());
+        EXPECT_EQ(exclusive.ApproximateSize(), exclusive_size);
+
+        const auto deleted = database.Get(AsBytes("a"));
+        ASSERT_TRUE(deleted.has_value());
+        EXPECT_FALSE(deleted->has_value());
+        const auto value = database.Get(AsBytes("b"));
+        ASSERT_TRUE(value.has_value() && value->has_value());
+        EXPECT_EQ(Text(**value), "2");
+        const auto exclusive_value = database.Get(AsBytes("c"));
+        ASSERT_TRUE(exclusive_value.has_value() && exclusive_value->has_value());
+        EXPECT_EQ(Text(**exclusive_value), "3");
+        ASSERT_TRUE(database.Delete(AsBytes("missing")).has_value());
     }
 
     Result<Database> reopened = Database::Open(OpeningOptions(), directory.path());
     ASSERT_TRUE(reopened.has_value()) << reopened.error().ToString();
+    const auto value = reopened->Get(AsBytes("b"));
+    ASSERT_TRUE(value.has_value() && value->has_value());
+    EXPECT_EQ(Text(**value), "2");
+    const auto exclusive_value = reopened->Get(AsBytes("c"));
+    ASSERT_TRUE(exclusive_value.has_value() && exclusive_value->has_value());
+    EXPECT_EQ(Text(**exclusive_value), "3");
+}
+
+TEST(PublicDatabaseTest, ReusesCallerOutputAndLeavesItUnchangedWhenAbsent) {
+    TemporaryDatabaseDirectory directory;
+    Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
+    ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+    Database database = std::move(*opened);
+    ASSERT_TRUE(database.Put(AsBytes("value"), AsBytes("stored")).has_value());
+    ASSERT_TRUE(database.Put(AsBytes("deleted"), AsBytes("old")).has_value());
+    ASSERT_TRUE(database.Delete(AsBytes("deleted")).has_value());
+    ASSERT_TRUE(database.Put(AsBytes("empty"), {}).has_value());
+
+    std::vector<std::byte> output;
+    output.reserve(64);
+    const ByteView sentinel = AsBytes("sentinel");
+    output.assign(sentinel.begin(), sentinel.end());
+    const std::size_t capacity = output.capacity();
+    const std::byte* const storage = output.data();
+
+    const Result<bool> found = database.Get(AsBytes("value"), output);
+    ASSERT_TRUE(found.has_value() && *found);
+    EXPECT_EQ(Text(output), "stored");
+    EXPECT_EQ(output.capacity(), capacity);
+    EXPECT_EQ(output.data(), storage);
+
+    const ByteView unchanged_bytes = AsBytes("unchanged");
+    output.assign(unchanged_bytes.begin(), unchanged_bytes.end());
+    const std::vector<std::byte> unchanged = output;
+    const Result<bool> missing = database.Get(AsBytes("missing"), output);
+    ASSERT_TRUE(missing.has_value());
+    EXPECT_FALSE(*missing);
+    EXPECT_EQ(output, unchanged);
+    EXPECT_EQ(output.capacity(), capacity);
+
+    const Result<bool> deleted = database.Get(AsBytes("deleted"), output);
+    ASSERT_TRUE(deleted.has_value());
+    EXPECT_FALSE(*deleted);
+    EXPECT_EQ(output, unchanged);
+
+    const Result<bool> empty = database.Get(AsBytes("empty"), output);
+    ASSERT_TRUE(empty.has_value() && *empty);
+    EXPECT_TRUE(output.empty());
+    EXPECT_EQ(output.capacity(), capacity);
+
+    const auto owning = database.Get(AsBytes("value"));
+    ASSERT_TRUE(owning.has_value() && owning->has_value());
+    EXPECT_EQ(Text(**owning), "stored");
+
+    Result<Snapshot> snapshot = database.GetSnapshot();
+    ASSERT_TRUE(snapshot.has_value()) << snapshot.error().ToString();
+    ASSERT_TRUE(database.Put(AsBytes("value"), AsBytes("new")).has_value());
+    ReadOptions snapshot_read{.snapshot = &*snapshot};
+    const Result<bool> old = database.Get(AsBytes("value"), output, snapshot_read);
+    ASSERT_TRUE(old.has_value() && *old);
+    EXPECT_EQ(Text(output), "stored");
+}
+
+TEST(PublicDatabaseTest, IteratesAndSeeksInBothDirections) {
+    TemporaryDatabaseDirectory directory;
+    Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
+    ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+    Database database = std::move(*opened);
+    ASSERT_TRUE(database.Put(AsBytes("a"), AsBytes("1")).has_value());
+    ASSERT_TRUE(database.Put(AsBytes("c"), AsBytes("3")).has_value());
+    ASSERT_TRUE(database.Put(AsBytes("b"), AsBytes("2")).has_value());
+
+    Result<Iterator> created = database.NewIterator();
+    ASSERT_TRUE(created.has_value()) << created.error().ToString();
+    Iterator iterator = std::move(*created);
+    EXPECT_FALSE(iterator.valid());
+    ASSERT_TRUE(iterator.SeekToFirst().has_value());
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(Text(iterator.key()), "a");
+    EXPECT_EQ(Text(iterator.value()), "1");
+    ASSERT_TRUE(iterator.Next().has_value());
+    EXPECT_EQ(Text(iterator.key()), "b");
+    ASSERT_TRUE(iterator.Seek(AsBytes("bb")).has_value());
+    EXPECT_EQ(Text(iterator.key()), "c");
+    ASSERT_TRUE(iterator.SeekToLast().has_value());
+    EXPECT_EQ(Text(iterator.key()), "c");
+    ASSERT_TRUE(iterator.Prev().has_value());
+    EXPECT_EQ(Text(iterator.key()), "b");
+}
+
+TEST(PublicDatabaseTest, IteratorRetainsItsSnapshotAfterTheSnapshotHandleIsDestroyed) {
+    TemporaryDatabaseDirectory directory;
+    Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
+    ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+    Database database = std::move(*opened);
+    ASSERT_TRUE(database.Put(AsBytes("a"), AsBytes("old")).has_value());
+
+    Result<Iterator> created = [&] {
+        Result<Snapshot> snapshot = database.GetSnapshot();
+        EXPECT_TRUE(snapshot.has_value());
+        if (!snapshot.has_value()) {
+            return Result<Iterator>(std::unexpected(snapshot.error()));
+        }
+        ReadOptions options{.snapshot = &*snapshot};
+        return database.NewIterator(options);
+    }();
+    ASSERT_TRUE(created.has_value()) << created.error().ToString();
+    ASSERT_TRUE(database.Put(AsBytes("a"), AsBytes("new")).has_value());
+
+    Iterator iterator = std::move(*created);
+    ASSERT_TRUE(iterator.SeekToFirst().has_value());
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(Text(iterator.key()), "a");
+    EXPECT_EQ(Text(iterator.value()), "old");
+}
+
+TEST(PublicDatabaseTest, ReportsOwningDatabaseStateAndRetainedSnapshotRegistration) {
+    TemporaryDatabaseDirectory directory;
+    Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
+    ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+    Database database = std::move(*opened);
+
+    Result<DatabaseState> initial = database.GetState();
+    ASSERT_TRUE(initial.has_value()) << initial.error().ToString();
+    EXPECT_EQ(initial->last_sequence, 0U);
+    EXPECT_EQ(initial->snapshot_count, 0U);
+    EXPECT_FALSE(initial->oldest_snapshot_sequence.has_value());
+    EXPECT_EQ(initial->write_queue_depth, 0U);
+    EXPECT_GT(initial->mutable_memtable_bytes, 0U);
+    EXPECT_FALSE(initial->immutable_memtable_bytes.has_value());
+    EXPECT_EQ(initial->protected_output_count, 0U);
+    EXPECT_FALSE(initial->background_work_scheduled);
+    EXPECT_FALSE(initial->sticky_error.has_value());
+    for (const DatabaseLevelState& level : initial->levels) {
+        EXPECT_EQ(level.file_count, 0U);
+        EXPECT_EQ(level.file_bytes, 0U);
+    }
+
+    const std::string large(5000, 'v');
+    ASSERT_TRUE(database.Put(AsBytes("a"), AsBytes(large)).has_value());
+    Result<DatabaseState> written = database.GetState();
+    ASSERT_TRUE(written.has_value()) << written.error().ToString();
+    EXPECT_EQ(written->last_sequence, 1U);
+    EXPECT_GT(written->mutable_memtable_bytes, initial->mutable_memtable_bytes);
+
+    std::optional<Iterator> retained_iterator;
+    {
+        Result<Snapshot> snapshot = database.GetSnapshot();
+        ASSERT_TRUE(snapshot.has_value()) << snapshot.error().ToString();
+        Result<DatabaseState> snapshotted = database.GetState();
+        ASSERT_TRUE(snapshotted.has_value()) << snapshotted.error().ToString();
+        EXPECT_EQ(snapshotted->snapshot_count, 1U);
+        EXPECT_EQ(snapshotted->oldest_snapshot_sequence, 1U);
+
+        ReadOptions options{.snapshot = &*snapshot};
+        Result<Iterator> iterator = database.NewIterator(options);
+        ASSERT_TRUE(iterator.has_value()) << iterator.error().ToString();
+        retained_iterator.emplace(std::move(*iterator));
+    }
+
+    Result<DatabaseState> retained = database.GetState();
+    ASSERT_TRUE(retained.has_value()) << retained.error().ToString();
+    EXPECT_EQ(retained->snapshot_count, 1U);
+    EXPECT_EQ(retained->oldest_snapshot_sequence, 1U);
+    retained_iterator.reset();
+
+    Result<DatabaseState> released = database.GetState();
+    ASSERT_TRUE(released.has_value()) << released.error().ToString();
+    EXPECT_EQ(released->snapshot_count, 0U);
+    EXPECT_FALSE(released->oldest_snapshot_sequence.has_value());
+
+    const DatabaseState saved = *released;
+    ASSERT_TRUE(database.Put(AsBytes("b"), AsBytes("later")).has_value());
+    Result<DatabaseState> later = database.GetState();
+    ASSERT_TRUE(later.has_value()) << later.error().ToString();
+    EXPECT_EQ(later->last_sequence, 2U);
+    EXPECT_EQ(saved.last_sequence, 1U);
+    EXPECT_GT(saved.mutable_memtable_bytes, 0U);
+}
+
+TEST(PublicDatabaseTest, DatabaseStateOutlivesItsDatabase) {
+    TemporaryDatabaseDirectory directory;
+    DatabaseState saved;
+    {
+        Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
+        ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+        ASSERT_TRUE(opened->Put(AsBytes("a"), AsBytes("1")).has_value());
+        Result<DatabaseState> state = opened->GetState();
+        ASSERT_TRUE(state.has_value()) << state.error().ToString();
+        saved = *state;
+    }
+
+    EXPECT_EQ(saved.last_sequence, 1U);
+    EXPECT_GT(saved.mutable_memtable_bytes, 0U);
+    EXPECT_FALSE(saved.sticky_error.has_value());
+}
+
+TEST(PublicDatabaseTest, RejectsForeignAndMovedFromHandles) {
+    TemporaryDatabaseDirectory first_directory;
+    TemporaryDatabaseDirectory second_directory;
+    Result<Database> first_opened = Database::Open(CreatingOptions(), first_directory.path());
+    Result<Database> second_opened = Database::Open(CreatingOptions(), second_directory.path());
+    ASSERT_TRUE(first_opened.has_value()) << first_opened.error().ToString();
+    ASSERT_TRUE(second_opened.has_value()) << second_opened.error().ToString();
+    Database first = std::move(*first_opened);
+    Database second = std::move(*second_opened);
+
+    Result<Snapshot> snapshot = first.GetSnapshot();
+    ASSERT_TRUE(snapshot.has_value()) << snapshot.error().ToString();
+    ReadOptions foreign{.snapshot = &*snapshot};
+    const auto foreign_read = second.Get(AsBytes("a"), foreign);
+    ASSERT_FALSE(foreign_read.has_value());
+    EXPECT_EQ(foreign_read.error().code(), ErrorCode::InvalidArgument);
+    const auto foreign_iterator = second.NewIterator(foreign);
+    ASSERT_FALSE(foreign_iterator.has_value());
+    EXPECT_EQ(foreign_iterator.error().code(), ErrorCode::InvalidArgument);
+
+    Snapshot retained = std::move(*snapshot);
+    ReadOptions moved_snapshot{.snapshot = &*snapshot};
+    const auto moved_read = first.Get(AsBytes("a"), moved_snapshot);
+    ASSERT_FALSE(moved_read.has_value());
+    EXPECT_EQ(moved_read.error().code(), ErrorCode::InvalidArgument);
+
+    Database moved = std::move(first);
+    ExpectInvalid(first.Put(AsBytes("a"), AsBytes("1")));
+    ExpectInvalid(first.Delete(AsBytes("a")));
+    WriteBatch valid_batch;
+    ExpectInvalid(first.Write(valid_batch));
+    ExpectInvalid(first.WriteExclusive(valid_batch));
+    ExpectInvalid(first.Get(AsBytes("a")));
+    ExpectInvalid(first.NewIterator());
+    ExpectInvalid(first.GetSnapshot());
+    ExpectInvalid(first.GetState());
+
+    Result<Iterator> iterator = moved.NewIterator();
+    ASSERT_TRUE(iterator.has_value()) << iterator.error().ToString();
+    Iterator retained_iterator = std::move(*iterator);
+    EXPECT_FALSE(iterator->valid());
+    ExpectInvalid(iterator->SeekToFirst());
+    ExpectInvalid(iterator->SeekToLast());
+    ExpectInvalid(iterator->Seek(AsBytes("a")));
+    ExpectInvalid(iterator->Next());
+    ExpectInvalid(iterator->Prev());
+
+    Result<Iterator> assigned_source = moved.NewIterator();
+    Result<Iterator> assigned_target = moved.NewIterator();
+    ASSERT_TRUE(assigned_source.has_value() && assigned_target.has_value());
+    *assigned_target = std::move(*assigned_source);
+    EXPECT_FALSE(assigned_source->valid());
+
+    Result<Snapshot> snapshot_source = moved.GetSnapshot();
+    Result<Snapshot> snapshot_target = moved.GetSnapshot();
+    ASSERT_TRUE(snapshot_source.has_value() && snapshot_target.has_value());
+    *snapshot_target = std::move(*snapshot_source);
+
+    Database assigned = std::move(second);
+    assigned = std::move(moved);
+
+    WriteBatch moved_batch_source;
+    WriteBatch moved_batch = std::move(moved_batch_source);
+    ExpectInvalid(assigned.Write(moved_batch_source));
+    ExpectInvalid(assigned.WriteExclusive(moved_batch_source));
+    EXPECT_TRUE(assigned.Write(moved_batch).has_value());
+    EXPECT_TRUE(assigned.WriteExclusive(moved_batch).has_value());
+}
+
+TEST(PublicDatabaseTest, ChildHandlesKeepTheEngineAlive) {
+    TemporaryDatabaseDirectory iterator_directory;
+    std::optional<Iterator> iterator;
+    {
+        Result<Database> opened = Database::Open(CreatingOptions(), iterator_directory.path());
+        ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+        ASSERT_TRUE(opened->Put(AsBytes("a"), AsBytes("1")).has_value());
+        Result<Iterator> created = opened->NewIterator();
+        ASSERT_TRUE(created.has_value()) << created.error().ToString();
+        iterator.emplace(std::move(*created));
+    }
+    const Result<Database> iterator_locked =
+        Database::Open(OpeningOptions(), iterator_directory.path());
+    ASSERT_FALSE(iterator_locked.has_value());
+    EXPECT_EQ(iterator_locked.error().code(), ErrorCode::Busy);
+    ASSERT_TRUE(iterator->SeekToFirst().has_value());
+    ASSERT_TRUE(iterator->valid());
+    EXPECT_EQ(Text(iterator->value()), "1");
+    iterator.reset();
+    EXPECT_TRUE(Database::Open(OpeningOptions(), iterator_directory.path()).has_value());
+
+    TemporaryDatabaseDirectory snapshot_directory;
+    std::optional<Snapshot> snapshot;
+    {
+        Result<Database> opened = Database::Open(CreatingOptions(), snapshot_directory.path());
+        ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+        Result<Snapshot> created = opened->GetSnapshot();
+        ASSERT_TRUE(created.has_value()) << created.error().ToString();
+        snapshot.emplace(std::move(*created));
+    }
+    const Result<Database> snapshot_locked =
+        Database::Open(OpeningOptions(), snapshot_directory.path());
+    ASSERT_FALSE(snapshot_locked.has_value());
+    EXPECT_EQ(snapshot_locked.error().code(), ErrorCode::Busy);
+    snapshot.reset();
+    EXPECT_TRUE(Database::Open(OpeningOptions(), snapshot_directory.path()).has_value());
+}
+
+TEST(PublicDatabaseTest, ValidatesOptionsAndRetainsTheComparator) {
+    TemporaryDatabaseDirectory invalid_directory;
+    Options invalid = CreatingOptions();
+    invalid.block_restart_interval = 0;
+    const Result<Database> rejected = Database::Open(invalid, invalid_directory.path());
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().code(), ErrorCode::InvalidArgument);
+    EXPECT_FALSE(std::filesystem::exists(invalid_directory.path()));
+
+    for (const Compression compression :
+         {static_cast<Compression>(-1), static_cast<Compression>(3)}) {
+        SCOPED_TRACE(static_cast<int>(compression));
+        TemporaryDatabaseDirectory directory;
+        Options invalid_compression = CreatingOptions();
+        invalid_compression.compression = compression;
+        const Result<Database> result = Database::Open(invalid_compression, directory.path());
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error().code(), ErrorCode::InvalidArgument);
+        EXPECT_FALSE(std::filesystem::exists(directory.path()));
+    }
+
+    for (const int level : {-6, 23}) {
+        SCOPED_TRACE(level);
+        TemporaryDatabaseDirectory directory;
+        Options invalid_level = CreatingOptions();
+        invalid_level.compression = Compression::Zstd;
+        invalid_level.zstd_compression_level = level;
+        const Result<Database> result = Database::Open(invalid_level, directory.path());
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error().code(), ErrorCode::InvalidArgument);
+        EXPECT_FALSE(std::filesystem::exists(directory.path()));
+    }
+
+    TemporaryDatabaseDirectory comparator_directory;
+    auto destroyed = std::make_shared<std::atomic<bool>>(false);
+    auto comparator = std::make_shared<TrackingComparator>(destroyed);
+    std::weak_ptr<const Comparator> retained = comparator;
+    Options options = CreatingOptions();
+    options.comparator = comparator;
+    Result<Database> opened = Database::Open(std::move(options), comparator_directory.path());
+    ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+    comparator.reset();
+    EXPECT_FALSE(retained.expired());
+    ASSERT_TRUE(opened->Put(AsBytes("a"), AsBytes("1")).has_value());
+    opened = std::unexpected(Error::Aborted("release the database"));
+    EXPECT_TRUE(retained.expired());
+    EXPECT_TRUE(destroyed->load());
+}
+
+TEST(PublicDatabaseTest, WiresBloomFiltersIntoWrittenTables) {
+    TemporaryDatabaseDirectory directory;
+    Options options = CreatingOptions();
+    options.write_buffer_size = 1;
+    options.block_restart_interval = 4;
+    options.bloom_bits_per_key = 10;
+    {
+        Result<Database> opened = Database::Open(options, directory.path());
+        ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+        const std::string large(std::size_t{70} << 10U, 'v');
+        ASSERT_TRUE(opened->Put(AsBytes("large"), AsBytes(large)).has_value());
+        ASSERT_TRUE(opened->Put(AsBytes("trigger"), AsBytes("1")).has_value());
+    }
+
+    options.create_if_missing = false;
+    Result<Database> reopened = Database::Open(options, directory.path());
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().ToString();
     const auto value = reopened->Get(AsBytes("large"));
     ASSERT_TRUE(value.has_value() && value->has_value());
     EXPECT_EQ(value->value().size(), std::size_t{70} << 10U);
-  }
+}
+
+TEST(PublicDatabaseTest, WritesAndReopensEveryCompressionMode) {
+    for (const Compression compression :
+         {Compression::None, Compression::Snappy, Compression::Zstd}) {
+        SCOPED_TRACE(static_cast<int>(compression));
+        TemporaryDatabaseDirectory directory;
+        Options options = CreatingOptions();
+        options.write_buffer_size = 1;
+        options.compression = compression;
+        if (compression == Compression::Zstd) {
+            options.zstd_compression_level = -5;
+        }
+        {
+            Result<Database> opened = Database::Open(options, directory.path());
+            ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+            const std::string large(std::size_t{70} << 10U, 'v');
+            ASSERT_TRUE(opened->Put(AsBytes("large"), AsBytes(large)).has_value());
+            ASSERT_TRUE(opened->Put(AsBytes("trigger"), AsBytes("1")).has_value());
+        }
+
+        Result<Database> reopened = Database::Open(OpeningOptions(), directory.path());
+        ASSERT_TRUE(reopened.has_value()) << reopened.error().ToString();
+        const auto value = reopened->Get(AsBytes("large"));
+        ASSERT_TRUE(value.has_value() && value->has_value());
+        EXPECT_EQ(value->value().size(), std::size_t{70} << 10U);
+    }
 }
 
 }  // namespace

@@ -21,121 +21,122 @@ constexpr std::size_t MaximumLength =
     static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max());
 
 struct EntryView {
-  ByteView internal_key;
-  ByteView value;
+    ByteView internal_key;
+    ByteView value;
 };
 
 bool IsValidValueKind(ValueKind kind) noexcept {
-  return kind == ValueKind::Deletion || kind == ValueKind::Value;
+    return kind == ValueKind::Deletion || kind == ValueKind::Value;
 }
 
 std::uint64_t PackTrailer(SequenceNumber sequence, ValueKind kind) noexcept {
-  return (sequence << 8U) | static_cast<std::uint8_t>(kind);
+    return (sequence << 8U) | static_cast<std::uint8_t>(kind);
 }
 
 std::uint32_t DecodeVarint32Unchecked(const std::byte*& input) noexcept {
-  std::uint32_t value = 0;
-  std::size_t shift = 0;
-  while (true) {
-    const unsigned int byte = std::to_integer<unsigned int>(*input);
-    ++input;
-    value |= static_cast<std::uint32_t>(byte & 0x7fU) << shift;
-    if ((byte & 0x80U) == 0U) {
-      return value;
+    std::uint32_t value = 0;
+    std::size_t shift = 0;
+    while (true) {
+        const unsigned int byte = std::to_integer<unsigned int>(*input);
+        ++input;
+        value |= static_cast<std::uint32_t>(byte & 0x7fU) << shift;
+        if ((byte & 0x80U) == 0U) {
+            return value;
+        }
+        shift += 7U;
     }
-    shift += 7U;
-  }
 }
 
 ByteView DecodeLengthPrefixedUnchecked(const std::byte*& input) noexcept {
-  const std::uint32_t length = DecodeVarint32Unchecked(input);
-  const ByteView value(input, length);
-  input += length;
-  return value;
+    const std::uint32_t length = DecodeVarint32Unchecked(input);
+    const ByteView value(input, length);
+    input += length;
+    return value;
 }
 
 ByteView DecodeInternalKey(const std::byte* entry) noexcept {
-  return DecodeLengthPrefixedUnchecked(entry);
+    return DecodeLengthPrefixedUnchecked(entry);
 }
 
 EntryView DecodeEntry(const std::byte* entry) noexcept {
-  const ByteView internal_key = DecodeLengthPrefixedUnchecked(entry);
-  const ByteView value = DecodeLengthPrefixedUnchecked(entry);
-  return {
-      .internal_key = internal_key,
-      .value = value,
-  };
+    const ByteView internal_key = DecodeLengthPrefixedUnchecked(entry);
+    const ByteView value = DecodeLengthPrefixedUnchecked(entry);
+    return {
+        .internal_key = internal_key,
+        .value = value,
+    };
 }
 
 ValueKind DecodeValueKind(ByteView internal_key) noexcept {
-  const ByteView trailer = internal_key.last<InternalKeyTrailerSize>();
-  return static_cast<ValueKind>(DecodeFixed64(std::span<const std::byte, InternalKeyTrailerSize>(
-                                    trailer.data(), InternalKeyTrailerSize)) &
-                                0xffU);
+    const ByteView trailer = internal_key.last<InternalKeyTrailerSize>();
+    return static_cast<ValueKind>(DecodeFixed64(std::span<const std::byte, InternalKeyTrailerSize>(
+                                      trailer.data(), InternalKeyTrailerSize)) &
+                                  0xffU);
 }
 
 bool TryAddSize(std::size_t& total, std::size_t value) noexcept {
-  if (value > std::numeric_limits<std::size_t>::max() - total) {
-    return false;
-  }
-  total += value;
-  return true;
+    if (value > std::numeric_limits<std::size_t>::max() - total) {
+        return false;
+    }
+    total += value;
+    return true;
 }
 
 std::size_t TrustedEncodedSize(ByteView key, ByteView value) noexcept {
-  const std::size_t internal_key_size = key.size() + InternalKeyTrailerSize;
-  return VarintLength(internal_key_size) + internal_key_size + VarintLength(value.size()) +
-         value.size();
+    const std::size_t internal_key_size = key.size() + InternalKeyTrailerSize;
+    return VarintLength(internal_key_size) + internal_key_size + VarintLength(value.size()) +
+           value.size();
 }
 
 const std::byte* EncodeEntry(Arena& arena, SequenceNumber sequence, ValueKind kind, ByteView key,
                              ByteView value, std::size_t encoded_size) {
-  MutableByteView output = arena.Allocate(encoded_size);
-  const std::byte* const entry = output.data();
-  const std::size_t internal_key_size = key.size() + InternalKeyTrailerSize;
-  const bool encoded_key_length =
-      EncodeVarint32(output, static_cast<std::uint32_t>(internal_key_size));
-  assert(encoded_key_length);
-  (void)encoded_key_length;
+    MutableByteView output = arena.Allocate(encoded_size);
+    const std::byte* const entry = output.data();
+    const std::size_t internal_key_size = key.size() + InternalKeyTrailerSize;
+    const bool encoded_key_length =
+        EncodeVarint32(output, static_cast<std::uint32_t>(internal_key_size));
+    assert(encoded_key_length);
+    (void)encoded_key_length;
 
-  std::ranges::copy(key, output.begin());
-  output = output.subspan(key.size());
-  EncodeFixed64(std::span<std::byte, InternalKeyTrailerSize>(output.data(), InternalKeyTrailerSize),
-                PackTrailer(sequence, kind));
-  output = output.subspan(InternalKeyTrailerSize);
+    std::ranges::copy(key, output.begin());
+    output = output.subspan(key.size());
+    EncodeFixed64(
+        std::span<std::byte, InternalKeyTrailerSize>(output.data(), InternalKeyTrailerSize),
+        PackTrailer(sequence, kind));
+    output = output.subspan(InternalKeyTrailerSize);
 
-  const bool encoded_value_length =
-      EncodeVarint32(output, static_cast<std::uint32_t>(value.size()));
-  assert(encoded_value_length);
-  (void)encoded_value_length;
-  std::ranges::copy(value, output.begin());
-  output = output.subspan(value.size());
-  assert(output.empty());
-  return entry;
+    const bool encoded_value_length =
+        EncodeVarint32(output, static_cast<std::uint32_t>(value.size()));
+    assert(encoded_value_length);
+    (void)encoded_value_length;
+    std::ranges::copy(value, output.begin());
+    output = output.subspan(value.size());
+    assert(output.empty());
+    return entry;
 }
 
 }  // namespace
 
 // GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
 MemTable::ReadPin::ReadPin(const MemTable& table) noexcept : table_(&table) {
-  ++table_->read_pins_;
+    ++table_->read_pins_;
 }
 
 MemTable::ReadPin::ReadPin(ReadPin&& source) noexcept : table_(source.table_) {
-  source.table_ = nullptr;
+    source.table_ = nullptr;
 }
 
 MemTable::ReadPin::~ReadPin() {
-  if (table_ != nullptr) {
-    assert(table_->read_pins_ > 0);
-    --table_->read_pins_;
-  }
+    if (table_ != nullptr) {
+        assert(table_->read_pins_ > 0);
+        --table_->read_pins_;
+    }
 }
 // GCOVR_EXCL_STOP
 
 const MemTable& MemTable::ReadPin::value() const noexcept {
-  assert(table_ != nullptr);
-  return *table_;
+    assert(table_ != nullptr);
+    return *table_;
 }
 
 MemTable::MemTable(const Comparator& user_comparator)
@@ -145,74 +146,74 @@ MemTable::MemTable(const Comparator& user_comparator)
       table_(entry_comparator_, arena_) {}
 
 Status MemTable::Add(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value) {
-  if (sequence > MaxSequenceNumber) {
-    return std::unexpected(Error::InvalidArgument("memtable sequence exceeds 56 bits"));
-  }
-  if (!IsValidValueKind(kind)) {
-    return std::unexpected(Error::InvalidArgument("memtable value kind is unsupported"));
-  }
+    if (sequence > MaxSequenceNumber) {
+        return std::unexpected(Error::InvalidArgument("memtable sequence exceeds 56 bits"));
+    }
+    if (!IsValidValueKind(kind)) {
+        return std::unexpected(Error::InvalidArgument("memtable value kind is unsupported"));
+    }
 
-  if (key.size() > MaximumLength - InternalKeyTrailerSize) {
-    return std::unexpected(Error::InvalidArgument("memtable internal key exceeds uint32"));
-  }
-  if (value.size() > MaximumLength) {
-    return std::unexpected(Error::InvalidArgument("memtable value exceeds uint32"));
-  }
+    if (key.size() > MaximumLength - InternalKeyTrailerSize) {
+        return std::unexpected(Error::InvalidArgument("memtable internal key exceeds uint32"));
+    }
+    if (value.size() > MaximumLength) {
+        return std::unexpected(Error::InvalidArgument("memtable value exceeds uint32"));
+    }
 
-  const std::size_t internal_key_size = key.size() + InternalKeyTrailerSize;
-  std::size_t encoded_size = VarintLength(internal_key_size);
-  if (!TryAddSize(encoded_size, internal_key_size) ||
-      !TryAddSize(encoded_size, VarintLength(value.size())) ||
-      !TryAddSize(encoded_size, value.size())) {
-    return std::unexpected(Error::InvalidArgument("memtable entry is too large"));
-  }
+    const std::size_t internal_key_size = key.size() + InternalKeyTrailerSize;
+    std::size_t encoded_size = VarintLength(internal_key_size);
+    if (!TryAddSize(encoded_size, internal_key_size) ||
+        !TryAddSize(encoded_size, VarintLength(value.size())) ||
+        !TryAddSize(encoded_size, value.size())) {
+        return std::unexpected(Error::InvalidArgument("memtable entry is too large"));
+    }
 
-  const std::byte* const entry = EncodeEntry(arena_, sequence, kind, key, value, encoded_size);
-  if (!table_.Insert(entry)) {
-    return std::unexpected(Error::InvalidArgument("memtable internal key already exists"));
-  }
-  return {};
+    const std::byte* const entry = EncodeEntry(arena_, sequence, kind, key, value, encoded_size);
+    if (!table_.Insert(entry)) {
+        return std::unexpected(Error::InvalidArgument("memtable internal key already exists"));
+    }
+    return {};
 }
 
 void MemTable::AddTrusted(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value) {
-  assert(sequence <= MaxSequenceNumber);
-  assert(IsValidValueKind(kind));
-  assert(key.size() <= MaximumLength - InternalKeyTrailerSize);
-  assert(value.size() <= MaximumLength);
-  const std::byte* const entry =
-      EncodeEntry(arena_, sequence, kind, key, value, TrustedEncodedSize(key, value));
-  table_.InsertTrusted(entry);
+    assert(sequence <= MaxSequenceNumber);
+    assert(IsValidValueKind(kind));
+    assert(key.size() <= MaximumLength - InternalKeyTrailerSize);
+    assert(value.size() <= MaximumLength);
+    const std::byte* const entry =
+        EncodeEntry(arena_, sequence, kind, key, value, TrustedEncodedSize(key, value));
+    table_.InsertTrusted(entry);
 }
 
 MemTableLookup MemTable::Lookup(const LookupKey& key) const {
-  Table::Iterator iterator(table_);
-  iterator.Seek(key.memtable_key().data());
-  if (!iterator.valid()) {
-    return {};
-  }
+    Table::Iterator iterator(table_);
+    iterator.Seek(key.memtable_key().data());
+    if (!iterator.valid()) {
+        return {};
+    }
 
-  const EntryView entry = DecodeEntry(iterator.key());
-  const ByteView candidate_user_key =
-      entry.internal_key.first(entry.internal_key.size() - InternalKeyTrailerSize);
-  if (user_comparator_.Compare(candidate_user_key, key.user_key()) != 0) {
-    return {};
-  }
+    const EntryView entry = DecodeEntry(iterator.key());
+    const ByteView candidate_user_key =
+        entry.internal_key.first(entry.internal_key.size() - InternalKeyTrailerSize);
+    if (user_comparator_.Compare(candidate_user_key, key.user_key()) != 0) {
+        return {};
+    }
 
-  if (DecodeValueKind(entry.internal_key) == ValueKind::Deletion) {
+    if (DecodeValueKind(entry.internal_key) == ValueKind::Deletion) {
+        return {
+            .kind = MemTableLookupKind::Deletion,
+            .value = {},
+        };
+    }
     return {
-        .kind = MemTableLookupKind::Deletion,
-        .value = {},
+        .kind = MemTableLookupKind::Value,
+        .value = entry.value,
     };
-  }
-  return {
-      .kind = MemTableLookupKind::Value,
-      .value = entry.value,
-  };
 }
 
 int MemTable::EntryComparator::operator()(const std::byte* left,
                                           const std::byte* right) const noexcept {
-  return comparator.CompareTrusted(DecodeInternalKey(left), DecodeInternalKey(right));
+    return comparator.CompareTrusted(DecodeInternalKey(left), DecodeInternalKey(right));
 }
 
 MemTable::Iterator::Iterator(const MemTable& table) noexcept : iterator_(table.table_) {}
@@ -222,42 +223,42 @@ ByteView MemTable::Iterator::key() const { return DecodeEntry(iterator_.key()).i
 ByteView MemTable::Iterator::value() const { return DecodeEntry(iterator_.key()).value; }
 
 Status MemTable::Iterator::Seek(ByteView internal_key) {
-  if (internal_key.size() > MaximumLength) {
-    return std::unexpected(Error::InvalidArgument("memtable seek key exceeds uint32"));
-  }
-  const Result<ParsedInternalKey> parsed = ParseInternalKey(internal_key);
-  if (!parsed.has_value()) {
-    return std::unexpected(parsed.error());
-  }
+    if (internal_key.size() > MaximumLength) {
+        return std::unexpected(Error::InvalidArgument("memtable seek key exceeds uint32"));
+    }
+    const Result<ParsedInternalKey> parsed = ParseInternalKey(internal_key);
+    if (!parsed.has_value()) {
+        return std::unexpected(parsed.error());
+    }
 
-  const std::size_t prefix_size = VarintLength(internal_key.size());
-  if (internal_key.size() > std::numeric_limits<std::size_t>::max() - prefix_size) {
-    return std::unexpected(Error::InvalidArgument("memtable seek representation is too large"));
-  }
-  SeekEncoded(internal_key);
-  return {};
+    const std::size_t prefix_size = VarintLength(internal_key.size());
+    if (internal_key.size() > std::numeric_limits<std::size_t>::max() - prefix_size) {
+        return std::unexpected(Error::InvalidArgument("memtable seek representation is too large"));
+    }
+    SeekEncoded(internal_key);
+    return {};
 }
 
 void MemTable::Iterator::SeekTrusted(ByteView internal_key) {
-  assert(internal_key.size() <= MaximumLength);
-  assert(ParseInternalKey(internal_key).has_value());
-  assert(internal_key.size() <=
-         std::numeric_limits<std::size_t>::max() - VarintLength(internal_key.size()));
-  SeekEncoded(internal_key);
+    assert(internal_key.size() <= MaximumLength);
+    assert(ParseInternalKey(internal_key).has_value());
+    assert(internal_key.size() <=
+           std::numeric_limits<std::size_t>::max() - VarintLength(internal_key.size()));
+    SeekEncoded(internal_key);
 }
 
 void MemTable::Iterator::SeekEncoded(ByteView internal_key) {
-  const std::size_t prefix_size = VarintLength(internal_key.size());
-  seek_key_.resize(prefix_size + internal_key.size());
-  MutableByteView output(seek_key_);
-  const bool encoded_length =
-      EncodeVarint32(output, static_cast<std::uint32_t>(internal_key.size()));
-  assert(encoded_length);
-  (void)encoded_length;
-  std::ranges::copy(internal_key, output.begin());
-  output = output.subspan(internal_key.size());
-  assert(output.empty());
-  iterator_.Seek(seek_key_.data());
+    const std::size_t prefix_size = VarintLength(internal_key.size());
+    seek_key_.resize(prefix_size + internal_key.size());
+    MutableByteView output(seek_key_);
+    const bool encoded_length =
+        EncodeVarint32(output, static_cast<std::uint32_t>(internal_key.size()));
+    assert(encoded_length);
+    (void)encoded_length;
+    std::ranges::copy(internal_key, output.begin());
+    output = output.subspan(internal_key.size());
+    assert(output.empty());
+    iterator_.Seek(seek_key_.data());
 }
 
 }  // namespace modern_leveldb

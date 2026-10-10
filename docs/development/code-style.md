@@ -48,11 +48,35 @@ persistent-format identifiers are not governed by C++ identifier naming rules.
 
 [`.clang-format`](../../.clang-format) is the source of truth for formatting:
 
-- Google-based layout with two-space indentation.
+- Google-based layout with four-space block and continuation indentation.
+  Wrapped arguments may still align with the first argument.
+- Spaces only, with a four-column tab width.
+- Access labels such as `public:` and `private:` aligned with the enclosing
+  class declaration.
 - A 100-column limit.
 - Opening braces on the declaration or control-flow line.
 - Left-aligned pointer and reference markers, such as `Error*` and `ByteView&`.
 - Case-sensitive include sorting.
+
+The indentation, tab policy, and access-label alignment reference
+[Catch2's configuration](https://github.com/catchorg/Catch2/blob/04382af4c640d801d332191528d11bd7ae5819f3/.clang-format#L23-L41),
+not its complete formatting style. Other layout choices retain the existing
+Google-based conventions; see
+[ADR-0071](../adr/0071-four-space-cpp-formatting.md).
+
+```cpp
+class Reader {
+public:
+    void Reset() {
+        position_ = 0;
+        ready_ = false;
+    }
+
+private:
+    std::size_t position_ = 0;
+    bool ready_ = false;
+};
+```
 
 Use the formatter on changed C++ files rather than manually adjusting layout.
 For example, from the repository root:

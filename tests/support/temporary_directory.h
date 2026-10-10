@@ -10,32 +10,32 @@
 namespace modern_leveldb::test_support {
 
 class TemporaryDirectory final {
- public:
-  TemporaryDirectory() : TemporaryDirectory(std::filesystem::temp_directory_path()) {}
+public:
+    TemporaryDirectory() : TemporaryDirectory(std::filesystem::temp_directory_path()) {}
 
-  explicit TemporaryDirectory(const std::filesystem::path& root) {
-    static std::atomic<unsigned> next{0};
-    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    do {
-      path_ = root / ("modern-leveldb-test-" + std::to_string(stamp) + "-" +
-                      std::to_string(next.fetch_add(1)));
-    } while (!std::filesystem::create_directory(path_));
-  }
-
-  TemporaryDirectory(const TemporaryDirectory&) = delete;
-  TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
-  ~TemporaryDirectory() {
-    std::error_code error;
-    std::filesystem::remove_all(path_, error);
-    if (error) {
-      std::cerr << "temporary directory cleanup failed: " << error.message() << '\n';
+    explicit TemporaryDirectory(const std::filesystem::path& root) {
+        static std::atomic<unsigned> next{0};
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        do {
+            path_ = root / ("modern-leveldb-test-" + std::to_string(stamp) + "-" +
+                            std::to_string(next.fetch_add(1)));
+        } while (!std::filesystem::create_directory(path_));
     }
-  }
 
-  [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
+    TemporaryDirectory(const TemporaryDirectory&) = delete;
+    TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
+    ~TemporaryDirectory() {
+        std::error_code error;
+        std::filesystem::remove_all(path_, error);
+        if (error) {
+            std::cerr << "temporary directory cleanup failed: " << error.message() << '\n';
+        }
+    }
 
- private:
-  std::filesystem::path path_;
+    [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
+
+private:
+    std::filesystem::path path_;
 };
 
 }  // namespace modern_leveldb::test_support

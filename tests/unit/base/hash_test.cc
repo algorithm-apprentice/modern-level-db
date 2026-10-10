@@ -19,8 +19,8 @@ constexpr std::array<std::byte, 12> BinaryInput{
 };
 
 struct HashVector {
-  std::uint32_t seed;
-  std::array<std::uint32_t, BinaryInput.size() + 1> prefixes;
+    std::uint32_t seed;
+    std::array<std::uint32_t, BinaryInput.size() + 1> prefixes;
 };
 
 constexpr std::array GoldenVectors{
@@ -41,46 +41,47 @@ constexpr std::array GoldenVectors{
 static_assert(noexcept(Hash32(ByteView{}, 0U)));
 
 TEST(HashTest, EmptyInputPreservesSeed) {
-  for (const std::uint32_t seed : {0U, 1U, 0xffffffffU, 0xbc9f1d34U, 0x12345678U}) {
-    SCOPED_TRACE(seed);
-    EXPECT_EQ(Hash32({}, seed), seed);
-  }
+    for (const std::uint32_t seed : {0U, 1U, 0xffffffffU, 0xbc9f1d34U, 0x12345678U}) {
+        SCOPED_TRACE(seed);
+        EXPECT_EQ(Hash32({}, seed), seed);
+    }
 }
 
 TEST(HashTest, MatchesUpstreamPrefixVectors) {
-  for (const auto& golden : GoldenVectors) {
-    SCOPED_TRACE(golden.seed);
-    for (std::size_t length = 0; length <= BinaryInput.size(); ++length) {
-      SCOPED_TRACE(length);
-      EXPECT_EQ(Hash32(ByteView(BinaryInput).first(length), golden.seed), golden.prefixes[length]);
+    for (const auto& golden : GoldenVectors) {
+        SCOPED_TRACE(golden.seed);
+        for (std::size_t length = 0; length <= BinaryInput.size(); ++length) {
+            SCOPED_TRACE(length);
+            EXPECT_EQ(Hash32(ByteView(BinaryInput).first(length), golden.seed),
+                      golden.prefixes[length]);
+        }
     }
-  }
 }
 
 TEST(HashTest, AcceptsUnalignedPrefixes) {
-  std::array<std::byte, BinaryInput.size() + 7> storage{};
-  for (std::size_t offset = 0; offset < 8; ++offset) {
-    SCOPED_TRACE(offset);
-    std::ranges::copy(BinaryInput, storage.data() + offset);
-    for (const auto& golden : GoldenVectors) {
-      SCOPED_TRACE(golden.seed);
-      for (std::size_t length = 0; length <= BinaryInput.size(); ++length) {
-        SCOPED_TRACE(length);
-        EXPECT_EQ(Hash32(ByteView(storage).subspan(offset, length), golden.seed),
-                  golden.prefixes[length]);
-      }
+    std::array<std::byte, BinaryInput.size() + 7> storage{};
+    for (std::size_t offset = 0; offset < 8; ++offset) {
+        SCOPED_TRACE(offset);
+        std::ranges::copy(BinaryInput, storage.data() + offset);
+        for (const auto& golden : GoldenVectors) {
+            SCOPED_TRACE(golden.seed);
+            for (std::size_t length = 0; length <= BinaryInput.size(); ++length) {
+                SCOPED_TRACE(length);
+                EXPECT_EQ(Hash32(ByteView(storage).subspan(offset, length), golden.seed),
+                          golden.prefixes[length]);
+            }
+        }
     }
-  }
 }
 
 TEST(HashTest, PreservesCallerViewAndStorage) {
-  auto storage = BinaryInput;
-  ByteView input = storage;
+    auto storage = BinaryInput;
+    ByteView input = storage;
 
-  EXPECT_EQ(Hash32(input, GoldenVectors[0].seed), GoldenVectors[0].prefixes.back());
-  EXPECT_EQ(input.data(), storage.data());
-  EXPECT_EQ(input.size(), storage.size());
-  EXPECT_EQ(storage, BinaryInput);
+    EXPECT_EQ(Hash32(input, GoldenVectors[0].seed), GoldenVectors[0].prefixes.back());
+    EXPECT_EQ(input.data(), storage.data());
+    EXPECT_EQ(input.size(), storage.size());
+    EXPECT_EQ(storage, BinaryInput);
 }
 
 }  // namespace

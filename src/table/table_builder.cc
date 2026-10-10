@@ -28,182 +28,182 @@ TableBuilder::TableBuilder(std::unique_ptr<WritableFile> file,
       zstd_compression_level_(options.zstd_compression_level),
       data_block_(options.restart_interval),
       index_block_(1) {
-  if (file_ == nullptr) {
-    first_error_ = Error::InvalidArgument("table builder has no file");
-  }
-  Record(ValidateCompressionOptions(compression_, zstd_compression_level_));
-  if (options.filter_policy.has_value()) {
-    filter_block_.emplace(*options.filter_policy);
-    const Status started = filter_block_->StartBlock(0);
-    assert(started.has_value());
-    (void)started;
-    filter_key_.assign("filter.");
-    filter_key_.append(options.filter_policy->Name());
-  }
+    if (file_ == nullptr) {
+        first_error_ = Error::InvalidArgument("table builder has no file");
+    }
+    Record(ValidateCompressionOptions(compression_, zstd_compression_level_));
+    if (options.filter_policy.has_value()) {
+        filter_block_.emplace(*options.filter_policy);
+        const Status started = filter_block_->StartBlock(0);
+        assert(started.has_value());
+        (void)started;
+        filter_key_.assign("filter.");
+        filter_key_.append(options.filter_policy->Name());
+    }
 }
 
 Status TableBuilder::Add(ByteView key, ByteView value) {
-  if (finished_) {
-    return std::unexpected(Error::InvalidArgument("table builder is finished"));
-  }
-  if (first_error_.has_value()) {
-    return FirstError();
-  }
-  if (!ParseInternalKey(key).has_value()) {
-    Record(std::unexpected(Error::InvalidArgument("table key is not an internal key")));
-    return FirstError();
-  }
-  if (entry_count_ > 0 && comparator_->Compare(key, last_key_) <= 0) {
-    Record(std::unexpected(Error::InvalidArgument("table keys must strictly increase")));
-    return FirstError();
-  }
-  return AddValid(key, value);
+    if (finished_) {
+        return std::unexpected(Error::InvalidArgument("table builder is finished"));
+    }
+    if (first_error_.has_value()) {
+        return FirstError();
+    }
+    if (!ParseInternalKey(key).has_value()) {
+        Record(std::unexpected(Error::InvalidArgument("table key is not an internal key")));
+        return FirstError();
+    }
+    if (entry_count_ > 0 && comparator_->Compare(key, last_key_) <= 0) {
+        Record(std::unexpected(Error::InvalidArgument("table keys must strictly increase")));
+        return FirstError();
+    }
+    return AddValid(key, value);
 }
 
 Status TableBuilder::AddTrusted(ByteView key, ByteView value) {
-  if (finished_) {
-    return std::unexpected(Error::InvalidArgument("table builder is finished"));
-  }
-  if (first_error_.has_value()) {
-    return FirstError();
-  }
-  assert(ParseInternalKey(key).has_value());
-  assert(entry_count_ == 0 || comparator_->CompareTrusted(key, last_key_) > 0);
-  return AddValid(key, value);
+    if (finished_) {
+        return std::unexpected(Error::InvalidArgument("table builder is finished"));
+    }
+    if (first_error_.has_value()) {
+        return FirstError();
+    }
+    assert(ParseInternalKey(key).has_value());
+    assert(entry_count_ == 0 || comparator_->CompareTrusted(key, last_key_) > 0);
+    return AddValid(key, value);
 }
 
 Status TableBuilder::AddValid(ByteView key, ByteView value) {
-  if (filter_block_.has_value()) {
-    if (!Record(filter_block_->AddKey(key.first(key.size() - InternalKeyTrailerSize)))) {
-      return FirstError();
+    if (filter_block_.has_value()) {
+        if (!Record(filter_block_->AddKey(key.first(key.size() - InternalKeyTrailerSize)))) {
+            return FirstError();
+        }
     }
-  }
 
-  if (pending_index_entry_) {
-    comparator_->FindShortestSeparator(last_key_, key);
-    AddPendingIndexEntry();
-  }
-  last_key_.assign(key.begin(), key.end());
-  ++entry_count_;
-  Record(data_block_.Add(key, value));
-  if (first_error_.has_value()) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs a block over 4 GiB
-    return FirstError();           // GCOVR_EXCL_LINE: needs a block over 4 GiB
-  }
-
-  if (data_block_.CurrentSizeEstimate() >= block_size_) {
-    WriteDataBlock();
-    if (first_error_.has_value()) {
-      return FirstError();
+    if (pending_index_entry_) {
+        comparator_->FindShortestSeparator(last_key_, key);
+        AddPendingIndexEntry();
     }
-  }
-  return {};
+    last_key_.assign(key.begin(), key.end());
+    ++entry_count_;
+    Record(data_block_.Add(key, value));
+    if (first_error_.has_value()) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs a block over 4 GiB
+        return FirstError();         // GCOVR_EXCL_LINE: needs a block over 4 GiB
+    }
+
+    if (data_block_.CurrentSizeEstimate() >= block_size_) {
+        WriteDataBlock();
+        if (first_error_.has_value()) {
+            return FirstError();
+        }
+    }
+    return {};
 }
 
 Status TableBuilder::Finish() {
-  if (finished_) {
-    return std::unexpected(Error::InvalidArgument("table builder is finished"));
-  }
-  finished_ = true;
-  if (!first_error_.has_value()) {
-    WriteTail();
-  }
-  if (file_ != nullptr) {
-    Record(file_->Close());
-  }
-  if (first_error_.has_value()) {
-    return FirstError();
-  }
-  return {};
+    if (finished_) {
+        return std::unexpected(Error::InvalidArgument("table builder is finished"));
+    }
+    finished_ = true;
+    if (!first_error_.has_value()) {
+        WriteTail();
+    }
+    if (file_ != nullptr) {
+        Record(file_->Close());
+    }
+    if (first_error_.has_value()) {
+        return FirstError();
+    }
+    return {};
 }
 
 bool TableBuilder::Record(Status status) {
-  if (status.has_value()) {
-    return true;
-  }
-  if (!first_error_.has_value()) {
-    first_error_ = std::move(status).error();
-  }
-  return false;
+    if (status.has_value()) {
+        return true;
+    }
+    if (!first_error_.has_value()) {
+        first_error_ = std::move(status).error();
+    }
+    return false;
 }
 
 Status TableBuilder::FirstError() const { return std::unexpected(*first_error_); }
 
 void TableBuilder::AddPendingIndexEntry() {
-  std::vector<std::byte> handle;
-  AppendBlockHandle(handle, pending_handle_);
-  Record(index_block_.Add(last_key_, handle));
-  pending_index_entry_ = false;
+    std::vector<std::byte> handle;
+    AppendBlockHandle(handle, pending_handle_);
+    Record(index_block_.Add(last_key_, handle));
+    pending_index_entry_ = false;
 }
 
 void TableBuilder::WriteDataBlock() {
-  WriteBlock(data_block_.Finish(), pending_handle_);
-  data_block_.Reset();
-  pending_index_entry_ = true;
-  if (filter_block_.has_value()) {
-    Record(filter_block_->StartBlock(file_size_));
-  }
+    WriteBlock(data_block_.Finish(), pending_handle_);
+    data_block_.Reset();
+    pending_index_entry_ = true;
+    if (filter_block_.has_value()) {
+        Record(filter_block_->StartBlock(file_size_));
+    }
 }
 
 void TableBuilder::WriteBlock(ByteView contents, BlockHandle& handle) {
-  if (first_error_.has_value()) {
-    return;
-  }
-  const bool compressed =
-      TryCompressBlock(contents, compression_, zstd_compression_level_, compressed_output_);
-  const ByteView stored = compressed ? ByteView(compressed_output_) : contents;
-  const BlockCompression type = compressed ? compression_ : BlockCompression::None;
-  WriteRawBlock(stored, type, handle);
-  compressed_output_.clear();
+    if (first_error_.has_value()) {
+        return;
+    }
+    const bool compressed =
+        TryCompressBlock(contents, compression_, zstd_compression_level_, compressed_output_);
+    const ByteView stored = compressed ? ByteView(compressed_output_) : contents;
+    const BlockCompression type = compressed ? compression_ : BlockCompression::None;
+    WriteRawBlock(stored, type, handle);
+    compressed_output_.clear();
 }
 
 void TableBuilder::WriteRawBlock(ByteView contents, BlockCompression type, BlockHandle& handle) {
-  if (first_error_.has_value()) {
-    return;
-  }
-  handle = BlockHandle{.offset = file_size_, .size = contents.size()};
-  const auto trailer = EncodeBlockTrailer(contents, type);
-  // Separate statements keep each Status temporary unconditional; see ADR-0019.
-  if (!Record(file_->Append(contents))) {
-    return;
-  }
-  if (Record(file_->Append(trailer))) {
-    file_size_ += contents.size() + BlockTrailerSize;
-  }
+    if (first_error_.has_value()) {
+        return;
+    }
+    handle = BlockHandle{.offset = file_size_, .size = contents.size()};
+    const auto trailer = EncodeBlockTrailer(contents, type);
+    // Separate statements keep each Status temporary unconditional; see ADR-0019.
+    if (!Record(file_->Append(contents))) {
+        return;
+    }
+    if (Record(file_->Append(trailer))) {
+        file_size_ += contents.size() + BlockTrailerSize;
+    }
 }
 
 void TableBuilder::WriteTail() {
-  if (!data_block_.empty()) {
-    WriteDataBlock();
-  }
+    if (!data_block_.empty()) {
+        WriteDataBlock();
+    }
 
-  BlockBuilder metaindex(restart_interval_);
-  if (filter_block_.has_value()) {
-    BlockHandle filter_handle{};
-    WriteRawBlock(filter_block_->Finish(), BlockCompression::None, filter_handle);
-    std::vector<std::byte> handle;
-    AppendBlockHandle(handle, filter_handle);
-    const Status added = metaindex.Add(AsBytes(filter_key_), handle);
-    assert(added.has_value());
-    (void)added;
-  }
-  BlockHandle metaindex_handle{};
-  WriteBlock(metaindex.Finish(), metaindex_handle);
+    BlockBuilder metaindex(restart_interval_);
+    if (filter_block_.has_value()) {
+        BlockHandle filter_handle{};
+        WriteRawBlock(filter_block_->Finish(), BlockCompression::None, filter_handle);
+        std::vector<std::byte> handle;
+        AppendBlockHandle(handle, filter_handle);
+        const Status added = metaindex.Add(AsBytes(filter_key_), handle);
+        assert(added.has_value());
+        (void)added;
+    }
+    BlockHandle metaindex_handle{};
+    WriteBlock(metaindex.Finish(), metaindex_handle);
 
-  if (pending_index_entry_) {
-    comparator_->FindShortSuccessor(last_key_);
-    AddPendingIndexEntry();
-  }
-  BlockHandle index_handle{};
-  WriteBlock(index_block_.Finish(), index_handle);
-  if (first_error_.has_value()) {
-    return;
-  }
+    if (pending_index_entry_) {
+        comparator_->FindShortSuccessor(last_key_);
+        AddPendingIndexEntry();
+    }
+    BlockHandle index_handle{};
+    WriteBlock(index_block_.Finish(), index_handle);
+    if (first_error_.has_value()) {
+        return;
+    }
 
-  const auto footer = EncodeFooter({.metaindex = metaindex_handle, .index = index_handle});
-  if (Record(file_->Append(footer))) {
-    file_size_ += footer.size();
-    Record(file_->Sync());
-  }
+    const auto footer = EncodeFooter({.metaindex = metaindex_handle, .index = index_handle});
+    if (Record(file_->Append(footer))) {
+        file_size_ += footer.size();
+        Record(file_->Sync());
+    }
 }
 
 }  // namespace modern_leveldb

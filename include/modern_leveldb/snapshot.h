@@ -12,19 +12,19 @@ class SnapshotRegistration;
 }
 
 class Snapshot final {
- public:
-  Snapshot(const Snapshot&) = delete;
-  Snapshot& operator=(const Snapshot&) = delete;
-  Snapshot(Snapshot&& source) noexcept;
-  Snapshot& operator=(Snapshot&& source) noexcept;
-  ~Snapshot();
+public:
+    Snapshot(const Snapshot&) = delete;
+    Snapshot& operator=(const Snapshot&) = delete;
+    Snapshot(Snapshot&& source) noexcept;
+    Snapshot& operator=(Snapshot&& source) noexcept;
+    ~Snapshot();
 
- private:
-  explicit Snapshot(std::shared_ptr<detail::SnapshotRegistration> registration) noexcept;
+private:
+    explicit Snapshot(std::shared_ptr<detail::SnapshotRegistration> registration) noexcept;
 
-  friend class Database;
+    friend class Database;
 
-  std::shared_ptr<detail::SnapshotRegistration> registration_;
+    std::shared_ptr<detail::SnapshotRegistration> registration_;
 };
 
 }  // namespace modern_leveldb

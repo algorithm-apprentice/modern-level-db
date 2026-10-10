@@ -10,58 +10,58 @@
 namespace modern_leveldb::read_diagnostics {
 
 enum class Counter : std::size_t {
-  Gets,
-  MutableHits,
-  ImmutableHits,
-  SstableHits,
-  Deletions,
-  Misses,
-  Level0Candidates,
-  DeeperCandidates,
-  FilesSearched,
-  TableCacheHits,
-  TableCacheMisses,
-  BlockCacheHits,
-  BlockCacheMisses,
-  RandomReadCalls,
-  RandomReadRequestedBytes,
-  RandomReadReturnedBytes,
-  MappedViewBlocks,
-  MappedViewBytes,
-  CopiedReadBlocks,
-  CopiedReadBytes,
-  StoredBlocks,
-  StoredBlockBytes,
-  DecodedBlocks,
-  DecodedBlockBytes,
-  DecompressedBlocks,
-  ValidationEntries,
-  RestartEntriesDecoded,
-  IndexEntriesDecoded,
-  DataEntriesDecoded,
-  InternalKeyComparisons,
-  ResultBytes,
-  Count,
+    Gets,
+    MutableHits,
+    ImmutableHits,
+    SstableHits,
+    Deletions,
+    Misses,
+    Level0Candidates,
+    DeeperCandidates,
+    FilesSearched,
+    TableCacheHits,
+    TableCacheMisses,
+    BlockCacheHits,
+    BlockCacheMisses,
+    RandomReadCalls,
+    RandomReadRequestedBytes,
+    RandomReadReturnedBytes,
+    MappedViewBlocks,
+    MappedViewBytes,
+    CopiedReadBlocks,
+    CopiedReadBytes,
+    StoredBlocks,
+    StoredBlockBytes,
+    DecodedBlocks,
+    DecodedBlockBytes,
+    DecompressedBlocks,
+    ValidationEntries,
+    RestartEntriesDecoded,
+    IndexEntriesDecoded,
+    DataEntriesDecoded,
+    InternalKeyComparisons,
+    ResultBytes,
+    Count,
 };
 
 enum class Stage : std::size_t {
-  Get,
-  CandidateSelection,
-  TableCacheLookup,
-  BlockCacheLookup,
-  RandomRead,
-  StoredBlockDecode,
-  BlockConstruction,
-  IndexSeek,
-  DataSeek,
-  ResultCopy,
-  Count,
+    Get,
+    CandidateSelection,
+    TableCacheLookup,
+    BlockCacheLookup,
+    RandomRead,
+    StoredBlockDecode,
+    BlockConstruction,
+    IndexSeek,
+    DataSeek,
+    ResultCopy,
+    Count,
 };
 
 enum class BlockRole {
-  Other,
-  Index,
-  Data,
+    Other,
+    Index,
+    Data,
 };
 
 inline constexpr std::array<std::string_view, static_cast<std::size_t>(Counter::Count)>
@@ -106,21 +106,21 @@ inline constexpr std::array<std::string_view, static_cast<std::size_t>(Stage::Co
 };
 
 struct StageTotal {
-  std::uint64_t events = 0;
-  std::uint64_t nanoseconds = 0;
+    std::uint64_t events = 0;
+    std::uint64_t nanoseconds = 0;
 };
 
 enum class FileOpenReason : std::size_t {
-  Mapped,
-  Disabled,
-  MissingExpectedSize,
-  EmptyFile,
-  SizeMismatch,
-  SizeUnrepresentable,
-  CountBudgetExhausted,
-  StatFailed,
-  MmapFailed,
-  Count,
+    Mapped,
+    Disabled,
+    MissingExpectedSize,
+    EmptyFile,
+    SizeMismatch,
+    SizeUnrepresentable,
+    CountBudgetExhausted,
+    StatFailed,
+    MmapFailed,
+    Count,
 };
 
 inline constexpr std::array<std::string_view, static_cast<std::size_t>(FileOpenReason::Count)>
@@ -137,99 +137,100 @@ inline constexpr std::array<std::string_view, static_cast<std::size_t>(FileOpenR
 };
 
 struct FileOpenTotal {
-  std::uint64_t files = 0;
-  std::uint64_t bytes = 0;
+    std::uint64_t files = 0;
+    std::uint64_t bytes = 0;
 };
 
 struct SetupSnapshot {
-  std::array<FileOpenTotal, static_cast<std::size_t>(FileOpenReason::Count)> file_opens{};
+    std::array<FileOpenTotal, static_cast<std::size_t>(FileOpenReason::Count)> file_opens{};
 };
 
 struct Snapshot {
-  std::array<std::uint64_t, static_cast<std::size_t>(Counter::Count)> counters{};
-  std::array<StageTotal, static_cast<std::size_t>(Stage::Count)> stages{};
-  std::uint64_t sample_seed = 0;
-  std::uint64_t sample_denominator = 0;
-  std::uint64_t sampled_gets = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(Counter::Count)> counters{};
+    std::array<StageTotal, static_cast<std::size_t>(Stage::Count)> stages{};
+    std::uint64_t sample_seed = 0;
+    std::uint64_t sample_denominator = 0;
+    std::uint64_t sampled_gets = 0;
 };
 
 // Installs one foreground-thread setup collection epoch.
 class SetupSession final {
- public:
-  explicit SetupSession(SetupSnapshot& snapshot) noexcept;
-  SetupSession(const SetupSession&) = delete;
-  SetupSession& operator=(const SetupSession&) = delete;
-  ~SetupSession();
+public:
+    explicit SetupSession(SetupSnapshot& snapshot) noexcept;
+    SetupSession(const SetupSession&) = delete;
+    SetupSession& operator=(const SetupSession&) = delete;
+    ~SetupSession();
 };
 
 // Installs one foreground-thread collection epoch. The snapshot must outlive
 // the session, and sessions must not nest on one thread.
 class Session final {
- public:
-  Session(Snapshot& snapshot, std::uint64_t sample_seed, std::uint64_t sample_denominator) noexcept;
-  Session(const Session&) = delete;
-  Session& operator=(const Session&) = delete;
-  ~Session();
+public:
+    Session(Snapshot& snapshot, std::uint64_t sample_seed,
+            std::uint64_t sample_denominator) noexcept;
+    Session(const Session&) = delete;
+    Session& operator=(const Session&) = delete;
+    ~Session();
 };
 
 // Marks one public Get and deterministically selects it for stage timing.
 class GetScope final {
- public:
-  GetScope() noexcept;
-  GetScope(const GetScope&) = delete;
-  GetScope& operator=(const GetScope&) = delete;
-  ~GetScope();
+public:
+    GetScope() noexcept;
+    GetScope(const GetScope&) = delete;
+    GetScope& operator=(const GetScope&) = delete;
+    ~GetScope();
 
- private:
-  bool active_ = false;
-  bool sampled_ = false;
-  std::chrono::steady_clock::time_point started_{};
+private:
+    bool active_ = false;
+    bool sampled_ = false;
+    std::chrono::steady_clock::time_point started_{};
 };
 
 // Accumulates an inclusive duration only for a sampled Get.
 class StageScope final {
- public:
-  explicit StageScope(Stage stage) noexcept;
-  StageScope(const StageScope&) = delete;
-  StageScope& operator=(const StageScope&) = delete;
-  ~StageScope();
+public:
+    explicit StageScope(Stage stage) noexcept;
+    StageScope(const StageScope&) = delete;
+    StageScope& operator=(const StageScope&) = delete;
+    ~StageScope();
 
- private:
-  Stage stage_;
-  bool active_ = false;
-  std::chrono::steady_clock::time_point started_{};
+private:
+    Stage stage_;
+    bool active_ = false;
+    std::chrono::steady_clock::time_point started_{};
 };
 
 // Accumulates several disjoint intervals into one sampled stage event.
 class StageAccumulator final {
- public:
-  explicit StageAccumulator(Stage stage) noexcept;
-  StageAccumulator(const StageAccumulator&) = delete;
-  StageAccumulator& operator=(const StageAccumulator&) = delete;
-  ~StageAccumulator();
+public:
+    explicit StageAccumulator(Stage stage) noexcept;
+    StageAccumulator(const StageAccumulator&) = delete;
+    StageAccumulator& operator=(const StageAccumulator&) = delete;
+    ~StageAccumulator();
 
-  void Resume() noexcept;
-  void Pause() noexcept;
+    void Resume() noexcept;
+    void Pause() noexcept;
 
- private:
-  Stage stage_;
-  bool active_ = false;
-  bool running_ = false;
-  std::chrono::steady_clock::time_point started_{};
-  std::uint64_t nanoseconds_ = 0;
+private:
+    Stage stage_;
+    bool active_ = false;
+    bool running_ = false;
+    std::chrono::steady_clock::time_point started_{};
+    std::uint64_t nanoseconds_ = 0;
 };
 
 // Attributes checked block-entry decoding to the active index or data seek.
 class BlockRoleScope final {
- public:
-  explicit BlockRoleScope(BlockRole role) noexcept;
-  BlockRoleScope(const BlockRoleScope&) = delete;
-  BlockRoleScope& operator=(const BlockRoleScope&) = delete;
-  ~BlockRoleScope();
+public:
+    explicit BlockRoleScope(BlockRole role) noexcept;
+    BlockRoleScope(const BlockRoleScope&) = delete;
+    BlockRoleScope& operator=(const BlockRoleScope&) = delete;
+    ~BlockRoleScope();
 
- private:
-  bool active_ = false;
-  BlockRole previous_ = BlockRole::Other;
+private:
+    bool active_ = false;
+    BlockRole previous_ = BlockRole::Other;
 };
 
 void Add(Counter counter, std::uint64_t amount = 1) noexcept;

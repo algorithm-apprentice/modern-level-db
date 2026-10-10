@@ -19,8 +19,8 @@ namespace modern_leveldb {
 // A file that a point read searched without deciding the read before it
 // searched another, which LevelDB charges a seek.
 struct SeekCharge {
-  std::uint32_t level;
-  const Version::File* file;
+    std::uint32_t level;
+    const Version::File* file;
 };
 
 // Reads the value of the newest entry of the key's user key whose sequence is

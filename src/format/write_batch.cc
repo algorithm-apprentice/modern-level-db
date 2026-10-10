@@ -26,150 +26,151 @@ constexpr std::size_t MaximumKeySize =
     std::numeric_limits<std::uint32_t>::max() - InternalKeyTrailerSize;
 
 bool IsSequenceRangeValid(SequenceNumber sequence, std::uint32_t count) noexcept {
-  if (sequence > MaxSequenceNumber) {
-    return false;
-  }
-  return count == 0 || static_cast<SequenceNumber>(count - 1U) <= MaxSequenceNumber - sequence;
+    if (sequence > MaxSequenceNumber) {
+        return false;
+    }
+    return count == 0 || static_cast<SequenceNumber>(count - 1U) <= MaxSequenceNumber - sequence;
 }
 
 Result<ByteView> ConsumeBatchValue(ByteView& input) {
-  Result<ByteView> value = ConsumeLengthPrefixed(input);
-  if (!value.has_value()) {
-    return std::unexpected(value.error());
-  }
-  return *value;
+    Result<ByteView> value = ConsumeLengthPrefixed(input);
+    if (!value.has_value()) {
+        return std::unexpected(value.error());
+    }
+    return *value;
 }
 
 std::uint32_t ConsumeVarint32Unchecked(ByteView& input) noexcept {
-  std::uint32_t value = 0;
-  std::size_t shift = 0;
-  while (true) {
-    const unsigned int byte = std::to_integer<unsigned int>(input.front());
-    input = input.subspan(1);
-    value |= static_cast<std::uint32_t>(byte & 0x7fU) << shift;
-    if ((byte & 0x80U) == 0U) {
-      return value;
+    std::uint32_t value = 0;
+    std::size_t shift = 0;
+    while (true) {
+        const unsigned int byte = std::to_integer<unsigned int>(input.front());
+        input = input.subspan(1);
+        value |= static_cast<std::uint32_t>(byte & 0x7fU) << shift;
+        if ((byte & 0x80U) == 0U) {
+            return value;
+        }
+        shift += 7U;
     }
-    shift += 7U;
-  }
 }
 
 ByteView ConsumeLengthPrefixedUnchecked(ByteView& input) noexcept {
-  const std::uint32_t length = ConsumeVarint32Unchecked(input);
-  const ByteView value = input.first(length);
-  input = input.subspan(length);
-  return value;
+    const std::uint32_t length = ConsumeVarint32Unchecked(input);
+    const ByteView value = input.first(length);
+    input = input.subspan(length);
+    return value;
 }
 
 bool Aliases(ByteView value, ByteView storage) noexcept {
-  if (value.empty()) {
-    return false;
-  }
-  assert(!storage.empty());
-  const std::less<const std::byte*> before;
-  return before(value.data(), storage.data() + storage.size()) &&
-         before(storage.data(), value.data() + value.size());
+    if (value.empty()) {
+        return false;
+    }
+    assert(!storage.empty());
+    const std::less<const std::byte*> before;
+    return before(value.data(), storage.data() + storage.size()) &&
+           before(storage.data(), value.data() + value.size());
 }
 
 // GCOVR_EXCL_START: these require one logical value larger than 4 GiB
 std::unexpected<Error> KeyTooLong() {
-  return std::unexpected(Error::InvalidArgument("write batch key is too long for the memtable"));
+    return std::unexpected(Error::InvalidArgument("write batch key is too long for the memtable"));
 }
 
 std::unexpected<Error> ValueTooLong() {
-  return std::unexpected(Error::InvalidArgument("write batch value exceeds uint32"));
+    return std::unexpected(Error::InvalidArgument("write batch value exceeds uint32"));
 }
 // GCOVR_EXCL_STOP
 
 // GCOVR_EXCL_START: representable records exceed supported string storage
 std::unexpected<Error> BatchTooLarge() {
-  return std::unexpected(Error::InvalidArgument("write batch representation is too large"));
+    return std::unexpected(Error::InvalidArgument("write batch representation is too large"));
 }
 // GCOVR_EXCL_STOP
 
 void EncodeBatchValue(MutableByteView& output, ByteView value) noexcept {
-  const bool encoded = EncodeVarint32(output, static_cast<std::uint32_t>(value.size()));
-  assert(encoded);
-  static_cast<void>(encoded);
-  std::ranges::copy(value, output.begin());
-  output = output.subspan(value.size());
+    const bool encoded = EncodeVarint32(output, static_cast<std::uint32_t>(value.size()));
+    assert(encoded);
+    static_cast<void>(encoded);
+    std::ranges::copy(value, output.begin());
+    output = output.subspan(value.size());
 }
 
 }  // namespace
 
 Result<WriteBatchReader> WriteBatchReader::Open(ByteView encoded) {
-  if (encoded.size() < WriteBatchHeaderSize) {
-    return std::unexpected(Error::Corruption("write batch is shorter than its header"));
-  }
-
-  const SequenceNumber sequence =
-      DecodeFixed64(encoded.subspan<SequenceOffset, sizeof(SequenceNumber)>());
-  const std::uint32_t count = DecodeFixed32(encoded.subspan<CountOffset, sizeof(std::uint32_t)>());
-  if (!IsSequenceRangeValid(sequence, count)) {
-    return std::unexpected(Error::Corruption("write batch sequence range exceeds 56 bits"));
-  }
-
-  ByteView remaining = encoded.subspan(WriteBatchHeaderSize);
-  std::uint32_t records_left = count;
-  while (records_left > 0) {
-    if (remaining.empty()) {
-      return std::unexpected(Error::Corruption("write batch count exceeds encoded records"));
+    if (encoded.size() < WriteBatchHeaderSize) {
+        return std::unexpected(Error::Corruption("write batch is shorter than its header"));
     }
 
-    const auto kind = static_cast<ValueKind>(std::to_integer<std::uint8_t>(remaining.front()));
-    remaining = remaining.subspan(1);
-    if (kind != ValueKind::Deletion && kind != ValueKind::Value) {
-      return std::unexpected(Error::Corruption("write batch has an unknown value kind"));
+    const SequenceNumber sequence =
+        DecodeFixed64(encoded.subspan<SequenceOffset, sizeof(SequenceNumber)>());
+    const std::uint32_t count =
+        DecodeFixed32(encoded.subspan<CountOffset, sizeof(std::uint32_t)>());
+    if (!IsSequenceRangeValid(sequence, count)) {
+        return std::unexpected(Error::Corruption("write batch sequence range exceeds 56 bits"));
     }
 
-    Result<ByteView> key = ConsumeBatchValue(remaining);
-    if (!key.has_value()) {
-      return std::unexpected(key.error());
-    }
-    if (kind == ValueKind::Value) {
-      Result<ByteView> value = ConsumeBatchValue(remaining);
-      if (!value.has_value()) {
-        return std::unexpected(value.error());
-      }
-    }
-    --records_left;
-  }
+    ByteView remaining = encoded.subspan(WriteBatchHeaderSize);
+    std::uint32_t records_left = count;
+    while (records_left > 0) {
+        if (remaining.empty()) {
+            return std::unexpected(Error::Corruption("write batch count exceeds encoded records"));
+        }
 
-  if (!remaining.empty()) {
-    return std::unexpected(Error::Corruption("write batch has trailing bytes"));
-  }
+        const auto kind = static_cast<ValueKind>(std::to_integer<std::uint8_t>(remaining.front()));
+        remaining = remaining.subspan(1);
+        if (kind != ValueKind::Deletion && kind != ValueKind::Value) {
+            return std::unexpected(Error::Corruption("write batch has an unknown value kind"));
+        }
 
-  return WriteBatchReader(encoded.subspan(WriteBatchHeaderSize), sequence, count);
+        Result<ByteView> key = ConsumeBatchValue(remaining);
+        if (!key.has_value()) {
+            return std::unexpected(key.error());
+        }
+        if (kind == ValueKind::Value) {
+            Result<ByteView> value = ConsumeBatchValue(remaining);
+            if (!value.has_value()) {
+                return std::unexpected(value.error());
+            }
+        }
+        --records_left;
+    }
+
+    if (!remaining.empty()) {
+        return std::unexpected(Error::Corruption("write batch has trailing bytes"));
+    }
+
+    return WriteBatchReader(encoded.subspan(WriteBatchHeaderSize), sequence, count);
 }
 
 WriteBatchReader WriteBatchReader::OpenTrusted(const EncodedWriteBatch& batch) noexcept {
-  assert(batch.encoded().size() >= WriteBatchHeaderSize);
-  assert(IsSequenceRangeValid(batch.sequence(), batch.count()));
-  return WriteBatchReader(batch.encoded().subspan(WriteBatchHeaderSize), batch.sequence(),
-                          batch.count());
+    assert(batch.encoded().size() >= WriteBatchHeaderSize);
+    assert(IsSequenceRangeValid(batch.sequence(), batch.count()));
+    return WriteBatchReader(batch.encoded().subspan(WriteBatchHeaderSize), batch.sequence(),
+                            batch.count());
 }
 
 std::optional<WriteBatchEntry> WriteBatchReader::Next() noexcept {
-  if (index_ == count_) {
-    return std::nullopt;
-  }
+    if (index_ == count_) {
+        return std::nullopt;
+    }
 
-  const auto kind = static_cast<ValueKind>(std::to_integer<std::uint8_t>(remaining_.front()));
-  remaining_ = remaining_.subspan(1);
-  const ByteView key = ConsumeLengthPrefixedUnchecked(remaining_);
-  ByteView value;
-  if (kind == ValueKind::Value) {
-    value = ConsumeLengthPrefixedUnchecked(remaining_);
-  }
+    const auto kind = static_cast<ValueKind>(std::to_integer<std::uint8_t>(remaining_.front()));
+    remaining_ = remaining_.subspan(1);
+    const ByteView key = ConsumeLengthPrefixedUnchecked(remaining_);
+    ByteView value;
+    if (kind == ValueKind::Value) {
+        value = ConsumeLengthPrefixedUnchecked(remaining_);
+    }
 
-  const WriteBatchEntry entry{
-      .sequence = sequence_ + index_,
-      .kind = kind,
-      .key = key,
-      .value = value,
-  };
-  ++index_;
-  return entry;
+    const WriteBatchEntry entry{
+        .sequence = sequence_ + index_,
+        .kind = kind,
+        .key = key,
+        .value = value,
+    };
+    ++index_;
+    return entry;
 }
 
 // GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
@@ -177,153 +178,155 @@ EncodedWriteBatch::EncodedWriteBatch() : encoded_(WriteBatchHeaderSize, '\0') {}
 
 EncodedWriteBatch::EncodedWriteBatch(EncodedWriteBatch&& source)
     : encoded_(WriteBatchHeaderSize, '\0') {
-  encoded_.swap(source.encoded_);
+    encoded_.swap(source.encoded_);
 }
 // GCOVR_EXCL_STOP
 
 EncodedWriteBatch& EncodedWriteBatch::operator=(EncodedWriteBatch&& source) {
-  if (this != &source) {
-    EncodedWriteBatch replacement(std::move(source));
-    encoded_.swap(replacement.encoded_);
-  }
-  return *this;
+    if (this != &source) {
+        EncodedWriteBatch replacement(std::move(source));
+        encoded_.swap(replacement.encoded_);
+    }
+    return *this;
 }
 
 Status EncodedWriteBatch::Put(ByteView key, ByteView value) {
-  const Status validation = ValidateAdditionalRecords(1);
-  if (!validation.has_value()) {
-    return validation;
-  }
-  const Status appended = AppendRecord(ValueKind::Value, key, value);
-  if (!appended.has_value()) {
-    return appended;
-  }
-  SetCount(count() + 1U);
-  return {};
+    const Status validation = ValidateAdditionalRecords(1);
+    if (!validation.has_value()) {
+        return validation;
+    }
+    const Status appended = AppendRecord(ValueKind::Value, key, value);
+    if (!appended.has_value()) {
+        return appended;
+    }
+    SetCount(count() + 1U);
+    return {};
 }
 
 Status EncodedWriteBatch::Delete(ByteView key) {
-  const Status validation = ValidateAdditionalRecords(1);
-  if (!validation.has_value()) {
-    return validation;
-  }
-  const Status appended = AppendRecord(ValueKind::Deletion, key, {});
-  if (!appended.has_value()) {
-    return appended;
-  }
-  SetCount(count() + 1U);
-  return {};
+    const Status validation = ValidateAdditionalRecords(1);
+    if (!validation.has_value()) {
+        return validation;
+    }
+    const Status appended = AppendRecord(ValueKind::Deletion, key, {});
+    if (!appended.has_value()) {
+        return appended;
+    }
+    SetCount(count() + 1U);
+    return {};
 }
 
 Status EncodedWriteBatch::Append(const EncodedWriteBatch& source) {
-  const std::uint32_t source_count = source.count();
-  if (source_count == 0) {
+    const std::uint32_t source_count = source.count();
+    if (source_count == 0) {
+        return {};
+    }
+
+    const Status validation = ValidateAdditionalRecords(source_count);
+    if (!validation.has_value()) {
+        return validation;
+    }
+
+    const ByteView source_records = source.encoded().subspan(WriteBatchHeaderSize);
+    std::string stable_records;
+    std::string_view records = AsStringView(source_records);
+    if (this == &source) {
+        stable_records.assign(records);
+        records = stable_records;
+    }
+    const bool records_too_large = records.size() > encoded_.max_size() - encoded_.size();
+    if (records_too_large) {     // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs more than string max_size
+        return BatchTooLarge();  // GCOVR_EXCL_LINE: needs more than string max_size
+    }
+    encoded_.append(records.data(), records.size());
+    SetCount(count() + source_count);
     return {};
-  }
-
-  const Status validation = ValidateAdditionalRecords(source_count);
-  if (!validation.has_value()) {
-    return validation;
-  }
-
-  const ByteView source_records = source.encoded().subspan(WriteBatchHeaderSize);
-  std::string stable_records;
-  std::string_view records = AsStringView(source_records);
-  if (this == &source) {
-    stable_records.assign(records);
-    records = stable_records;
-  }
-  const bool records_too_large = records.size() > encoded_.max_size() - encoded_.size();
-  if (records_too_large) {   // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs more than string max_size
-    return BatchTooLarge();  // GCOVR_EXCL_LINE: needs more than string max_size
-  }
-  encoded_.append(records.data(), records.size());
-  SetCount(count() + source_count);
-  return {};
 }
 
 Status EncodedWriteBatch::AppendRecord(ValueKind kind, ByteView key, ByteView value) {
-  if (key.size() > MaximumKeySize) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs over 4 GiB
-    return KeyTooLong();              // GCOVR_EXCL_LINE: needs a key over 4 GiB
-  }
-  const bool value_too_long = value.size() > std::numeric_limits<std::uint32_t>::max();
-  if (value_too_long) {     // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs a value over 4 GiB
-    return ValueTooLong();  // GCOVR_EXCL_LINE: needs a value over 4 GiB
-  }
+    if (key.size() > MaximumKeySize) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs over 4 GiB
+        return KeyTooLong();            // GCOVR_EXCL_LINE: needs a key over 4 GiB
+    }
+    const bool value_too_long = value.size() > std::numeric_limits<std::uint32_t>::max();
+    if (value_too_long) {       // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs a value over 4 GiB
+        return ValueTooLong();  // GCOVR_EXCL_LINE: needs a value over 4 GiB
+    }
 
-  const std::uint64_t record_size =
-      std::uint64_t{1} + VarintLength(key.size()) + key.size() +
-      (kind == ValueKind::Value ? std::uint64_t{VarintLength(value.size())} + value.size()
-                                : std::uint64_t{0});
-  const bool record_too_large = record_size > encoded_.max_size() - encoded_.size();
-  if (record_too_large) {    // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs more than string max_size
-    return BatchTooLarge();  // GCOVR_EXCL_LINE: needs more than string max_size
-  }
+    const std::uint64_t record_size =
+        std::uint64_t{1} + VarintLength(key.size()) + key.size() +
+        (kind == ValueKind::Value ? std::uint64_t{VarintLength(value.size())} + value.size()
+                                  : std::uint64_t{0});
+    const bool record_too_large = record_size > encoded_.max_size() - encoded_.size();
+    if (record_too_large) {      // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs more than string max_size
+        return BatchTooLarge();  // GCOVR_EXCL_LINE: needs more than string max_size
+    }
 
-  const ByteView storage = encoded();
-  std::string stable_key;
-  if (Aliases(key, storage)) {
-    stable_key.assign(AsStringView(key));
-    key = AsBytes(stable_key);
-  }
-  std::string stable_value;
-  if (Aliases(value, storage)) {
-    stable_value.assign(AsStringView(value));
-    value = AsBytes(stable_value);
-  }
+    const ByteView storage = encoded();
+    std::string stable_key;
+    if (Aliases(key, storage)) {
+        stable_key.assign(AsStringView(key));
+        key = AsBytes(stable_key);
+    }
+    std::string stable_value;
+    if (Aliases(value, storage)) {
+        stable_value.assign(AsStringView(value));
+        value = AsBytes(stable_value);
+    }
 
-  const std::size_t old_size = encoded_.size();
-  encoded_.resize(old_size + static_cast<std::size_t>(record_size));
-  MutableByteView output =
-      AsWritableBytes(std::span<char>(encoded_.data() + old_size, encoded_.size() - old_size));
-  output.front() = static_cast<std::byte>(kind);
-  output = output.subspan(1);
-  EncodeBatchValue(output, key);
-  if (kind == ValueKind::Value) {
-    EncodeBatchValue(output, value);
-  }
-  assert(output.empty());
-  return {};
+    const std::size_t old_size = encoded_.size();
+    encoded_.resize(old_size + static_cast<std::size_t>(record_size));
+    MutableByteView output =
+        AsWritableBytes(std::span<char>(encoded_.data() + old_size, encoded_.size() - old_size));
+    output.front() = static_cast<std::byte>(kind);
+    output = output.subspan(1);
+    EncodeBatchValue(output, key);
+    if (kind == ValueKind::Value) {
+        EncodeBatchValue(output, value);
+    }
+    assert(output.empty());
+    return {};
 }
 
 Status EncodedWriteBatch::SetSequence(SequenceNumber sequence) {
-  if (!IsSequenceRangeValid(sequence, count())) {
-    return std::unexpected(Error::InvalidArgument("write batch sequence range exceeds 56 bits"));
-  }
-  MutableByteView bytes = AsWritableBytes(std::span<char>(encoded_.data(), encoded_.size()));
-  EncodeFixed64(bytes.subspan<SequenceOffset, sizeof(SequenceNumber)>(), sequence);
-  return {};
+    if (!IsSequenceRangeValid(sequence, count())) {
+        return std::unexpected(
+            Error::InvalidArgument("write batch sequence range exceeds 56 bits"));
+    }
+    MutableByteView bytes = AsWritableBytes(std::span<char>(encoded_.data(), encoded_.size()));
+    EncodeFixed64(bytes.subspan<SequenceOffset, sizeof(SequenceNumber)>(), sequence);
+    return {};
 }
 
 void EncodedWriteBatch::Clear() noexcept {
-  encoded_.resize(WriteBatchHeaderSize);
-  std::ranges::fill(encoded_, '\0');
+    encoded_.resize(WriteBatchHeaderSize);
+    std::ranges::fill(encoded_, '\0');
 }
 
 SequenceNumber EncodedWriteBatch::sequence() const noexcept {
-  return DecodeFixed64(encoded().subspan<SequenceOffset, sizeof(SequenceNumber)>());
+    return DecodeFixed64(encoded().subspan<SequenceOffset, sizeof(SequenceNumber)>());
 }
 
 std::uint32_t EncodedWriteBatch::count() const noexcept {
-  return DecodeFixed32(encoded().subspan<CountOffset, sizeof(std::uint32_t)>());
+    return DecodeFixed32(encoded().subspan<CountOffset, sizeof(std::uint32_t)>());
 }
 
 Status EncodedWriteBatch::ValidateAdditionalRecords(std::uint32_t additional) const {
-  const std::uint32_t current_count = count();
-  if (additional > std::numeric_limits<std::uint32_t>::max() - current_count) {
-    return std::unexpected(Error::InvalidArgument("write batch record count exceeds uint32"));
-  }
+    const std::uint32_t current_count = count();
+    if (additional > std::numeric_limits<std::uint32_t>::max() - current_count) {
+        return std::unexpected(Error::InvalidArgument("write batch record count exceeds uint32"));
+    }
 
-  const std::uint32_t new_count = current_count + additional;
-  if (!IsSequenceRangeValid(sequence(), new_count)) {
-    return std::unexpected(Error::InvalidArgument("write batch sequence range exceeds 56 bits"));
-  }
-  return {};
+    const std::uint32_t new_count = current_count + additional;
+    if (!IsSequenceRangeValid(sequence(), new_count)) {
+        return std::unexpected(
+            Error::InvalidArgument("write batch sequence range exceeds 56 bits"));
+    }
+    return {};
 }
 
 void EncodedWriteBatch::SetCount(std::uint32_t count) noexcept {
-  MutableByteView bytes = AsWritableBytes(std::span<char>(encoded_.data(), encoded_.size()));
-  EncodeFixed32(bytes.subspan<CountOffset, sizeof(std::uint32_t)>(), count);
+    MutableByteView bytes = AsWritableBytes(std::span<char>(encoded_.data(), encoded_.size()));
+    EncodeFixed32(bytes.subspan<CountOffset, sizeof(std::uint32_t)>(), count);
 }
 
 }  // namespace modern_leveldb

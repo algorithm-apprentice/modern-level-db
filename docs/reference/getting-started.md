@@ -72,37 +72,35 @@ Modern LevelDB headers do not expose codec headers.
 #include "modern_leveldb/db.h"
 
 int main() {
-  modern_leveldb::Options options;
-  options.create_if_missing = true;
+    modern_leveldb::Options options;
+    options.create_if_missing = true;
 
 #if defined(_WIN32)
-  // Required on every owned native Windows open. See the durability guide.
-  options.allow_weak_namespace_durability = true;
+    // Required on every owned native Windows open. See the durability guide.
+    options.allow_weak_namespace_durability = true;
 #endif
 
-  auto opened = modern_leveldb::Database::Open(
-      options, std::filesystem::path{"example-db"});
-  if (!opened.has_value()) {
-    std::cerr << opened.error().ToString() << '\n';
-    return 1;
-  }
+    auto opened = modern_leveldb::Database::Open(options, std::filesystem::path{"example-db"});
+    if (!opened.has_value()) {
+        std::cerr << opened.error().ToString() << '\n';
+        return 1;
+    }
 
-  modern_leveldb::Database database = std::move(*opened);
-  auto written = database.Put(
-      modern_leveldb::AsBytes("key"), modern_leveldb::AsBytes("value"));
-  if (!written.has_value()) {
-    std::cerr << written.error().ToString() << '\n';
-    return 1;
-  }
+    modern_leveldb::Database database = std::move(*opened);
+    auto written = database.Put(modern_leveldb::AsBytes("key"), modern_leveldb::AsBytes("value"));
+    if (!written.has_value()) {
+        std::cerr << written.error().ToString() << '\n';
+        return 1;
+    }
 
-  auto value = database.Get(modern_leveldb::AsBytes("key"));
-  if (!value.has_value()) {
-    std::cerr << value.error().ToString() << '\n';
-    return 1;
-  }
-  if (value->has_value()) {
-    std::cout << modern_leveldb::AsStringView(**value) << '\n';
-  }
+    auto value = database.Get(modern_leveldb::AsBytes("key"));
+    if (!value.has_value()) {
+        std::cerr << value.error().ToString() << '\n';
+        return 1;
+    }
+    if (value->has_value()) {
+        std::cout << modern_leveldb::AsStringView(**value) << '\n';
+    }
 }
 ```
 

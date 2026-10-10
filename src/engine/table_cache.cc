@@ -19,9 +19,9 @@ namespace modern_leveldb {
 namespace {
 
 std::array<std::byte, sizeof(std::uint64_t)> CacheKey(std::uint64_t file_number) noexcept {
-  std::array<std::byte, sizeof(std::uint64_t)> key{};
-  EncodeFixed64(key, file_number);
-  return key;
+    std::array<std::byte, sizeof(std::uint64_t)> key{};
+    EncodeFixed64(key, file_number);
+    return key;
 }
 
 }  // namespace
@@ -37,33 +37,33 @@ TableCache::TableCache(FileSystem& file_system, std::filesystem::path directory,
 
 Result<TableCache::Handle> TableCache::Find(std::uint64_t file_number, std::uint64_t file_size) {
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
-  read_diagnostics::StageScope lookup(read_diagnostics::Stage::TableCacheLookup);
+    read_diagnostics::StageScope lookup(read_diagnostics::Stage::TableCacheLookup);
 #endif
-  const auto key = CacheKey(file_number);
-  std::optional<Handle> cached = tables_.Lookup(key);
-  if (cached.has_value()) {
+    const auto key = CacheKey(file_number);
+    std::optional<Handle> cached = tables_.Lookup(key);
+    if (cached.has_value()) {
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
-    read_diagnostics::Add(read_diagnostics::Counter::TableCacheHits);
+        read_diagnostics::Add(read_diagnostics::Counter::TableCacheHits);
 #endif
-    return std::move(*cached);
-  }
+        return std::move(*cached);
+    }
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
-  read_diagnostics::Add(read_diagnostics::Counter::TableCacheMisses);
+    read_diagnostics::Add(read_diagnostics::Counter::TableCacheMisses);
 #endif
 
-  Result<std::unique_ptr<RandomAccessFile>> file =
-      file_system_->OpenRandomAccess(TableFileName(directory_, file_number), file_size);
-  if (!file.has_value()) {
-    return std::unexpected(std::move(file).error());
-  }
-  Result<std::unique_ptr<Table>> table =
-      Table::Open(std::move(*file), file_size, *comparator_, options_);
-  if (!table.has_value()) {
-    return std::unexpected(std::move(table).error());
-  }
-  // Tables have charge one, so the charge accounting could overflow only with
-  // SIZE_MAX tables in one shard; Insert would return that error.
-  return tables_.Insert(key, std::move(*table), 1);
+    Result<std::unique_ptr<RandomAccessFile>> file =
+        file_system_->OpenRandomAccess(TableFileName(directory_, file_number), file_size);
+    if (!file.has_value()) {
+        return std::unexpected(std::move(file).error());
+    }
+    Result<std::unique_ptr<Table>> table =
+        Table::Open(std::move(*file), file_size, *comparator_, options_);
+    if (!table.has_value()) {
+        return std::unexpected(std::move(table).error());
+    }
+    // Tables have charge one, so the charge accounting could overflow only with
+    // SIZE_MAX tables in one shard; Insert would return that error.
+    return tables_.Insert(key, std::move(*table), 1);
 }
 
 void TableCache::Evict(std::uint64_t file_number) { tables_.Erase(CacheKey(file_number)); }

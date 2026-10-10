@@ -13,25 +13,25 @@ namespace modern_leveldb {
 // Next and Prev require a valid position. A failed move leaves the iterator
 // invalid, and the next seek starts over.
 class InternalIterator {
- public:
-  InternalIterator(const InternalIterator&) = delete;
-  InternalIterator& operator=(const InternalIterator&) = delete;
-  InternalIterator(InternalIterator&&) = delete;
-  InternalIterator& operator=(InternalIterator&&) = delete;
-  virtual ~InternalIterator() = default;
+public:
+    InternalIterator(const InternalIterator&) = delete;
+    InternalIterator& operator=(const InternalIterator&) = delete;
+    InternalIterator(InternalIterator&&) = delete;
+    InternalIterator& operator=(InternalIterator&&) = delete;
+    virtual ~InternalIterator() = default;
 
-  [[nodiscard]] virtual bool valid() const noexcept = 0;
-  [[nodiscard]] virtual ByteView key() const noexcept = 0;
-  [[nodiscard]] virtual ByteView value() const noexcept = 0;
+    [[nodiscard]] virtual bool valid() const noexcept = 0;
+    [[nodiscard]] virtual ByteView key() const noexcept = 0;
+    [[nodiscard]] virtual ByteView value() const noexcept = 0;
 
-  [[nodiscard]] virtual Status SeekToFirst() = 0;
-  [[nodiscard]] virtual Status SeekToLast() = 0;
-  [[nodiscard]] virtual Status Seek(ByteView target) = 0;
-  [[nodiscard]] virtual Status Next() = 0;
-  [[nodiscard]] virtual Status Prev() = 0;
+    [[nodiscard]] virtual Status SeekToFirst() = 0;
+    [[nodiscard]] virtual Status SeekToLast() = 0;
+    [[nodiscard]] virtual Status Seek(ByteView target) = 0;
+    [[nodiscard]] virtual Status Next() = 0;
+    [[nodiscard]] virtual Status Prev() = 0;
 
- protected:
-  InternalIterator() = default;
+protected:
+    InternalIterator() = default;
 };
 
 }  // namespace modern_leveldb

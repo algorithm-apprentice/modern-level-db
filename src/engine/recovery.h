@@ -17,20 +17,20 @@
 namespace modern_leveldb {
 
 struct RecoveryOptions {
-  bool create_if_missing = false;
-  bool error_if_exists = false;
-  bool sync_wal_creation = true;
-  // Replay writes a memtable to a table once its memory usage exceeds this.
-  std::size_t write_buffer_size = 4 * 1024 * 1024;
-  TableBuilderOptions table_options;
+    bool create_if_missing = false;
+    bool error_if_exists = false;
+    bool sync_wal_creation = true;
+    // Replay writes a memtable to a table once its memory usage exceeds this.
+    std::size_t write_buffer_size = 4 * 1024 * 1024;
+    TableBuilderOptions table_options;
 };
 
 // The state of an opened database. The lock is released last.
 struct RecoveredDatabase {
-  std::unique_ptr<FileLock> lock;
-  std::unique_ptr<VersionSet> versions;
-  std::unique_ptr<WalWriter> log;
-  std::uint64_t log_number;
+    std::unique_ptr<FileLock> lock;
+    std::unique_ptr<VersionSet> versions;
+    std::unique_ptr<WalWriter> log;
+    std::uint64_t log_number;
 };
 
 // Locks the database directory, creates or recovers its version set, replays

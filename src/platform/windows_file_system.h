@@ -17,47 +17,47 @@ class WindowsFileOperations;
 class MappedReadLimiter;
 
 class WindowsFileSystem final : public FileSystem {
- public:
-  explicit WindowsFileSystem(bool allow_weak_namespace_durability = false,
-                             bool allow_mmap_reads = true);
-  WindowsFileSystem(bool allow_weak_namespace_durability,
-                    std::shared_ptr<WindowsFileOperations> operations);
-  WindowsFileSystem(bool allow_weak_namespace_durability,
-                    std::shared_ptr<WindowsFileOperations> operations,
-                    std::shared_ptr<MappedReadLimiter> mmap_limiter);
-  [[nodiscard]] static std::shared_ptr<MappedReadLimiter> NewMmapBudgetForTesting(
-      std::size_t maximum_mappings);
+public:
+    explicit WindowsFileSystem(bool allow_weak_namespace_durability = false,
+                               bool allow_mmap_reads = true);
+    WindowsFileSystem(bool allow_weak_namespace_durability,
+                      std::shared_ptr<WindowsFileOperations> operations);
+    WindowsFileSystem(bool allow_weak_namespace_durability,
+                      std::shared_ptr<WindowsFileOperations> operations,
+                      std::shared_ptr<MappedReadLimiter> mmap_limiter);
+    [[nodiscard]] static std::shared_ptr<MappedReadLimiter> NewMmapBudgetForTesting(
+        std::size_t maximum_mappings);
 
-  // Checks consent and the resolved local NTFS location before database mutation.
-  [[nodiscard]] Result<std::filesystem::path> PrepareDatabaseDirectory(
-      const std::filesystem::path& directory) const;
+    // Checks consent and the resolved local NTFS location before database mutation.
+    [[nodiscard]] Result<std::filesystem::path> PrepareDatabaseDirectory(
+        const std::filesystem::path& directory) const;
 
-  [[nodiscard]] Result<std::unique_ptr<SequentialFile>> OpenSequential(
-      const std::filesystem::path& path) override;
-  [[nodiscard]] Result<std::unique_ptr<RandomAccessFile>> OpenRandomAccess(
-      const std::filesystem::path& path,
-      std::optional<std::uint64_t> expected_size = std::nullopt) override;
-  [[nodiscard]] Result<std::unique_ptr<WritableFile>> OpenWritable(
-      const std::filesystem::path& path) override;
-  [[nodiscard]] Result<std::unique_ptr<WritableFile>> OpenAppendable(
-      const std::filesystem::path& path) override;
-  [[nodiscard]] Result<bool> FileExists(const std::filesystem::path& path) const override;
-  [[nodiscard]] Result<std::vector<std::filesystem::path>> ListDirectory(
-      const std::filesystem::path& path) const override;
-  [[nodiscard]] Result<std::uint64_t> FileSize(const std::filesystem::path& path) const override;
-  [[nodiscard]] Status CreateDirectory(const std::filesystem::path& path) override;
-  [[nodiscard]] Status RemoveFile(const std::filesystem::path& path) override;
-  [[nodiscard]] Status RemoveDirectory(const std::filesystem::path& path) override;
-  [[nodiscard]] Status RenameFile(const std::filesystem::path& source,
-                                  const std::filesystem::path& destination) override;
-  [[nodiscard]] Status SyncDirectory(const std::filesystem::path& path) override;
-  [[nodiscard]] Result<std::unique_ptr<FileLock>> LockFile(
-      const std::filesystem::path& path) override;
+    [[nodiscard]] Result<std::unique_ptr<SequentialFile>> OpenSequential(
+        const std::filesystem::path& path) override;
+    [[nodiscard]] Result<std::unique_ptr<RandomAccessFile>> OpenRandomAccess(
+        const std::filesystem::path& path,
+        std::optional<std::uint64_t> expected_size = std::nullopt) override;
+    [[nodiscard]] Result<std::unique_ptr<WritableFile>> OpenWritable(
+        const std::filesystem::path& path) override;
+    [[nodiscard]] Result<std::unique_ptr<WritableFile>> OpenAppendable(
+        const std::filesystem::path& path) override;
+    [[nodiscard]] Result<bool> FileExists(const std::filesystem::path& path) const override;
+    [[nodiscard]] Result<std::vector<std::filesystem::path>> ListDirectory(
+        const std::filesystem::path& path) const override;
+    [[nodiscard]] Result<std::uint64_t> FileSize(const std::filesystem::path& path) const override;
+    [[nodiscard]] Status CreateDirectory(const std::filesystem::path& path) override;
+    [[nodiscard]] Status RemoveFile(const std::filesystem::path& path) override;
+    [[nodiscard]] Status RemoveDirectory(const std::filesystem::path& path) override;
+    [[nodiscard]] Status RenameFile(const std::filesystem::path& source,
+                                    const std::filesystem::path& destination) override;
+    [[nodiscard]] Status SyncDirectory(const std::filesystem::path& path) override;
+    [[nodiscard]] Result<std::unique_ptr<FileLock>> LockFile(
+        const std::filesystem::path& path) override;
 
- private:
-  bool allow_weak_namespace_durability_;
-  std::shared_ptr<WindowsFileOperations> operations_;
-  std::shared_ptr<MappedReadLimiter> mmap_limiter_;
+private:
+    bool allow_weak_namespace_durability_;
+    std::shared_ptr<WindowsFileOperations> operations_;
+    std::shared_ptr<MappedReadLimiter> mmap_limiter_;
 };
 
 }  // namespace modern_leveldb

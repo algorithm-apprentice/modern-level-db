@@ -112,6 +112,7 @@ decision context and evidence available when each change was made.
 | [ADR-0068: Windows Mapped-Read Reference Parity](0068-windows-mapped-read-parity.md) | Windows read I/O | Implemented | Aligns native mappings with pinned LevelDB | [Platform and durability](../reference/platform-support-and-durability.md) |
 | [ADR-0069: Native Windows Selected-Workload Profiling](0069-native-windows-selected-workload-profiling.md) | Windows profiling | Implemented | Adds owned native CPU capture and validation | [Benchmarking and profiling](../development/benchmarking-and-profiling.md) |
 | [ADR-0070: Documentation Information Architecture](0070-documentation-information-architecture.md) | Documentation governance | Accepted | Defines audiences, authorities, lifecycle policy, migration DAG, and quality boundaries | [Reference index](../reference/README.md); [development index](../development/README.md); [architecture](../architecture.md) |
+| [ADR-0071: Four-Space C++ Formatting](0071-four-space-cpp-formatting.md) | Code style | Accepted | Establishes four-space formatting informed by Catch2 and a mechanical source migration | [Code style](../development/code-style.md) |
 
 ## Historical upstream-link provenance
 

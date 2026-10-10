@@ -88,81 +88,81 @@ accidental repeated run does not overwrite earlier data.
 namespace ml = modern_leveldb;
 
 ml::Status RunDemo(ml::Database& database) {
-  ml::Status written = database.Put(ml::AsBytes("color"), ml::AsBytes("red"));
-  if (!written.has_value()) {
-    return written;
-  }
+    ml::Status written = database.Put(ml::AsBytes("color"), ml::AsBytes("red"));
+    if (!written.has_value()) {
+        return written;
+    }
 
-  auto snapshot = database.GetSnapshot();
-  if (!snapshot.has_value()) {
-    return std::unexpected(snapshot.error());
-  }
+    auto snapshot = database.GetSnapshot();
+    if (!snapshot.has_value()) {
+        return std::unexpected(snapshot.error());
+    }
 
-  written = database.Put(ml::AsBytes("color"), ml::AsBytes("blue"));
-  if (!written.has_value()) {
-    return written;
-  }
+    written = database.Put(ml::AsBytes("color"), ml::AsBytes("blue"));
+    if (!written.has_value()) {
+        return written;
+    }
 
-  ml::ReadOptions old_view{.snapshot = &*snapshot};
-  auto old = database.Get(ml::AsBytes("color"), old_view);
-  if (!old.has_value()) {
-    return std::unexpected(old.error());
-  }
-  if (!old->has_value()) {
-    return std::unexpected(ml::Error::Corruption("snapshot value is missing"));
-  }
-  if (ml::AsStringView(**old) != "red") {
-    return std::unexpected(ml::Error::Corruption("unexpected snapshot value"));
-  }
+    ml::ReadOptions old_view{.snapshot = &*snapshot};
+    auto old = database.Get(ml::AsBytes("color"), old_view);
+    if (!old.has_value()) {
+        return std::unexpected(old.error());
+    }
+    if (!old->has_value()) {
+        return std::unexpected(ml::Error::Corruption("snapshot value is missing"));
+    }
+    if (ml::AsStringView(**old) != "red") {
+        return std::unexpected(ml::Error::Corruption("unexpected snapshot value"));
+    }
 
-  ml::Status deleted = database.Delete(ml::AsBytes("color"));
-  if (!deleted.has_value()) {
-    return deleted;
-  }
-  auto latest = database.Get(ml::AsBytes("color"));
-  if (!latest.has_value()) {
-    return std::unexpected(latest.error());
-  }
-  if (latest->has_value()) {
-    return std::unexpected(ml::Error::Corruption("deleted key is still visible"));
-  }
-  auto still_old = database.Get(ml::AsBytes("color"), old_view);
-  if (!still_old.has_value()) {
-    return std::unexpected(still_old.error());
-  }
-  if (!still_old->has_value()) {
-    return std::unexpected(ml::Error::Corruption("snapshot lost its old value"));
-  }
-  if (ml::AsStringView(**still_old) != "red") {
-    return std::unexpected(ml::Error::Corruption("snapshot changed after deletion"));
-  }
-  return {};
+    ml::Status deleted = database.Delete(ml::AsBytes("color"));
+    if (!deleted.has_value()) {
+        return deleted;
+    }
+    auto latest = database.Get(ml::AsBytes("color"));
+    if (!latest.has_value()) {
+        return std::unexpected(latest.error());
+    }
+    if (latest->has_value()) {
+        return std::unexpected(ml::Error::Corruption("deleted key is still visible"));
+    }
+    auto still_old = database.Get(ml::AsBytes("color"), old_view);
+    if (!still_old.has_value()) {
+        return std::unexpected(still_old.error());
+    }
+    if (!still_old->has_value()) {
+        return std::unexpected(ml::Error::Corruption("snapshot lost its old value"));
+    }
+    if (ml::AsStringView(**still_old) != "red") {
+        return std::unexpected(ml::Error::Corruption("snapshot changed after deletion"));
+    }
+    return {};
 }
 
 int main(int argc, char* argv[]) {
-  if (argc != 2) {
-    std::cerr << "usage: learning_demo NEW_DATABASE_DIRECTORY\n";
-    return 2;
-  }
-  ml::Options options;
-  options.create_if_missing = true;
-  options.error_if_exists = true;
+    if (argc != 2) {
+        std::cerr << "usage: learning_demo NEW_DATABASE_DIRECTORY\n";
+        return 2;
+    }
+    ml::Options options;
+    options.create_if_missing = true;
+    options.error_if_exists = true;
 #if defined(_WIN32)
-  // Required for every owned native Windows open.
-  options.allow_weak_namespace_durability = true;
+    // Required for every owned native Windows open.
+    options.allow_weak_namespace_durability = true;
 #endif
-  auto opened = ml::Database::Open(options, std::filesystem::path(argv[1]));
-  if (!opened.has_value()) {
-    std::cerr << opened.error().ToString() << '\n';
-    return 1;
-  }
-  const ml::Status result = RunDemo(*opened);
-  if (!result.has_value()) {
-    std::cerr << result.error().ToString() << '\n';
-    return 1;
-  }
-  std::cout << "snapshot=red; latest=absent\n";
-  return 0;
+    auto opened = ml::Database::Open(options, std::filesystem::path(argv[1]));
+    if (!opened.has_value()) {
+        std::cerr << opened.error().ToString() << '\n';
+        return 1;
+    }
+    const ml::Status result = RunDemo(*opened);
+    if (!result.has_value()) {
+        std::cerr << result.error().ToString() << '\n';
+        return 1;
+    }
+    std::cout << "snapshot=red; latest=absent\n";
+    return 0;
 }
 ```
 

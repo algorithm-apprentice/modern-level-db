@@ -21,120 +21,119 @@ inline constexpr SequenceNumber MaxSequenceNumber = (std::uint64_t{1} << 56U) - 
 inline constexpr std::size_t InternalKeyTrailerSize = 8;
 
 enum class ValueKind : std::uint8_t {
-  Deletion = 0,
-  Value = 1,
+    Deletion = 0,
+    Value = 1,
 };
 
 inline constexpr ValueKind SeekValueKind = ValueKind::Value;
 
 struct ParsedInternalKey {
-  ByteView user_key;
-  SequenceNumber sequence;
-  ValueKind kind;
+    ByteView user_key;
+    SequenceNumber sequence;
+    ValueKind kind;
 };
 
 [[nodiscard]] Result<ParsedInternalKey> ParseInternalKey(ByteView encoded);
 
 class LookupKey final {
- public:
-  [[nodiscard]] static Result<LookupKey> Create(ByteView user_key,
-                                                SequenceNumber sequence);
+public:
+    [[nodiscard]] static Result<LookupKey> Create(ByteView user_key, SequenceNumber sequence);
 
-  LookupKey(const LookupKey&) = delete;
-  LookupKey& operator=(const LookupKey&) = delete;
-  LookupKey(LookupKey&& source) noexcept;
-  LookupKey& operator=(LookupKey&& source) noexcept;
-  ~LookupKey() = default;
+    LookupKey(const LookupKey&) = delete;
+    LookupKey& operator=(const LookupKey&) = delete;
+    LookupKey(LookupKey&& source) noexcept;
+    LookupKey& operator=(LookupKey&& source) noexcept;
+    ~LookupKey() = default;
 
-  [[nodiscard]] ByteView memtable_key() const noexcept;
-  [[nodiscard]] ByteView internal_key() const noexcept;
-  [[nodiscard]] ByteView user_key() const noexcept;
+    [[nodiscard]] ByteView memtable_key() const noexcept;
+    [[nodiscard]] ByteView internal_key() const noexcept;
+    [[nodiscard]] ByteView user_key() const noexcept;
 
- private:
-  static constexpr std::size_t InlineCapacity = 200;
+private:
+    static constexpr std::size_t InlineCapacity = 200;
 
-  LookupKey() noexcept;
+    LookupKey() noexcept;
 
-  [[nodiscard]] std::byte* data() noexcept;
-  [[nodiscard]] const std::byte* data() const noexcept;
-  void ResetToCanonicalEmpty() noexcept;
+    [[nodiscard]] std::byte* data() noexcept;
+    [[nodiscard]] const std::byte* data() const noexcept;
+    void ResetToCanonicalEmpty() noexcept;
 
-  std::array<std::byte, InlineCapacity> inline_storage_{};
-  std::unique_ptr<std::byte[]> heap_storage_;
-  std::size_t encoded_size_ = 0;
-  std::size_t internal_key_offset_ = 0;
+    std::array<std::byte, InlineCapacity> inline_storage_{};
+    std::unique_ptr<std::byte[]> heap_storage_;
+    std::size_t encoded_size_ = 0;
+    std::size_t internal_key_offset_ = 0;
 };
 
 class InternalKey final {
- public:
-  [[nodiscard]] static Result<InternalKey> Create(ByteView user_key, SequenceNumber sequence,
-                                                  ValueKind kind);
-  [[nodiscard]] static Result<InternalKey> Decode(ByteView encoded);
+public:
+    [[nodiscard]] static Result<InternalKey> Create(ByteView user_key, SequenceNumber sequence,
+                                                    ValueKind kind);
+    [[nodiscard]] static Result<InternalKey> Decode(ByteView encoded);
 
-  InternalKey(const InternalKey&) = default;
-  InternalKey& operator=(const InternalKey&) = default;
-  InternalKey(InternalKey&&) noexcept = default;
-  InternalKey& operator=(InternalKey&&) noexcept = default;
-  ~InternalKey() = default;
+    InternalKey(const InternalKey&) = default;
+    InternalKey& operator=(const InternalKey&) = default;
+    InternalKey(InternalKey&&) noexcept = default;
+    InternalKey& operator=(InternalKey&&) noexcept = default;
+    ~InternalKey() = default;
 
-  [[nodiscard]] ByteView encoded() const noexcept { return encoded_; }
-  [[nodiscard]] ByteView user_key() const noexcept;
-  [[nodiscard]] SequenceNumber sequence() const noexcept { return sequence_; }
-  [[nodiscard]] ValueKind kind() const noexcept { return kind_; }
+    [[nodiscard]] ByteView encoded() const noexcept { return encoded_; }
+    [[nodiscard]] ByteView user_key() const noexcept;
+    [[nodiscard]] SequenceNumber sequence() const noexcept { return sequence_; }
+    [[nodiscard]] ValueKind kind() const noexcept { return kind_; }
 
- private:
-  InternalKey(std::vector<std::byte> encoded, SequenceNumber sequence, ValueKind kind)
-      : encoded_(std::move(encoded)), sequence_(sequence), kind_(kind) {}
+private:
+    InternalKey(std::vector<std::byte> encoded, SequenceNumber sequence, ValueKind kind)
+        : encoded_(std::move(encoded)), sequence_(sequence), kind_(kind) {}
 
-  std::vector<std::byte> encoded_;
-  SequenceNumber sequence_;
-  ValueKind kind_;
+    std::vector<std::byte> encoded_;
+    SequenceNumber sequence_;
+    ValueKind kind_;
 };
 
 class InternalKeyComparator final : public Comparator {
- public:
-  explicit InternalKeyComparator(const Comparator& user_comparator)
-      : user_comparator_(user_comparator) {}
-  InternalKeyComparator(Comparator&&) = delete;
-  InternalKeyComparator(const Comparator&&) = delete;
+public:
+    explicit InternalKeyComparator(const Comparator& user_comparator)
+        : user_comparator_(user_comparator) {}
+    InternalKeyComparator(Comparator&&) = delete;
+    InternalKeyComparator(const Comparator&&) = delete;
 
-  [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override;
-  // Both operands must contain an internal-key trailer.
-  [[nodiscard]] int CompareTrusted(ByteView left, ByteView right) const noexcept;
-  [[nodiscard]] int Compare(const InternalKey& left, const InternalKey& right) const noexcept {
-    return Compare(left.encoded(), right.encoded());
-  }
+    [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override;
+    // Both operands must contain an internal-key trailer.
+    [[nodiscard]] int CompareTrusted(ByteView left, ByteView right) const noexcept;
+    [[nodiscard]] int Compare(const InternalKey& left, const InternalKey& right) const noexcept {
+        return Compare(left.encoded(), right.encoded());
+    }
 
-  [[nodiscard]] std::string_view Name() const noexcept override;
-  void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const override;
-  void FindShortSuccessor(std::vector<std::byte>& key) const override;
+    [[nodiscard]] std::string_view Name() const noexcept override;
+    void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const override;
+    void FindShortSuccessor(std::vector<std::byte>& key) const override;
 
-  [[nodiscard]] const Comparator& user_comparator() const noexcept { return user_comparator_; }
+    [[nodiscard]] const Comparator& user_comparator() const noexcept { return user_comparator_; }
 
- private:
-  const Comparator& user_comparator_;
+private:
+    const Comparator& user_comparator_;
 };
 
 class TrustedInternalKeyComparator final : public Comparator {
- public:
-  explicit TrustedInternalKeyComparator(const InternalKeyComparator& comparator) noexcept
-      : comparator_(&comparator) {}
-  TrustedInternalKeyComparator(InternalKeyComparator&&) = delete;
-  TrustedInternalKeyComparator(const InternalKeyComparator&&) = delete;
+public:
+    explicit TrustedInternalKeyComparator(const InternalKeyComparator& comparator) noexcept
+        : comparator_(&comparator) {}
+    TrustedInternalKeyComparator(InternalKeyComparator&&) = delete;
+    TrustedInternalKeyComparator(const InternalKeyComparator&&) = delete;
 
-  [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override {
-    return comparator_->CompareTrusted(left, right);
-  }
-  [[nodiscard]] std::string_view Name() const noexcept override { return comparator_->Name(); }
-  void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const override {
-    comparator_->FindShortestSeparator(start, limit);
-  }
-  void FindShortSuccessor(std::vector<std::byte>& key) const override {
-    comparator_->FindShortSuccessor(key);
-  }
+    [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override {
+        return comparator_->CompareTrusted(left, right);
+    }
+    [[nodiscard]] std::string_view Name() const noexcept override { return comparator_->Name(); }
+    void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const override {
+        comparator_->FindShortestSeparator(start, limit);
+    }
+    void FindShortSuccessor(std::vector<std::byte>& key) const override {
+        comparator_->FindShortSuccessor(key);
+    }
 
- private:
-  const InternalKeyComparator* comparator_;
+private:
+    const InternalKeyComparator* comparator_;
 };
 
 }  // namespace modern_leveldb

@@ -20,49 +20,49 @@ namespace modern_leveldb {
 // do not overlap. Version topology is immutable. Versions share file metadata,
 // whose seek budget changes only under the database mutex.
 class Version final {
- public:
-  using File = std::shared_ptr<const FileMetadata>;
+public:
+    using File = std::shared_ptr<const FileMetadata>;
 
-  Version() = default;
+    Version() = default;
 
-  // Requires a level below NumLevels.
-  [[nodiscard]] std::span<const File> files(std::uint32_t level) const noexcept;
+    // Requires a level below NumLevels.
+    [[nodiscard]] std::span<const File> files(std::uint32_t level) const noexcept;
 
- private:
-  friend class VersionBuilder;
-  friend class VersionSet;
+private:
+    friend class VersionBuilder;
+    friend class VersionSet;
 
-  std::array<std::vector<File>, NumLevels> files_;
-  mutable std::size_t read_pins_ = 0;
+    std::array<std::vector<File>, NumLevels> files_;
+    mutable std::size_t read_pins_ = 0;
 };
 
 // Applies version edits to a base version.
 class VersionBuilder final {
- public:
-  VersionBuilder(const InternalKeyComparator& comparator, const Version& base);
-  VersionBuilder(const InternalKeyComparator&& comparator, const Version& base) = delete;
+public:
+    VersionBuilder(const InternalKeyComparator& comparator, const Version& base);
+    VersionBuilder(const InternalKeyComparator&& comparator, const Version& base) = delete;
 
-  // Removes the edit's deleted files, then adds its new files. Returns
-  // InvalidArgument for a deleted file that is not live in its level, a new
-  // file whose number is live in any level, or a new file whose smallest key
-  // follows its largest; the builder may then only be destroyed.
-  [[nodiscard]] Status Apply(const VersionEdit& edit);
+    // Removes the edit's deleted files, then adds its new files. Returns
+    // InvalidArgument for a deleted file that is not live in its level, a new
+    // file whose number is live in any level, or a new file whose smallest key
+    // follows its largest; the builder may then only be destroyed.
+    [[nodiscard]] Status Apply(const VersionEdit& edit);
 
-  // Returns the version of the applied edits, or InvalidArgument if two files
-  // in a level above 0 overlap.
-  [[nodiscard]] Result<Version> Build() const;
+    // Returns the version of the applied edits, or InvalidArgument if two files
+    // in a level above 0 overlap.
+    [[nodiscard]] Result<Version> Build() const;
 
-  // Applies one internally generated edit by linearly merging its small
-  // per-level delta with the ordered base. The edit must delete live files,
-  // add fresh valid files, and preserve non-overlap above level 0.
-  [[nodiscard]] static Version BuildTrusted(const InternalKeyComparator& comparator,
-                                            const Version& base, const VersionEdit& edit);
+    // Applies one internally generated edit by linearly merging its small
+    // per-level delta with the ordered base. The edit must delete live files,
+    // add fresh valid files, and preserve non-overlap above level 0.
+    [[nodiscard]] static Version BuildTrusted(const InternalKeyComparator& comparator,
+                                              const Version& base, const VersionEdit& edit);
 
- private:
-  [[nodiscard]] bool IsLive(std::uint64_t number) const;
+private:
+    [[nodiscard]] bool IsLive(std::uint64_t number) const;
 
-  const InternalKeyComparator* comparator_;
-  std::array<std::map<std::uint64_t, Version::File>, NumLevels> levels_;
+    const InternalKeyComparator* comparator_;
+    std::array<std::map<std::uint64_t, Version::File>, NumLevels> levels_;
 };
 
 }  // namespace modern_leveldb

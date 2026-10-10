@@ -18,20 +18,20 @@
 namespace modern_leveldb {
 
 struct CompactionOptions {
-  TableBuilderOptions table_options{};
-  // LevelDB's max_file_size: an output ends once it reaches this size, or
-  // early once the grandparents it overlaps total more than ten times this.
-  std::uint64_t target_file_size = std::uint64_t{2} << 20U;
+    TableBuilderOptions table_options{};
+    // LevelDB's max_file_size: an output ends once it reaches this size, or
+    // early once the grandparents it overlaps total more than ten times this.
+    std::uint64_t target_file_size = std::uint64_t{2} << 20U;
 };
 
 // The engine's steps within a compaction, which may take the database mutex.
 struct CompactionHooks {
-  // Returns a fresh file number for an output and protects it from
-  // obsolete-file cleanup.
-  std::function<std::uint64_t()> new_file_number;
-  // Runs before each input entry, where the engine flushes a pending immutable
-  // memtable. An error stops the compaction, such as when the database closes.
-  std::function<Status()> before_entry;
+    // Returns a fresh file number for an output and protects it from
+    // obsolete-file cleanup.
+    std::function<std::uint64_t()> new_file_number;
+    // Runs before each input entry, where the engine flushes a pending immutable
+    // memtable. An error stops the compaction, such as when the database closes.
+    std::function<Status()> before_entry;
 };
 
 // Merges the compaction's inputs as LevelDB's VersionSet::MakeInputIterator

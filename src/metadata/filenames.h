@@ -12,17 +12,17 @@
 namespace modern_leveldb {
 
 enum class FileType {
-  Log,
-  Lock,
-  Table,
-  Descriptor,
-  Current,
-  Temp,
+    Log,
+    Lock,
+    Table,
+    Descriptor,
+    Current,
+    Temp,
 };
 
 struct ParsedFileName {
-  FileType type;
-  std::uint64_t number;
+    FileType type;
+    std::uint64_t number;
 };
 
 // Numbered file-name generators require a nonzero file number.
