@@ -136,6 +136,10 @@ Result<RecoveredDatabase> RecoverDatabase(FileSystem& file_system,
 5. Selects the logs whose number is at least the log number or equal to the
    previous log number, and marks their numbers used. A log number at or
    above `FileNumberLimit` is `Corruption`.
+   `PrepareLogsForReplay` orchestrates directory scanning,
+   `ValidateReferencedTableFiles`, numeric log sorting, and
+   `MarkReplayLogNumbersUsed`, in that order. Missing referenced tables are
+   reported before log numbers are marked or replay begins.
 6. Replays the logs in number order into a memtable. Corruption events are
    skipped. After each record, a memtable whose memory usage exceeds
    `write_buffer_size` is written to a level-0 table with `BuildTable`, and so
