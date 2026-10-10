@@ -219,7 +219,7 @@ public:
     BlockCache blocks{std::size_t{1} << 20U};
     TableOptions table_options{.filter_policy = std::nullopt,
                                .block_cache = &blocks,
-                               .use_trusted_internal_key_comparison = true};
+                               .block_key_format = BlockKeyFormat::Internal};
     TableCache cache{file_system, directory, comparator, table_options, 100};
     CompactionOptions options;
     std::vector<std::uint64_t> numbers;

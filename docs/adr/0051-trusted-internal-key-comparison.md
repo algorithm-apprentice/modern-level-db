@@ -5,7 +5,10 @@
 ## Status
 
 Experiment completed; the candidate failed admission and was not committed.
-The defensive internal-key comparator remains in production.
+This document records that rejected experiment, not the current comparator
+contract. The later block-iterator work established explicit key-format
+boundaries, and the current implementation uses one internal-key comparator
+domain instead of defensive and trusted comparison operations.
 
 ## Context
 

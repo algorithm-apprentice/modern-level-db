@@ -68,7 +68,7 @@ Status TableBuilder::AddTrusted(ByteView key, ByteView value) {
         return FirstError();
     }
     assert(ParseInternalKey(key).has_value());
-    assert(entry_count_ == 0 || comparator_->CompareTrusted(key, last_key_) > 0);
+    assert(entry_count_ == 0 || comparator_->Compare(key, last_key_) > 0);
     return AddValid(key, value);
 }
 

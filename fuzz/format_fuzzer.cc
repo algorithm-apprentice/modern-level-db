@@ -90,10 +90,9 @@ void FuzzFormat(ByteView input) {
                     block->ValidateEntries([](ByteView, ByteView) -> Status { return {}; })
                         .has_value();
                 const InternalKeyComparator internal(BytewiseComparator());
-                const TrustedInternalKeyComparator trusted(internal);
                 const bool internal_keys = (command & 8U) != 0U;
                 const Comparator& comparator =
-                    internal_keys ? static_cast<const Comparator&>(trusted) : BytewiseComparator();
+                    internal_keys ? static_cast<const Comparator&>(internal) : BytewiseComparator();
                 Block::Iterator iterator(
                     *block, comparator,
                     internal_keys ? BlockKeyFormat::Internal : BlockKeyFormat::Arbitrary);

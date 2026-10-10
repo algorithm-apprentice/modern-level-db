@@ -228,8 +228,8 @@ entry whose lengths are representable. Sequence uniqueness makes duplicate
 internal keys impossible in one memtable.
 
 `MemTable::AddTrusted`, `SkipList::InsertTrusted`, and
-`InternalKeyComparator::CompareTrusted` may assert these properties. Checked
-entry points remain for recovery and direct unit tests.
+`InternalKeyComparator::Compare` may assert these properties. Checked entry
+points remain for recovery and direct unit tests.
 
 ### I7. Arena node layout
 

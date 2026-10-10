@@ -611,10 +611,9 @@ TEST(BlockIteratorTest, ForwardDecodeRejectsALaterOutOfRangeRestart) {
 }
 
 TEST(BlockIteratorTest, InternalKeyModeRejectsShortTargetsAndEntries) {
-    const InternalKeyComparator defensive(BytewiseComparator());
-    const TrustedInternalKeyComparator trusted(defensive);
+    const InternalKeyComparator comparator(BytewiseComparator());
     const Block block = MakeBlock(WithRestarts(EntryBytes(0, "short", ""), {0}));
-    Block::Iterator iterator(block, trusted, BlockKeyFormat::Internal);
+    Block::Iterator iterator(block, comparator, BlockKeyFormat::Internal);
 
     ExpectCorruption(iterator.Seek(AsBytes("short")));
     EXPECT_FALSE(iterator.valid());
@@ -623,14 +622,13 @@ TEST(BlockIteratorTest, InternalKeyModeRejectsShortTargetsAndEntries) {
 }
 
 TEST(BlockIteratorTest, InternalKeySeekRejectsAShortRestartKey) {
-    const InternalKeyComparator defensive(BytewiseComparator());
-    const TrustedInternalKeyComparator trusted(defensive);
+    const InternalKeyComparator comparator(BytewiseComparator());
     const InternalKey valid = InternalKey::Create(AsBytes("a"), 1, ValueKind::Value).value();
     const auto first = EntryBytes(0, AsStringView(valid.encoded()), "");
     const auto short_restart = EntryBytes(0, "short", "");
     const Block block = MakeBlock(WithRestarts(Concat({first, short_restart}),
                                                {0, static_cast<std::uint32_t>(first.size())}));
-    Block::Iterator iterator(block, trusted, BlockKeyFormat::Internal);
+    Block::Iterator iterator(block, comparator, BlockKeyFormat::Internal);
     const InternalKey target = InternalKey::Create(AsBytes("z"), 1, ValueKind::Value).value();
 
     ExpectCorruption(iterator.Seek(target.encoded()));

@@ -107,10 +107,8 @@ public:
     InternalKeyComparator(const Comparator&&) = delete;
 
     [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override;
-    // Both operands must contain a trailer. Memtable encoders and checked table
-    // entries establish the trusted domain; unlike Compare, this does not give
-    // malformed short keys a defensive total order. The user comparator is borrowed.
-    [[nodiscard]] int CompareTrusted(ByteView left, ByteView right) const noexcept;
+    // Both operands must contain a trailer. Encoders and checked read boundaries
+    // establish this comparator domain; malformed bytes are errors, not sortable keys.
     [[nodiscard]] int Compare(const InternalKey& left, const InternalKey& right) const noexcept {
         return Compare(left.encoded(), right.encoded());
     }
@@ -123,28 +121,6 @@ public:
 
 private:
     const Comparator& user_comparator_;
-};
-
-class TrustedInternalKeyComparator final : public Comparator {
-public:
-    explicit TrustedInternalKeyComparator(const InternalKeyComparator& comparator) noexcept
-        : comparator_(&comparator) {}
-    TrustedInternalKeyComparator(InternalKeyComparator&&) = delete;
-    TrustedInternalKeyComparator(const InternalKeyComparator&&) = delete;
-
-    [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override {
-        return comparator_->CompareTrusted(left, right);
-    }
-    [[nodiscard]] std::string_view Name() const noexcept override { return comparator_->Name(); }
-    void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const override {
-        comparator_->FindShortestSeparator(start, limit);
-    }
-    void FindShortSuccessor(std::vector<std::byte>& key) const override {
-        comparator_->FindShortSuccessor(key);
-    }
-
-private:
-    const InternalKeyComparator* comparator_;
 };
 
 }  // namespace modern_leveldb

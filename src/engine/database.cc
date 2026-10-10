@@ -72,8 +72,7 @@ std::unique_ptr<Clock> OwnedClock(const DatabaseEngineOptions& options) {
 TableOptions ReadTableOptions(const DatabaseEngineOptions& options, BlockCache* owned_block_cache) {
     TableOptions table_options{
         .filter_policy = options.table_options.filter_policy,
-        .block_cache = options.block_cache != nullptr ? options.block_cache : owned_block_cache,
-        .use_trusted_internal_key_comparison = true};
+        .block_cache = options.block_cache != nullptr ? options.block_cache : owned_block_cache};
     return table_options;
 }
 

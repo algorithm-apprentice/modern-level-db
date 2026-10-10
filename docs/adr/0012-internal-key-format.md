@@ -3,10 +3,10 @@
 - Status: Accepted
 - Date: 2026-09-22
 
-[ADR-0051](0051-trusted-internal-key-comparison.md) designs a separate
-trusted comparison operation for callers with explicit validity boundaries.
-The defensive malformed-key ordering below remains the general byte-view
-contract until that candidate passes admission.
+[ADR-0051](0051-trusted-internal-key-comparison.md) records the rejected
+two-operation comparison experiment. Later block-iterator work established
+explicit key-format boundaries; the current comparator has one internal-key
+domain and does not order malformed short bytes.
 
 ## Context
 
@@ -152,11 +152,12 @@ class InternalKeyComparator final : public Comparator {
 The comparator borrows a user comparator that must outlive it. For valid keys,
 ordering exactly matches LevelDB.
 
-The base comparator cannot return an error. To avoid undefined behavior on
-corrupted inputs, malformed keys have a deterministic total order:
-
-- Malformed keys sort before valid keys.
-- Two malformed keys use bytewise comparison of their complete encodings.
+Comparison is defined only for byte views that contain the eight-byte trailer.
+Encoders, owning `InternalKey` values, memtable entries, and checked table/block
+boundaries establish that structural domain. Debug builds assert it; malformed
+external bytes return `Corruption` before comparison instead of receiving an
+artificial order. Direct arbitrary-key table tests select bytewise comparison
+explicitly.
 
 Separator and successor operations leave malformed inputs unchanged. For valid
 inputs, they shorten only the user-key portion. A replacement is accepted only

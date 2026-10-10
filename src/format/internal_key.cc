@@ -191,37 +191,6 @@ std::uint64_t InternalKey::trailer() const noexcept {
 }
 
 int InternalKeyComparator::Compare(ByteView left, ByteView right) const noexcept {
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    read_diagnostics::Add(read_diagnostics::Counter::InternalKeyComparisons);
-#endif
-    InternalKeyView left_key;
-    InternalKeyView right_key;
-    const bool left_valid = TryDecodeInternalKey(left, left_key);
-    const bool right_valid = TryDecodeInternalKey(right, right_key);
-
-    if (left_valid != right_valid) {
-        return left_valid ? 1 : -1;
-    }
-    if (!left_valid) {
-        return BytewiseComparator().Compare(left, right);
-    }
-
-    const int user_order = user_comparator_.Compare(left_key.user_key, right_key.user_key);
-    if (user_order != 0) {
-        return user_order;
-    }
-    const std::uint64_t left_trailer = PackTrailer(left_key.sequence, left_key.kind);
-    const std::uint64_t right_trailer = PackTrailer(right_key.sequence, right_key.kind);
-    if (left_trailer > right_trailer) {
-        return -1;
-    }
-    if (left_trailer < right_trailer) {
-        return 1;
-    }
-    return 0;
-}
-
-int InternalKeyComparator::CompareTrusted(ByteView left, ByteView right) const noexcept {
     assert(left.size() >= InternalKeyTrailerSize);
     assert(right.size() >= InternalKeyTrailerSize);
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
@@ -264,7 +233,7 @@ void InternalKeyComparator::FindShortestSeparator(std::vector<std::byte>& start,
     }
 
     AppendFixed64(shortened, PackTrailer(MaxSequenceNumber, SeekValueKind));
-    if (CompareTrusted(shortened, limit) < 0) {
+    if (Compare(shortened, limit) < 0) {
         start = std::move(shortened);
     }
 }

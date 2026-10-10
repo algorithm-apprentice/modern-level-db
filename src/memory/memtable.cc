@@ -184,7 +184,7 @@ MemTableLookup MemTable::Lookup(const LookupKey& key) const {
 
 int MemTable::EntryComparator::operator()(const std::byte* left,
                                           const std::byte* right) const noexcept {
-    return comparator.CompareTrusted(DecodeInternalKey(left), DecodeInternalKey(right));
+    return comparator.Compare(DecodeInternalKey(left), DecodeInternalKey(right));
 }
 
 MemTable::Iterator::Iterator(const MemTable& table) noexcept : iterator_(table.table_) {}

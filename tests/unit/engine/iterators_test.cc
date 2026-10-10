@@ -84,7 +84,7 @@ std::vector<std::byte> Key(std::string_view user_key, SequenceNumber sequence,
 
 TableOptions InternalTableOptions() {
     TableOptions options;
-    options.use_trusted_internal_key_comparison = true;
+    options.block_key_format = BlockKeyFormat::Internal;
     return options;
 }
 

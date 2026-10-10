@@ -244,7 +244,7 @@ Status FormatVersionEdit(const WalLogicalRecord& record, WritableFile& output,
 
 Status DumpTable(FileSystem& file_system, const std::filesystem::path& path,
                  std::string_view escaped_path, WritableFile& output) {
-    // Diagnostic traversal uses defensive comparison and no cache population.
+    // Diagnostic traversal uses arbitrary bytewise keys and no cache population.
     // It exposes visited physical history, not a latest-value database view.
     Result<std::uint64_t> size = file_system.FileSize(path);
     if (!size.has_value()) {
@@ -255,8 +255,10 @@ Status DumpTable(FileSystem& file_system, const std::filesystem::path& path,
         return std::unexpected(std::move(file).error());
     }
     const InternalKeyComparator comparator(BytewiseComparator());
+    TableOptions table_options;
+    table_options.block_key_format = BlockKeyFormat::Arbitrary;
     Result<std::unique_ptr<Table>> table =
-        Table::Open(std::move(*file), *size, comparator, TableOptions{});
+        Table::Open(std::move(*file), *size, comparator, table_options);
     if (!table.has_value()) {
         return std::unexpected(std::move(table).error());
     }
