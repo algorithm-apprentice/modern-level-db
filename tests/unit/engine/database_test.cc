@@ -1594,7 +1594,7 @@ TEST_F(DatabaseTest, MovesALoneFileToTheNextLevelWithoutRewritingIt) {
 TEST_F(DatabaseTest, SlowsEachWriteOnceWhileLevel0HasEightFiles) {
     const auto database = Open();
     WarmUp(*database);
-    for (std::size_t i = 0; i < Level0SlowdownWritesTrigger; ++i) {
+    for (std::size_t i = 0; i < WriteDelayLevel0FileCountThreshold; ++i) {
         Cycle(*database);
     }
     ASSERT_EQ(Levels(), "8 1 1 0 0 0 0");
@@ -1631,7 +1631,7 @@ TEST_F(DatabaseTest, SlowsEachWriteOnceWhileLevel0HasEightFiles) {
 TEST_F(DatabaseTest, StopsWritesThatNeedAMemtableWhileLevel0HasTwelveFiles) {
     const auto database = Open();
     WarmUp(*database);
-    for (std::size_t i = 0; i < Level0StopWritesTrigger; ++i) {
+    for (std::size_t i = 0; i < WriteStallLevel0FileCountThreshold; ++i) {
         Cycle(*database);
     }
     ASSERT_EQ(Levels(), "12 1 1 0 0 0 0");
