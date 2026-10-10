@@ -1,7 +1,6 @@
 #include "engine/compaction.h"
 
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -12,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/result_internal.h"
 #include "engine/iterators.h"
 #include "metadata/filenames.h"
 #include "metadata/version.h"
@@ -24,18 +24,6 @@ namespace {
 
 // Bound the next rewrite's overlap relative to this output's target size.
 constexpr std::uint64_t GrandparentOverlapFactor = 10;
-
-void Expect(const Status& status) noexcept {
-    assert(status.has_value());
-    static_cast<void>(status);
-}
-
-// Decodes a key that ParseInternalKey and the table builder accepted.
-InternalKey Decoded(ByteView key) {
-    Result<InternalKey> decoded = InternalKey::Decode(key);
-    assert(decoded.has_value());
-    return std::move(decoded).value();
-}
 
 // Tracks deeper files passed by the input range, not just emitted entries.
 // This bounds future overlap even when current records are dropped.
@@ -158,8 +146,8 @@ public:
         if (!table.has_value()) {
             return std::unexpected(table.error());
         }
-        InternalKey smallest = Decoded(smallest_);
-        InternalKey largest = Decoded(largest_);
+        InternalKey smallest = TakeTrusted(InternalKey::Decode(smallest_));
+        InternalKey largest = TakeTrusted(InternalKey::Decode(largest_));
         FileMetadata output{.number = number_,
                             .file_size = size,
                             .smallest = std::move(smallest),
@@ -277,7 +265,7 @@ Result<VersionEdit> RunCompaction(FileSystem& file_system, const std::filesystem
         return std::unexpected(synced.error());
     }
     for (const FileMetadata& output : outputs.finished()) {
-        Expect(edit.AddFile(compaction.level + 1, output));
+        AssertSuccess(edit.AddFile(compaction.level + 1, output));
     }
     return edit;
 }

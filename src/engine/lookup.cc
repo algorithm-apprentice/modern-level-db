@@ -15,6 +15,7 @@
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
 #include "instrumentation/read_diagnostics.h"
 #endif
+#include "base/result_internal.h"
 #include "metadata/version_edit.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/comparator.h"
@@ -273,7 +274,7 @@ std::optional<SeekCharge> SampleCharge(const Version& version,
     SelectionTimer selection;
     std::optional<Candidate> first;
     std::size_t matches = 0;
-    const Status visited =
+    AssertSuccess(
         ForEachOverlapping(version, comparator, parsed->user_key, internal_key, selection,
                            [&](const Candidate& candidate) {  // GCOVR_EXCL_LINE: GCC lambda clone
                                ++matches;
@@ -281,9 +282,7 @@ std::optional<SeekCharge> SampleCharge(const Version& version,
                                    first = candidate;
                                }
                                return matches < 2;
-                           });
-    assert(visited.has_value());
-    (void)visited;
+                           }));
     if (matches < 2) {
         return std::nullopt;
     }

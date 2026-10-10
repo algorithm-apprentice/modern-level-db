@@ -17,6 +17,7 @@
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
 #include "instrumentation/read_diagnostics.h"
 #endif
+#include "base/result_internal.h"
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
@@ -101,11 +102,7 @@ Result<Block> ReadBlock(const RandomAccessFile& file, std::uint64_t blocks_end,
 }
 
 // Decodes an index value, which Open validated.
-BlockHandle IndexHandle(ByteView value) {
-    const Result<BlockHandle> handle = ConsumeBlockHandle(value);
-    assert(handle.has_value());
-    return handle.value();
-}
+BlockHandle IndexHandle(ByteView value) { return TakeTrusted(ConsumeBlockHandle(value)); }
 
 // Checks that the index values are handles of blocks before the footer that
 // follow one another without overlapping, so that an offset identifies a block
@@ -356,10 +353,8 @@ Result<Table::BlockReference> Table::ReadDataBlock(BlockHandle handle,
     auto owned = std::make_unique<const Block>(std::move(*block));
     if (block_cache_ != nullptr && options.fill_cache && owned->cacheable()) {
         const std::size_t charge = owned->size();
-        Result<BlockCache::Handle> inserted =
-            block_cache_->Insert(cache_key, std::move(owned), charge);
-        assert(inserted.has_value());
-        return BlockReference(std::move(*inserted));
+        return BlockReference(
+            TakeTrusted(block_cache_->Insert(cache_key, std::move(owned), charge)));
     }
     return BlockReference(std::move(owned));
 }
