@@ -27,19 +27,11 @@ constexpr std::uint64_t PackTrailer(SequenceNumber sequence, ValueKind kind) noe
     return (sequence << 8U) | static_cast<std::uint8_t>(kind);
 }
 
-struct DecodedInternalKey {
-    ByteView user_key;
-    SequenceNumber sequence;
-    ValueKind kind;
-
-    [[nodiscard]] std::uint64_t trailer() const noexcept { return PackTrailer(sequence, kind); }
-};
-
 constexpr bool IsValidValueKind(ValueKind kind) noexcept {
     return kind == ValueKind::Deletion || kind == ValueKind::Value;
 }
 
-bool TryDecodeInternalKey(ByteView encoded, DecodedInternalKey& decoded) noexcept {
+bool TryDecodeInternalKey(ByteView encoded, ParsedInternalKey& decoded) noexcept {
     if (encoded.size() < InternalKeyTrailerSize) {
         return false;
     }
@@ -74,18 +66,14 @@ std::vector<std::byte> EncodeUnchecked(ByteView user_key, SequenceNumber sequenc
 }  // namespace
 
 Result<ParsedInternalKey> ParseInternalKey(ByteView encoded) {
-    DecodedInternalKey decoded;
+    ParsedInternalKey decoded;
     if (!TryDecodeInternalKey(encoded, decoded)) {
         if (encoded.size() < InternalKeyTrailerSize) {
             return std::unexpected(Error::Corruption("internal key is shorter than its trailer"));
         }
         return std::unexpected(Error::Corruption("internal key has an unknown value kind"));
     }
-    return ParsedInternalKey{
-        .user_key = decoded.user_key,
-        .sequence = decoded.sequence,
-        .kind = decoded.kind,
-    };
+    return decoded;
 }
 
 Result<LookupKey> LookupKey::Create(ByteView user_key, SequenceNumber sequence) {
@@ -203,8 +191,8 @@ int InternalKeyComparator::Compare(ByteView left, ByteView right) const noexcept
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
     read_diagnostics::Add(read_diagnostics::Counter::InternalKeyComparisons);
 #endif
-    DecodedInternalKey left_key;
-    DecodedInternalKey right_key;
+    ParsedInternalKey left_key;
+    ParsedInternalKey right_key;
     const bool left_valid = TryDecodeInternalKey(left, left_key);
     const bool right_valid = TryDecodeInternalKey(right, right_key);
 
@@ -219,8 +207,8 @@ int InternalKeyComparator::Compare(ByteView left, ByteView right) const noexcept
     if (user_order != 0) {
         return user_order;
     }
-    const std::uint64_t left_trailer = left_key.trailer();
-    const std::uint64_t right_trailer = right_key.trailer();
+    const std::uint64_t left_trailer = PackTrailer(left_key.sequence, left_key.kind);
+    const std::uint64_t right_trailer = PackTrailer(right_key.sequence, right_key.kind);
     if (left_trailer > right_trailer) {
         return -1;
     }
@@ -259,8 +247,8 @@ std::string_view InternalKeyComparator::Name() const noexcept {
 
 void InternalKeyComparator::FindShortestSeparator(std::vector<std::byte>& start,
                                                   ByteView limit) const {
-    DecodedInternalKey start_key;
-    DecodedInternalKey limit_key;
+    ParsedInternalKey start_key;
+    ParsedInternalKey limit_key;
     if (!TryDecodeInternalKey(start, start_key) || !TryDecodeInternalKey(limit, limit_key)) {
         return;
     }
@@ -279,7 +267,7 @@ void InternalKeyComparator::FindShortestSeparator(std::vector<std::byte>& start,
 }
 
 void InternalKeyComparator::FindShortSuccessor(std::vector<std::byte>& key) const {
-    DecodedInternalKey decoded;
+    ParsedInternalKey decoded;
     if (!TryDecodeInternalKey(key, decoded)) {
         return;
     }
