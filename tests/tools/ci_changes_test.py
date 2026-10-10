@@ -12,6 +12,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import ci_changes
 
 
+class WorkflowTriggersTest(unittest.TestCase):
+    def test_runs_for_pull_requests_and_only_main_pushes(self):
+        workflow = (
+            Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+        ).read_text(encoding="utf-8")
+        triggers = workflow.partition("\non:\n")[2].partition("\npermissions:\n")[0]
+        self.assertEqual(
+            triggers,
+            "  pull_request:\n  push:\n    branches:\n      - main\n",
+        )
+
+
 class DocumentationPathsTest(unittest.TestCase):
     def test_accepts_only_the_nonempty_documentation_allowlist(self):
         for paths in (
