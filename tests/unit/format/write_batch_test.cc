@@ -41,6 +41,10 @@ std::vector<std::byte> Bytes(std::initializer_list<unsigned int> values) {
 
 std::vector<std::byte> Materialize(ByteView value) { return {value.begin(), value.end()}; }
 
+void MoveAssign(EncodedWriteBatch& destination, EncodedWriteBatch&& source) {
+    destination = std::move(source);
+}
+
 std::vector<std::byte> EncodedBatch(SequenceNumber sequence, std::uint32_t count,
                                     ByteView records = {}) {
     std::vector<std::byte> encoded;
@@ -315,7 +319,7 @@ TEST(WriteBatchTest, CopyAndMovePreserveOwningInvariants) {
     EXPECT_EQ(Materialize(assigned.encoded()), expected);
     EXPECT_EQ(Materialize(moved.encoded()), std::vector<std::byte>(WriteBatchHeaderSize));
 
-    assigned = std::move(assigned);
+    MoveAssign(assigned, std::move(assigned));
     EXPECT_EQ(Materialize(assigned.encoded()), expected);
 }
 
