@@ -271,7 +271,7 @@ void InternalKeyComparator::FindShortestSeparator(std::vector<std::byte>& start,
     }
 
     AppendFixed64(shortened, PackTrailer(MaxSequenceNumber, SeekValueKind));
-    if (CompareTrusted(start, shortened) < 0 && CompareTrusted(shortened, limit) < 0) {
+    if (CompareTrusted(shortened, limit) < 0) {
         start = std::move(shortened);
     }
 }
@@ -290,9 +290,7 @@ void InternalKeyComparator::FindShortSuccessor(std::vector<std::byte>& key) cons
     }
 
     AppendFixed64(successor, PackTrailer(MaxSequenceNumber, SeekValueKind));
-    if (CompareTrusted(key, successor) < 0) {
-        key = std::move(successor);
-    }
+    key = std::move(successor);
 }
 
 }  // namespace modern_leveldb
