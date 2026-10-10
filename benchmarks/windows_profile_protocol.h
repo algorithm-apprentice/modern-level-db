@@ -19,31 +19,31 @@ inline constexpr DWORD ControlVersion = 1;
 inline constexpr std::size_t ControlBytes = 4096;
 
 struct alignas(8) Control {
-  DWORD magic = ControlMagic;
-  DWORD version = ControlVersion;
-  DWORD pid = 0;
-  volatile LONG failure = 0;
-  volatile LONG64 epoch = 0;
-  volatile LONG active = 0;
+    DWORD magic = ControlMagic;
+    DWORD version = ControlVersion;
+    DWORD pid = 0;
+    volatile LONG failure = 0;
+    volatile LONG64 epoch = 0;
+    volatile LONG active = 0;
 };
 
 struct State {
-  std::uint64_t epoch;
-  bool active;
-  DWORD failure;
+    std::uint64_t epoch;
+    bool active;
+    DWORD failure;
 };
 
 inline State Observe(Control& control) noexcept {
-  const LONG64 before = ::InterlockedCompareExchange64(&control.epoch, 0, 0);
-  const LONG active = ::InterlockedCompareExchange(&control.active, 0, 0);
-  const LONG failure = ::InterlockedCompareExchange(&control.failure, 0, 0);
-  const LONG64 after = ::InterlockedCompareExchange64(&control.epoch, 0, 0);
-  return {static_cast<std::uint64_t>(after), before == after && active == 1,
-          static_cast<DWORD>(failure)};
+    const LONG64 before = ::InterlockedCompareExchange64(&control.epoch, 0, 0);
+    const LONG active = ::InterlockedCompareExchange(&control.active, 0, 0);
+    const LONG failure = ::InterlockedCompareExchange(&control.failure, 0, 0);
+    const LONG64 after = ::InterlockedCompareExchange64(&control.epoch, 0, 0);
+    return {static_cast<std::uint64_t>(after), before == after && active == 1,
+            static_cast<DWORD>(failure)};
 }
 
 inline std::uint64_t FileTime(FILETIME time) noexcept {
-  return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32U) | time.dwLowDateTime;
+    return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32U) | time.dwLowDateTime;
 }
 
 }  // namespace modern_leveldb::profiling::windows

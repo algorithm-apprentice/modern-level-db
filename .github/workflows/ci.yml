@@ -166,6 +166,7 @@ jobs:
           diff-cover build/coverage/coverage.xml
           --compare-branch=origin/main
           --branch-coverage
+          --ignore-whitespace
           --fail-under=100
 
       - name: Upload coverage report

@@ -50,7 +50,7 @@ decision context and evidence available when each change was made.
 
 | ADR | Topic | Lifecycle | Implementation / outcome | Supersession / current reference |
 |---|---|---|---|---|
-| [ADR-0019: Test Coverage Policy](0019-test-coverage-policy.md) | Quality gates | Accepted | Establishes changed-code coverage policy | [CI and quality gates](../development/ci-and-quality-gates.md) |
+| [ADR-0019: Test Coverage Policy](0019-test-coverage-policy.md) | Quality gates | Accepted | Establishes changed-code coverage policy | [ADR-0071](0071-four-space-cpp-formatting.md); [CI and quality gates](../development/ci-and-quality-gates.md) |
 | [ADR-0020: Database File Names](0020-database-file-names.md) | Storage layout | Accepted | Implements LevelDB-compatible names and parsing | [Storage diagnostics](../reference/storage-diagnostics.md) |
 | [ADR-0021: MANIFEST Version Edits](0021-manifest-version-edits.md) | MANIFEST format | Accepted | Implements version-edit encoding | [Current architecture](../architecture.md) |
 | [ADR-0022: SSTable Block Format](0022-sstable-block-format.md) | SSTable format | Accepted | Implements block encoding and decoding | [ADR-0055](0055-leveldb-block-iterator-parity.md) |
@@ -112,6 +112,7 @@ decision context and evidence available when each change was made.
 | [ADR-0068: Windows Mapped-Read Reference Parity](0068-windows-mapped-read-parity.md) | Windows read I/O | Implemented | Aligns native mappings with pinned LevelDB | [Platform and durability](../reference/platform-support-and-durability.md) |
 | [ADR-0069: Native Windows Selected-Workload Profiling](0069-native-windows-selected-workload-profiling.md) | Windows profiling | Implemented | Adds owned native CPU capture and validation | [Benchmarking and profiling](../development/benchmarking-and-profiling.md) |
 | [ADR-0070: Documentation Information Architecture](0070-documentation-information-architecture.md) | Documentation governance | Accepted | Defines audiences, authorities, lifecycle policy, migration DAG, and quality boundaries | [Reference index](../reference/README.md); [development index](../development/README.md); [architecture](../architecture.md) |
+| [ADR-0071: Four-Space C++ Formatting](0071-four-space-cpp-formatting.md) | Code style | Accepted | Establishes four-space formatting informed by Catch2 and a mechanical source migration | [Code style](../development/code-style.md) |
 
 ## Historical upstream-link provenance
 

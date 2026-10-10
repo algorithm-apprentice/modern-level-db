@@ -40,167 +40,168 @@ void InsertBatchTrusted(WriteBatchReader& batch, MemTable& memtable);
 // Queues writers under a database mutex and commits the batches of the writers
 // behind the front one with its own, as LevelDB's DBImpl::Write does.
 class WriteQueue final {
- public:
-  WriteQueue();
+public:
+    WriteQueue();
 
-  WriteQueue(const WriteQueue&) = delete;
-  WriteQueue& operator=(const WriteQueue&) = delete;
-  WriteQueue(WriteQueue&&) = delete;
-  WriteQueue& operator=(WriteQueue&&) = delete;
-  ~WriteQueue() = default;
+    WriteQueue(const WriteQueue&) = delete;
+    WriteQueue& operator=(const WriteQueue&) = delete;
+    WriteQueue(WriteQueue&&) = delete;
+    WriteQueue& operator=(WriteQueue&&) = delete;
+    ~WriteQueue() = default;
 
-  // Requires the lock on the database mutex. Waits until the batch has been
-  // committed in a group or its writer is at the front. At the front, it
-  // prepares, and if that succeeds, commits a group of its batch and the
-  // batches of the writers queued behind it, which return the same status. A
-  // failed prepare fails only this writer. If a step throws, the writers of the
-  // group return Aborted and the exception propagates. Commit may change only
-  // the batch's hidden sequence, which the queue restores before completion.
-  template <typename Prepare, typename Commit>
-  [[nodiscard]] Status Write(std::unique_lock<std::mutex>& lock, EncodedWriteBatch& batch,
-                             bool sync, Prepare&& prepare, Commit&& commit);
+    // Requires the lock on the database mutex. Waits until the batch has been
+    // committed in a group or its writer is at the front. At the front, it
+    // prepares, and if that succeeds, commits a group of its batch and the
+    // batches of the writers queued behind it, which return the same status. A
+    // failed prepare fails only this writer. If a step throws, the writers of the
+    // group return Aborted and the exception propagates. Commit may change only
+    // the batch's hidden sequence, which the queue restores before completion.
+    template <typename Prepare, typename Commit>
+    [[nodiscard]] Status Write(std::unique_lock<std::mutex>& lock, EncodedWriteBatch& batch,
+                               bool sync, Prepare&& prepare, Commit&& commit);
 
-  // Requires the lock. Queues a writer without a batch that, at the front,
-  // calls prepare with force set and completes alone, as LevelDB's batch-less
-  // writer does. A group ends before it.
-  template <typename Prepare>
-  [[nodiscard]] Status Force(std::unique_lock<std::mutex>& lock, Prepare&& prepare);
+    // Requires the lock. Queues a writer without a batch that, at the front,
+    // calls prepare with force set and completes alone, as LevelDB's batch-less
+    // writer does. A group ends before it.
+    template <typename Prepare>
+    [[nodiscard]] Status Force(std::unique_lock<std::mutex>& lock, Prepare&& prepare);
 
-  // Returns the number of queued writers, including the front one. Requires the
-  // lock.
-  [[nodiscard]] std::size_t size() const noexcept { return writers_.size(); }
+    // Returns the number of queued writers, including the front one. Requires the
+    // lock.
+    [[nodiscard]] std::size_t size() const noexcept { return writers_.size(); }
 
- private:
-  struct Writer {
-    EncodedWriteBatch* batch;
-    bool sync;
-    bool done = false;
-    std::shared_ptr<const Status> result{};
-    std::condition_variable woken{};
-  };
+private:
+    struct Writer {
+        EncodedWriteBatch* batch;
+        bool sync;
+        bool done = false;
+        std::shared_ptr<const Status> result{};
+        std::condition_variable woken{};
+    };
 
-  struct Group {
-    EncodedWriteBatch* batch;
-    Writer* last;
-  };
+    struct Group {
+        EncodedWriteBatch* batch;
+        Writer* last;
+    };
 
-  class LeaderGuard final {
-   public:
-    LeaderGuard(WriteQueue& queue, std::unique_lock<std::mutex>& lock,
-                const Writer& leader) noexcept;
-    LeaderGuard(const LeaderGuard&) = delete;
-    LeaderGuard& operator=(const LeaderGuard&) = delete;
-    LeaderGuard(LeaderGuard&&) = delete;
-    LeaderGuard& operator=(LeaderGuard&&) = delete;
-    ~LeaderGuard();
+    class LeaderGuard final {
+    public:
+        LeaderGuard(WriteQueue& queue, std::unique_lock<std::mutex>& lock,
+                    const Writer& leader) noexcept;
+        LeaderGuard(const LeaderGuard&) = delete;
+        LeaderGuard& operator=(const LeaderGuard&) = delete;
+        LeaderGuard(LeaderGuard&&) = delete;
+        LeaderGuard& operator=(LeaderGuard&&) = delete;
+        ~LeaderGuard();
 
-    void TakeOn(const Writer* last) noexcept { last_ = last; }
-    void Dismiss() noexcept { dismissed_ = true; }
+        void TakeOn(const Writer* last) noexcept { last_ = last; }
+        void Dismiss() noexcept { dismissed_ = true; }
 
-   private:
-    WriteQueue& queue_;
-    std::unique_lock<std::mutex>& lock_;
-    const Writer& leader_;
-    const Writer* last_;
-    bool dismissed_ = false;
-  };
+    private:
+        WriteQueue& queue_;
+        std::unique_lock<std::mutex>& lock_;
+        const Writer& leader_;
+        const Writer* last_;
+        bool dismissed_ = false;
+    };
 
-  class SequenceGuard final {
-   public:
-    explicit SequenceGuard(EncodedWriteBatch& batch) noexcept;
-    SequenceGuard(const SequenceGuard&) = delete;
-    SequenceGuard& operator=(const SequenceGuard&) = delete;
-    ~SequenceGuard();
+    class SequenceGuard final {
+    public:
+        explicit SequenceGuard(EncodedWriteBatch& batch) noexcept;
+        SequenceGuard(const SequenceGuard&) = delete;
+        SequenceGuard& operator=(const SequenceGuard&) = delete;
+        ~SequenceGuard();
 
-   private:
-    EncodedWriteBatch& batch_;
-    SequenceNumber sequence_;
-    std::uint32_t count_;
-    std::size_t size_;
-  };
+    private:
+        EncodedWriteBatch& batch_;
+        SequenceNumber sequence_;
+        std::uint32_t count_;
+        std::size_t size_;
+    };
 
-  template <typename Prepare, typename Commit>
-  [[nodiscard]] Status Run(std::unique_lock<std::mutex>& lock, EncodedWriteBatch* batch, bool sync,
-                           Prepare& prepare, Commit& commit);
-  // Uses the leader directly until the first admitted follower requires group_
-  // and returns the selected batch with the group's last writer.
-  [[nodiscard]] Group BuildGroup(Writer& leader);
-  // Removes the writers from the front through `last`, gives them the result,
-  // and wakes the next writer.
-  void Complete(const Writer& leader, const Writer* last,
-                const std::shared_ptr<const Status>& result) noexcept;
+    template <typename Prepare, typename Commit>
+    [[nodiscard]] Status Run(std::unique_lock<std::mutex>& lock, EncodedWriteBatch* batch,
+                             bool sync, Prepare& prepare, Commit& commit);
+    // Uses the leader directly until the first admitted follower requires group_
+    // and returns the selected batch with the group's last writer.
+    [[nodiscard]] Group BuildGroup(Writer& leader);
+    // Removes the writers from the front through `last`, gives them the result,
+    // and wakes the next writer.
+    void Complete(const Writer& leader, const Writer* last,
+                  const std::shared_ptr<const Status>& result) noexcept;
 
-  std::deque<Writer*> writers_;
-  EncodedWriteBatch group_;
-  // The result of a group whose commit threw, allocated in advance.
-  std::shared_ptr<const Status> aborted_;
+    std::deque<Writer*> writers_;
+    EncodedWriteBatch group_;
+    // The result of a group whose commit threw, allocated in advance.
+    std::shared_ptr<const Status> aborted_;
 };
 
 // GCOVR_EXCL_START: identical queue driver repeats for each callback type
 template <typename Prepare, typename Commit>
 Status WriteQueue::Write(std::unique_lock<std::mutex>& lock, EncodedWriteBatch& batch, bool sync,
                          Prepare&& prepare, Commit&& commit) {
-  return Run(lock, &batch, sync, prepare, commit);
+    return Run(lock, &batch, sync, prepare, commit);
 }
 
 template <typename Prepare>
 Status WriteQueue::Force(std::unique_lock<std::mutex>& lock, Prepare&& prepare) {
-  auto unreachable_commit = [](std::unique_lock<std::mutex>&, EncodedWriteBatch&, bool) -> Status {
-    assert(false);
-    return std::unexpected(Error::Aborted("a forced writer unexpectedly reached commit"));
-  };
-  return Run(lock, nullptr, false, prepare, unreachable_commit);
+    auto unreachable_commit = [](std::unique_lock<std::mutex>&, EncodedWriteBatch&,
+                                 bool) -> Status {
+        assert(false);
+        return std::unexpected(Error::Aborted("a forced writer unexpectedly reached commit"));
+    };
+    return Run(lock, nullptr, false, prepare, unreachable_commit);
 }
 
 template <typename Prepare, typename Commit>
 Status WriteQueue::Run(std::unique_lock<std::mutex>& lock, EncodedWriteBatch* batch, bool sync,
                        Prepare& prepare, Commit& commit) {
-  static_assert(std::is_nothrow_move_assignable_v<Status>);
-  assert(lock.owns_lock());
-  Writer writer{.batch = batch, .sync = sync};
-  writers_.push_back(&writer);
-  writer.woken.wait(lock, [&] { return writer.done || writers_.front() == &writer; });
-  if (writer.done) {
-    assert(writer.result != nullptr);
-    return *writer.result;
-  }
+    static_assert(std::is_nothrow_move_assignable_v<Status>);
+    assert(lock.owns_lock());
+    Writer writer{.batch = batch, .sync = sync};
+    writers_.push_back(&writer);
+    writer.woken.wait(lock, [&] { return writer.done || writers_.front() == &writer; });
+    if (writer.done) {
+        assert(writer.result != nullptr);
+        return *writer.result;
+    }
 
-  LeaderGuard guard(*this, lock, writer);
-  const Status prepared = prepare(lock, batch == nullptr);
-  assert(lock.owns_lock());
-  // A forced writer only prepares.
-  if (!prepared.has_value() || batch == nullptr) {
-    guard.Dismiss();
-    Complete(writer, &writer, nullptr);
-    return prepared;
-  }
+    LeaderGuard guard(*this, lock, writer);
+    const Status prepared = prepare(lock, batch == nullptr);
+    assert(lock.owns_lock());
+    // A forced writer only prepares.
+    if (!prepared.has_value() || batch == nullptr) {
+        guard.Dismiss();
+        Complete(writer, &writer, nullptr);
+        return prepared;
+    }
 
-  const Group group = BuildGroup(writer);
-  if (group.last == &writer) {
+    const Group group = BuildGroup(writer);
+    if (group.last == &writer) {
+        guard.TakeOn(group.last);
+        Status result;
+        {
+            SequenceGuard restore(*group.batch);
+            result = commit(lock, *group.batch, writer.sync);
+        }
+        assert(lock.owns_lock());
+        guard.Dismiss();
+        Complete(writer, group.last, nullptr);
+        return result;
+    }
+
+    // Allocate before commit so every taken-on writer receives a status without
+    // an allocation after the group may have reached the WAL.
+    const auto result = std::make_shared<Status>();
     guard.TakeOn(group.last);
-    Status result;
     {
-      SequenceGuard restore(*group.batch);
-      result = commit(lock, *group.batch, writer.sync);
+        SequenceGuard restore(*group.batch);
+        *result = commit(lock, *group.batch, writer.sync);
     }
     assert(lock.owns_lock());
     guard.Dismiss();
-    Complete(writer, group.last, nullptr);
-    return result;
-  }
-
-  // Allocate before commit so every taken-on writer receives a status without
-  // an allocation after the group may have reached the WAL.
-  const auto result = std::make_shared<Status>();
-  guard.TakeOn(group.last);
-  {
-    SequenceGuard restore(*group.batch);
-    *result = commit(lock, *group.batch, writer.sync);
-  }
-  assert(lock.owns_lock());
-  guard.Dismiss();
-  Complete(writer, group.last, result);
-  return *result;
+    Complete(writer, group.last, result);
+    return *result;
 }
 // GCOVR_EXCL_STOP
 

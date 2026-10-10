@@ -11,19 +11,19 @@ namespace modern_leveldb {
 
 // Writes synchronously to a borrowed POSIX descriptor without closing it.
 class PosixOutputFile final : public WritableFile {
- public:
-  explicit PosixOutputFile(int descriptor) noexcept : descriptor_(descriptor) {}
+public:
+    explicit PosixOutputFile(int descriptor) noexcept : descriptor_(descriptor) {}
 
-  [[nodiscard]] Status Append(ByteView data) override;
-  [[nodiscard]] Status Flush() override;
-  [[nodiscard]] Status Sync() override;
-  [[nodiscard]] Status Close() override;
+    [[nodiscard]] Status Append(ByteView data) override;
+    [[nodiscard]] Status Flush() override;
+    [[nodiscard]] Status Sync() override;
+    [[nodiscard]] Status Close() override;
 
- private:
-  [[nodiscard]] Status CheckOpen() const;
+private:
+    [[nodiscard]] Status CheckOpen() const;
 
-  int descriptor_;
-  bool closed_ = false;
+    int descriptor_;
+    bool closed_ = false;
 };
 
 }  // namespace modern_leveldb

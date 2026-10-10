@@ -12,17 +12,17 @@ using MutableByteView = std::span<std::byte>;
 
 // Returns a non-owning byte view over the string storage.
 [[nodiscard]] inline ByteView AsBytes(std::string_view value) noexcept {
-  return std::as_bytes(std::span<const char>(value.data(), value.size()));
+    return std::as_bytes(std::span<const char>(value.data(), value.size()));
 }
 
 // Returns a non-owning mutable byte view over character storage.
 [[nodiscard]] inline MutableByteView AsWritableBytes(std::span<char> value) noexcept {
-  return std::as_writable_bytes(value);
+    return std::as_writable_bytes(value);
 }
 
 // Returns a non-owning string view over byte storage.
 [[nodiscard]] inline std::string_view AsStringView(ByteView value) noexcept {
-  return {reinterpret_cast<const char*>(value.data()), value.size()};
+    return {reinterpret_cast<const char*>(value.data()), value.size()};
 }
 
 }  // namespace modern_leveldb

@@ -18,11 +18,11 @@
 namespace modern_leveldb {
 
 struct FlushOptions {
-  TableBuilderOptions table_options{};
-  // LevelDB's max_file_size, the size at which compaction splits its outputs.
-  // A memtable's table stays above a level whose next level's files that
-  // overlap it total more than ten times this size.
-  std::uint64_t target_file_size = std::uint64_t{2} << 20U;
+    TableBuilderOptions table_options{};
+    // LevelDB's max_file_size, the size at which compaction splits its outputs.
+    // A memtable's table stays above a level whose next level's files that
+    // overlap it total more than ten times this size.
+    std::uint64_t target_file_size = std::uint64_t{2} << 20U;
 };
 
 // The deepest level at which a memtable's table starts, LevelDB's

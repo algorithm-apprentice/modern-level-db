@@ -11,9 +11,9 @@
 namespace modern_leveldb {
 
 enum class BlockCompression : std::uint8_t {
-  None = 0,
-  Snappy = 1,
-  Zstd = 2,
+    None = 0,
+    Snappy = 1,
+    Zstd = 2,
 };
 
 inline constexpr int MinZstdCompressionLevel = -5;
@@ -23,7 +23,7 @@ inline constexpr int MaxZstdCompressionLevel = 22;
 
 [[nodiscard]] constexpr bool CompressionIsWorthwhile(std::size_t raw_size,
                                                      std::size_t compressed_size) noexcept {
-  return compressed_size < raw_size - raw_size / 8U;
+    return compressed_size < raw_size - raw_size / 8U;
 }
 
 // Reuses scratch and returns whether it contains the representation to store.

@@ -21,67 +21,69 @@
 namespace modern_leveldb {
 
 [[nodiscard]] inline DWORD WindowsIoRequestSize(std::size_t size) noexcept {
-  return static_cast<DWORD>(
-      std::min(size, static_cast<std::size_t>(std::numeric_limits<DWORD>::max())));
+    return static_cast<DWORD>(
+        std::min(size, static_cast<std::size_t>(std::numeric_limits<DWORD>::max())));
 }
 
 // Private fault seam; returned file objects retain it for their whole lifetime.
 class WindowsFileOperations {
- public:
-  virtual ~WindowsFileOperations() = default;
-  [[nodiscard]] virtual HANDLE Open(const wchar_t* path, DWORD access, DWORD share,
-                                    DWORD disposition, DWORD flags) const noexcept {
-    return ::CreateFileW(path, access, share, nullptr, disposition, flags, nullptr);
-  }
-  [[nodiscard]] virtual BOOL Inspect(HANDLE file,
-                                     BY_HANDLE_FILE_INFORMATION* information) const noexcept {
-    return ::GetFileInformationByHandle(file, information);
-  }
-  [[nodiscard]] virtual HANDLE Event() const noexcept {
-    return ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
-  }
-  [[nodiscard]] virtual BOOL Read(HANDLE file, void* output, DWORD size, DWORD* read,
-                                  OVERLAPPED* overlapped) const noexcept {
-    return ::ReadFile(file, output, size, read, overlapped);
-  }
-  [[nodiscard]] virtual BOOL Complete(HANDLE file, OVERLAPPED* overlapped,
-                                      DWORD* read) const noexcept {
-    return ::GetOverlappedResult(file, overlapped, read, TRUE);
-  }
-  [[nodiscard]] virtual BOOL Write(HANDLE file, const void* data, DWORD size,
-                                   DWORD* written) const noexcept {
-    return ::WriteFile(file, data, size, written, nullptr);
-  }
-  [[nodiscard]] virtual BOOL Sync(HANDLE file) const noexcept { return ::FlushFileBuffers(file); }
-  [[nodiscard]] virtual BOOL Size(HANDLE file, LARGE_INTEGER* size) const noexcept {
-    return ::GetFileSizeEx(file, size);
-  }
-  [[nodiscard]] virtual HANDLE Mapping(HANDLE file) const noexcept {
-    return ::CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
-  }
-  [[nodiscard]] virtual void* Map(HANDLE mapping) const noexcept {
-    return ::MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
-  }
-  [[nodiscard]] virtual BOOL Unmap(const void* mapping) const noexcept {
-    return ::UnmapViewOfFile(mapping);
-  }
-  [[nodiscard]] virtual BOOL Close(HANDLE handle) const noexcept { return ::CloseHandle(handle); }
-  [[nodiscard]] virtual HANDLE Find(const wchar_t* pattern,
-                                    WIN32_FIND_DATAW* information) const noexcept {
-    return ::FindFirstFileW(pattern, information);
-  }
-  [[nodiscard]] virtual BOOL Next(HANDLE handle, WIN32_FIND_DATAW* information) const noexcept {
-    return ::FindNextFileW(handle, information);
-  }
-  [[nodiscard]] virtual BOOL CloseFind(HANDLE handle) const noexcept { return ::FindClose(handle); }
-  [[nodiscard]] virtual UINT DriveType(const wchar_t* volume) const noexcept {
-    return ::GetDriveTypeW(volume);
-  }
-  [[nodiscard]] virtual BOOL VolumeInformation(const wchar_t* volume, wchar_t* file_system,
-                                               DWORD size) const noexcept {
-    return ::GetVolumeInformationW(volume, nullptr, 0, nullptr, nullptr, nullptr, file_system,
-                                   size);
-  }
+public:
+    virtual ~WindowsFileOperations() = default;
+    [[nodiscard]] virtual HANDLE Open(const wchar_t* path, DWORD access, DWORD share,
+                                      DWORD disposition, DWORD flags) const noexcept {
+        return ::CreateFileW(path, access, share, nullptr, disposition, flags, nullptr);
+    }
+    [[nodiscard]] virtual BOOL Inspect(HANDLE file,
+                                       BY_HANDLE_FILE_INFORMATION* information) const noexcept {
+        return ::GetFileInformationByHandle(file, information);
+    }
+    [[nodiscard]] virtual HANDLE Event() const noexcept {
+        return ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    }
+    [[nodiscard]] virtual BOOL Read(HANDLE file, void* output, DWORD size, DWORD* read,
+                                    OVERLAPPED* overlapped) const noexcept {
+        return ::ReadFile(file, output, size, read, overlapped);
+    }
+    [[nodiscard]] virtual BOOL Complete(HANDLE file, OVERLAPPED* overlapped,
+                                        DWORD* read) const noexcept {
+        return ::GetOverlappedResult(file, overlapped, read, TRUE);
+    }
+    [[nodiscard]] virtual BOOL Write(HANDLE file, const void* data, DWORD size,
+                                     DWORD* written) const noexcept {
+        return ::WriteFile(file, data, size, written, nullptr);
+    }
+    [[nodiscard]] virtual BOOL Sync(HANDLE file) const noexcept { return ::FlushFileBuffers(file); }
+    [[nodiscard]] virtual BOOL Size(HANDLE file, LARGE_INTEGER* size) const noexcept {
+        return ::GetFileSizeEx(file, size);
+    }
+    [[nodiscard]] virtual HANDLE Mapping(HANDLE file) const noexcept {
+        return ::CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    }
+    [[nodiscard]] virtual void* Map(HANDLE mapping) const noexcept {
+        return ::MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+    }
+    [[nodiscard]] virtual BOOL Unmap(const void* mapping) const noexcept {
+        return ::UnmapViewOfFile(mapping);
+    }
+    [[nodiscard]] virtual BOOL Close(HANDLE handle) const noexcept { return ::CloseHandle(handle); }
+    [[nodiscard]] virtual HANDLE Find(const wchar_t* pattern,
+                                      WIN32_FIND_DATAW* information) const noexcept {
+        return ::FindFirstFileW(pattern, information);
+    }
+    [[nodiscard]] virtual BOOL Next(HANDLE handle, WIN32_FIND_DATAW* information) const noexcept {
+        return ::FindNextFileW(handle, information);
+    }
+    [[nodiscard]] virtual BOOL CloseFind(HANDLE handle) const noexcept {
+        return ::FindClose(handle);
+    }
+    [[nodiscard]] virtual UINT DriveType(const wchar_t* volume) const noexcept {
+        return ::GetDriveTypeW(volume);
+    }
+    [[nodiscard]] virtual BOOL VolumeInformation(const wchar_t* volume, wchar_t* file_system,
+                                                 DWORD size) const noexcept {
+        return ::GetVolumeInformationW(volume, nullptr, 0, nullptr, nullptr, nullptr, file_system,
+                                       size);
+    }
 };
 
 }  // namespace modern_leveldb

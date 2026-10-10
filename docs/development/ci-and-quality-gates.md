@@ -97,6 +97,12 @@ region records the reason at `GCOVR_EXCL_START`, while a bare
 `GCOVR_EXCL_STOP` closes it. Coverage does not replace behavioral assertions,
 models, compatibility, sanitizers, fuzzing, or native platform tests.
 
+The diff-coverage comparison ignores whitespace-only line changes; wrapped
+statements still count as changed lines. The 100% threshold and all build/test
+jobs remain unchanged. This avoids requiring a legacy-coverage backfill for a
+mechanical formatting migration; see
+[ADR-0071](../adr/0071-four-space-cpp-formatting.md).
+
 See [ADR-0019](../adr/0019-test-coverage-policy.md) for exact exclusion
 contracts.
 

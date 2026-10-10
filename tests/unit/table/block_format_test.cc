@@ -29,271 +29,272 @@ static_assert(std::is_nothrow_move_constructible_v<BlockContents>);
 static_assert(!std::is_move_assignable_v<BlockContents>);
 
 std::vector<std::byte> Bytes(std::initializer_list<unsigned int> values) {
-  std::vector<std::byte> result;
-  result.reserve(values.size());
-  for (const unsigned int value : values) {
-    result.push_back(static_cast<std::byte>(value));
-  }
-  return result;
+    std::vector<std::byte> result;
+    result.reserve(values.size());
+    for (const unsigned int value : values) {
+        result.push_back(static_cast<std::byte>(value));
+    }
+    return result;
 }
 
 std::vector<std::byte> Materialize(ByteView value) {
-  return std::vector<std::byte>(value.begin(), value.end());
+    return std::vector<std::byte>(value.begin(), value.end());
 }
 
 std::vector<std::byte> EncodedHandle(BlockHandle handle) {
-  std::vector<std::byte> encoded;
-  AppendBlockHandle(encoded, handle);
-  return encoded;
+    std::vector<std::byte> encoded;
+    AppendBlockHandle(encoded, handle);
+    return encoded;
 }
 
 // Stores contents with an arbitrary type byte and a matching checksum.
 std::vector<std::byte> StoredBlock(ByteView contents, unsigned int type) {
-  std::vector<std::byte> stored = Materialize(contents);
-  stored.push_back(static_cast<std::byte>(type));
-  AppendFixed32(stored, MaskCrc32c(Crc32c(stored)));
-  return stored;
+    std::vector<std::byte> stored = Materialize(contents);
+    stored.push_back(static_cast<std::byte>(type));
+    AppendFixed32(stored, MaskCrc32c(Crc32c(stored)));
+    return stored;
 }
 
 std::vector<std::byte> StoredBlock(ByteView contents) {
-  std::vector<std::byte> stored = Materialize(contents);
-  const auto trailer = EncodeBlockTrailer(contents, BlockCompression::None);
-  stored.insert(stored.end(), trailer.begin(), trailer.end());
-  return stored;
+    std::vector<std::byte> stored = Materialize(contents);
+    const auto trailer = EncodeBlockTrailer(contents, BlockCompression::None);
+    stored.insert(stored.end(), trailer.begin(), trailer.end());
+    return stored;
 }
 
 void ExpectHandle(const BlockHandle& actual, const BlockHandle& expected) {
-  EXPECT_EQ(actual.offset, expected.offset);
-  EXPECT_EQ(actual.size, expected.size);
+    EXPECT_EQ(actual.offset, expected.offset);
+    EXPECT_EQ(actual.size, expected.size);
 }
 
 template <typename T>
 void ExpectError(const Result<T>& result, ErrorCode code) {
-  ASSERT_FALSE(result.has_value());
-  EXPECT_EQ(result.error().code(), code) << result.error().ToString();
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code(), code) << result.error().ToString();
 }
 
 TEST(BlockHandleTest, EncodesOffsetThenSize) {
-  EXPECT_EQ(EncodedHandle({.offset = 300, .size = 5}), Bytes({0xac, 0x02, 0x05}));
-  EXPECT_EQ(EncodedHandle({.offset = 0, .size = 0}), Bytes({0x00, 0x00}));
-  EXPECT_EQ(EncodedHandle({.offset = MaxNumber, .size = MaxNumber}).size(),
-            BlockHandleMaxEncodedSize);
+    EXPECT_EQ(EncodedHandle({.offset = 300, .size = 5}), Bytes({0xac, 0x02, 0x05}));
+    EXPECT_EQ(EncodedHandle({.offset = 0, .size = 0}), Bytes({0x00, 0x00}));
+    EXPECT_EQ(EncodedHandle({.offset = MaxNumber, .size = MaxNumber}).size(),
+              BlockHandleMaxEncodedSize);
 }
 
 TEST(BlockHandleTest, RoundTripsVarintBoundaries) {
-  constexpr std::array<std::uint64_t, 9> Values = {
-      0,
-      127,
-      128,
-      16'383,
-      16'384,
-      std::numeric_limits<std::uint32_t>::max(),
-      std::uint64_t{1} << 32U,
-      MaxNumber - 1,
-      MaxNumber,
-  };
-  for (const std::uint64_t offset : Values) {
-    for (const std::uint64_t size : Values) {
-      const BlockHandle handle{.offset = offset, .size = size};
-      const std::vector<std::byte> encoded = EncodedHandle(handle);
-      ByteView input = encoded;
-      const Result<BlockHandle> decoded = ConsumeBlockHandle(input);
-      ASSERT_TRUE(decoded.has_value());
-      ExpectHandle(*decoded, handle);
-      EXPECT_TRUE(input.empty());
+    constexpr std::array<std::uint64_t, 9> Values = {
+        0,
+        127,
+        128,
+        16'383,
+        16'384,
+        std::numeric_limits<std::uint32_t>::max(),
+        std::uint64_t{1} << 32U,
+        MaxNumber - 1,
+        MaxNumber,
+    };
+    for (const std::uint64_t offset : Values) {
+        for (const std::uint64_t size : Values) {
+            const BlockHandle handle{.offset = offset, .size = size};
+            const std::vector<std::byte> encoded = EncodedHandle(handle);
+            ByteView input = encoded;
+            const Result<BlockHandle> decoded = ConsumeBlockHandle(input);
+            ASSERT_TRUE(decoded.has_value());
+            ExpectHandle(*decoded, handle);
+            EXPECT_TRUE(input.empty());
+        }
     }
-  }
 }
 
 TEST(BlockHandleTest, LeavesFollowingBytesForTheCaller) {
-  std::vector<std::byte> encoded = EncodedHandle({.offset = 7, .size = 9});
-  encoded.push_back(std::byte{0x7f});
+    std::vector<std::byte> encoded = EncodedHandle({.offset = 7, .size = 9});
+    encoded.push_back(std::byte{0x7f});
 
-  ByteView input = encoded;
-  const Result<BlockHandle> decoded = ConsumeBlockHandle(input);
+    ByteView input = encoded;
+    const Result<BlockHandle> decoded = ConsumeBlockHandle(input);
 
-  ASSERT_TRUE(decoded.has_value());
-  ExpectHandle(*decoded, {.offset = 7, .size = 9});
-  EXPECT_EQ(Materialize(input), Bytes({0x7f}));
+    ASSERT_TRUE(decoded.has_value());
+    ExpectHandle(*decoded, {.offset = 7, .size = 9});
+    EXPECT_EQ(Materialize(input), Bytes({0x7f}));
 }
 
 TEST(BlockHandleTest, RejectsTruncatedHandlesWithoutConsumingInput) {
-  const std::vector<std::byte> encoded = EncodedHandle({.offset = 300, .size = 300});
-  for (std::size_t length = 0; length < encoded.size(); ++length) {
-    SCOPED_TRACE(length);
-    ByteView input = ByteView(encoded).first(length);
-    ExpectError(ConsumeBlockHandle(input), ErrorCode::Corruption);
-    EXPECT_EQ(input.size(), length);
-  }
+    const std::vector<std::byte> encoded = EncodedHandle({.offset = 300, .size = 300});
+    for (std::size_t length = 0; length < encoded.size(); ++length) {
+        SCOPED_TRACE(length);
+        ByteView input = ByteView(encoded).first(length);
+        ExpectError(ConsumeBlockHandle(input), ErrorCode::Corruption);
+        EXPECT_EQ(input.size(), length);
+    }
 }
 
 TEST(FooterTest, EncodesHandlesPaddingAndMagic) {
-  std::vector<std::byte> expected = Bytes({0x01, 0x02, 0x03, 0x04});
-  expected.resize(2 * BlockHandleMaxEncodedSize);
-  const std::vector<std::byte> magic = Bytes({0x57, 0xfb, 0x80, 0x8b, 0x24, 0x75, 0x47, 0xdb});
-  expected.insert(expected.end(), magic.begin(), magic.end());
+    std::vector<std::byte> expected = Bytes({0x01, 0x02, 0x03, 0x04});
+    expected.resize(2 * BlockHandleMaxEncodedSize);
+    const std::vector<std::byte> magic = Bytes({0x57, 0xfb, 0x80, 0x8b, 0x24, 0x75, 0x47, 0xdb});
+    expected.insert(expected.end(), magic.begin(), magic.end());
 
-  const auto encoded = EncodeFooter({
-      .metaindex = {.offset = 1, .size = 2},
-      .index = {.offset = 3, .size = 4},
-  });
+    const auto encoded = EncodeFooter({
+        .metaindex = {.offset = 1, .size = 2},
+        .index = {.offset = 3, .size = 4},
+    });
 
-  EXPECT_EQ(Materialize(encoded), expected);
+    EXPECT_EQ(Materialize(encoded), expected);
 }
 
 TEST(FooterTest, RoundTripsMaximumHandles) {
-  const Footer footer{
-      .metaindex = {.offset = MaxNumber, .size = MaxNumber},
-      .index = {.offset = MaxNumber, .size = MaxNumber - 1},
-  };
+    const Footer footer{
+        .metaindex = {.offset = MaxNumber, .size = MaxNumber},
+        .index = {.offset = MaxNumber, .size = MaxNumber - 1},
+    };
 
-  const auto encoded = EncodeFooter(footer);
-  const Result<Footer> decoded = DecodeFooter(encoded);
+    const auto encoded = EncodeFooter(footer);
+    const Result<Footer> decoded = DecodeFooter(encoded);
 
-  ASSERT_TRUE(decoded.has_value());
-  ExpectHandle(decoded->metaindex, footer.metaindex);
-  ExpectHandle(decoded->index, footer.index);
+    ASSERT_TRUE(decoded.has_value());
+    ExpectHandle(decoded->metaindex, footer.metaindex);
+    ExpectHandle(decoded->index, footer.index);
 }
 
 TEST(FooterTest, RejectsBadMagicNumbers) {
-  for (std::size_t index = FooterSize - sizeof(TableMagicNumber); index < FooterSize; ++index) {
-    SCOPED_TRACE(index);
-    auto encoded = EncodeFooter({});
-    encoded[index] ^= std::byte{0x01};
-    ExpectError(DecodeFooter(encoded), ErrorCode::Corruption);
-  }
+    for (std::size_t index = FooterSize - sizeof(TableMagicNumber); index < FooterSize; ++index) {
+        SCOPED_TRACE(index);
+        auto encoded = EncodeFooter({});
+        encoded[index] ^= std::byte{0x01};
+        ExpectError(DecodeFooter(encoded), ErrorCode::Corruption);
+    }
 }
 
 TEST(FooterTest, RejectsMalformedHandles) {
-  auto metaindex = EncodeFooter({});
-  std::fill_n(metaindex.begin(), 2 * BlockHandleMaxEncodedSize, std::byte{0x80});
-  ExpectError(DecodeFooter(metaindex), ErrorCode::Corruption);
+    auto metaindex = EncodeFooter({});
+    std::fill_n(metaindex.begin(), 2 * BlockHandleMaxEncodedSize, std::byte{0x80});
+    ExpectError(DecodeFooter(metaindex), ErrorCode::Corruption);
 
-  auto index = EncodeFooter({});
-  std::fill_n(index.begin() + 2, 2 * BlockHandleMaxEncodedSize - 2, std::byte{0x80});
-  ExpectError(DecodeFooter(index), ErrorCode::Corruption);
+    auto index = EncodeFooter({});
+    std::fill_n(index.begin() + 2, 2 * BlockHandleMaxEncodedSize - 2, std::byte{0x80});
+    ExpectError(DecodeFooter(index), ErrorCode::Corruption);
 }
 
 TEST(FooterTest, RejectsNonzeroPadding) {
-  auto encoded = EncodeFooter({});
-  encoded[2 * BlockHandleMaxEncodedSize - 1] = std::byte{0x01};
+    auto encoded = EncodeFooter({});
+    encoded[2 * BlockHandleMaxEncodedSize - 1] = std::byte{0x01};
 
-  ExpectError(DecodeFooter(encoded), ErrorCode::Corruption);
+    ExpectError(DecodeFooter(encoded), ErrorCode::Corruption);
 }
 
 TEST(BlockTrailerTest, StoresTypeNoneAndTheMaskedChecksum) {
-  const auto trailer = EncodeBlockTrailer(Bytes({'h', 'e', 'l', 'l', 'o'}), BlockCompression::None);
+    const auto trailer =
+        EncodeBlockTrailer(Bytes({'h', 'e', 'l', 'l', 'o'}), BlockCompression::None);
 
-  // LevelDB's trailer for "hello": type 0, then the masked CRC32C of "hello\0".
-  EXPECT_EQ(Materialize(trailer), Bytes({0x00, 0x97, 0xa8, 0x8f, 0x83}));
+    // LevelDB's trailer for "hello": type 0, then the masked CRC32C of "hello\0".
+    EXPECT_EQ(Materialize(trailer), Bytes({0x00, 0x97, 0xa8, 0x8f, 0x83}));
 }
 
 TEST(BlockTrailerTest, StoresTheSelectedTypeInTheChecksum) {
-  const std::vector<std::byte> contents = Bytes({'h', 'e', 'l', 'l', 'o'});
+    const std::vector<std::byte> contents = Bytes({'h', 'e', 'l', 'l', 'o'});
 
-  EXPECT_EQ(Materialize(EncodeBlockTrailer(contents, BlockCompression::Snappy)),
-            Materialize(ByteView(StoredBlock(contents, 1)).last<BlockTrailerSize>()));
-  EXPECT_EQ(Materialize(EncodeBlockTrailer(contents, BlockCompression::Zstd)),
-            Materialize(ByteView(StoredBlock(contents, 2)).last<BlockTrailerSize>()));
+    EXPECT_EQ(Materialize(EncodeBlockTrailer(contents, BlockCompression::Snappy)),
+              Materialize(ByteView(StoredBlock(contents, 1)).last<BlockTrailerSize>()));
+    EXPECT_EQ(Materialize(EncodeBlockTrailer(contents, BlockCompression::Zstd)),
+              Materialize(ByteView(StoredBlock(contents, 2)).last<BlockTrailerSize>()));
 }
 
 TEST(StoredBlockTest, ReturnsVerifiedContentsInTheSameBuffer) {
-  const std::vector<std::byte> contents = Bytes({'b', 'l', 'o', 'c', 'k'});
-  std::vector<std::byte> stored = StoredBlock(contents);
-  const std::byte* const data = stored.data();
+    const std::vector<std::byte> contents = Bytes({'b', 'l', 'o', 'c', 'k'});
+    std::vector<std::byte> stored = StoredBlock(contents);
+    const std::byte* const data = stored.data();
 
-  Result<BlockContents> decoded = DecodeStoredBlock(std::move(stored));
+    Result<BlockContents> decoded = DecodeStoredBlock(std::move(stored));
 
-  ASSERT_TRUE(decoded.has_value());
-  EXPECT_EQ(Materialize(decoded->data()), contents);
-  EXPECT_EQ(decoded->data().data(), data);
-  EXPECT_TRUE(decoded->cacheable());
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_EQ(Materialize(decoded->data()), contents);
+    EXPECT_EQ(decoded->data().data(), data);
+    EXPECT_TRUE(decoded->cacheable());
 
-  BlockContents moved(std::move(*decoded));
-  EXPECT_EQ(Materialize(moved.data()), contents);
-  EXPECT_EQ(moved.data().data(), data);
-  EXPECT_TRUE(moved.cacheable());
+    BlockContents moved(std::move(*decoded));
+    EXPECT_EQ(Materialize(moved.data()), contents);
+    EXPECT_EQ(moved.data().data(), data);
+    EXPECT_TRUE(moved.cacheable());
 }
 
 TEST(StoredBlockTest, DistinguishesOwnedAndBorrowedEmptyContents) {
-  const std::vector<std::byte> stored = StoredBlock({});
-  const Result<BlockContents> owned = DecodeStoredBlock(stored);
-  const Result<BlockContents> borrowed = DecodeStoredBlock(ByteView(stored));
+    const std::vector<std::byte> stored = StoredBlock({});
+    const Result<BlockContents> owned = DecodeStoredBlock(stored);
+    const Result<BlockContents> borrowed = DecodeStoredBlock(ByteView(stored));
 
-  ASSERT_TRUE(owned.has_value());
-  ASSERT_TRUE(borrowed.has_value());
-  EXPECT_TRUE(owned->data().empty());
-  EXPECT_TRUE(owned->cacheable());
-  EXPECT_TRUE(borrowed->data().empty());
-  EXPECT_FALSE(borrowed->cacheable());
+    ASSERT_TRUE(owned.has_value());
+    ASSERT_TRUE(borrowed.has_value());
+    EXPECT_TRUE(owned->data().empty());
+    EXPECT_TRUE(owned->cacheable());
+    EXPECT_TRUE(borrowed->data().empty());
+    EXPECT_FALSE(borrowed->cacheable());
 }
 
 TEST(StoredBlockTest, RejectsInputShorterThanATrailer) {
-  ExpectError(DecodeStoredBlock(Bytes({0x00, 0x00, 0x00, 0x00})), ErrorCode::Corruption);
+    ExpectError(DecodeStoredBlock(Bytes({0x00, 0x00, 0x00, 0x00})), ErrorCode::Corruption);
 }
 
 TEST(StoredBlockTest, RejectsChecksumMismatches) {
-  const std::vector<std::byte> stored = StoredBlock(Bytes({'a', 'b', 'c'}));
-  for (std::size_t index = 0; index < stored.size(); ++index) {
-    SCOPED_TRACE(index);
-    std::vector<std::byte> corrupted = stored;
-    corrupted[index] ^= std::byte{0x01};
-    ExpectError(DecodeStoredBlock(std::move(corrupted)), ErrorCode::Corruption);
-  }
+    const std::vector<std::byte> stored = StoredBlock(Bytes({'a', 'b', 'c'}));
+    for (std::size_t index = 0; index < stored.size(); ++index) {
+        SCOPED_TRACE(index);
+        std::vector<std::byte> corrupted = stored;
+        corrupted[index] ^= std::byte{0x01};
+        ExpectError(DecodeStoredBlock(std::move(corrupted)), ErrorCode::Corruption);
+    }
 }
 
 TEST(StoredBlockTest, DecompressesSnappyAndZstdAfterVerifyingTheChecksum) {
-  const std::vector<std::byte> snappy = Bytes({0x05, 0x10, 'h', 'e', 'l', 'l', 'o'});
-  const std::vector<std::byte> zstd = Bytes({0x28, 0xb5, 0x2f, 0xfd, 0x24, 0x05, 0x29, 0x00, 0x00,
-                                             'h', 'e', 'l', 'l', 'o', 0xa3, 0x6d, 0x9f, 0x88});
+    const std::vector<std::byte> snappy = Bytes({0x05, 0x10, 'h', 'e', 'l', 'l', 'o'});
+    const std::vector<std::byte> zstd = Bytes({0x28, 0xb5, 0x2f, 0xfd, 0x24, 0x05, 0x29, 0x00, 0x00,
+                                               'h', 'e', 'l', 'l', 'o', 0xa3, 0x6d, 0x9f, 0x88});
 
-  const Result<BlockContents> decoded_snappy = DecodeStoredBlock(StoredBlock(snappy, 1));
-  ASSERT_TRUE(decoded_snappy.has_value()) << decoded_snappy.error().ToString();
-  EXPECT_EQ(Materialize(decoded_snappy->data()), Bytes({'h', 'e', 'l', 'l', 'o'}));
-  EXPECT_TRUE(decoded_snappy->cacheable());
+    const Result<BlockContents> decoded_snappy = DecodeStoredBlock(StoredBlock(snappy, 1));
+    ASSERT_TRUE(decoded_snappy.has_value()) << decoded_snappy.error().ToString();
+    EXPECT_EQ(Materialize(decoded_snappy->data()), Bytes({'h', 'e', 'l', 'l', 'o'}));
+    EXPECT_TRUE(decoded_snappy->cacheable());
 
-  const Result<BlockContents> decoded_zstd = DecodeStoredBlock(StoredBlock(zstd, 2));
-  ASSERT_TRUE(decoded_zstd.has_value()) << decoded_zstd.error().ToString();
-  EXPECT_EQ(Materialize(decoded_zstd->data()), Bytes({'h', 'e', 'l', 'l', 'o'}));
-  EXPECT_TRUE(decoded_zstd->cacheable());
+    const Result<BlockContents> decoded_zstd = DecodeStoredBlock(StoredBlock(zstd, 2));
+    ASSERT_TRUE(decoded_zstd.has_value()) << decoded_zstd.error().ToString();
+    EXPECT_EQ(Materialize(decoded_zstd->data()), Bytes({'h', 'e', 'l', 'l', 'o'}));
+    EXPECT_TRUE(decoded_zstd->cacheable());
 }
 
 TEST(StoredBlockTest, BorrowedAndOwningDecodePathsMatch) {
-  const std::vector<std::byte> contents = Bytes({'b', 'l', 'o', 'c', 'k'});
-  const std::vector<std::byte> snappy = Bytes({0x05, 0x10, 'h', 'e', 'l', 'l', 'o'});
-  const std::vector<std::byte> zstd = Bytes({0x28, 0xb5, 0x2f, 0xfd, 0x24, 0x05, 0x29, 0x00, 0x00,
-                                             'h', 'e', 'l', 'l', 'o', 0xa3, 0x6d, 0x9f, 0x88});
-  for (const std::vector<std::byte>& stored :
-       {StoredBlock(contents), StoredBlock(snappy, 1), StoredBlock(zstd, 2)}) {
-    const Result<BlockContents> owning = DecodeStoredBlock(stored);
-    const Result<BlockContents> borrowed = DecodeStoredBlock(ByteView(stored));
-    ASSERT_TRUE(owning.has_value()) << owning.error().ToString();
-    ASSERT_TRUE(borrowed.has_value()) << borrowed.error().ToString();
-    EXPECT_EQ(Materialize(borrowed->data()), Materialize(owning->data()));
-    EXPECT_TRUE(owning->cacheable());
-    EXPECT_EQ(borrowed->cacheable(), stored[stored.size() - BlockTrailerSize] != std::byte{0});
-    if (!borrowed->cacheable()) {
-      EXPECT_EQ(borrowed->data().data(), stored.data());
+    const std::vector<std::byte> contents = Bytes({'b', 'l', 'o', 'c', 'k'});
+    const std::vector<std::byte> snappy = Bytes({0x05, 0x10, 'h', 'e', 'l', 'l', 'o'});
+    const std::vector<std::byte> zstd = Bytes({0x28, 0xb5, 0x2f, 0xfd, 0x24, 0x05, 0x29, 0x00, 0x00,
+                                               'h', 'e', 'l', 'l', 'o', 0xa3, 0x6d, 0x9f, 0x88});
+    for (const std::vector<std::byte>& stored :
+         {StoredBlock(contents), StoredBlock(snappy, 1), StoredBlock(zstd, 2)}) {
+        const Result<BlockContents> owning = DecodeStoredBlock(stored);
+        const Result<BlockContents> borrowed = DecodeStoredBlock(ByteView(stored));
+        ASSERT_TRUE(owning.has_value()) << owning.error().ToString();
+        ASSERT_TRUE(borrowed.has_value()) << borrowed.error().ToString();
+        EXPECT_EQ(Materialize(borrowed->data()), Materialize(owning->data()));
+        EXPECT_TRUE(owning->cacheable());
+        EXPECT_EQ(borrowed->cacheable(), stored[stored.size() - BlockTrailerSize] != std::byte{0});
+        if (!borrowed->cacheable()) {
+            EXPECT_EQ(borrowed->data().data(), stored.data());
+        }
     }
-  }
 
-  std::vector<std::byte> corrupt = StoredBlock(contents);
-  corrupt.front() ^= std::byte{0x01};
-  ExpectError(DecodeStoredBlock(corrupt), ErrorCode::Corruption);
-  ExpectError(DecodeStoredBlock(ByteView(corrupt)), ErrorCode::Corruption);
-  const std::vector<std::byte> unknown = StoredBlock(contents, 3);
-  ExpectError(DecodeStoredBlock(unknown), ErrorCode::Corruption);
-  ExpectError(DecodeStoredBlock(ByteView(unknown)), ErrorCode::Corruption);
-  const std::vector<std::byte> malformed_snappy = StoredBlock(Bytes({0xff}), 1);
-  ExpectError(DecodeStoredBlock(malformed_snappy), ErrorCode::Corruption);
-  ExpectError(DecodeStoredBlock(ByteView(malformed_snappy)), ErrorCode::Corruption);
+    std::vector<std::byte> corrupt = StoredBlock(contents);
+    corrupt.front() ^= std::byte{0x01};
+    ExpectError(DecodeStoredBlock(corrupt), ErrorCode::Corruption);
+    ExpectError(DecodeStoredBlock(ByteView(corrupt)), ErrorCode::Corruption);
+    const std::vector<std::byte> unknown = StoredBlock(contents, 3);
+    ExpectError(DecodeStoredBlock(unknown), ErrorCode::Corruption);
+    ExpectError(DecodeStoredBlock(ByteView(unknown)), ErrorCode::Corruption);
+    const std::vector<std::byte> malformed_snappy = StoredBlock(Bytes({0xff}), 1);
+    ExpectError(DecodeStoredBlock(malformed_snappy), ErrorCode::Corruption);
+    ExpectError(DecodeStoredBlock(ByteView(malformed_snappy)), ErrorCode::Corruption);
 }
 
 TEST(StoredBlockTest, RejectsUnknownTypes) {
-  const std::vector<std::byte> contents = Bytes({'q'});
+    const std::vector<std::byte> contents = Bytes({'q'});
 
-  ExpectError(DecodeStoredBlock(StoredBlock(contents, 3)), ErrorCode::Corruption);
-  ExpectError(DecodeStoredBlock(StoredBlock(contents, 0xff)), ErrorCode::Corruption);
+    ExpectError(DecodeStoredBlock(StoredBlock(contents, 3)), ErrorCode::Corruption);
+    ExpectError(DecodeStoredBlock(StoredBlock(contents, 0xff)), ErrorCode::Corruption);
 }
 
 }  // namespace

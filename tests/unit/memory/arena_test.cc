@@ -24,113 +24,116 @@ static_assert(Arena::Alignment == std::max(sizeof(void*), std::size_t{8}));
 constexpr std::size_t BlockCharge(std::size_t bytes) noexcept { return bytes + sizeof(std::byte*); }
 
 TEST(ArenaTest, StartsEmptyAndDoesNotReserveMemoryForZeroBytes) {
-  Arena arena;
+    Arena arena;
 
-  EXPECT_EQ(arena.memory_usage(), 0U);
-  EXPECT_TRUE(arena.Allocate(0).empty());
-  EXPECT_TRUE(arena.AllocateAligned(0).empty());
-  EXPECT_EQ(arena.memory_usage(), 0U);
+    EXPECT_EQ(arena.memory_usage(), 0U);
+    EXPECT_TRUE(arena.Allocate(0).empty());
+    EXPECT_TRUE(arena.AllocateAligned(0).empty());
+    EXPECT_EQ(arena.memory_usage(), 0U);
 }
 
 TEST(ArenaTest, ReturnsWritableViewsWithExactRequestedSizes) {
-  Arena arena;
+    Arena arena;
 
-  MutableByteView first = arena.Allocate(3);
-  MutableByteView second = arena.Allocate(7);
+    MutableByteView first = arena.Allocate(3);
+    MutableByteView second = arena.Allocate(7);
 
-  ASSERT_EQ(first.size(), 3U);
-  ASSERT_EQ(second.size(), 7U);
-  std::ranges::fill(first, std::byte{0x12});
-  std::ranges::fill(second, std::byte{0x34});
-  EXPECT_TRUE(std::ranges::all_of(first, [](std::byte byte) { return byte == std::byte{0x12}; }));
-  EXPECT_TRUE(std::ranges::all_of(second, [](std::byte byte) { return byte == std::byte{0x34}; }));
+    ASSERT_EQ(first.size(), 3U);
+    ASSERT_EQ(second.size(), 7U);
+    std::ranges::fill(first, std::byte{0x12});
+    std::ranges::fill(second, std::byte{0x34});
+    EXPECT_TRUE(std::ranges::all_of(first, [](std::byte byte) { return byte == std::byte{0x12}; }));
+    EXPECT_TRUE(
+        std::ranges::all_of(second, [](std::byte byte) { return byte == std::byte{0x34}; }));
 }
 
 TEST(ArenaTest, PreservesAllAllocationsAcrossBlockGrowth) {
-  struct Allocation {
-    MutableByteView bytes;
-    std::byte pattern;
-  };
+    struct Allocation {
+        MutableByteView bytes;
+        std::byte pattern;
+    };
 
-  Arena arena;
-  std::vector<Allocation> allocations;
-  allocations.reserve(2'000);
-  for (std::size_t index = 0; index < 2'000; ++index) {
-    const std::size_t size = index % 131U + 1U;
-    const auto pattern = static_cast<std::byte>(index % 251U);
-    MutableByteView bytes = index % 7U == 0U ? arena.AllocateAligned(size) : arena.Allocate(size);
-    std::ranges::fill(bytes, pattern);
-    allocations.push_back({bytes, pattern});
-  }
+    Arena arena;
+    std::vector<Allocation> allocations;
+    allocations.reserve(2'000);
+    for (std::size_t index = 0; index < 2'000; ++index) {
+        const std::size_t size = index % 131U + 1U;
+        const auto pattern = static_cast<std::byte>(index % 251U);
+        MutableByteView bytes =
+            index % 7U == 0U ? arena.AllocateAligned(size) : arena.Allocate(size);
+        std::ranges::fill(bytes, pattern);
+        allocations.push_back({bytes, pattern});
+    }
 
-  for (const auto& allocation : allocations) {
-    EXPECT_TRUE(std::ranges::all_of(allocation.bytes,
-                                    [&](std::byte byte) { return byte == allocation.pattern; }));
-  }
+    for (const auto& allocation : allocations) {
+        EXPECT_TRUE(std::ranges::all_of(
+            allocation.bytes, [&](std::byte byte) { return byte == allocation.pattern; }));
+    }
 }
 
 TEST(ArenaTest, ReturnsLevelDbAlignedStorageAfterUnalignedAllocations) {
-  Arena arena;
-  (void)arena.Allocate(1);
+    Arena arena;
+    (void)arena.Allocate(1);
 
-  for (std::size_t size = 1; size <= 64; ++size) {
-    MutableByteView bytes = arena.AllocateAligned(size);
-    ASSERT_EQ(bytes.size(), size);
-    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(bytes.data()) % Arena::Alignment, 0U);
-    std::ranges::fill(bytes, std::byte{0xa5});
-  }
-  EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U));
+    for (std::size_t size = 1; size <= 64; ++size) {
+        MutableByteView bytes = arena.AllocateAligned(size);
+        ASSERT_EQ(bytes.size(), size);
+        EXPECT_EQ(reinterpret_cast<std::uintptr_t>(bytes.data()) % Arena::Alignment, 0U);
+        std::ranges::fill(bytes, std::byte{0xa5});
+    }
+    EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U));
 }
 
 TEST(ArenaTest, UsesFourKilobyteBlocksForSmallAllocations) {
-  Arena arena;
+    Arena arena;
 
-  for (int allocation = 0; allocation < 4; ++allocation) {
-    (void)arena.Allocate(1'024);
-    EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U));
-  }
+    for (int allocation = 0; allocation < 4; ++allocation) {
+        (void)arena.Allocate(1'024);
+        EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U));
+    }
 
-  (void)arena.Allocate(1);
-  EXPECT_EQ(arena.memory_usage(), 2U * BlockCharge(4'096U));
+    (void)arena.Allocate(1);
+    EXPECT_EQ(arena.memory_usage(), 2U * BlockCharge(4'096U));
 }
 
 TEST(ArenaTest, GivesLargeAllocationsDedicatedBlocksWithoutDiscardingSmallBlock) {
-  Arena arena;
-  MutableByteView current_tail;
-  for (int allocation = 0; allocation < 3; ++allocation) {
-    current_tail = arena.Allocate(1'024);
-  }
-  EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U));
+    Arena arena;
+    MutableByteView current_tail;
+    for (int allocation = 0; allocation < 3; ++allocation) {
+        current_tail = arena.Allocate(1'024);
+    }
+    EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U));
 
-  MutableByteView large = arena.Allocate(1'025);
-  EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U) + BlockCharge(1'025U));
-  std::ranges::fill(large, std::byte{0x5a});
+    MutableByteView large = arena.Allocate(1'025);
+    EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U) + BlockCharge(1'025U));
+    std::ranges::fill(large, std::byte{0x5a});
 
-  MutableByteView small = arena.Allocate(8);
-  EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U) + BlockCharge(1'025U));
-  EXPECT_EQ(small.data(), current_tail.data() + current_tail.size());
-  EXPECT_TRUE(std::ranges::all_of(large, [](std::byte byte) { return byte == std::byte{0x5a}; }));
+    MutableByteView small = arena.Allocate(8);
+    EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U) + BlockCharge(1'025U));
+    EXPECT_EQ(small.data(), current_tail.data() + current_tail.size());
+    EXPECT_TRUE(std::ranges::all_of(large, [](std::byte byte) { return byte == std::byte{0x5a}; }));
 }
 
 TEST(ArenaTest, UsesCurrentBlockWhenALargeRequestStillFits) {
-  Arena arena;
-  MutableByteView first = arena.Allocate(8);
+    Arena arena;
+    MutableByteView first = arena.Allocate(8);
 
-  MutableByteView large = arena.Allocate(1'025);
+    MutableByteView large = arena.Allocate(1'025);
 
-  EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U));
-  EXPECT_EQ(large.data(), first.data() + first.size());
+    EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U));
+    EXPECT_EQ(large.data(), first.data() + first.size());
 }
 
 TEST(ArenaTest, CountsOwnedBlockCapacityAndOwnerPointers) {
-  Arena arena;
-  for (int allocation = 0; allocation < 4; ++allocation) {
-    (void)arena.Allocate(1'024);
-  }
-  (void)arena.Allocate(1'025);
-  (void)arena.Allocate(2'000);
+    Arena arena;
+    for (int allocation = 0; allocation < 4; ++allocation) {
+        (void)arena.Allocate(1'024);
+    }
+    (void)arena.Allocate(1'025);
+    (void)arena.Allocate(2'000);
 
-  EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U) + BlockCharge(1'025U) + BlockCharge(2'000U));
+    EXPECT_EQ(arena.memory_usage(),
+              BlockCharge(4'096U) + BlockCharge(1'025U) + BlockCharge(2'000U));
 }
 
 }  // namespace

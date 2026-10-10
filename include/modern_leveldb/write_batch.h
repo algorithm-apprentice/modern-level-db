@@ -12,26 +12,26 @@ namespace modern_leveldb {
 class Database;
 
 class WriteBatch final {
- public:
-  WriteBatch();
-  WriteBatch(const WriteBatch& source);
-  WriteBatch& operator=(const WriteBatch& source);
-  WriteBatch(WriteBatch&& source) noexcept;
-  WriteBatch& operator=(WriteBatch&& source) noexcept;
-  ~WriteBatch();
+public:
+    WriteBatch();
+    WriteBatch(const WriteBatch& source);
+    WriteBatch& operator=(const WriteBatch& source);
+    WriteBatch(WriteBatch&& source) noexcept;
+    WriteBatch& operator=(WriteBatch&& source) noexcept;
+    ~WriteBatch();
 
-  [[nodiscard]] Status Put(ByteView key, ByteView value);
-  [[nodiscard]] Status Delete(ByteView key);
-  [[nodiscard]] Status Append(const WriteBatch& source);
-  void Clear() noexcept;
-  [[nodiscard]] std::size_t ApproximateSize() const noexcept;
+    [[nodiscard]] Status Put(ByteView key, ByteView value);
+    [[nodiscard]] Status Delete(ByteView key);
+    [[nodiscard]] Status Append(const WriteBatch& source);
+    void Clear() noexcept;
+    [[nodiscard]] std::size_t ApproximateSize() const noexcept;
 
- private:
-  class Impl;
+private:
+    class Impl;
 
-  friend class Database;
+    friend class Database;
 
-  std::unique_ptr<Impl> impl_;
+    std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace modern_leveldb

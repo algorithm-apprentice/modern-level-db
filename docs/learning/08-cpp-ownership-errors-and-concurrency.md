@@ -79,12 +79,11 @@ payload.
 
 ```cpp
 modern_leveldb::Status Store(modern_leveldb::Database& database) {
-  auto written = database.Put(modern_leveldb::AsBytes("key"),
-                              modern_leveldb::AsBytes("value"));
-  if (!written.has_value()) {
-    return written;
-  }
-  return {};
+    auto written = database.Put(modern_leveldb::AsBytes("key"), modern_leveldb::AsBytes("value"));
+    if (!written.has_value()) {
+        return written;
+    }
+    return {};
 }
 ```
 

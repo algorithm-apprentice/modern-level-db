@@ -21,15 +21,15 @@
 namespace modern_leveldb {
 
 struct TableBuilderOptions {
-  // A data block is written once its size estimate reaches this size.
-  std::size_t block_size = 4 * 1024;
-  // Must be at least one.
-  std::uint32_t restart_interval = 16;
-  // Without a policy, the table has no filter block. A policy requires a user
-  // comparator that considers keys equal only when their bytes are equal.
-  std::optional<BloomFilterPolicy> filter_policy;
-  BlockCompression compression = BlockCompression::None;
-  int zstd_compression_level = 1;
+    // A data block is written once its size estimate reaches this size.
+    std::size_t block_size = 4 * 1024;
+    // Must be at least one.
+    std::uint32_t restart_interval = 16;
+    // Without a policy, the table has no filter block. A policy requires a user
+    // comparator that considers keys equal only when their bytes are equal.
+    std::optional<BloomFilterPolicy> filter_policy;
+    BlockCompression compression = BlockCompression::None;
+    int zstd_compression_level = 1;
 };
 
 // Writes one SSTable of internal keys, which must strictly increase under the
@@ -38,67 +38,67 @@ struct TableBuilderOptions {
 // the caller deletes the file. If a call throws, which only allocation failure
 // causes, the builder must not be used again.
 class TableBuilder final {
- public:
-  // The comparator must outlive the builder. A null file makes every call
-  // return InvalidArgument.
-  TableBuilder(std::unique_ptr<WritableFile> file, const InternalKeyComparator& comparator,
-               const TableBuilderOptions& options);
-  TableBuilder(std::unique_ptr<WritableFile> file, const InternalKeyComparator&& comparator,
-               const TableBuilderOptions& options) = delete;
+public:
+    // The comparator must outlive the builder. A null file makes every call
+    // return InvalidArgument.
+    TableBuilder(std::unique_ptr<WritableFile> file, const InternalKeyComparator& comparator,
+                 const TableBuilderOptions& options);
+    TableBuilder(std::unique_ptr<WritableFile> file, const InternalKeyComparator&& comparator,
+                 const TableBuilderOptions& options) = delete;
 
-  TableBuilder(const TableBuilder&) = delete;
-  TableBuilder& operator=(const TableBuilder&) = delete;
-  TableBuilder(TableBuilder&&) = delete;
-  TableBuilder& operator=(TableBuilder&&) = delete;
-  ~TableBuilder() = default;
+    TableBuilder(const TableBuilder&) = delete;
+    TableBuilder& operator=(const TableBuilder&) = delete;
+    TableBuilder(TableBuilder&&) = delete;
+    TableBuilder& operator=(TableBuilder&&) = delete;
+    ~TableBuilder() = default;
 
-  [[nodiscard]] Status Add(ByteView internal_key, ByteView value);
-  // The key must be a valid internal key that strictly follows every key
-  // already added.
-  [[nodiscard]] Status AddTrusted(ByteView internal_key, ByteView value);
+    [[nodiscard]] Status Add(ByteView internal_key, ByteView value);
+    // The key must be a valid internal key that strictly follows every key
+    // already added.
+    [[nodiscard]] Status AddTrusted(ByteView internal_key, ByteView value);
 
-  // Writes the remaining blocks and the footer, then syncs and closes the
-  // file. After an earlier error it only closes the file. Returns the first
-  // error. Every call after Finish returns InvalidArgument.
-  [[nodiscard]] Status Finish();
+    // Writes the remaining blocks and the footer, then syncs and closes the
+    // file. After an earlier error it only closes the file. Returns the first
+    // error. Every call after Finish returns InvalidArgument.
+    [[nodiscard]] Status Finish();
 
-  [[nodiscard]] std::uint64_t entry_count() const noexcept { return entry_count_; }
+    [[nodiscard]] std::uint64_t entry_count() const noexcept { return entry_count_; }
 
-  // Bytes appended so far: the written data blocks before Finish, and the
-  // whole table after it succeeds.
-  [[nodiscard]] std::uint64_t file_size() const noexcept { return file_size_; }
+    // Bytes appended so far: the written data blocks before Finish, and the
+    // whole table after it succeeds.
+    [[nodiscard]] std::uint64_t file_size() const noexcept { return file_size_; }
 
- private:
-  // Keeps the first error and reports whether status succeeded.
-  bool Record(Status status);
-  [[nodiscard]] Status FirstError() const;
-  [[nodiscard]] Status AddValid(ByteView internal_key, ByteView value);
-  void AddPendingIndexEntry();
-  void WriteDataBlock();
-  void WriteBlock(ByteView contents, BlockHandle& handle);
-  void WriteRawBlock(ByteView contents, BlockCompression type, BlockHandle& handle);
-  void WriteTail();
+private:
+    // Keeps the first error and reports whether status succeeded.
+    bool Record(Status status);
+    [[nodiscard]] Status FirstError() const;
+    [[nodiscard]] Status AddValid(ByteView internal_key, ByteView value);
+    void AddPendingIndexEntry();
+    void WriteDataBlock();
+    void WriteBlock(ByteView contents, BlockHandle& handle);
+    void WriteRawBlock(ByteView contents, BlockCompression type, BlockHandle& handle);
+    void WriteTail();
 
-  std::unique_ptr<WritableFile> file_;
-  const InternalKeyComparator* comparator_;
-  std::size_t block_size_;
-  std::uint32_t restart_interval_;
-  BlockCompression compression_;
-  int zstd_compression_level_;
-  BlockBuilder data_block_;
-  BlockBuilder index_block_;
-  std::optional<FilterBlockBuilder> filter_block_;
-  // The metaindex key of the filter block.
-  std::string filter_key_;
-  std::vector<std::byte> compressed_output_;
-  std::vector<std::byte> last_key_;
-  // The last written data block, whose index entry waits for the next key.
-  BlockHandle pending_handle_{};
-  bool pending_index_entry_ = false;
-  std::uint64_t entry_count_ = 0;
-  std::uint64_t file_size_ = 0;
-  std::optional<Error> first_error_;
-  bool finished_ = false;
+    std::unique_ptr<WritableFile> file_;
+    const InternalKeyComparator* comparator_;
+    std::size_t block_size_;
+    std::uint32_t restart_interval_;
+    BlockCompression compression_;
+    int zstd_compression_level_;
+    BlockBuilder data_block_;
+    BlockBuilder index_block_;
+    std::optional<FilterBlockBuilder> filter_block_;
+    // The metaindex key of the filter block.
+    std::string filter_key_;
+    std::vector<std::byte> compressed_output_;
+    std::vector<std::byte> last_key_;
+    // The last written data block, whose index entry waits for the next key.
+    BlockHandle pending_handle_{};
+    bool pending_index_entry_ = false;
+    std::uint64_t entry_count_ = 0;
+    std::uint64_t file_size_ = 0;
+    std::optional<Error> first_error_;
+    bool finished_ = false;
 };
 
 }  // namespace modern_leveldb

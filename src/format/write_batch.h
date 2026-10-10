@@ -15,66 +15,66 @@ namespace modern_leveldb {
 inline constexpr std::size_t WriteBatchHeaderSize = 12;
 
 struct WriteBatchEntry {
-  SequenceNumber sequence;
-  ValueKind kind;
-  ByteView key;
-  ByteView value;
+    SequenceNumber sequence;
+    ValueKind kind;
+    ByteView key;
+    ByteView value;
 };
 
 class EncodedWriteBatch;
 
 class WriteBatchReader final {
- public:
-  [[nodiscard]] static Result<WriteBatchReader> Open(ByteView encoded);
-  // Requires an owned batch whose private encoding invariant holds.
-  [[nodiscard]] static WriteBatchReader OpenTrusted(const EncodedWriteBatch& batch) noexcept;
+public:
+    [[nodiscard]] static Result<WriteBatchReader> Open(ByteView encoded);
+    // Requires an owned batch whose private encoding invariant holds.
+    [[nodiscard]] static WriteBatchReader OpenTrusted(const EncodedWriteBatch& batch) noexcept;
 
-  WriteBatchReader(const WriteBatchReader&) = delete;
-  WriteBatchReader& operator=(const WriteBatchReader&) = delete;
-  WriteBatchReader(WriteBatchReader&&) noexcept = default;
-  WriteBatchReader& operator=(WriteBatchReader&&) noexcept = default;
-  ~WriteBatchReader() = default;
+    WriteBatchReader(const WriteBatchReader&) = delete;
+    WriteBatchReader& operator=(const WriteBatchReader&) = delete;
+    WriteBatchReader(WriteBatchReader&&) noexcept = default;
+    WriteBatchReader& operator=(WriteBatchReader&&) noexcept = default;
+    ~WriteBatchReader() = default;
 
-  [[nodiscard]] SequenceNumber sequence() const noexcept { return sequence_; }
-  [[nodiscard]] std::uint32_t count() const noexcept { return count_; }
-  [[nodiscard]] std::optional<WriteBatchEntry> Next() noexcept;
+    [[nodiscard]] SequenceNumber sequence() const noexcept { return sequence_; }
+    [[nodiscard]] std::uint32_t count() const noexcept { return count_; }
+    [[nodiscard]] std::optional<WriteBatchEntry> Next() noexcept;
 
- private:
-  WriteBatchReader(ByteView records, SequenceNumber sequence, std::uint32_t count) noexcept
-      : remaining_(records), sequence_(sequence), count_(count) {}
+private:
+    WriteBatchReader(ByteView records, SequenceNumber sequence, std::uint32_t count) noexcept
+        : remaining_(records), sequence_(sequence), count_(count) {}
 
-  ByteView remaining_;
-  SequenceNumber sequence_;
-  std::uint32_t count_;
-  std::uint32_t index_ = 0;
+    ByteView remaining_;
+    SequenceNumber sequence_;
+    std::uint32_t count_;
+    std::uint32_t index_ = 0;
 };
 
 class EncodedWriteBatch final {
- public:
-  EncodedWriteBatch();
+public:
+    EncodedWriteBatch();
 
-  EncodedWriteBatch(const EncodedWriteBatch&) = default;
-  EncodedWriteBatch& operator=(const EncodedWriteBatch&) = default;
-  EncodedWriteBatch(EncodedWriteBatch&& source);
-  EncodedWriteBatch& operator=(EncodedWriteBatch&& source);
-  ~EncodedWriteBatch() = default;
+    EncodedWriteBatch(const EncodedWriteBatch&) = default;
+    EncodedWriteBatch& operator=(const EncodedWriteBatch&) = default;
+    EncodedWriteBatch(EncodedWriteBatch&& source);
+    EncodedWriteBatch& operator=(EncodedWriteBatch&& source);
+    ~EncodedWriteBatch() = default;
 
-  [[nodiscard]] Status Put(ByteView key, ByteView value);
-  [[nodiscard]] Status Delete(ByteView key);
-  [[nodiscard]] Status Append(const EncodedWriteBatch& source);
-  [[nodiscard]] Status SetSequence(SequenceNumber sequence);
-  void Clear() noexcept;
+    [[nodiscard]] Status Put(ByteView key, ByteView value);
+    [[nodiscard]] Status Delete(ByteView key);
+    [[nodiscard]] Status Append(const EncodedWriteBatch& source);
+    [[nodiscard]] Status SetSequence(SequenceNumber sequence);
+    void Clear() noexcept;
 
-  [[nodiscard]] SequenceNumber sequence() const noexcept;
-  [[nodiscard]] std::uint32_t count() const noexcept;
-  [[nodiscard]] ByteView encoded() const noexcept { return AsBytes(encoded_); }
+    [[nodiscard]] SequenceNumber sequence() const noexcept;
+    [[nodiscard]] std::uint32_t count() const noexcept;
+    [[nodiscard]] ByteView encoded() const noexcept { return AsBytes(encoded_); }
 
- private:
-  [[nodiscard]] Status AppendRecord(ValueKind kind, ByteView key, ByteView value);
-  [[nodiscard]] Status ValidateAdditionalRecords(std::uint32_t additional) const;
-  void SetCount(std::uint32_t count) noexcept;
+private:
+    [[nodiscard]] Status AppendRecord(ValueKind kind, ByteView key, ByteView value);
+    [[nodiscard]] Status ValidateAdditionalRecords(std::uint32_t additional) const;
+    void SetCount(std::uint32_t count) noexcept;
 
-  std::string encoded_;
+    std::string encoded_;
 };
 
 }  // namespace modern_leveldb

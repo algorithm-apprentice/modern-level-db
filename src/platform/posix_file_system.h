@@ -15,40 +15,40 @@ namespace modern_leveldb {
 class MappedReadLimiter;
 
 class PosixFileSystem final : public FileSystem {
- public:
-  PosixFileSystem();
-  explicit PosixFileSystem(bool allow_mmap_reads);
-  explicit PosixFileSystem(std::shared_ptr<MappedReadLimiter> mmap_budget) noexcept;
-  // Creates an isolated mmap budget for tests.
-  [[nodiscard]] static std::shared_ptr<MappedReadLimiter> NewMmapBudgetForTesting(
-      std::size_t maximum_mappings);
+public:
+    PosixFileSystem();
+    explicit PosixFileSystem(bool allow_mmap_reads);
+    explicit PosixFileSystem(std::shared_ptr<MappedReadLimiter> mmap_budget) noexcept;
+    // Creates an isolated mmap budget for tests.
+    [[nodiscard]] static std::shared_ptr<MappedReadLimiter> NewMmapBudgetForTesting(
+        std::size_t maximum_mappings);
 
-  [[nodiscard]] Result<std::unique_ptr<SequentialFile>> OpenSequential(
-      const std::filesystem::path& path) override;
-  [[nodiscard]] Result<std::unique_ptr<RandomAccessFile>> OpenRandomAccess(
-      const std::filesystem::path& path,
-      std::optional<std::uint64_t> expected_size = std::nullopt) override;
-  [[nodiscard]] Result<std::unique_ptr<WritableFile>> OpenWritable(
-      const std::filesystem::path& path) override;
-  [[nodiscard]] Result<std::unique_ptr<WritableFile>> OpenAppendable(
-      const std::filesystem::path& path) override;
+    [[nodiscard]] Result<std::unique_ptr<SequentialFile>> OpenSequential(
+        const std::filesystem::path& path) override;
+    [[nodiscard]] Result<std::unique_ptr<RandomAccessFile>> OpenRandomAccess(
+        const std::filesystem::path& path,
+        std::optional<std::uint64_t> expected_size = std::nullopt) override;
+    [[nodiscard]] Result<std::unique_ptr<WritableFile>> OpenWritable(
+        const std::filesystem::path& path) override;
+    [[nodiscard]] Result<std::unique_ptr<WritableFile>> OpenAppendable(
+        const std::filesystem::path& path) override;
 
-  [[nodiscard]] Result<bool> FileExists(const std::filesystem::path& path) const override;
-  [[nodiscard]] Result<std::vector<std::filesystem::path>> ListDirectory(
-      const std::filesystem::path& path) const override;
-  [[nodiscard]] Result<std::uint64_t> FileSize(const std::filesystem::path& path) const override;
+    [[nodiscard]] Result<bool> FileExists(const std::filesystem::path& path) const override;
+    [[nodiscard]] Result<std::vector<std::filesystem::path>> ListDirectory(
+        const std::filesystem::path& path) const override;
+    [[nodiscard]] Result<std::uint64_t> FileSize(const std::filesystem::path& path) const override;
 
-  [[nodiscard]] Status CreateDirectory(const std::filesystem::path& path) override;
-  [[nodiscard]] Status RemoveFile(const std::filesystem::path& path) override;
-  [[nodiscard]] Status RemoveDirectory(const std::filesystem::path& path) override;
-  [[nodiscard]] Status RenameFile(const std::filesystem::path& source,
-                                  const std::filesystem::path& destination) override;
-  [[nodiscard]] Status SyncDirectory(const std::filesystem::path& path) override;
-  [[nodiscard]] Result<std::unique_ptr<FileLock>> LockFile(
-      const std::filesystem::path& path) override;
+    [[nodiscard]] Status CreateDirectory(const std::filesystem::path& path) override;
+    [[nodiscard]] Status RemoveFile(const std::filesystem::path& path) override;
+    [[nodiscard]] Status RemoveDirectory(const std::filesystem::path& path) override;
+    [[nodiscard]] Status RenameFile(const std::filesystem::path& source,
+                                    const std::filesystem::path& destination) override;
+    [[nodiscard]] Status SyncDirectory(const std::filesystem::path& path) override;
+    [[nodiscard]] Result<std::unique_ptr<FileLock>> LockFile(
+        const std::filesystem::path& path) override;
 
- private:
-  std::shared_ptr<MappedReadLimiter> mmap_budget_;
+private:
+    std::shared_ptr<MappedReadLimiter> mmap_budget_;
 };
 
 }  // namespace modern_leveldb

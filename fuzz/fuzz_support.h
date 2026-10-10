@@ -6,9 +6,9 @@
 namespace modern_leveldb::fuzz_support {
 
 inline void Require(bool condition) {
-  if (!condition) {
-    std::abort();
-  }
+    if (!condition) {
+        std::abort();
+    }
 }
 
 }  // namespace modern_leveldb::fuzz_support
