@@ -127,14 +127,25 @@ bool ChildSeesKernelLock(const std::filesystem::path& path) {
 TEST(PosixFileSystemTest, RejectsEmptyAndEmbeddedNullPaths) {
     PosixFileSystem file_system;
     const std::filesystem::path embedded_null(std::string("bad\0path", 8));
+    const auto expect_invalid = [](const auto& result) {
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error().code(), ErrorCode::InvalidArgument);
+    };
 
     const auto empty = file_system.OpenSequential({});
-    ASSERT_FALSE(empty.has_value());
-    EXPECT_EQ(empty.error().code(), ErrorCode::InvalidArgument);
-
-    const auto invalid = file_system.FileExists(embedded_null);
-    ASSERT_FALSE(invalid.has_value());
-    EXPECT_EQ(invalid.error().code(), ErrorCode::InvalidArgument);
+    expect_invalid(empty);
+    expect_invalid(file_system.OpenWritable(embedded_null));
+    expect_invalid(file_system.OpenAppendable(embedded_null));
+    expect_invalid(file_system.FileExists(embedded_null));
+    expect_invalid(file_system.ListDirectory(embedded_null));
+    expect_invalid(file_system.FileSize(embedded_null));
+    expect_invalid(file_system.CreateDirectory(embedded_null));
+    expect_invalid(file_system.RemoveFile(embedded_null));
+    expect_invalid(file_system.RemoveDirectory(embedded_null));
+    expect_invalid(file_system.RenameFile(embedded_null, "destination"));
+    expect_invalid(file_system.RenameFile("source", embedded_null));
+    expect_invalid(file_system.SyncDirectory(embedded_null));
+    expect_invalid(file_system.LockFile(embedded_null));
 }
 
 TEST(PosixFileSystemTest, ReadsSequentiallyAndReportsEof) {
@@ -211,6 +222,10 @@ TEST(PosixFileSystemTest, RandomReadReturnsShortReadAndRejectsHugeOffset) {
     auto opened = file_system.OpenRandomAccess(path);
     ASSERT_TRUE(opened.has_value());
 
+    const auto empty = (*opened)->Read(0, {});
+    ASSERT_TRUE(empty.has_value());
+    EXPECT_EQ(*empty, 0U);
+
     std::array<std::byte, 8> output{};
     const auto short_read = (*opened)->Read(2, output);
     ASSERT_TRUE(short_read.has_value());
@@ -225,6 +240,26 @@ TEST(PosixFileSystemTest, RandomReadReturnsShortReadAndRejectsHugeOffset) {
     ASSERT_FALSE(invalid.has_value());
     EXPECT_EQ(invalid.error().code(), ErrorCode::InvalidArgument);
 }
+
+#if defined(__linux__)
+TEST(PosixFileSystemTest, ReportsDirectoryReadErrors) {
+    TemporaryDirectory directory;
+    PosixFileSystem file_system(false);
+    std::array<std::byte, 1> output{};
+
+    auto sequential = file_system.OpenSequential(directory.path());
+    ASSERT_TRUE(sequential.has_value());
+    const auto sequential_read = (*sequential)->Read(output);
+    ASSERT_FALSE(sequential_read.has_value());
+    EXPECT_EQ(sequential_read.error().code(), ErrorCode::Io);
+
+    auto random = file_system.OpenRandomAccess(directory.path());
+    ASSERT_TRUE(random.has_value());
+    const auto random_read = (*random)->Read(0, output);
+    ASSERT_FALSE(random_read.has_value());
+    EXPECT_EQ(random_read.error().code(), ErrorCode::Io);
+}
+#endif
 
 TEST(PosixFileSystemTest, MappedRandomReadsExposeStableExactViews) {
     TemporaryDirectory directory;
@@ -343,6 +378,7 @@ TEST(PosixFileSystemTest, BuffersFlushesSyncsAndAppendsWrites) {
     ASSERT_TRUE(writable.has_value());
     EXPECT_TRUE(ReadFixture(path).empty());
 
+    ASSERT_TRUE((*writable)->Append({}));
     ASSERT_TRUE((*writable)->Append(AsBytes("abc")));
     EXPECT_TRUE(ReadFixture(path).empty());
     ASSERT_TRUE((*writable)->Flush());
@@ -352,6 +388,17 @@ TEST(PosixFileSystemTest, BuffersFlushesSyncsAndAppendsWrites) {
     ASSERT_TRUE((*writable)->Append(large));
     ASSERT_TRUE((*writable)->Sync());
     ASSERT_TRUE((*writable)->Close());
+    EXPECT_TRUE((*writable)->Close().has_value());
+
+    const Status append_after_close = (*writable)->Append(AsBytes("late"));
+    ASSERT_FALSE(append_after_close.has_value());
+    EXPECT_EQ(append_after_close.error().code(), ErrorCode::InvalidArgument);
+    const Status flush_after_close = (*writable)->Flush();
+    ASSERT_FALSE(flush_after_close.has_value());
+    EXPECT_EQ(flush_after_close.error().code(), ErrorCode::InvalidArgument);
+    const Status sync_after_close = (*writable)->Sync();
+    ASSERT_FALSE(sync_after_close.has_value());
+    EXPECT_EQ(sync_after_close.error().code(), ErrorCode::InvalidArgument);
 
     std::vector<std::byte> expected = {std::byte{'a'}, std::byte{'b'}, std::byte{'c'}};
     expected.insert(expected.end(), large.begin(), large.end());
@@ -392,6 +439,10 @@ TEST(PosixFileSystemTest, WritableFileRetainsItsFirstIoError) {
     ASSERT_FALSE(flush.has_value());
     EXPECT_EQ(flush.error().code(), ErrorCode::Io);
 
+    const Status append = (*writable)->Append(AsBytes("later"));
+    ASSERT_FALSE(append.has_value());
+    EXPECT_EQ(append.error().message(), flush.error().message());
+
     const Status sync = (*writable)->Sync();
     ASSERT_FALSE(sync.has_value());
     EXPECT_EQ(sync.error().code(), flush.error().code());
@@ -401,6 +452,40 @@ TEST(PosixFileSystemTest, WritableFileRetainsItsFirstIoError) {
     ASSERT_FALSE(close.has_value());
     EXPECT_EQ(close.error().code(), flush.error().code());
     EXPECT_EQ(close.error().message(), flush.error().message());
+
+    const Status repeated_close = (*writable)->Close();
+    ASSERT_FALSE(repeated_close.has_value());
+    EXPECT_EQ(repeated_close.error().message(), flush.error().message());
+}
+
+TEST(PosixFileSystemTest, WritableAppendReportsBufferedFlushFailure) {
+    PosixFileSystem file_system;
+    auto writable = file_system.OpenAppendable("/dev/full");
+    ASSERT_TRUE(writable.has_value());
+    const std::vector<std::byte> data = Pattern(70'000);
+
+    const Status status = (*writable)->Append(data);
+
+    ASSERT_FALSE(status.has_value());
+    EXPECT_EQ(status.error().code(), ErrorCode::Io);
+}
+
+TEST(PosixFileSystemTest, WritableSyncReportsDeviceFailure) {
+    PosixFileSystem file_system;
+    auto writable = file_system.OpenAppendable("/dev/full");
+    ASSERT_TRUE(writable.has_value());
+
+    const Status status = (*writable)->Sync();
+
+    ASSERT_FALSE(status.has_value());
+    EXPECT_EQ(status.error().code(), ErrorCode::Io);
+}
+
+TEST(PosixFileSystemTest, WritableDestructorIgnoresBestEffortWriteFailure) {
+    PosixFileSystem file_system;
+    auto writable = file_system.OpenAppendable("/dev/full");
+    ASSERT_TRUE(writable.has_value());
+    ASSERT_TRUE((*writable)->Append(AsBytes("buffered")));
 }
 #endif
 
@@ -476,6 +561,34 @@ TEST(PosixFileSystemTest, ReportsMissingPaths) {
     EXPECT_EQ(children.error().code(), ErrorCode::NotFound);
 }
 
+TEST(PosixFileSystemTest, ReportsDeterministicNamespaceFailures) {
+    TemporaryDirectory directory;
+    PosixFileSystem file_system;
+    const auto missing_parent = directory.path() / "missing";
+    const auto missing = missing_parent / "entry";
+    const auto expect_not_found = [](const auto& result) {
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+    };
+
+    expect_not_found(file_system.OpenWritable(missing));
+    expect_not_found(file_system.OpenAppendable(missing));
+    expect_not_found(file_system.CreateDirectory(missing));
+    expect_not_found(file_system.RemoveFile(missing));
+    expect_not_found(file_system.RenameFile(missing, directory.path() / "destination"));
+    expect_not_found(file_system.SyncDirectory(missing_parent));
+    expect_not_found(file_system.LockFile(missing));
+    expect_not_found(file_system.LockFile(missing));
+
+    const long maximum_name = ::pathconf(directory.path().c_str(), _PC_NAME_MAX);
+    ASSERT_GT(maximum_name, 0);
+    const auto too_long =
+        directory.path() / std::string(static_cast<std::size_t>(maximum_name) + 1U, 'x');
+    const auto exists = file_system.FileExists(too_long);
+    ASSERT_FALSE(exists.has_value());
+    EXPECT_EQ(exists.error().code(), ErrorCode::Io);
+}
+
 TEST(PosixFileSystemTest, PreventsDuplicateProcessLocksWithoutDroppingKernelLock) {
     TemporaryDirectory directory;
     PosixFileSystem first_file_system;
@@ -493,6 +606,75 @@ TEST(PosixFileSystemTest, PreventsDuplicateProcessLocksWithoutDroppingKernelLock
     first->reset();
     auto acquired_after_release = second_file_system.LockFile(lock_path);
     EXPECT_TRUE(acquired_after_release.has_value());
+}
+
+TEST(PosixFileSystemTest, ReportsKernelLocksHeldByAnotherProcess) {
+    TemporaryDirectory directory;
+    PosixFileSystem file_system;
+    const auto lock_path = directory.path() / "LOCK";
+    WriteFixture(lock_path, {});
+
+    std::array<int, 2> ready_pipe{};
+    std::array<int, 2> release_pipe{};
+    ASSERT_EQ(::pipe(ready_pipe.data()), 0);
+    ASSERT_EQ(::pipe(release_pipe.data()), 0);
+
+    const pid_t child = ::fork();
+    ASSERT_NE(child, -1);
+    if (child == 0) {
+        ::close(ready_pipe[0]);
+        ::close(release_pipe[1]);
+        const int descriptor = ::open(lock_path.c_str(), O_RDWR);
+        if (descriptor < 0) {
+            ::_exit(2);
+        }
+        struct flock lock{};
+        lock.l_type = F_WRLCK;
+        lock.l_whence = SEEK_SET;
+        if (::fcntl(descriptor, F_SETLK, &lock) == -1) {
+            ::_exit(3);
+        }
+        const char ready = '1';
+        if (::write(ready_pipe[1], &ready, 1) != 1) {
+            ::_exit(4);
+        }
+        char release = 0;
+        if (::read(release_pipe[0], &release, 1) != 1) {
+            ::_exit(5);
+        }
+        ::close(descriptor);
+        ::_exit(0);
+    }
+
+    ::close(ready_pipe[1]);
+    ::close(release_pipe[0]);
+    char ready = 0;
+    const ssize_t ready_size = ::read(ready_pipe[0], &ready, 1);
+    bool reported_busy = false;
+    if (ready_size == 1 && ready == '1') {
+        const auto blocked = file_system.LockFile(lock_path);
+        reported_busy = !blocked.has_value() && blocked.error().code() == ErrorCode::Busy;
+    }
+    ssize_t release_size = -1;
+    if (ready_size == 1) {
+        const char release = '1';
+        release_size = ::write(release_pipe[1], &release, 1);
+    }
+    ::close(ready_pipe[0]);
+    ::close(release_pipe[1]);
+    int status = 0;
+    const pid_t waited = ::waitpid(child, &status, 0);
+
+    ASSERT_EQ(ready_size, 1);
+    ASSERT_EQ(ready, '1');
+    ASSERT_EQ(release_size, 1);
+    ASSERT_EQ(waited, child);
+    ASSERT_TRUE(WIFEXITED(status));
+    ASSERT_EQ(WEXITSTATUS(status), 0);
+    EXPECT_TRUE(reported_busy);
+
+    auto acquired = file_system.LockFile(lock_path);
+    EXPECT_TRUE(acquired.has_value());
 }
 
 TEST(PosixFileSystemTest, TreatsSymlinkedDatabasePathsAsOneProcessLock) {
