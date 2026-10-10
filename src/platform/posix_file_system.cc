@@ -18,7 +18,6 @@
 #include <limits>
 #include <memory>
 #include <mutex>
-#include <new>
 #include <optional>
 #include <set>
 #include <string>
@@ -330,9 +329,8 @@ void RecordFileOpen(FileOpenReason, std::uint64_t) noexcept {}
 namespace {
 
 std::shared_ptr<MappedReadLimiter> ProcessMmapBudget() {
-    constexpr auto Count = static_cast<std::ptrdiff_t>(DefaultMmapCount);
     static const auto budget = std::make_shared<MappedReadLimiter>(
-        Count);  // GCOVR_EXCL_LINE: GCC 13 does not attribute static initialization
+        DefaultMmapCount);  // GCOVR_EXCL_LINE: GCC 13 does not attribute static initialization
     return budget;
 }
 
@@ -660,14 +658,6 @@ PosixFileSystem::PosixFileSystem(bool allow_mmap_reads)
 PosixFileSystem::PosixFileSystem(std::shared_ptr<MappedReadLimiter> mmap_budget) noexcept
     : mmap_budget_(std::move(mmap_budget)) {}
 // GCOVR_EXCL_STOP
-
-std::shared_ptr<MappedReadLimiter> PosixFileSystem::NewMmapBudgetForTesting(
-    std::size_t maximum_mappings) {
-    if (maximum_mappings > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max())) {
-        throw std::bad_array_new_length();
-    }
-    return std::make_shared<MappedReadLimiter>(static_cast<std::ptrdiff_t>(maximum_mappings));
-}
 
 Result<std::unique_ptr<SequentialFile>> PosixFileSystem::OpenSequential(
     const std::filesystem::path& path) {

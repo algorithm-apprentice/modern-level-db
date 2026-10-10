@@ -9,7 +9,6 @@
 #include <exception>
 #include <limits>
 #include <memory>
-#include <new>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -580,14 +579,6 @@ WindowsFileSystem::WindowsFileSystem(bool allow_weak_namespace_durability,
       operations_(std::move(operations)),
       mmap_limiter_(std::move(mmap_limiter)) {
     assert(operations_ != nullptr);
-}
-
-std::shared_ptr<MappedReadLimiter> WindowsFileSystem::NewMmapBudgetForTesting(
-    std::size_t maximum_mappings) {
-    if (maximum_mappings > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max())) {
-        throw std::bad_array_new_length();
-    }
-    return std::make_shared<MappedReadLimiter>(static_cast<std::ptrdiff_t>(maximum_mappings));
 }
 
 Result<std::filesystem::path> WindowsFileSystem::PrepareDatabaseDirectory(

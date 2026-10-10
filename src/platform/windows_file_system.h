@@ -28,8 +28,6 @@ public:
     WindowsFileSystem(bool allow_weak_namespace_durability,
                       std::shared_ptr<WindowsFileOperations> operations,
                       std::shared_ptr<MappedReadLimiter> mmap_limiter);
-    [[nodiscard]] static std::shared_ptr<MappedReadLimiter> NewMmapBudgetForTesting(
-        std::size_t maximum_mappings);
 
     // Checks consent and the resolved local NTFS location before database mutation.
     [[nodiscard]] Result<std::filesystem::path> PrepareDatabaseDirectory(

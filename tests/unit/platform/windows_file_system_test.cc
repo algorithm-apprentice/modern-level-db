@@ -20,6 +20,7 @@
 
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
+#include "platform/mapped_read_limiter.h"
 #include "platform/windows_file_system_internal.h"
 #include "support/temporary_directory.h"
 #include "table/table.h"
@@ -407,7 +408,7 @@ TEST(WindowsFileSystemTest, MappedFilesReleaseAcquisitionHandlesAndOutliveFilesy
     const auto path = directory.path() / std::filesystem::path{u8"mapped-\u4e2d-\U0001f680"};
     WriteFixture(path, "owned view");
     auto operations = std::make_shared<FaultOperations>();
-    auto limiter = WindowsFileSystem::NewMmapBudgetForTesting(1);
+    auto limiter = std::make_shared<MappedReadLimiter>(1);
     std::unique_ptr<RandomAccessFile> file;
     {
         WindowsFileSystem filesystem(false, operations, limiter);
@@ -436,7 +437,7 @@ TEST(WindowsFileSystemTest, ConcurrentMappedReadsDoNotUseCopiedIoOrInvalidateVie
     }
     WriteFixture(path, data);
     auto operations = std::make_shared<FaultOperations>();
-    WindowsFileSystem filesystem(false, operations, WindowsFileSystem::NewMmapBudgetForTesting(1));
+    WindowsFileSystem filesystem(false, operations, std::make_shared<MappedReadLimiter>(1));
     auto mapped = filesystem.OpenRandomAccess(path, data.size());
     ASSERT_TRUE(mapped.has_value());
     ASSERT_TRUE((*mapped)->TryReadView(0, data.size()).has_value());
@@ -510,7 +511,7 @@ TEST(WindowsFileSystemTest, SharesCountLimitAndRestoresExhaustedSlots) {
     TemporaryDirectory directory;
     const auto path = directory.path() / "mapped";
     WriteFixture(path, "abc");
-    auto limiter = WindowsFileSystem::NewMmapBudgetForTesting(1);
+    auto limiter = std::make_shared<MappedReadLimiter>(1);
     auto operations = std::make_shared<WindowsFileOperations>();
     WindowsFileSystem first(false, operations, limiter);
     WindowsFileSystem second(false, operations, limiter);
@@ -531,7 +532,7 @@ TEST(WindowsFileSystemTest, MappingEligibilityGuardsDoNotConsumeSlots) {
     const auto path = directory.path() / "mapped";
     WriteFixture(path, "abc");
     auto operations = std::make_shared<WindowsFileOperations>();
-    auto limiter = WindowsFileSystem::NewMmapBudgetForTesting(1);
+    auto limiter = std::make_shared<MappedReadLimiter>(1);
     WindowsFileSystem filesystem(false, operations, limiter);
     for (const auto expected :
          {std::optional<std::uint64_t>{}, std::optional<std::uint64_t>{0},
@@ -548,7 +549,7 @@ TEST(WindowsFileSystemTest, MappingEligibilityGuardsDoNotConsumeSlots) {
     auto empty = filesystem.OpenRandomAccess(directory.path() / "empty", 0);
     ASSERT_TRUE(empty.has_value());
     EXPECT_FALSE((*empty)->TryReadView(0, 0).has_value());
-    WindowsFileSystem disabled(false, operations, WindowsFileSystem::NewMmapBudgetForTesting(0));
+    WindowsFileSystem disabled(false, operations, std::make_shared<MappedReadLimiter>(0));
     auto zero = disabled.OpenRandomAccess(path, 3);
     ASSERT_TRUE(zero.has_value());
     EXPECT_FALSE((*zero)->TryReadView(0, 3).has_value());
@@ -558,7 +559,7 @@ TEST(WindowsFileSystemTest, ConcurrentOpensReserveOnlyTheAvailableMappingSlots) 
     TemporaryDirectory directory;
     const auto path = directory.path() / "mapped";
     WriteFixture(path, "abc");
-    auto limiter = WindowsFileSystem::NewMmapBudgetForTesting(1);
+    auto limiter = std::make_shared<MappedReadLimiter>(1);
     auto operations = std::make_shared<WindowsFileOperations>();
     std::latch ready(8);
     std::latch release(1);
@@ -595,7 +596,7 @@ TEST(WindowsFileSystemTest, NativeMappingFailuresReportErrorsAndRollbackAllResou
     WriteFixture(path, "abc");
     for (unsigned failure = 0; failure != 5; ++failure) {
         auto operations = std::make_shared<FaultOperations>();
-        auto limiter = WindowsFileSystem::NewMmapBudgetForTesting(1);
+        auto limiter = std::make_shared<MappedReadLimiter>(1);
         WindowsFileSystem filesystem(false, operations, limiter);
         operations->fail_size = failure == 0;
         operations->fail_mapping = failure == 1;
@@ -643,8 +644,7 @@ TEST(WindowsFileSystemDeathTest, FailedOwnedViewUnmapDoesNotRecycleAnActiveSlot)
     EXPECT_DEATH(
         {
             auto operations = std::make_shared<FaultOperations>();
-            WindowsFileSystem filesystem(false, operations,
-                                         WindowsFileSystem::NewMmapBudgetForTesting(1));
+            WindowsFileSystem filesystem(false, operations, std::make_shared<MappedReadLimiter>(1));
             auto mapped = filesystem.OpenRandomAccess(path, 3);
             if (!mapped.has_value() || !(*mapped)->TryReadView(0, 3).has_value()) {
                 std::exit(0);
