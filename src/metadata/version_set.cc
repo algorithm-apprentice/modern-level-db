@@ -16,18 +16,13 @@
 #include <variant>
 #include <vector>
 
+#include "base/result_internal.h"
 #include "metadata/filenames.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/comparator.h"
 
 namespace modern_leveldb {
 namespace {
-
-// Checks recording a field that the version set's invariants make valid.
-void Expect(const Status& status) noexcept {
-    assert(status.has_value());
-    static_cast<void>(status);
-}
 
 Result<std::string> ReadCurrent(FileSystem& file_system, const std::filesystem::path& directory) {
     Result<std::unique_ptr<SequentialFile>> file =
@@ -65,10 +60,10 @@ VersionEdit Snapshot(const Comparator& user_comparator,
     snapshot.SetComparatorName(user_comparator.Name());
     for (std::uint32_t level = 0; level < NumLevels; ++level) {
         if (compact_pointers[level].has_value()) {
-            Expect(snapshot.AddCompactPointer(level, *compact_pointers[level]));
+            AssertSuccess(snapshot.AddCompactPointer(level, *compact_pointers[level]));
         }
         for (const Version::File& file : version.files(level)) {
-            Expect(snapshot.AddFile(level, *file));
+            AssertSuccess(snapshot.AddFile(level, *file));
         }
     }
     return snapshot;
@@ -307,8 +302,8 @@ Status VersionSet::ApplyPrepared(VersionEdit edit, Version version,
     const std::uint64_t prev_log_number = edit.prev_log_number().value_or(prev_log_number_);
     edit.SetLogNumber(log_number);
     edit.SetPrevLogNumber(prev_log_number);
-    Expect(edit.SetNextFileNumber(next_file_number_));
-    Expect(edit.SetLastSequence(last_sequence_));
+    AssertSuccess(edit.SetNextFileNumber(next_file_number_));
+    AssertSuccess(edit.SetLastSequence(last_sequence_));
     std::array<std::optional<InternalKey>, NumLevels> compact_pointers = compact_pointers_;
     for (const CompactPointer& pointer : edit.compact_pointers()) {
         compact_pointers[pointer.level] = pointer.key;

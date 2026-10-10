@@ -14,6 +14,7 @@
 #include <variant>
 #include <vector>
 
+#include "base/result_internal.h"
 #include "engine/build_table.h"
 #include "engine/write_path.h"
 #include "format/write_batch.h"
@@ -26,12 +27,6 @@
 
 namespace modern_leveldb {
 namespace {
-
-// Checks a step that the recovery's invariants make valid.
-void Expect(const Status& status) noexcept {
-    assert(status.has_value());
-    static_cast<void>(status);
-}
 
 // GCOVR_EXCL_START: only keys larger than 4 GiB reach this function
 std::unexpected<Error> InvalidEntry(const Error& error) {
@@ -284,7 +279,7 @@ private:
             return std::unexpected(std::move(table).error());
         }
         FileMetadata file = std::move(*table).value();
-        Expect(edit_->AddFile(0, std::move(file)));
+        AssertSuccess(edit_->AddFile(0, std::move(file)));
         memtable_ = std::make_unique<MemTable>(comparator_->user_comparator());
         has_entries_ = false;
         return {};
