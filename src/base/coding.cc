@@ -195,10 +195,9 @@ void AppendLengthPrefixed(std::vector<std::byte>& output, ByteView value) {
     const std::size_t old_size = output.size();
     output.resize(old_size + prefix_size + value.size());
 
-    MutableByteView prefix(output.data() + old_size, prefix_size);
-    EncodeVarintTrusted(prefix, length);
-    assert(prefix.empty());
-    std::ranges::copy(value, output.data() + old_size + prefix_size);
+    MutableByteView remaining(output.data() + old_size, output.size() - old_size);
+    EncodeLengthPrefixedTrusted(remaining, value);
+    assert(remaining.empty());
 }
 
 Result<ByteView> ConsumeLengthPrefixed(ByteView& input) {

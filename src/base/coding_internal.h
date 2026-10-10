@@ -1,6 +1,8 @@
 #ifndef MODERN_LEVELDB_BASE_CODING_INTERNAL_H_
 #define MODERN_LEVELDB_BASE_CODING_INTERNAL_H_
 
+#include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 
@@ -10,21 +12,29 @@ namespace modern_leveldb {
 
 // Requires enough output for the canonical encoding and advances past it.
 void EncodeVarint32Trusted(MutableByteView& output, std::uint32_t value) noexcept;
+// Requires enough output for the uint32 length and payload, then advances past both.
+inline void EncodeLengthPrefixedTrusted(MutableByteView& output, ByteView value) noexcept {
+    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(value.size()));
+    assert(output.size() >= value.size());
+    std::ranges::copy(value, output.begin());
+    output = output.subspan(value.size());
+}
 
 // Require a complete uint32 varint and its length-prefixed payload in stable
 // backing storage. Checked decoders establish these domains once.
 inline std::uint32_t ConsumeVarint32Trusted(const std::byte*& input) noexcept {
+    constexpr std::size_t MaxBytes = 5;
     std::uint32_t value = 0;
-    std::size_t shift = 0;
-    while (true) {
+    for (std::size_t index = 0; index < MaxBytes; ++index) {
         const unsigned int byte = std::to_integer<unsigned int>(*input);
         ++input;
-        value |= static_cast<std::uint32_t>(byte & 0x7fU) << shift;
+        value |= static_cast<std::uint32_t>(byte & 0x7fU) << (index * 7U);
         if ((byte & 0x80U) == 0U) {
             return value;
         }
-        shift += 7U;
     }
+    assert(false && "trusted uint32 varint exceeds five bytes");
+    return value;
 }
 
 inline std::uint32_t ConsumeVarint32Trusted(ByteView& input) noexcept {

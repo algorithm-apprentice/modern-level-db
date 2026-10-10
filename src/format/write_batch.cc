@@ -30,20 +30,6 @@ bool IsSequenceRangeValid(SequenceNumber sequence, std::uint32_t count) noexcept
     return count == 0 || static_cast<SequenceNumber>(count - 1U) <= MaxSequenceNumber - sequence;
 }
 
-Result<ByteView> ConsumeBatchValue(ByteView& input) {
-    Result<ByteView> value = ConsumeLengthPrefixed(input);
-    if (!value.has_value()) {
-        return std::unexpected(value.error());
-    }
-    return *value;
-}
-
-void EncodeBatchValue(MutableByteView& output, ByteView value) noexcept {
-    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(value.size()));
-    std::ranges::copy(value, output.begin());
-    output = output.subspan(value.size());
-}
-
 }  // namespace
 
 Result<WriteBatchReader> WriteBatchReader::Open(ByteView encoded) {
@@ -74,12 +60,12 @@ Result<WriteBatchReader> WriteBatchReader::Open(ByteView encoded) {
             return std::unexpected(Error::Corruption("write batch has an unknown value kind"));
         }
 
-        Result<ByteView> key = ConsumeBatchValue(remaining);
+        Result<ByteView> key = ConsumeLengthPrefixed(remaining);
         if (!key.has_value()) {
             return std::unexpected(key.error());
         }
         if (kind == ValueKind::Value) {
-            Result<ByteView> value = ConsumeBatchValue(remaining);
+            Result<ByteView> value = ConsumeLengthPrefixed(remaining);
             if (!value.has_value()) {
                 return std::unexpected(value.error());
             }
@@ -220,9 +206,9 @@ void EncodedWriteBatch::AppendRecord(ValueKind kind, ByteView key, ByteView valu
         AsWritableBytes(std::span<char>(encoded_.data() + old_size, encoded_.size() - old_size));
     output.front() = static_cast<std::byte>(kind);
     output = output.subspan(1);
-    EncodeBatchValue(output, key);
+    EncodeLengthPrefixedTrusted(output, key);
     if (kind == ValueKind::Value) {
-        EncodeBatchValue(output, value);
+        EncodeLengthPrefixedTrusted(output, value);
     }
     assert(output.empty());
 }

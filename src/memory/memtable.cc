@@ -70,9 +70,7 @@ const std::byte* EncodeEntry(Arena& arena, SequenceNumber sequence, ValueKind ki
         PackTrailer(sequence, kind));
     output = output.subspan(InternalKeyTrailerSize);
 
-    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(value.size()));
-    std::ranges::copy(value, output.begin());
-    output = output.subspan(value.size());
+    EncodeLengthPrefixedTrusted(output, value);
     assert(output.empty());
     return entry;
 }
@@ -189,9 +187,7 @@ void MemTable::Iterator::SeekEncoded(ByteView internal_key) {
     const std::size_t prefix_size = VarintLength(static_cast<std::uint32_t>(internal_key.size()));
     seek_key_.resize(prefix_size + internal_key.size());
     MutableByteView output(seek_key_);
-    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(internal_key.size()));
-    std::ranges::copy(internal_key, output.begin());
-    output = output.subspan(internal_key.size());
+    EncodeLengthPrefixedTrusted(output, internal_key);
     assert(output.empty());
     iterator_.Seek(seek_key_.data());
 }
