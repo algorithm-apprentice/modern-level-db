@@ -72,9 +72,9 @@ TEST(WriteBatchTest, PersistentConstantsAndDefaultHeaderMatchLevelDb) {
 
 TEST(WriteBatchTest, MatchesLevelDbGoldenPutAndDeleteEncoding) {
     EncodedWriteBatch batch;
-    ASSERT_TRUE(batch.SetSequence(0x00010203040506ULL).has_value());
-    ASSERT_TRUE(batch.Put(AsBytes("foo"), AsBytes("bar")).has_value());
-    ASSERT_TRUE(batch.Delete(AsBytes("box")).has_value());
+    batch.SetSequence(0x00010203040506ULL);
+    batch.Put(AsBytes("foo"), AsBytes("bar"));
+    batch.Delete(AsBytes("box"));
 
     EXPECT_EQ(Materialize(batch.encoded()),
               Bytes({
@@ -88,9 +88,9 @@ TEST(WriteBatchTest, EncodesEmptyBinaryAndMultiByteLengths) {
     const std::vector<std::byte> long_key(128, std::byte{'k'});
     EncodedWriteBatch batch;
 
-    ASSERT_TRUE(batch.Put({}, {}).has_value());
-    ASSERT_TRUE(batch.Delete(binary_key).has_value());
-    ASSERT_TRUE(batch.Put(long_key, AsBytes("v")).has_value());
+    batch.Put({}, {});
+    batch.Delete(binary_key);
+    batch.Put(long_key, AsBytes("v"));
 
     const ByteView encoded = batch.encoded();
     ASSERT_GE(encoded.size(), WriteBatchHeaderSize + 3U + 4U + 4U);
@@ -108,10 +108,10 @@ TEST(WriteBatchTest, EncodesEmptyBinaryAndMultiByteLengths) {
 
 TEST(WriteBatchReaderTest, IteratesBorrowedEntriesWithAssignedSequences) {
     EncodedWriteBatch batch;
-    ASSERT_TRUE(batch.SetSequence(100).has_value());
-    ASSERT_TRUE(batch.Put(AsBytes("alpha"), AsBytes("one")).has_value());
-    ASSERT_TRUE(batch.Delete(AsBytes("beta")).has_value());
-    ASSERT_TRUE(batch.Put(AsBytes("gamma"), {}).has_value());
+    batch.SetSequence(100);
+    batch.Put(AsBytes("alpha"), AsBytes("one"));
+    batch.Delete(AsBytes("beta"));
+    batch.Put(AsBytes("gamma"), {});
 
     auto opened = WriteBatchReader::Open(batch.encoded());
     ASSERT_TRUE(opened.has_value());
@@ -148,13 +148,13 @@ TEST(WriteBatchReaderTest, IteratesBorrowedEntriesWithAssignedSequences) {
 
 TEST(WriteBatchTest, TrustedAppendMatchesCheckedAppendForDistinctOwnedBatches) {
     EncodedWriteBatch source;
-    ASSERT_TRUE(source.Put(AsBytes("a"), AsBytes("1")).has_value());
-    ASSERT_TRUE(source.Delete(AsBytes("b")).has_value());
+    source.Put(AsBytes("a"), AsBytes("1"));
+    source.Delete(AsBytes("b"));
     const std::vector<std::byte> source_before = Materialize(source.encoded());
     EncodedWriteBatch checked;
     EncodedWriteBatch trusted;
 
-    ASSERT_TRUE(checked.Append(source).has_value());
+    checked.Append(source);
     trusted.AppendTrusted(source);
     const EncodedWriteBatch empty;
     trusted.AppendTrusted(empty);
@@ -164,9 +164,9 @@ TEST(WriteBatchTest, TrustedAppendMatchesCheckedAppendForDistinctOwnedBatches) {
 
 TEST(WriteBatchReaderTest, TrustedReaderUsesAnOwnedBatchWithoutRevalidation) {
     EncodedWriteBatch batch;
-    ASSERT_TRUE(batch.SetSequence(77).has_value());
-    ASSERT_TRUE(batch.Put(AsBytes("alpha"), AsBytes("one")).has_value());
-    ASSERT_TRUE(batch.Delete(AsBytes("beta")).has_value());
+    batch.SetSequence(77);
+    batch.Put(AsBytes("alpha"), AsBytes("one"));
+    batch.Delete(AsBytes("beta"));
 
     WriteBatchReader reader = WriteBatchReader::OpenTrusted(batch);
 
@@ -187,16 +187,16 @@ TEST(WriteBatchReaderTest, TrustedReaderUsesAnOwnedBatchWithoutRevalidation) {
 
 TEST(WriteBatchTest, AppendPreservesDestinationSequenceAndSource) {
     EncodedWriteBatch destination;
-    ASSERT_TRUE(destination.SetSequence(100).has_value());
-    ASSERT_TRUE(destination.Put(AsBytes("a"), AsBytes("1")).has_value());
+    destination.SetSequence(100);
+    destination.Put(AsBytes("a"), AsBytes("1"));
 
     EncodedWriteBatch source;
-    ASSERT_TRUE(source.SetSequence(9'999).has_value());
-    ASSERT_TRUE(source.Delete(AsBytes("b")).has_value());
-    ASSERT_TRUE(source.Put(AsBytes("c"), AsBytes("2")).has_value());
+    source.SetSequence(9'999);
+    source.Delete(AsBytes("b"));
+    source.Put(AsBytes("c"), AsBytes("2"));
     const std::vector<std::byte> source_before = Materialize(source.encoded());
 
-    ASSERT_TRUE(destination.Append(source).has_value());
+    destination.Append(source);
 
     EXPECT_EQ(destination.sequence(), 100U);
     EXPECT_EQ(destination.count(), 3U);
@@ -221,15 +221,15 @@ TEST(WriteBatchTest, AppendPreservesDestinationSequenceAndSource) {
 
 TEST(WriteBatchTest, AppendHandlesEmptyAndSelfSources) {
     EncodedWriteBatch batch;
-    ASSERT_TRUE(batch.SetSequence(7).has_value());
-    ASSERT_TRUE(batch.Put(AsBytes("key"), AsBytes("value")).has_value());
+    batch.SetSequence(7);
+    batch.Put(AsBytes("key"), AsBytes("value"));
     const std::vector<std::byte> before = Materialize(batch.encoded());
 
     const EncodedWriteBatch empty;
-    ASSERT_TRUE(batch.Append(empty).has_value());
+    batch.Append(empty);
     EXPECT_EQ(Materialize(batch.encoded()), before);
 
-    ASSERT_TRUE(batch.Append(batch).has_value());
+    batch.Append(batch);
     EXPECT_EQ(batch.sequence(), 7U);
     EXPECT_EQ(batch.count(), 2U);
     ASSERT_EQ(batch.encoded().size(), before.size() + before.size() - WriteBatchHeaderSize);
@@ -238,57 +238,29 @@ TEST(WriteBatchTest, AppendHandlesEmptyAndSelfSources) {
         batch.encoded().subspan(before.size())));
 }
 
-TEST(WriteBatchTest, SequenceValidationIsFailureAtomic) {
+TEST(WriteBatchTest, MutationsLeaveSequenceAssignmentToTheCommitBoundary) {
     EncodedWriteBatch batch;
-    ASSERT_TRUE(batch.SetSequence(MaxSequenceNumber).has_value());
-    ASSERT_TRUE(batch.Put(AsBytes("last"), AsBytes("value")).has_value());
-    const std::vector<std::byte> one_record = Materialize(batch.encoded());
-
-    const Status put_overflow = batch.Put(AsBytes("overflow"), AsBytes("value"));
-    ASSERT_FALSE(put_overflow.has_value());
-    EXPECT_EQ(put_overflow.error().code(), ErrorCode::InvalidArgument);
-    EXPECT_EQ(Materialize(batch.encoded()), one_record);
-
-    const Status add_overflow = batch.Delete(AsBytes("overflow"));
-    ASSERT_FALSE(add_overflow.has_value());
-    EXPECT_EQ(add_overflow.error().code(), ErrorCode::InvalidArgument);
-    EXPECT_EQ(Materialize(batch.encoded()), one_record);
-
-    const Status set_too_large = batch.SetSequence(MaxSequenceNumber + 1U);
-    ASSERT_FALSE(set_too_large.has_value());
-    EXPECT_EQ(set_too_large.error().code(), ErrorCode::InvalidArgument);
-    EXPECT_EQ(Materialize(batch.encoded()), one_record);
-
-    ASSERT_TRUE(batch.SetSequence(MaxSequenceNumber - 1U).has_value());
-    ASSERT_TRUE(batch.Delete(AsBytes("penultimate")).has_value());
-    const std::vector<std::byte> two_records = Materialize(batch.encoded());
-
-    const Status set_range_overflow = batch.SetSequence(MaxSequenceNumber);
-    ASSERT_FALSE(set_range_overflow.has_value());
-    EXPECT_EQ(set_range_overflow.error().code(), ErrorCode::InvalidArgument);
-    EXPECT_EQ(Materialize(batch.encoded()), two_records);
-}
-
-TEST(WriteBatchTest, AppendSequenceValidationIsFailureAtomic) {
-    EncodedWriteBatch destination;
-    ASSERT_TRUE(destination.SetSequence(MaxSequenceNumber).has_value());
-    ASSERT_TRUE(destination.Put(AsBytes("last"), {}).has_value());
+    batch.SetSequence(MaxSequenceNumber);
+    batch.Put(AsBytes("last"), AsBytes("value"));
 
     EncodedWriteBatch source;
-    ASSERT_TRUE(source.Delete(AsBytes("too-much")).has_value());
-    const std::vector<std::byte> before = Materialize(destination.encoded());
+    source.Delete(AsBytes("penultimate"));
+    batch.Append(source);
 
-    const Status status = destination.Append(source);
+    EXPECT_EQ(batch.sequence(), MaxSequenceNumber);
+    EXPECT_EQ(batch.count(), 2U);
 
-    ASSERT_FALSE(status.has_value());
-    EXPECT_EQ(status.error().code(), ErrorCode::InvalidArgument);
-    EXPECT_EQ(Materialize(destination.encoded()), before);
+    batch.SetSequence(MaxSequenceNumber - 1U);
+    WriteBatchReader reader = WriteBatchReader::OpenTrusted(batch);
+    ASSERT_TRUE(reader.Next().has_value());
+    ASSERT_TRUE(reader.Next().has_value());
+    EXPECT_FALSE(reader.Next().has_value());
 }
 
 TEST(WriteBatchTest, ClearRestoresCanonicalEmptyBatch) {
     EncodedWriteBatch batch;
-    ASSERT_TRUE(batch.SetSequence(88).has_value());
-    ASSERT_TRUE(batch.Put(AsBytes("key"), AsBytes("value")).has_value());
+    batch.SetSequence(88);
+    batch.Put(AsBytes("key"), AsBytes("value"));
 
     batch.Clear();
 
@@ -299,8 +271,8 @@ TEST(WriteBatchTest, ClearRestoresCanonicalEmptyBatch) {
 
 TEST(WriteBatchTest, CopyAndMovePreserveOwningInvariants) {
     EncodedWriteBatch original;
-    ASSERT_TRUE(original.SetSequence(55).has_value());
-    ASSERT_TRUE(original.Put(AsBytes("key"), AsBytes("value")).has_value());
+    original.SetSequence(55);
+    original.Put(AsBytes("key"), AsBytes("value"));
     const std::vector<std::byte> expected = Materialize(original.encoded());
 
     EncodedWriteBatch copy = original;
@@ -314,7 +286,7 @@ TEST(WriteBatchTest, CopyAndMovePreserveOwningInvariants) {
     EXPECT_EQ(copy.count(), 0U);
 
     EncodedWriteBatch assigned;
-    ASSERT_TRUE(assigned.Delete(AsBytes("old")).has_value());
+    assigned.Delete(AsBytes("old"));
     assigned = std::move(moved);
     EXPECT_EQ(Materialize(assigned.encoded()), expected);
     EXPECT_EQ(Materialize(moved.encoded()), std::vector<std::byte>(WriteBatchHeaderSize));
@@ -352,9 +324,22 @@ TEST(WriteBatchReaderTest, RejectsCountMismatchAndTrailingBytes) {
     ExpectCorruption(EncodedBatch(0, 0, Bytes({0xff})));
 }
 
-TEST(WriteBatchReaderTest, RejectsSequenceRangeOverflow) {
-    ExpectCorruption(EncodedBatch(MaxSequenceNumber + 1U, 0));
-    ExpectCorruption(EncodedBatch(MaxSequenceNumber, 2, Bytes({0x00, 0x00, 0x00, 0x00})));
+TEST(WriteBatchReaderTest, PreservesLevelDbCompatibleUncheckedSequenceHeaders) {
+    const std::vector<std::byte> empty_encoded = EncodedBatch(MaxSequenceNumber + 1U, 0);
+    auto empty = WriteBatchReader::Open(empty_encoded);
+    ASSERT_TRUE(empty.has_value());
+    EXPECT_EQ(empty->sequence(), MaxSequenceNumber + 1U);
+
+    const std::vector<std::byte> two_encoded =
+        EncodedBatch(MaxSequenceNumber, 2, Bytes({0x00, 0x00, 0x00, 0x00}));
+    auto two = WriteBatchReader::Open(two_encoded);
+    ASSERT_TRUE(two.has_value());
+    const auto first = two->Next();
+    const auto second = two->Next();
+    ASSERT_TRUE(first.has_value());
+    ASSERT_TRUE(second.has_value());
+    EXPECT_EQ(first->sequence, MaxSequenceNumber);
+    EXPECT_EQ(second->sequence, MaxSequenceNumber + 1U);
 }
 
 TEST(WriteBatchReaderTest, AcceptsLevelDbCompatibleNonCanonicalVarints) {

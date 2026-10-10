@@ -41,8 +41,8 @@ void InsertBatchTrusted(WriteBatchReader& batch, MemTable& memtable) {
     }
 }
 
-Status PrepareGroup(EncodedWriteBatch& group, SequenceNumber first_sequence) {
-    return group.SetSequence(first_sequence);
+void PrepareGroup(EncodedWriteBatch& group, SequenceNumber first_sequence) noexcept {
+    group.SetSequence(first_sequence);
 }
 
 Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log, MemTable& memtable) {
@@ -88,9 +88,7 @@ WriteQueue::SequenceGuard::SequenceGuard(EncodedWriteBatch& batch) noexcept
 WriteQueue::SequenceGuard::~SequenceGuard() {
     assert(batch_.count() == count_);
     assert(batch_.encoded().size() == size_);
-    const Status restored = batch_.SetSequence(sequence_);
-    assert(restored.has_value());
-    static_cast<void>(restored);
+    batch_.SetSequence(sequence_);
 }
 // GCOVR_EXCL_STOP
 

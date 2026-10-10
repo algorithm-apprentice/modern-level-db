@@ -37,21 +37,24 @@ Status WriteBatch::Put(ByteView key, ByteView value) {
     if (impl_ == nullptr) {
         return MovedFromBatch();
     }
-    return impl_->batch().Put(key, value);
+    impl_->batch().Put(key, value);
+    return {};
 }
 
 Status WriteBatch::Delete(ByteView key) {
     if (impl_ == nullptr) {
         return MovedFromBatch();
     }
-    return impl_->batch().Delete(key);
+    impl_->batch().Delete(key);
+    return {};
 }
 
 Status WriteBatch::Append(const WriteBatch& source) {
     if (impl_ == nullptr || source.impl_ == nullptr) {
         return MovedFromBatch();
     }
-    return impl_->batch().Append(source.impl_->batch());
+    impl_->batch().Append(source.impl_->batch());
+    return {};
 }
 
 void WriteBatch::Clear() noexcept {

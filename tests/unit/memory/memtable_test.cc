@@ -211,6 +211,14 @@ TEST(MemTableDeathTest, TrustedInsertionAssertsUniqueInternalKeys) {
 
     EXPECT_DEATH(table.AddTrusted(1, ValueKind::Value, AsBytes("key"), AsBytes("second")), "");
 }
+
+TEST(MemTableDeathTest, TrustedInsertionAssertsRepresentableSequenceAndKind) {
+    MemTable table{BytewiseComparator()};
+
+    EXPECT_DEATH(table.AddTrusted(MaxSequenceNumber + 1U, ValueKind::Value, AsBytes("key"), {}),
+                 "");
+    EXPECT_DEATH(table.AddTrusted(1, static_cast<ValueKind>(2), AsBytes("key"), {}), "");
+}
 #endif
 
 TEST(MemTableTest, MovedFromLookupKeyRemainsAValidCanonicalLookup) {

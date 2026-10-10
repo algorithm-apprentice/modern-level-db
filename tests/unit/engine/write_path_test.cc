@@ -41,7 +41,7 @@ static_assert(!std::is_move_constructible_v<WriteQueue>);
 EncodedWriteBatch Batch(std::initializer_list<std::pair<std::string_view, std::string_view>> puts) {
     EncodedWriteBatch batch;
     for (const auto& [key, value] : puts) {
-        EXPECT_TRUE(batch.Put(AsBytes(key), AsBytes(value)).has_value());
+        batch.Put(AsBytes(key), AsBytes(value));
     }
     return batch;
 }
@@ -72,10 +72,10 @@ std::string Lookup(const MemTable& memtable, std::string_view key, SequenceNumbe
 
 TEST(InsertBatchTest, AddsEntriesWithTheirSequences) {
     EncodedWriteBatch batch;
-    ASSERT_TRUE(batch.Put(AsBytes("a"), AsBytes("alpha")).has_value());
-    ASSERT_TRUE(batch.Delete(AsBytes("b")).has_value());
-    ASSERT_TRUE(batch.Put(AsBytes("a"), AsBytes("again")).has_value());
-    ASSERT_TRUE(batch.SetSequence(10).has_value());
+    batch.Put(AsBytes("a"), AsBytes("alpha"));
+    batch.Delete(AsBytes("b"));
+    batch.Put(AsBytes("a"), AsBytes("again"));
+    batch.SetSequence(10);
     MemTable memtable(BytewiseComparator());
 
     WriteBatchReader reader = WriteBatchReader::Open(batch.encoded()).value();
@@ -95,9 +95,9 @@ TEST(InsertBatchTest, AddsEntriesWithTheirSequences) {
 
 TEST(InsertBatchTest, TrustedOwnedBatchAddsEntriesWithoutRevalidation) {
     EncodedWriteBatch batch;
-    ASSERT_TRUE(batch.Put(AsBytes("a"), AsBytes("alpha")).has_value());
-    ASSERT_TRUE(batch.Delete(AsBytes("b")).has_value());
-    ASSERT_TRUE(batch.SetSequence(20).has_value());
+    batch.Put(AsBytes("a"), AsBytes("alpha"));
+    batch.Delete(AsBytes("b"));
+    batch.SetSequence(20);
     MemTable memtable(BytewiseComparator());
 
     WriteBatchReader reader = WriteBatchReader::OpenTrusted(batch);
@@ -110,19 +110,14 @@ TEST(InsertBatchTest, TrustedOwnedBatchAddsEntriesWithoutRevalidation) {
 TEST(PrepareGroupTest, SetsTheSequenceWithinItsRange) {
     EncodedWriteBatch group = Batch({{"a", "1"}, {"b", "2"}, {"c", "3"}});
 
-    ASSERT_TRUE(PrepareGroup(group, 5).has_value());
+    PrepareGroup(group, 5);
     EXPECT_EQ(group.sequence(), 5U);
-    ASSERT_TRUE(PrepareGroup(group, MaxSequenceNumber - 2).has_value());
-    EXPECT_EQ(group.sequence(), MaxSequenceNumber - 2);
-
-    const Status exhausted = PrepareGroup(group, MaxSequenceNumber - 1);
-    ASSERT_FALSE(exhausted.has_value());
-    EXPECT_EQ(exhausted.error().code(), ErrorCode::InvalidArgument);
+    PrepareGroup(group, MaxSequenceNumber - 2);
     EXPECT_EQ(group.sequence(), MaxSequenceNumber - 2);
 
     EncodedWriteBatch empty;
-    ASSERT_TRUE(PrepareGroup(empty, MaxSequenceNumber).has_value());
-    EXPECT_FALSE(PrepareGroup(empty, MaxSequenceNumber + 1).has_value());
+    PrepareGroup(empty, MaxSequenceNumber);
+    EXPECT_EQ(empty.sequence(), MaxSequenceNumber);
 }
 
 class CommitGroupTest : public testing::Test {
@@ -146,7 +141,7 @@ protected:
 TEST_F(CommitGroupTest, LogsSyncsAndInserts) {
     const auto log = OpenLog();
     EncodedWriteBatch group = Batch({{"a", "1"}, {"b", "2"}});
-    ASSERT_TRUE(PrepareGroup(group, 7).has_value());
+    PrepareGroup(group, 7);
 
     std::size_t start = file_system_.operations().size();
     ASSERT_TRUE(CommitGroup(group, false, *log, memtable_).has_value());
@@ -156,7 +151,7 @@ TEST_F(CommitGroupTest, LogsSyncsAndInserts) {
     EXPECT_EQ(Lookup(memtable_, "b", 8), "2");
 
     EncodedWriteBatch synced = Batch({{"c", "3"}});
-    ASSERT_TRUE(PrepareGroup(synced, 9).has_value());
+    PrepareGroup(synced, 9);
     start = file_system_.operations().size();
     ASSERT_TRUE(CommitGroup(synced, true, *log, memtable_).has_value());
     EXPECT_EQ(Operations(start).back(), "sync 000005.log");
@@ -185,7 +180,7 @@ TEST_F(CommitGroupTest, InsertsNothingAfterALogFailure) {
         MemTable memtable(BytewiseComparator());
         const auto log = OpenLog();
         EncodedWriteBatch group = Batch({{"a", "1"}});
-        ASSERT_TRUE(PrepareGroup(group, 3).has_value());
+        PrepareGroup(group, 3);
         file_system_.FailOperation(file_system_.operations().size() + failing,
                                    Error::Io("injected failure"));
 
@@ -254,7 +249,7 @@ public:
                      SequenceNumber sequence = 0) {
         threads_.emplace_back([this, key = std::move(key), sync, value_size, sequence] {
             EncodedWriteBatch batch = Batch({{key, std::string(value_size, 'v')}});
-            EXPECT_TRUE(batch.SetSequence(sequence).has_value());
+            batch.SetSequence(sequence);
             std::string result;
             try {
                 std::unique_lock lock(mutex_);
@@ -358,7 +353,7 @@ TEST(WriteQueueTest, UsesTheSingleLeaderDirectlyAndRestoresItsSequence) {
     WriteQueue queue;
     std::mutex mutex;
     EncodedWriteBatch batch = Batch({{"w1", "v"}});
-    ASSERT_TRUE(batch.SetSequence(41).has_value());
+    batch.SetSequence(41);
     const std::byte* const storage = batch.encoded().data();
     bool committed = false;
     std::unique_lock lock(mutex);
@@ -367,7 +362,7 @@ TEST(WriteQueueTest, UsesTheSingleLeaderDirectlyAndRestoresItsSequence) {
         lock, batch, false, [](std::unique_lock<std::mutex>&, bool) -> Status { return {}; },
         [&](std::unique_lock<std::mutex>&, EncodedWriteBatch& group, bool) -> Status {
             EXPECT_EQ(group.encoded().data(), storage);
-            EXPECT_TRUE(group.SetSequence(7).has_value());
+            group.SetSequence(7);
             committed = true;
             return {};
         });
@@ -381,13 +376,13 @@ TEST(WriteQueueTest, RestoresTheSingleLeaderSequenceAfterACommitError) {
     WriteQueue queue;
     std::mutex mutex;
     EncodedWriteBatch batch = Batch({{"w1", "v"}});
-    ASSERT_TRUE(batch.SetSequence(42).has_value());
+    batch.SetSequence(42);
     std::unique_lock lock(mutex);
 
     const Status status = queue.Write(
         lock, batch, false, [](std::unique_lock<std::mutex>&, bool) -> Status { return {}; },
         [](std::unique_lock<std::mutex>&, EncodedWriteBatch& group, bool) -> Status {
-            EXPECT_TRUE(group.SetSequence(8).has_value());
+            group.SetSequence(8);
             return std::unexpected(Error::Io("commit failed"));
         });
 
@@ -400,14 +395,14 @@ TEST(WriteQueueTest, RestoresTheSingleLeaderSequenceAndLockAfterAnException) {
     WriteQueue queue;
     std::mutex mutex;
     EncodedWriteBatch batch = Batch({{"w1", "v"}});
-    ASSERT_TRUE(batch.SetSequence(43).has_value());
+    batch.SetSequence(43);
     std::unique_lock lock(mutex);
 
     EXPECT_THROW(
         static_cast<void>(queue.Write(
             lock, batch, false, [](std::unique_lock<std::mutex>&, bool) -> Status { return {}; },
             [](std::unique_lock<std::mutex>& owned_lock, EncodedWriteBatch& group, bool) -> Status {
-                EXPECT_TRUE(group.SetSequence(9).has_value());
+                group.SetSequence(9);
                 owned_lock.unlock();
                 throw std::runtime_error("commit threw");
             })),

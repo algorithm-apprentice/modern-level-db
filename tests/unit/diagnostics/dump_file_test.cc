@@ -99,8 +99,8 @@ void WriteRecords(MemoryFileSystem& file_system, const std::filesystem::path& pa
 
 std::vector<std::byte> Batch(SequenceNumber sequence, ByteView key, ByteView value) {
     EncodedWriteBatch batch;
-    EXPECT_TRUE(batch.Put(key, value).has_value());
-    EXPECT_TRUE(batch.SetSequence(sequence).has_value());
+    batch.Put(key, value);
+    batch.SetSequence(sequence);
     return Materialize(batch.encoded());
 }
 
@@ -207,10 +207,9 @@ TEST(DumpFileTest, DumpsWriteBatchesWithEscapedBinaryDataAndPerEntrySequences) {
     MemoryFileSystem file_system;
     const std::filesystem::path path = "db/000001.log";
     EncodedWriteBatch batch;
-    ASSERT_TRUE(
-        batch.Put(Bytes({'a', '\'', '\\', '\n', 0, 0xff}), Bytes({'v', '\r', '\t'})).has_value());
-    ASSERT_TRUE(batch.Delete(AsBytes("old")).has_value());
-    ASSERT_TRUE(batch.SetSequence(40).has_value());
+    batch.Put(Bytes({'a', '\'', '\\', '\n', 0, 0xff}), Bytes({'v', '\r', '\t'}));
+    batch.Delete(AsBytes("old"));
+    batch.SetSequence(40);
     WriteRecords(file_system, path, {Materialize(batch.encoded())});
     StringOutput output;
 
@@ -271,8 +270,8 @@ TEST(DumpFileTest, TreatsATruncatedFinalFragmentAsBenignEndOfFile) {
     const std::filesystem::path path = "000004.log";
     EncodedWriteBatch large;
     const std::vector<std::byte> value(40000, std::byte{'v'});
-    ASSERT_TRUE(large.Put(AsBytes("large"), value).has_value());
-    ASSERT_TRUE(large.SetSequence(2).has_value());
+    large.Put(AsBytes("large"), value);
+    large.SetSequence(2);
     WriteRecords(file_system, path,
                  {Batch(1, AsBytes("kept"), AsBytes("one")), Materialize(large.encoded())});
     std::vector<std::byte> truncated = *file_system.Contents(path);
@@ -335,9 +334,9 @@ TEST(DumpFileTest, PropagatesOutputFailureFromEveryRenderedSection) {
 
     const std::filesystem::path log_path = "000007.log";
     EncodedWriteBatch batch;
-    ASSERT_TRUE(batch.Put(AsBytes("a"), AsBytes("1")).has_value());
-    ASSERT_TRUE(batch.Delete(AsBytes("b")).has_value());
-    ASSERT_TRUE(batch.SetSequence(1).has_value());
+    batch.Put(AsBytes("a"), AsBytes("1"));
+    batch.Delete(AsBytes("b"));
+    batch.SetSequence(1);
     WriteRecords(file_system, log_path, {Materialize(batch.encoded())});
 
     const std::filesystem::path corrupt_path = "000008.log";

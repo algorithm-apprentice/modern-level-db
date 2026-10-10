@@ -58,9 +58,9 @@ private:
     std::uint32_t index_ = 0;
 };
 
-// Owns bytes whose mutators preserve a fully decodable batch for caller-provided
-// uint32-representable key/value lengths. The write queue temporarily assigns its
-// hidden sequence and restores it before returning.
+// Owns bytes whose mutators preserve the record encoding and fixed32 count for
+// practical caller-provided lengths. The write queue assigns a valid hidden
+// sequence at the commit boundary and restores it before returning.
 class EncodedWriteBatch final {
 public:
     EncodedWriteBatch();
@@ -72,15 +72,13 @@ public:
     ~EncodedWriteBatch() = default;
 
     // Inputs are copied and must not refer to this batch's private encoding.
-    [[nodiscard]] Status Put(ByteView key, ByteView value);
-    [[nodiscard]] Status Delete(ByteView key);
-    // Fresh public Database operations use these after establishing count/sequence capacity.
-    void PutTrusted(ByteView key, ByteView value);
-    void DeleteTrusted(ByteView key);
-    [[nodiscard]] Status Append(const EncodedWriteBatch& source);
-    // WriteQueue uses this for distinct owned batches after bounding group size/count.
+    void Put(ByteView key, ByteView value);
+    void Delete(ByteView key);
+    void Append(const EncodedWriteBatch& source);
+    // WriteQueue uses this for distinct owned batches bounded by its group-size policy.
     void AppendTrusted(const EncodedWriteBatch& source);
-    [[nodiscard]] Status SetSequence(SequenceNumber sequence);
+    // Requires the complete batch sequence interval to fit the internal-key trailer.
+    void SetSequence(SequenceNumber sequence) noexcept;
     void Clear() noexcept;
 
     [[nodiscard]] SequenceNumber sequence() const noexcept;
@@ -89,7 +87,6 @@ public:
 
 private:
     void AppendRecord(ValueKind kind, ByteView key, ByteView value);
-    [[nodiscard]] Status ValidateAdditionalRecords(std::uint32_t additional) const;
     void AppendRecords(std::string_view records, std::uint32_t count);
     void SetCount(std::uint32_t count) noexcept;
 

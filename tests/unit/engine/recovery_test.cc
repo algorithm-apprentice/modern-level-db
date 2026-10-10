@@ -57,12 +57,12 @@ std::vector<std::byte> Batch(SequenceNumber sequence,
     EncodedWriteBatch batch;
     for (const auto& op : ops) {
         if (const auto* put = std::get_if<Put>(&op)) {
-            EXPECT_TRUE(batch.Put(AsBytes(put->key), AsBytes(put->value)).has_value());
+            batch.Put(AsBytes(put->key), AsBytes(put->value));
         } else {
-            EXPECT_TRUE(batch.Delete(AsBytes(std::get<Delete>(op).key)).has_value());
+            batch.Delete(AsBytes(std::get<Delete>(op).key));
         }
     }
-    EXPECT_TRUE(batch.SetSequence(sequence).has_value());
+    batch.SetSequence(sequence);
     const ByteView encoded = batch.encoded();
     return std::vector<std::byte>(encoded.begin(), encoded.end());
 }

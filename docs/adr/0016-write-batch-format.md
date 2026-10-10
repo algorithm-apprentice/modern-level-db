@@ -3,8 +3,9 @@
 - Status: Accepted
 - Amended by: [ADR-0060](0060-leveldb-write-path-parity.md) replaces the
   private vector-backed representation with string-backed storage and trusted
-  owned iteration. The persistent batch encoding decided here remains
-  current.
+  owned iteration. Later LevelDB-parity cleanup also removes practical
+  count/sequence-range mutation errors; external parsing retains LevelDB's
+  structural checks. The persistent batch encoding decided here remains current.
 - Date: 2026-09-23
 
 ## Context
@@ -83,10 +84,10 @@ class EncodedWriteBatch final {
  public:
   EncodedWriteBatch();
 
-  Status Put(ByteView key, ByteView value);
-  Status Delete(ByteView key);
-  Status Append(const EncodedWriteBatch& source);
-  Status SetSequence(SequenceNumber sequence);
+  void Put(ByteView key, ByteView value);
+  void Delete(ByteView key);
+  void Append(const EncodedWriteBatch& source);
+  void SetSequence(SequenceNumber sequence) noexcept;
   void Clear() noexcept;
 
   SequenceNumber sequence() const noexcept;
@@ -95,38 +96,29 @@ class EncodedWriteBatch final {
 };
 ```
 
-`EncodedWriteBatch` owns one `std::vector<std::byte>` that always contains a valid
+`EncodedWriteBatch` owns one `std::string` that always contains a structural
 12-byte header followed by validated records. It is copyable and movable.
 There is no invalid/default-empty representation: a default batch has sequence
 zero, count zero, and exactly 12 header bytes.
 
-`Put` and `Delete` copy caller bytes into the representation and increment the
-fixed32 count. Empty keys and empty values are valid. A key or value larger than
-`uint32_t` length, count overflow, or sequence-range overflow returns
-`InvalidArgument` and leaves the batch unchanged.
+`Put` and `Delete` copy caller bytes directly into the representation and
+increment the fixed32 count. Empty keys and empty values are valid. Practical
+allocation limits establish uint32-representable lengths and record counts,
+matching pinned LevelDB instead of creating recoverable maximum-integer errors.
 
-Every mutator preserves the valid-representation invariant on validation or
-allocation failure. `Put` and `Delete` first encode the complete record in
-temporary storage, which also supports key/value views that alias the batch's
-current `encoded()` storage. They then append the staged record in one vector
-operation and update the header count last.
-
-`SetSequence` accepts zero and rejects values above `MaxSequenceNumber`.
-For a non-empty batch it also rejects a starting sequence whose final operation
-would exceed `MaxSequenceNumber`.
+`SetSequence` writes the hidden header field at the commit boundary. The engine's
+reserved sequence interval and MemTable's trusted trailer assertion establish
+the 56-bit internal-key invariant.
 
 `Clear` retains vector capacity, resets sequence/count to zero, and truncates to
 the header without allocation.
 
 `Append`:
 
-- Validates destination count and final sequence range before mutation.
 - Appends source records but not its header.
 - Leaves destination sequence unchanged.
-- Commits all source record bytes in one vector insertion and updates the count
-  last.
+- Commits all source record bytes in one string append and updates the count.
 - Supports self-append by staging the source record range before mutation.
-- Leaves the destination unchanged on validation or allocation failure.
 
 Move construction and move assignment are explicit: the destination receives
 the representation and the source becomes the canonical zero-sequence,

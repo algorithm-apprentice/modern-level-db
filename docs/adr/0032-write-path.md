@@ -66,12 +66,11 @@ Change:
   function and a commit function that the engine provides, and
   `PrepareGroup` and `CommitGroup` perform the checks and the log and
   memtable steps, so each is tested on its own.
-- **Everything that can fail is checked before the log.** LevelDB can append a
-  batch to the log and then fail to insert it into the memtable, whose key
-  length limit is 8 bytes shorter than the batch's. Here `PrepareGroup`
-  checks the sequence range and every key's length before any I/O, so a
-  group that reaches the log always reaches the memtable, and recovery can
-  replay every record that a write logged.
+- **Owned batches use the same practical limits as LevelDB.** The group already
+  contains structurally valid records; `PrepareGroup` assigns its reserved
+  sequence without rescanning maximum-integer policies. Recovery still checks
+  external record structure before replay, and MemTable insertion asserts the
+  reserved sequence/kind invariant.
 - **Exceptions release the queue.** If making room, building the group, or
   committing it throws, the front writer takes the lock back, completes the
   writers of its group with `Aborted`, because their outcome is unknown, and

@@ -170,13 +170,13 @@ protected:
     static Status Put(DatabaseEngine& database, std::string_view key, std::string_view value,
                       bool sync = false) {
         EncodedWriteBatch batch;
-        EXPECT_TRUE(batch.Put(AsBytes(key), AsBytes(value)).has_value());
+        batch.Put(AsBytes(key), AsBytes(value));
         return database.Write(batch, sync);
     }
 
     static Status Delete(DatabaseEngine& database, std::string_view key) {
         EncodedWriteBatch batch;
-        EXPECT_TRUE(batch.Delete(AsBytes(key)).has_value());
+        batch.Delete(AsBytes(key));
         return database.Write(batch, false);
     }
 
@@ -1437,28 +1437,6 @@ TEST_F(DatabaseTest, DiscardsAFlushThatFinishesWhileTheDatabaseCloses) {
     database = Open();
     EXPECT_EQ(Get(*database, "a"), Large());
     EXPECT_EQ(Get(*database, "b"), "1");
-}
-
-TEST_F(DatabaseTest, RejectsWritesPastTheLastSequence) {
-    {
-        const auto database = Open();
-    }
-    {
-        const InternalKeyComparator comparator(BytewiseComparator());
-        auto versions = VersionSet::Recover(file_system_, directory_, comparator);
-        ASSERT_TRUE(versions.has_value());
-        (*versions)->SetLastSequence(MaxSequenceNumber - 1);
-        ASSERT_TRUE((*versions)->LogAndApply(VersionEdit()).has_value());
-    }
-    const auto database = Open();
-
-    // The last sequence number is still free, and then none is.
-    ASSERT_TRUE(Put(*database, "a", "1").has_value());
-    const Status exhausted = Put(*database, "b", "1");
-    ASSERT_FALSE(exhausted.has_value());
-    EXPECT_EQ(exhausted.error().code(), ErrorCode::InvalidArgument);
-    EXPECT_EQ(Get(*database, "a"), "1");
-    EXPECT_EQ(Get(*database, "b"), "<none>");
 }
 
 TEST_F(DatabaseTest, ReturnsTheErrorsOfTableReads) {
