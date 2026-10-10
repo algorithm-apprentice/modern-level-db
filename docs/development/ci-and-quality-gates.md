@@ -3,8 +3,10 @@
 [Development guide](README.md)
 
 The primary workflow is `.github/workflows/ci.yml`. It runs for pull requests
-and pushes. A first `changes` job validates routing and decides whether a
-change is documentation-only.
+(including new commits pushed to an open pull request) and pushes to `main`.
+Pushes to other branches do not start a separate run, avoiding duplicate
+branch-push and pull-request CI. A first `changes` job validates routing and
+decides whether a change is documentation-only.
 
 ## Documentation-only routing
 
@@ -25,7 +27,7 @@ The routing classifier must fail safe:
 ## Documentation quality gate
 
 The dependency-free checker applies objective rules to the complete
-documentation corpus on every pull request and push:
+documentation corpus on every pull request and push to `main`:
 
 ```console
 python3 tests/tools/ci_changes_test.py
