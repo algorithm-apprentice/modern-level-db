@@ -10,6 +10,9 @@ namespace modern_leveldb {
 
 class Database;
 
+// Bidirectional view of visible user keys in comparator order at a fixed sequence.
+// Retains its engine and read sources. Do not operate on, move, or destroy the
+// same iterator concurrently. See docs/learning/06-reads-and-iterators.md.
 class Iterator final {
 public:
     Iterator(const Iterator&) = delete;
@@ -18,13 +21,19 @@ public:
     Iterator& operator=(Iterator&& source) noexcept;
     ~Iterator();
 
+    // Initially false; reaching either end is successful but leaves no position.
     [[nodiscard]] bool valid() const noexcept;
+    // Require valid(). Borrowed views expire on movement or destruction; copy
+    // them before advancing when values must be retained.
     [[nodiscard]] ByteView key() const noexcept;
     [[nodiscard]] ByteView value() const noexcept;
 
+    // Seeks establish a position; Seek chooses the first user key >= its target.
+    // A failed move leaves the iterator invalid. A later seek can start over.
     [[nodiscard]] Status SeekToFirst();
     [[nodiscard]] Status SeekToLast();
     [[nodiscard]] Status Seek(ByteView key);
+    // Require valid(); these are not seek operations on an unpositioned iterator.
     [[nodiscard]] Status Next();
     [[nodiscard]] Status Prev();
 

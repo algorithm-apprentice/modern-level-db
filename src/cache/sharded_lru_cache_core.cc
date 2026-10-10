@@ -214,6 +214,8 @@ ShardedLruCacheCore::Pin ShardedLruCacheCore::Insert(ByteView key, const void* v
             Evict(shard, retired);
         }
     }
+    // User value destructors can reenter the cache, so reclamation is outside
+    // the shard mutex. Retired entries are already unreachable from its index.
     DeleteRetired(retired);
     Entry* inserted = entry.release();
     return Pin(*this, *inserted);
@@ -319,6 +321,8 @@ void ShardedLruCacheCore::Unref(Shard& shard, Entry& entry, Entry*& retired) noe
         assert(!entry.in_cache);
         Retire(entry, retired);
     } else if (entry.in_cache && entry.refs == 1) {
+        // Releasing the last external pin makes the entry evictable again;
+        // it becomes most recently used rather than keeping its insertion age.
         Remove(entry);
         Append(shard.lru, entry);
     }

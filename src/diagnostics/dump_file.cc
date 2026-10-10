@@ -244,6 +244,8 @@ Status FormatVersionEdit(const WalLogicalRecord& record, WritableFile& output,
 
 Status DumpTable(FileSystem& file_system, const std::filesystem::path& path,
                  std::string_view escaped_path, WritableFile& output) {
+    // Diagnostic traversal uses defensive comparison and no cache population.
+    // It exposes visited physical history, not a latest-value database view.
     Result<std::uint64_t> size = file_system.FileSize(path);
     if (!size.has_value()) {
         return std::unexpected(std::move(size).error());

@@ -24,6 +24,9 @@ namespace {
 using fuzz_support::Require;
 
 bool WithinDecodeBudget(ByteView bytes, BlockCompression type) {
+    // Reject advertised huge decode sizes so fuzzing focuses on parser behavior.
+    // Unknown/malformed size metadata still reaches the decoder's own checks;
+    // this prefilter is not a general bound on every allocation.
     constexpr std::size_t Limit = 1 << 20;
     if (type == BlockCompression::Snappy) {
         std::size_t length = 0;
@@ -40,6 +43,8 @@ bool WithinDecodeBudget(ByteView bytes, BlockCompression type) {
 }
 
 void FuzzFormat(ByteView input) {
+    // Select one representation per input. Round-trip and traversal assertions
+    // test internal consistency; independent golden bytes test format conventions.
     if (input.empty() || input.size() > 65536) {
         return;
     }

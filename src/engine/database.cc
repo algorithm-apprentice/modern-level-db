@@ -33,7 +33,7 @@
 namespace modern_leveldb {
 namespace {
 
-// LevelDB's kNumNonTableCacheFiles: reserve this many open-file budget slots
+// Reserve this many open-file budget slots
 // for non-table files before sizing the table cache, not an actual file count.
 constexpr std::size_t ReservedNonTableFileCount = 10;
 // The block cache that a database owns when it is given none.
@@ -179,8 +179,8 @@ DatabaseEngine::DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options,
 DatabaseEngine::~DatabaseEngine() {
     std::unique_lock lock(mutex_);
     closing_ = true;
-    // No write can use the log any longer, and a close error has no one to go
-    // to, as in LevelDB's destructor. A failed open may have no log.
+    // No write can use the log any longer. Destruction has no caller to receive
+    // a close error; resource release is not a data-durability acknowledgment.
     if (log_ != nullptr) {
         try {
             static_cast<void>(log_->Close());
@@ -267,7 +267,8 @@ Status DatabaseEngine::SwitchMemTable() {
     if (!file.has_value()) {
         return std::unexpected(std::move(file).error());
     }
-    // The allocations come before any state changes.
+    // Allocate replacement owners before swapping live log/memtable state.
+    // The file number and on-disk name may already have been reserved/created.
     auto new_log = std::make_unique<WalWriter>(std::move(*file));
     auto new_memtable = std::make_shared<MemTable>(comparator_.user_comparator());
     if (sync_wal_creation_) {
@@ -319,7 +320,9 @@ Status DatabaseEngine::CommitWrite(std::unique_lock<std::mutex>& lock, EncodedWr
         return committed;
     }
     published_mutable_memtable_bytes_ = memtable.memory_usage();
-    // An empty group leaves the last sequence as it was.
+    // Publish only after the complete group is in the memtable. Concurrent
+    // readers use the previous sequence and therefore hide partially inserted
+    // newer entries. An empty group leaves the sequence unchanged.
     versions_->SetLastSequence(first + count - 1);
     return {};
 }
@@ -525,6 +528,8 @@ void DatabaseEngine::ReleaseReadPinnedMemtables() {
 void DatabaseEngine::FlushImmutable(std::unique_lock<std::mutex>& lock) {
     const std::shared_ptr<const Version> base = versions_->current();
     const std::uint64_t number = versions_->NewFileNumber();
+    // Retain the output number before unlocked I/O: cleanup must not mistake
+    // an unfinished/uninstalled table for an obsolete file.
     pending_outputs_.insert(number);
     const std::shared_ptr<const MemTable> immutable = immutable_;
     const std::uint64_t log_number = log_number_;
@@ -614,7 +619,8 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
     if (!edit.has_value()) {
         applied = std::unexpected(std::move(edit).error());
     } else if (closing_) {
-        // As LevelDB does after its last entry.
+        // Closing can begin after the last per-entry check; do not install a
+        // completed output into an engine already shutting down.
         applied = std::unexpected(Error::Aborted("the database closed during a compaction"));
     } else {
         applied = versions_->LogAndApply(std::move(*edit), lock);
@@ -649,6 +655,8 @@ Status DatabaseEngine::BeforeCompactionEntry() {
 }
 
 void DatabaseEngine::RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock) {
+    // Uncertain metadata failure forbids reclamation: either durable topology
+    // may still need the files. Otherwise retain all pinned Versions and outputs.
     if (background_error_.has_value()) {
         return;
     }

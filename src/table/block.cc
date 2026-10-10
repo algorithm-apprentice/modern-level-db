@@ -243,6 +243,8 @@ Status Block::Iterator::Seek(ByteView target) {
         }
     }
 
+    // Find the last restart key strictly before the target, then reconstruct
+    // forward from that checkpoint. Prefix-compressed entries cannot be binary-searched directly.
     while (left < right) {
         const std::size_t middle = left + (right - left + 1) / 2;
         ByteView middle_key;
@@ -258,6 +260,8 @@ Status Block::Iterator::Seek(ByteView target) {
     }
 
     assert(current_key_compare == 0 || valid());
+    // Reuse a current forward position only when the checkpoint is unchanged;
+    // otherwise rebuild the full key from its restart before applying suffixes.
     if (!(left == restart_index_ && current_key_compare < 0)) {
         const Status sought = SeekToRestartPoint(left);
         if (!sought.has_value()) {
@@ -279,6 +283,8 @@ Status Block::Iterator::Next() {
 
 Status Block::Iterator::Prev() {
     assert(valid());
+    // Entries have no backward link/full key at every offset. Reconstruct from
+    // a preceding restart until the next entry would be the current one.
     const std::size_t original = current_;
     while (true) {
         std::size_t restart = 0;

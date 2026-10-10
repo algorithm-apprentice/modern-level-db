@@ -90,6 +90,8 @@ std::optional<WalFragment> WalFragmenter::Cursor::Next() noexcept {
         *block_offset_ = 0;
     }
 
+    // Exactly one header of space can emit an empty First fragment for a nonempty
+    // record; the following block carries its payload. A shorter tail is padding.
     const std::size_t available = WalBlockSize - *block_offset_ - WalHeaderSize;
     const std::size_t fragment_size = std::min(remaining_.size(), available);
     const bool end = fragment_size == remaining_.size();

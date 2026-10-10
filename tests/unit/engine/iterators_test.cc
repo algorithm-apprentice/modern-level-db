@@ -185,7 +185,7 @@ TEST_F(MergingIteratorTest, OrdersEqualKeysByChild) {
               (std::vector<std::string>{"a@1=first", "b@1=first", "b@1=second", "c@1=second"}));
 
     // Changing direction moves the other children past the current key, so
-    // their equal entries are passed over, as in LevelDB.
+    // their equal entries are passed over instead of being replayed.
     EXPECT_EQ(After(merged->SeekToLast(), *merged), "c@1=second");
     EXPECT_EQ(After(merged->Prev(), *merged), "b@1=second");
     EXPECT_EQ(After(merged->Prev(), *merged), "b@1=first");

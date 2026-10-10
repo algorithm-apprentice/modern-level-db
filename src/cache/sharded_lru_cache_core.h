@@ -13,6 +13,9 @@
 
 namespace modern_leveldb {
 
+// Sharded retention and eviction, separate from value type. Capacity is a per-shard
+// target (ceil(total / 16)); pinned entries may exceed it. A pin borrows this core,
+// so all pins must be released before destruction.
 class ShardedLruCacheCore final {
 private:
     struct Entry;
@@ -51,6 +54,8 @@ public:
                              std::size_t charge);
     [[nodiscard]] std::optional<Pin> Lookup(ByteView key);
     void Erase(ByteView key);
+    // Charge of entries still indexed in the cache, not all retained values or
+    // physical memory. Uncached/erased pins are outside this accounting.
     [[nodiscard]] std::size_t total_charge() const;
     [[nodiscard]] std::uint64_t NewId() noexcept;
 
@@ -76,6 +81,7 @@ private:
         Entry* previous = nullptr;
         std::size_t charge;
         std::size_t key_length;
+        // Cache ownership contributes one reference; each pin adds another.
         bool in_cache = false;
         std::uint32_t refs = 1;
         std::uint32_t hash;
@@ -116,6 +122,8 @@ private:
         std::size_t capacity = 0;
         std::size_t usage = 0;
         HandleTable table;
+        // Indexed entries with only the cache reference are evictable in lru.
+        // Indexed entries with pins sit in in_use; erased pins sit in neither list.
         Entry lru;
         Entry in_use;
     };

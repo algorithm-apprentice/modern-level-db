@@ -15,14 +15,8 @@
 
 namespace modern_leveldb {
 
-// Iterates the user keys whose newest entry at or before the sequence is a
-// value, with that value, in the user comparator's order. key() returns the
-// user key. key() and value() require a valid position and remain valid until
-// the iterator moves; Next and Prev require a valid position. A failed move,
-// including one that finds a key that is not an internal key, leaves the
-// iterator invalid. The user comparator must outlive the iterator.
-// Samples a database iterator's reads for seek statistics, as LevelDB's
-// DBIter does. Either both functions are set or neither is.
+// Samples bytes examined by an iterator to estimate overlapping-file read cost.
+// Either both functions are set or neither is.
 struct ReadSampling {
     // Returns the number of key and value bytes to read before the next sample.
     std::function<std::uint64_t()> next_period;
@@ -30,6 +24,13 @@ struct ReadSampling {
     std::function<void(ByteView internal_key)> sample;
 };
 
+// Presents the newest visible value of each user key at or before a fixed
+// sequence, hiding older versions and deletions. See docs/learning/06-reads-and-iterators.md.
+//
+// Initially unpositioned. key(), value(), Next(), and Prev() require valid().
+// Key/value views remain valid until movement or destruction. A failed move,
+// including a malformed internal key, leaves the iterator invalid. The user
+// comparator and objects borrowed by the internal iterator must outlive it.
 class DbIterator final {
 public:
     // Requires a sequence of at most MaxSequenceNumber. With sampling, the

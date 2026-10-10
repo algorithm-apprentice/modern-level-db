@@ -318,6 +318,8 @@ Status VersionSet::ApplyPrepared(VersionEdit edit, Version version,
         new_manifest_snapshot =
             Snapshot(comparator_->user_comparator(), compact_pointers_, *current_).Encode();
     }
+    // Prepare ownership/capacity before I/O: after the durable edit succeeds,
+    // publishing its topology must not need another allocation.
     auto candidate = std::make_shared<const Version>(std::move(version));
     ReserveInstall();
 
@@ -338,6 +340,8 @@ Status VersionSet::ApplyPrepared(VersionEdit edit, Version version,
         failure_ = written.error();
         return written;
     }
+    // Persist first, publish second. Readers keep the old Version during I/O;
+    // an uncertain write failure must not authorize cleanup using the candidate.
     compact_pointers_ = std::move(compact_pointers);
     log_number_ = log_number;
     prev_log_number_ = prev_log_number;
@@ -403,6 +407,8 @@ Status VersionSet::Write(const VersionEdit& edit,
     if (created == nullptr) {
         return {};
     }
+    // Persist the new MANIFEST's name before CURRENT can durably refer to it.
+    // The native Windows backend retains only its explicit weak namespace policy.
     const Status directory = file_system_->SyncDirectory(directory_);
     if (!directory.has_value()) {
         return directory;
@@ -415,7 +421,8 @@ Status VersionSet::Write(const VersionEdit& edit,
     return {};
 }
 
-// Points CURRENT at the new MANIFEST through a temporary file.
+// Selects metadata through a synced temporary file, rename, then namespace barrier.
+// File bytes and the selected name are separate persistence obligations.
 Status VersionSet::InstallCurrent() const {
     const std::filesystem::path temporary = TempFileName(directory_, manifest_file_number_);
     Result<std::unique_ptr<WritableFile>> file = file_system_->OpenWritable(temporary);

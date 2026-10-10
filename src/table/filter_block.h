@@ -13,8 +13,7 @@
 namespace modern_leveldb {
 
 // Builds a table's filter block: one filter for each 2 KiB range of data block
-// offsets. If a member function throws, which only allocation failure causes,
-// the builder must not be used again.
+// offsets. After any exception the builder must not be used again.
 class FilterBlockBuilder final {
 public:
     explicit FilterBlockBuilder(BloomFilterPolicy policy) noexcept : policy_(policy) {}
@@ -51,7 +50,9 @@ private:
     bool finished_ = false;
 };
 
-// Answers filter queries from a validated filter block that it owns.
+// Answers filter queries from validated owned or borrowed block contents.
+// Borrowed backing bytes must remain alive and unchanged for the reader's lifetime;
+// owning the BlockContents wrapper does not extend the backing file's lifetime.
 class FilterBlockReader final {
 public:
     [[nodiscard]] static Result<FilterBlockReader> Create(std::vector<std::byte> contents,

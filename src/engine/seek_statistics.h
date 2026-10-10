@@ -11,12 +11,11 @@
 
 namespace modern_leveldb {
 
-// The average number of bytes that an iterator reads between samples, LevelDB's
-// config::kReadBytesPeriod.
+// Average byte interval for sampled iterator read-amplification estimates.
 inline constexpr std::uint64_t ReadBytesPeriod = std::uint64_t{1} << 20U;
 
-// Returns an iterator's sampling periods as LevelDB draws them for the seed:
-// uniform below twice ReadBytesPeriod, from LevelDB's Random.
+// Returns deterministic pseudo-random intervals below twice ReadBytesPeriod,
+// avoiding a fixed stride that could repeatedly miss the same overlapping keys.
 [[nodiscard]] std::function<std::uint64_t()> ReadSamplingPeriods(std::uint32_t seed);
 
 // The file that the current version should compact because its metadata seek

@@ -274,7 +274,8 @@ public:
     [[nodiscard]] Status Next() override {
         assert(valid());
         if (!forward_) {
-            // Position every other child after the current key.
+            // Direction changes must move other children strictly past the
+            // current key, or an equal entry would be emitted again.
             for (const std::unique_ptr<InternalIterator>& child : children_) {
                 if (child.get() == current_) {
                     continue;
@@ -303,7 +304,8 @@ public:
     [[nodiscard]] Status Prev() override {
         assert(valid());
         if (forward_) {
-            // Position every other child before the current key.
+            // Restore the reverse-merge invariant: every other child is strictly
+            // before the current key, so equal entries are not replayed.
             for (const std::unique_ptr<InternalIterator>& child : children_) {
                 if (child.get() == current_) {
                     continue;

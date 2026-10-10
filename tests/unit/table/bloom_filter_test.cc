@@ -37,7 +37,7 @@ std::vector<std::byte> BuildFilter(const BloomFilterPolicy& policy,
     return filter;
 }
 
-// LevelDB's test key: the fixed32 encoding of an integer.
+// Fixed-width binary integers exercise all byte positions, not decimal text keys.
 std::array<std::byte, 4> IntegerKey(std::uint32_t value) {
     std::array<std::byte, 4> key;
     EncodeFixed32(key, value);

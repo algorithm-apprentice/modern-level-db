@@ -13,6 +13,9 @@
 
 namespace modern_leveldb {
 
+// Owns cached values and returns move-only retention handles. Concurrent cache
+// operations are supported, but this cache must outlive every handle, including
+// uncached handles. See docs/learning/05-tables-filters-and-caches.md.
 template <typename Value>
 class ShardedLruCache final {
 public:
@@ -48,6 +51,9 @@ public:
     ShardedLruCache& operator=(ShardedLruCache&&) = delete;
     ~ShardedLruCache() = default;
 
+    // Copies the key and transfers value ownership, including on allocation failure.
+    // Replacement/Erase remove lookup reachability, not outstanding handle validity.
+    // A zero-capacity shard or charge overflow still returns an uncached live handle.
     [[nodiscard]] Result<Handle> Insert(ByteView key, std::unique_ptr<const Value> value,
                                         std::size_t charge) {
         if (value == nullptr) {

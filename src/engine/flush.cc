@@ -13,11 +13,10 @@
 namespace modern_leveldb {
 namespace {
 
-// LevelDB's MaxGrandParentOverlapBytes, relative to the target file size.
+// Bound inherited grandparent overlap relative to the target output size.
 constexpr std::uint64_t GrandparentOverlapFactor = 10;
 
-// LevelDB checks that the level after the next one exists; for every level
-// that a memtable's table moves from, it does.
+// Placement probes next-level overlap and the following level's overlap bytes.
 static_assert(MaxMemTableOutputLevel + 1 < NumLevels);
 
 // A range of user keys, both ends included.
@@ -95,6 +94,8 @@ Result<VersionEdit> FlushMemTable(FileSystem& file_system, const std::filesystem
     if (!table->has_value()) {
         return edit;
     }
+    // The file is complete; protect its name before a durable metadata edit may
+    // reference it, subject to the backend's admitted namespace guarantee.
     const Status synced = file_system.SyncDirectory(directory);
     if (!synced.has_value()) {
         return std::unexpected(synced.error());

@@ -14,7 +14,7 @@ namespace modern_leveldb {
 namespace {
 
 // A group may grow to this size, or by this much when its first batch is at
-// most this large, as in LevelDB.
+// most this large, amortizing small writes without an unbounded group.
 constexpr std::size_t MaximumGroupSize = std::size_t{1} << 20U;
 constexpr std::size_t SmallBatchGrowth = std::size_t{128} << 10U;
 

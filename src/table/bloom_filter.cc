@@ -29,7 +29,7 @@ std::byte BitMask(std::uint64_t position) noexcept {
 
 BloomFilterPolicy::BloomFilterPolicy(std::uint32_t bits_per_key) noexcept
     : bits_per_key_(bits_per_key),
-      // LevelDB rounds bits_per_key * ln(2), approximated as 0.69, down.
+      // Approximate the optimal probe count as floor(bits_per_key * ln(2)).
       probes_(static_cast<std::uint32_t>(
           std::clamp<std::uint64_t>(std::uint64_t{bits_per_key} * 69 / 100, 1, MaximumProbes))) {}
 
@@ -72,7 +72,7 @@ bool BloomFilterPolicy::KeyMayMatch(ByteView key, ByteView filter) const noexcep
     const std::uint64_t bits = std::uint64_t{filter.size() - 1} * 8;
     const auto probes = std::to_integer<std::uint32_t>(filter.back());
     if (probes > MaximumProbes) {
-        // LevelDB reserves larger probe counts for future filter encodings.
+        // Unknown future probe encodings must not cause false exclusions.
         return true;
     }
 

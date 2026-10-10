@@ -9,10 +9,14 @@
 
 namespace modern_leveldb {
 
+// Monotonic byte storage: allocations remain stable until arena destruction,
+// when all blocks are reclaimed together. Individual entries cannot be freed.
+// Allocation and accounting need one writer or external synchronization.
+// See docs/learning/03-memory-and-mvcc.md.
 class Arena final {
 public:
-    static constexpr std::size_t Alignment =
-        sizeof(void*) > std::size_t{8} ? sizeof(void*) : std::size_t{8};
+    static constexpr std::size_t Alignment = sizeof(void*) > std::size_t{8} ? sizeof(void*)
+                                                                            : std::size_t{8};
 
     Arena() noexcept = default;
 
@@ -26,6 +30,8 @@ public:
     [[nodiscard]] MutableByteView Allocate(std::size_t bytes);
     [[nodiscard]] MutableByteView AllocateAligned(std::size_t bytes);
 
+    // Reserved block bytes plus per-block pointer accounting, not live payload
+    // size or total process memory. Must not race with allocation.
     [[nodiscard]] std::size_t memory_usage() const noexcept { return memory_usage_; }
 
 private:

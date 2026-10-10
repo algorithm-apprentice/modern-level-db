@@ -11,6 +11,10 @@ namespace detail {
 class SnapshotRegistration;
 }
 
+// RAII registration of a read sequence. Retains the engine and prevents
+// compaction from discarding history needed at that sequence, not by copying data.
+// Reads naming this handle require it to stay live and in the same database;
+// do not move or destroy it concurrently with such reads.
 class Snapshot final {
 public:
     Snapshot(const Snapshot&) = delete;

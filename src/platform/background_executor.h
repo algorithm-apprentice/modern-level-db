@@ -15,6 +15,9 @@ namespace modern_leveldb {
 
 using BackgroundTask = std::function<void(std::stop_token)>;
 
+// Scheduling boundary, not a database lock. Engine injection requires deferred
+// execution (never inline in Schedule) and eventual execution of accepted tasks
+// while the engine is open. The injected executor must outlive that engine.
 class BackgroundExecutor {
 public:
     BackgroundExecutor() = default;
@@ -26,6 +29,9 @@ public:
     [[nodiscard]] virtual Status Schedule(BackgroundTask task) = 0;
 };
 
+// One worker runs queued callbacks in order. Destruction stops/joins the worker
+// and discards unstarted callbacks; it does not drain the queue. Tasks must contain
+// their own exceptions. Engine shutdown waits for its accepted work before teardown.
 class SerialExecutor final : public BackgroundExecutor {
 public:
     SerialExecutor();

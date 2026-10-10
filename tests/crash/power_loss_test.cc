@@ -133,6 +133,8 @@ CrashImage Baseline() {
 }
 
 struct Outcome {
+    // Durable acknowledged prefix is mandatory; an in-flight or unsynced batch
+    // may also survive, but only as a whole model state, never a partial batch.
     CrashImage image;
     std::vector<Model> possible{{{"baseline", "durable"}}};
     std::size_t acknowledged = 0;
@@ -211,6 +213,8 @@ TEST(PowerLossTest, PreservesAcknowledgedBatchesAtEveryMutationBoundary) {
             Check(recovered.Open(false));
             const Model actual = recovered.ReadAll();
             bool matched = false;
+            // Compare against every allowed whole-batch prefix, not only the
+            // acknowledged one: lost acknowledgment does not imply lost WAL bytes.
             for (std::size_t state = stopped.acknowledged; state < stopped.possible.size();
                  ++state) {
                 matched = matched || actual == stopped.possible[state];

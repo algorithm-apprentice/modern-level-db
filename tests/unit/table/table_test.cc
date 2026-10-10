@@ -49,7 +49,8 @@ static_assert(!std::is_constructible_v<Table::Iterator, Table&&>);
 static_assert(OpenableWith<const InternalKeyComparator&>);
 static_assert(!OpenableWith<InternalKeyComparator>);
 
-// LevelDB's tables from the writer tests, as hex.
+// Independent table bytes shared with the writer tests; provenance is the pinned
+// LevelDB writer, not this reader's own encoder.
 constexpr std::string_view EmptyTableWithFilter =
     "000000000b008ae8dad100220266696c7465722e6c6576656c64622e4275696c74696e426c6f6f6d"
     "46696c74657232000500000000010000000065e85da8000000000100000000c0f2a1b00a2f3e0800"

@@ -35,8 +35,10 @@ struct TableBuilderOptions {
 // Writes one SSTable of internal keys, which must strictly increase under the
 // comparator. The first error is kept, and later calls return it without
 // further writes. Destroying the builder without Finish abandons the table;
-// the caller deletes the file. If a call throws, which only allocation failure
-// causes, the builder must not be used again.
+// the caller deletes the file. Allocation, comparator callbacks, or file
+// implementations may throw; after any exception the builder must not be used again.
+// The index stores separators between data blocks, not necessarily actual keys.
+// A pending entry waits for the next block's first key so its separator stays below it.
 class TableBuilder final {
 public:
     // The comparator must outlive the builder. A null file makes every call

@@ -14,6 +14,8 @@ namespace modern_leveldb {
 
 class MappedReadLimiter;
 
+// Native copied reads with optional immutable mappings. File and directory
+// barriers protect different durable state; mapped page faults are not typed I/O errors.
 class PosixFileSystem final : public FileSystem {
 public:
     PosixFileSystem();

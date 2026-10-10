@@ -36,7 +36,7 @@ FileMetadata File(std::uint64_t number, std::string_view smallest, std::string_v
 }
 
 TEST(ReadSamplingPeriodsTest, DrawsLevelDbsPeriods) {
-    // The periods that LevelDB's Random(seed).Uniform(2 << 20) draws.
+    // Deterministic Park-Miller periods reduced modulo twice the mean byte interval.
     const std::function<std::uint64_t()> first = ReadSamplingPeriods(1);
     EXPECT_EQ(first(), 16807U);
     EXPECT_EQ(first(), 1456881U);

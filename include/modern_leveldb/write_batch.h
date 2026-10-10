@@ -11,6 +11,10 @@ namespace modern_leveldb {
 
 class Database;
 
+// Owns an ordered list of updates; the engine assigns sequences on submission.
+// Copying duplicates the operations, moving transfers them. Mutations copy their
+// input bytes. A batch is mutable and needs external synchronization when shared.
+// See docs/learning/02-bytes-and-formats.md for the representation.
 class WriteBatch final {
 public:
     WriteBatch();
@@ -20,6 +24,9 @@ public:
     WriteBatch& operator=(WriteBatch&& source) noexcept;
     ~WriteBatch();
 
+    // Empty keys/values are valid; Delete is distinct from Put with an empty value.
+    // Fallible operations reject a moved-from batch. Clear is a no-op and
+    // ApproximateSize returns zero in that state.
     [[nodiscard]] Status Put(ByteView key, ByteView value);
     [[nodiscard]] Status Delete(ByteView key);
     [[nodiscard]] Status Append(const WriteBatch& source);

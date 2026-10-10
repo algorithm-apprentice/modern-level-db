@@ -98,6 +98,8 @@ private:
     std::source_location location_;
 };
 
+// Ordinary failures carry an Error; optional success payloads express absence.
+// This type does not catch allocation or callback exceptions.
 template <typename T>
 using Result = std::expected<T, Error>;
 

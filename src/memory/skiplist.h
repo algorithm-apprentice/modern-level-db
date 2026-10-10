@@ -19,6 +19,12 @@ concept ArenaCompatibleSkipListKey =
     std::is_default_constructible_v<Key> && std::is_trivially_copy_constructible_v<Key> &&
     std::is_trivially_destructible_v<Key> && alignof(Key) <= Arena::Alignment;
 
+// Arena-backed ordered index with one externally serialized writer and concurrent
+// readers. Keys remain immutable after publication; nodes live until arena teardown.
+// The comparator, arena, and list must outlive all traversals. Compare must support
+// concurrent calls; its borrowed state is not protected by the link atomics.
+// Any storage referenced by a Key must also remain alive and unchanged.
+// See docs/learning/08-cpp-ownership-errors-and-concurrency.md.
 template <ArenaCompatibleSkipListKey Key, typename Compare>
 class SkipList final {
 private:
@@ -52,6 +58,8 @@ public:
         return true;
     }
 
+    // Requires a unique key, as established by reserved memtable write sequences.
+    // Duplicate insertion is a caller error, not a recoverable result here.
     void InsertTrusted(Key key) {
         std::array<Node*, MaxHeight> predecessors{};
         Node* existing = FindGreaterOrEqual(key, predecessors.data());
@@ -148,6 +156,8 @@ private:
     };
 
     static constexpr std::size_t LinksOffset() noexcept {
+        // Variable-height links follow the fixed node, aligned and constructed
+        // separately. Trivial destruction permits whole-arena reclamation.
         static_assert((alignof(Link) & (alignof(Link) - 1U)) == 0U);
         return (sizeof(Node) + alignof(Link) - 1U) & ~(alignof(Link) - 1U);
     }
@@ -163,11 +173,15 @@ private:
 
         Node* node = NewNode(key, height);
         if (height > current_height) {
+            // Height is only a search hint. A reader seeing the higher level before
+            // its first link is published finds the initialized null head link and descends.
             max_height_.store(height, std::memory_order_relaxed);
         }
         for (int level = 0; level < height; ++level) {
             Node* predecessor = predecessors[static_cast<std::size_t>(level)];
             node->SetNextRelaxed(level, predecessor->NextRelaxed(level));
+            // Release-publication pairs with readers' acquire loads: the key and
+            // outgoing link are initialized before the node becomes reachable.
             predecessor->SetNext(level, node);
         }
     }
@@ -264,6 +278,7 @@ private:
     Arena& arena_;
     Node* const head_;
     std::atomic<int> max_height_{1};
+    // Writer-private height selection; atomic links do not serialize writers.
     std::uint32_t random_seed_ = 0xdeadbeefU & 0x7fffffffU;
 };
 

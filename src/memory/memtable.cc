@@ -33,6 +33,8 @@ std::uint64_t PackTrailer(SequenceNumber sequence, ValueKind kind) noexcept {
     return (sequence << 8U) | static_cast<std::uint8_t>(kind);
 }
 
+// Only arena entries encoded by EncodeEntry (or a constructed lookup prefix)
+// reach these helpers; their validated lengths and stable storage bound reads.
 std::uint32_t DecodeVarint32Unchecked(const std::byte*& input) noexcept {
     std::uint32_t value = 0;
     std::size_t shift = 0;
@@ -186,6 +188,8 @@ void MemTable::AddTrusted(SequenceNumber sequence, ValueKind kind, ByteView key,
 }
 
 MemTableLookup MemTable::Lookup(const LookupKey& key) const {
+    // Descending sequence order skips versions newer than the lookup's sequence.
+    // A lower-bound result still needs equality on the user-key portion.
     Table::Iterator iterator(table_);
     iterator.Seek(key.memtable_key().data());
     if (!iterator.valid()) {

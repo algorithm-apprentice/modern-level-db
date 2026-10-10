@@ -97,7 +97,7 @@ inline constexpr std::array<std::string_view, static_cast<std::size_t>(Counter::
         "data_entries_decoded",
         "internal_key_comparisons",
         "result_bytes",
-};
+    };
 
 inline constexpr std::array<std::string_view, static_cast<std::size_t>(Stage::Count)> StageNames{
     "get",         "candidate_selection", "table_cache_lookup", "block_cache_lookup",
@@ -134,7 +134,7 @@ inline constexpr std::array<std::string_view, static_cast<std::size_t>(FileOpenR
         "count_budget_exhausted",
         "stat_failed",
         "mmap_failed",
-};
+    };
 
 struct FileOpenTotal {
     std::uint64_t files = 0;
@@ -187,7 +187,8 @@ private:
     std::chrono::steady_clock::time_point started_{};
 };
 
-// Accumulates an inclusive duration only for a sampled Get.
+// Accumulates an inclusive duration only for a sampled Get. Nested stage times
+// overlap: summing them is not an exclusive-cost decomposition or throughput result.
 class StageScope final {
 public:
     explicit StageScope(Stage stage) noexcept;

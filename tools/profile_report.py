@@ -218,6 +218,8 @@ def stop_owned(process, targets, target_executable, discovery_complete, grace=5)
 
 def run_owned(command, log, timeout, journal, target_executable=None, grace=5):
     """Run only owned processes; record status and verify cleanup before returning."""
+    # Process exit alone does not establish descendant cleanup. Retain verified
+    # identities and cleanup evidence before allowing scratch data to be removed.
     targets = []
     target_executable = Path(target_executable).resolve() if target_executable else None
     discovery_complete = target_executable is None

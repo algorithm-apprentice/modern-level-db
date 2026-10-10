@@ -11,11 +11,11 @@
 
 namespace modern_leveldb {
 
-// LevelDB's built-in Bloom filter policy. It is a small value, so filter
-// builders and readers keep their own copy.
+// Probabilistic exclusion for byte-equal keys: a valid filter can rule a key out,
+// while "may match" still requires a table lookup. Builders/readers keep a policy copy.
 class BloomFilterPolicy final {
 public:
-    // Any value follows LevelDB's formulas; the public API validates user options.
+    // Density controls space/probe tradeoffs; size bounds are enforced by builders.
     explicit BloomFilterPolicy(std::uint32_t bits_per_key) noexcept;
 
     [[nodiscard]] std::string_view Name() const noexcept { return "leveldb.BuiltinBloomFilter2"; }
@@ -27,8 +27,8 @@ public:
     // Appends one filter over the keys, leaving the existing bytes unchanged.
     void CreateFilter(std::span<const ByteView> keys, std::vector<std::byte>& output) const;
 
-    // Matches any byte string as LevelDB does: a filter shorter than two bytes
-    // matches nothing, and a probe count above 30 matches every key.
+    // A filter shorter than two bytes matches nothing; an unknown probe encoding
+    // (>30) conservatively matches every key instead of risking a false negative.
     [[nodiscard]] bool KeyMayMatch(ByteView key, ByteView filter) const noexcept;
 
 private:

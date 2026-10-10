@@ -116,6 +116,42 @@ complete validity/lifetime argument; see
 proof pattern and [ADR-0055](../adr/0055-leveldb-block-iterator-parity.md) for the
 current lazy, checked block-decoding boundary.
 
+### Comments as a learning layer
+
+Keep the layers complementary: lessons explain concepts and worked examples,
+headers state caller obligations, implementations explain invariant transitions,
+tests provide executable evidence, and ADRs retain decision history.
+
+Organize comments around this engine's representation, visibility, persistence,
+ownership, concurrency, and reclamation. Explain the local invariant instead
+of using another implementation's function name as its explanation. Keep
+upstream provenance only where it identifies a format contract or independent
+test oracle; do not erase compatibility identities or fixture origins.
+
+At a core module or type, briefly identify its role and the important
+representation, ownership, or synchronization model. At a declaration, explain
+non-obvious preconditions, absence/error meanings, borrowed-view invalidation,
+and failure/exception state. Beside a subtle transition, explain why publication,
+retention, or durability remains correct rather than narrating assignments.
+
+Use summary-first English prose, separating prerequisites and lifetime/error
+rules into paragraphs when needed. Name the retaining owner, protecting mutex,
+or invalidation event; "thread-safe" or "valid" alone is not a complete contract.
+Distinguish owned wrappers from owned backing storage and checked boundaries
+from trusted internal inputs.
+
+Link concepts to repository-relative lesson paths or stable test/symbol names
+when the next reading step is otherwise difficult to find. Do not embed source
+line numbers or repeat complete lessons and historical performance conclusions.
+Annotate representative golden bytes, thresholds, schedules, and model limits
+when their reasoning is opaque; do not restate descriptive test names.
+
+No comment quota, mandatory comment on every function, or documentation generator
+is required. Keep straightforward accessors, wrappers, and build commands terse.
+Preserve `GCOVR_EXCL_*`, `NOLINT`, and formatter directives and their reasons.
+Check every new contract against its actual callers and implementation; an
+unsupported guarantee is worse than missing prose.
+
 ## Review and changes
 
 Use behavior-oriented test names, as in

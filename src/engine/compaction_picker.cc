@@ -19,8 +19,8 @@ namespace {
 
 using Files = std::vector<Version::File>;
 
-// LevelDB's ExpandedCompactionByteSizeLimit and MaxGrandParentOverlapBytes,
-// relative to the target file size.
+// Bound current input expansion and overlap cost of a future compaction,
+// expressed relative to the target output size.
 constexpr std::uint64_t ExpandedCompactionFactor = 25;
 constexpr std::uint64_t GrandparentOverlapFactor = 10;
 
@@ -29,7 +29,7 @@ void Expect(const Status& status) noexcept {
     static_cast<void>(status);
 }
 
-// LevelDB's MaxBytesForLevel for levels 1 and deeper.
+// Geometric level capacity keeps each deeper level an order of magnitude larger.
 double MaxBytesForLevel(std::uint32_t level) {
     double bytes = 10. * 1048576.0;
     for (; level > 1; --level) {
@@ -71,9 +71,8 @@ KeyRange RangeOf(const InternalKeyComparator& comparator, std::span<const Versio
     return range;
 }
 
-// Returns the level's files that hold a user key of the range, both ends
-// included, as LevelDB's Version::GetOverlappingInputs does. Level-0 files may
-// overlap each other, so one that widens the range restarts the search.
+// Finds inclusive user-key overlaps. Level 0 is not a disjoint run: widening
+// the range can include files skipped earlier, so restart until the closure is stable.
 Files OverlappingFiles(const Version& version, std::uint32_t level,
                        const Comparator& user_comparator, const KeyRange& range) {
     ByteView begin = range.smallest->user_key();
@@ -105,11 +104,10 @@ Files OverlappingFiles(const Version& version, std::uint32_t level,
     return overlapping;
 }
 
-// Adds the level's files that start after the largest key of the files with
-// the same user key, as LevelDB's AddBoundaryInputs does, so that no newer
-// entry of a user key stays in the level while an older one moves down. Files
-// are sorted by smallest key, so the first file that starts after the largest
-// key is the only candidate LevelDB's search for the smallest one can find.
+// Extends the right edge across files sharing its user key. Otherwise older
+// versions left in the shallower level could hide newer versions moved down:
+// point reads stop at the first source that decides. Sorted smallest keys make
+// the first file after the current edge the only next boundary candidate.
 void AddBoundaryInputs(const InternalKeyComparator& comparator,
                        std::span<const Version::File> level_files, Files& files) {
     if (files.empty()) {
@@ -130,8 +128,8 @@ void AddBoundaryInputs(const InternalKeyComparator& comparator,
     }
 }
 
-// Returns the level files and the next level's files that a compaction
-// starting from the files reads, as LevelDB's SetupOtherInputs chooses them.
+// Closes the input range over both levels, then records grandparents to bound
+// the overlap inherited by the output's next compaction.
 Compaction SetupInputs(std::shared_ptr<const Version> version,
                        const InternalKeyComparator& comparator, std::uint32_t level, Files inputs,
                        std::uint64_t target_file_size) {

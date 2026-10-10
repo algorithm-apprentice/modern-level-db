@@ -287,7 +287,7 @@ TEST_F(RecoveryTest, ReplaysLogsIntoALevel0Table) {
 
 TEST_F(RecoveryTest, SplitsTablesAtTheWriteBufferSize) {
     static_cast<void>(Recover());
-    // LevelDB gives an empty batch the sequence of the next write.
+    // An empty batch consumes no sequence; its header names the next available one.
     WriteLog(2, {Batch(1, {Put{"a", "1"}}), Batch(2, {}), Batch(2, {Put{"b", "2"}, Put{"c", "3"}}),
                  Batch(4, {Delete{"a"}})});
     RecoveryOptions options;

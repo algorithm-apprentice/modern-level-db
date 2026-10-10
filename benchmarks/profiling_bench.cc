@@ -681,6 +681,8 @@ private:
     std::string read_value_;
 };
 
+// Marks workload execution for attribution, not preparation/verification. Capture
+// overhead makes these recordings diagnostic evidence, not throughput speedups.
 class ProfileInterval final {
 public:
     ProfileInterval(bool enabled, const std::string& name, benchmark::State& state)
@@ -732,6 +734,9 @@ private:
 #endif
 };
 
+// Prepare -> reopen -> verify -> warm -> measured queries -> verify/close.
+// Adapter policy selects result ownership and file access; comparisons require
+// matching work and policies, not merely matching case labels.
 template <typename Adapter>
 class Fixture final {
 public:
@@ -1318,6 +1323,8 @@ void CheckMutationStreams() {
     std::cout << "Verified all normal/smoke mutation streams and rejected incorrect dispatches\n";
 }
 
+// Mutable state advances each iteration. Use one predeclared fixed-work callback
+// per fresh process; adaptive reruns/repetitions would measure different database states.
 template <typename Adapter>
 class MutationFixture final {
 public:

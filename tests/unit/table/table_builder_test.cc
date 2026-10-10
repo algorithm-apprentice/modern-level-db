@@ -35,7 +35,8 @@ static_assert(!std::is_move_constructible_v<TableBuilder>);
 static_assert(!std::is_constructible_v<TableBuilder, std::unique_ptr<WritableFile>,
                                        InternalKeyComparator&&, const TableBuilderOptions&>);
 
-// LevelDB's uncompressed tables for the same inputs, as hex.
+// Independent uncompressed-table oracle from the pinned LevelDB writer, as hex;
+// a self-generated round trip could preserve the same wrong format in both codecs.
 constexpr std::string_view EmptyTable =
     "000000000100000000c0f2a1b0000000000100000000c0f2a1b000080d0800000000000000000000"
     "000000000000000000000000000000000000000000000000000057fb808b247547db";

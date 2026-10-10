@@ -73,6 +73,8 @@ __declspec(noinline) std::uint64_t Hot(std::uint64_t value) noexcept {
     return value;
 }
 
+// Hot, waiting, and alternating epochs are controls for CPU attribution and
+// sampling bias, not database performance results. Stall deliberately skips readiness.
 void Run(const Arguments& args) {
     if (args.mode == "stall") {
         ::Sleep(args.duration);
