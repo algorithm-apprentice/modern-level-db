@@ -33,8 +33,7 @@ Result<WriteBatchReader> WriteBatchReader::Open(ByteView encoded) {
     // Validate everything once so Next can decode borrowed records without
     // repeating recoverable checks. Mutating the backing bytes breaks this proof.
     ByteView remaining = encoded.subspan(WriteBatchHeaderSize);
-    std::uint32_t records_left = count;
-    while (records_left > 0) {
+    for (std::uint32_t index = 0; index < count; ++index) {
         if (remaining.empty()) {
             return std::unexpected(Error::Corruption("write batch count exceeds encoded records"));
         }
@@ -54,7 +53,6 @@ Result<WriteBatchReader> WriteBatchReader::Open(ByteView encoded) {
                 return std::unexpected(value.error());
             }
         }
-        --records_left;
     }
 
     if (!remaining.empty()) {
