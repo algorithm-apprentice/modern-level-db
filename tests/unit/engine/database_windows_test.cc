@@ -41,7 +41,7 @@ TEST(DatabaseWindowsTest, InjectedFilesystemKeepsItsOwnPolicyAndRecoversOrphanNu
         auto database = DatabaseEngine::Open(options, path);
         ASSERT_TRUE(database.has_value()) << database.error().ToString();
         EncodedWriteBatch batch;
-        ASSERT_TRUE(batch.Put(AsBytes("key"), AsBytes(expected)).has_value());
+        batch.Put(AsBytes("key"), AsBytes(expected));
         ASSERT_TRUE((*database)->Write(batch, true).has_value());
     }
     operations->fail = true;

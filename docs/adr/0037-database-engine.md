@@ -199,7 +199,7 @@ class DatabaseEngine final {
   returns `NotSupported`.
 - `Write` commits the batch through the `WriteQueue`: its prepare function
   makes room as described, and its commit function numbers the group with
-  `PrepareGroup`, commits it with `CommitGroup` without the mutex, records a
+  `SetSequence`, commits it with `CommitGroup` without the mutex, records a
   background error if that fails or throws, and otherwise raises the last
   sequence. An empty batch writes a log record and raises nothing.
 - `Get` and `NewIterator` read at the snapshot, which `GetSnapshot` must have

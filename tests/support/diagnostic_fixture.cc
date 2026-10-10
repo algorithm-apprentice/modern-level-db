@@ -19,11 +19,7 @@ int CreateFixture(const std::filesystem::path& path) {
     }
     modern_leveldb::EncodedWriteBatch batch;
     const std::string value(80 * 1'024, 'x');
-    const auto added = batch.Put(modern_leveldb::AsBytes("key"), modern_leveldb::AsBytes(value));
-    if (!added.has_value()) {
-        std::cerr << added.error().ToString() << '\n';
-        return 1;
-    }
+    batch.Put(modern_leveldb::AsBytes("key"), modern_leveldb::AsBytes(value));
     const auto written = (*database)->Write(batch, true);
     if (!written.has_value()) {
         std::cerr << written.error().ToString() << '\n';

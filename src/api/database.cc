@@ -158,7 +158,7 @@ Status Database::Put(ByteView key, ByteView value, const WriteOptions& options) 
         return std::unexpected(MovedFromDatabase("Put"));
     }
     EncodedWriteBatch batch;
-    batch.PutTrusted(key, value);
+    batch.Put(key, value);
     return state->engine().Write(batch, options.sync);
 }
 
@@ -168,7 +168,7 @@ Status Database::Delete(ByteView key, const WriteOptions& options) {
         return std::unexpected(MovedFromDatabase("Delete"));
     }
     EncodedWriteBatch batch;
-    batch.DeleteTrusted(key);
+    batch.Delete(key);
     return state->engine().Write(batch, options.sync);
 }
 

@@ -50,8 +50,8 @@ private:
 
 void WriteLog(MemoryFileSystem& file_system, const std::filesystem::path& path) {
     EncodedWriteBatch batch;
-    ASSERT_TRUE(batch.Put(AsBytes("a"), AsBytes("1")).has_value());
-    ASSERT_TRUE(batch.SetSequence(1).has_value());
+    batch.Put(AsBytes("a"), AsBytes("1"));
+    batch.SetSequence(1);
     auto file = file_system.OpenWritable(path);
     ASSERT_TRUE(file.has_value());
     WalWriter writer(std::move(*file));

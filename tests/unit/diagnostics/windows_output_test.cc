@@ -131,8 +131,8 @@ TEST(NativeDumpCommandTest, PreservesWideUnicodePathsAndInputBytes) {
     ASSERT_TRUE(file_system.CreateDirectory(native).has_value());
     const auto path = native / "000001.log";
     EncodedWriteBatch batch;
-    ASSERT_TRUE(batch.Put(AsBytes("key"), AsBytes("value")).has_value());
-    ASSERT_TRUE(batch.SetSequence(1).has_value());
+    batch.Put(AsBytes("key"), AsBytes("value"));
+    batch.SetSequence(1);
     auto writable = file_system.OpenWritable(path);
     ASSERT_TRUE(writable.has_value());
     WalWriter writer(std::move(*writable));

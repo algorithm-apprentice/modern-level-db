@@ -152,13 +152,15 @@ the portable calculation.
 ## Checked boundaries and trusted loops
 
 `WriteBatchReader::Open` validates an external encoded batch completely:
-header, lengths, tags, count, sequence range, and absence of trailing bytes.
-Its `Next` can then return an optional entry rather than a format error for
-every step.
+header, lengths, tags, count, and absence of trailing bytes. Like pinned
+LevelDB, the batch codec does not impose an additional sequence-range policy.
+Its `Next` can then return an optional entry rather than a format error for every
+step.
 
 The current owned-batch implementation stores its bytes in `std::string`.
-Its mutators preserve a valid private representation, so the commit path
-can use `OpenTrusted` without rescanning external data.
+Its mutators preserve the structural private representation, while the commit
+boundary assigns the sequence interval. The commit path can therefore use
+`OpenTrusted` without rescanning external data.
 Early [ADR-0016](../adr/0016-write-batch-format.md) described vector storage;
 [ADR-0060](../adr/0060-leveldb-write-path-parity.md) records this later
 change.

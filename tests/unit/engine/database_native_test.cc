@@ -29,7 +29,7 @@ TEST(DatabaseNativeTest, OwnsAFileSystemExecutorAndBlockCacheWhenGivenNone) {
         auto database = DatabaseEngine::Open(options, directory);
         ASSERT_TRUE(database.has_value()) << database.error().ToString();
         EncodedWriteBatch batch;
-        ASSERT_TRUE(batch.Put(AsBytes("a"), AsBytes("1")).has_value());
+        batch.Put(AsBytes("a"), AsBytes("1"));
         ASSERT_TRUE((*database)->Write(batch, false).has_value());
         ASSERT_TRUE((*database)->FlushMemTable().has_value());
         EXPECT_TRUE((*database)->WaitForBackgroundWork().has_value());
@@ -58,7 +58,7 @@ TEST(DatabaseNativeTest, CompactionPreservesSnapshotsAndPinnedIteratorFiles) {
     auto& database = **opened;
     const std::string first(80 * 1'024, 'a');
     EncodedWriteBatch batch;
-    ASSERT_TRUE(batch.Put(AsBytes("shared"), AsBytes(first)).has_value());
+    batch.Put(AsBytes("shared"), AsBytes(first));
     ASSERT_TRUE(database.Write(batch, true).has_value());
     ASSERT_TRUE(database.FlushMemTable().has_value());
     ASSERT_TRUE(database.WaitForBackgroundWork().has_value());
@@ -70,7 +70,7 @@ TEST(DatabaseNativeTest, CompactionPreservesSnapshotsAndPinnedIteratorFiles) {
     for (unsigned generation = 1; generation < 12; ++generation) {
         latest.assign(80 * 1'024, static_cast<char>('a' + generation));
         EncodedWriteBatch next;
-        ASSERT_TRUE(next.Put(AsBytes("shared"), AsBytes(latest)).has_value());
+        next.Put(AsBytes("shared"), AsBytes(latest));
         ASSERT_TRUE(database.Write(next, true).has_value());
         ASSERT_TRUE(database.FlushMemTable().has_value());
         ASSERT_TRUE(database.WaitForBackgroundWork().has_value());

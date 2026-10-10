@@ -18,11 +18,6 @@ namespace {
 constexpr std::size_t MaximumGroupSize = std::size_t{1} << 20U;
 constexpr std::size_t SmallBatchGrowth = std::size_t{128} << 10U;
 
-// Scratch starts at sequence zero; the group-size limit also bounds its record count.
-void AppendToGroup(EncodedWriteBatch& group, const EncodedWriteBatch& batch) {
-    group.AppendTrusted(batch);
-}
-
 }  // namespace
 
 Status InsertBatch(WriteBatchReader& batch, MemTable& memtable) {
@@ -39,10 +34,6 @@ void InsertBatchTrusted(WriteBatchReader& batch, MemTable& memtable) {
     while (const std::optional<WriteBatchEntry> entry = batch.Next()) {
         memtable.AddTrusted(entry->sequence, entry->kind, entry->key, entry->value);
     }
-}
-
-Status PrepareGroup(EncodedWriteBatch& group, SequenceNumber first_sequence) {
-    return group.SetSequence(first_sequence);
 }
 
 Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log, MemTable& memtable) {
@@ -88,9 +79,7 @@ WriteQueue::SequenceGuard::SequenceGuard(EncodedWriteBatch& batch) noexcept
 WriteQueue::SequenceGuard::~SequenceGuard() {
     assert(batch_.count() == count_);
     assert(batch_.encoded().size() == size_);
-    const Status restored = batch_.SetSequence(sequence_);
-    assert(restored.has_value());
-    static_cast<void>(restored);
+    batch_.SetSequence(sequence_);
 }
 // GCOVR_EXCL_STOP
 
@@ -120,10 +109,10 @@ WriteQueue::Group WriteQueue::BuildGroup(Writer& leader) {
         if (group == leader.batch) {
             // Whatever sequence the leader holds, scratch starts from zero.
             group_.Clear();
-            AppendToGroup(group_, *leader.batch);
+            group_.Append(*leader.batch);
             group = &group_;
         }
-        AppendToGroup(group_, *follower->batch);
+        group->Append(*follower->batch);
         last = follower;
     }
     return {.batch = group, .last = last};

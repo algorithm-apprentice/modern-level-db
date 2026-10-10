@@ -291,10 +291,7 @@ Status DatabaseEngine::SwitchMemTable() {
 Status DatabaseEngine::CommitWrite(std::unique_lock<std::mutex>& lock, EncodedWriteBatch& group,
                                    bool sync) {
     const SequenceNumber first = versions_->last_sequence() + 1;
-    const Status prepared = PrepareGroup(group, first);
-    if (!prepared.has_value()) {
-        return prepared;
-    }
+    group.SetSequence(first);
     const std::uint32_t count = group.count();
     // Only the front writer switches the log and the memtable, so they stay.
     WalWriter& log = *log_;

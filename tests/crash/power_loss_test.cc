@@ -126,7 +126,7 @@ CrashImage Baseline() {
     CrashDatabase base;
     Check(base.Open(true));
     EncodedWriteBatch batch;
-    Check(batch.Put(AsBytes("baseline"), AsBytes("durable")));
+    batch.Put(AsBytes("baseline"), AsBytes("durable"));
     Check(base.database->Write(batch, true));
     base.Close();
     return base.file_system.DurableImage();
@@ -152,19 +152,19 @@ Outcome RunCrashTrace(const CrashImage& base, BlockCompression compression,
         for (unsigned batch_index = 0; batch_index < 8; ++batch_index) {
             const std::string value(40 * 1024, static_cast<char>('a' + batch_index));
             EncodedWriteBatch batch;
-            Check(batch.Put(AsBytes("a"), AsBytes(value)));
-            Check(batch.Put(AsBytes("b"), AsBytes(value)));
+            batch.Put(AsBytes("a"), AsBytes(value));
+            batch.Put(AsBytes("b"), AsBytes(value));
             const std::string marker = "batch/" + std::to_string(batch_index);
-            Check(batch.Put(AsBytes(marker), AsBytes("committed")));
+            batch.Put(AsBytes(marker), AsBytes("committed"));
             Model next = outcome.possible.back();
             next["a"] = value;
             next["b"] = value;
             next[marker] = "committed";
             if (batch_index % 2 == 0) {
-                Check(batch.Delete(AsBytes("baseline")));
+                batch.Delete(AsBytes("baseline"));
                 next.erase("baseline");
             } else {
-                Check(batch.Put(AsBytes("baseline"), AsBytes("durable")));
+                batch.Put(AsBytes("baseline"), AsBytes("durable"));
                 next["baseline"] = "durable";
             }
             outcome.possible.push_back(std::move(next));
@@ -229,7 +229,7 @@ TEST(PowerLossTest, RecoversEveryPrefixOfAnUnsyncedFinalWalBatchAtomically) {
     CrashDatabase writer;
     Check(writer.Open(true));
     EncodedWriteBatch baseline;
-    Check(baseline.Put(AsBytes("baseline"), AsBytes("durable")));
+    baseline.Put(AsBytes("baseline"), AsBytes("durable"));
     Check(writer.database->Write(baseline, true));
     const CrashImage durable = writer.file_system.DurableImage();
     std::optional<std::filesystem::path> log;
@@ -243,8 +243,8 @@ TEST(PowerLossTest, RecoversEveryPrefixOfAnUnsyncedFinalWalBatchAtomically) {
     ASSERT_TRUE(log.has_value());
     const std::size_t prefix = durable.files.at(*log).size();
     EncodedWriteBatch pending;
-    Check(pending.Put(AsBytes("a"), AsBytes("pending")));
-    Check(pending.Put(AsBytes("b"), AsBytes("pending")));
+    pending.Put(AsBytes("a"), AsBytes("pending"));
+    pending.Put(AsBytes("b"), AsBytes("pending"));
     Check(writer.database->Write(pending, false));
     const auto complete = writer.file_system.Contents(*log).value();
     writer.Close();
