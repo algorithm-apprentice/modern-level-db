@@ -75,8 +75,8 @@ bool IsValidConcurrentKey(const ConcurrentKey& key) {
 
 using IntegerList = SkipList<std::uint64_t, IntegerCompare>;
 
-template <typename Key, typename Compare>
-concept HasSkipList = requires { typename SkipList<Key, Compare>; };
+template <typename Entry, typename Compare>
+concept HasSkipList = requires { typename SkipList<Entry, Compare>; };
 
 static_assert(!std::is_copy_constructible_v<IntegerList>);
 static_assert(!std::is_copy_assignable_v<IntegerList>);
@@ -130,7 +130,7 @@ TEST(SkipListTest, TrustedInsertionFindsAndIteratesUniqueKeys) {
     iterator.SeekToFirst();
     for (const std::uint64_t expected : std::array<std::uint64_t, 3>{10U, 20U, 30U}) {
         ASSERT_TRUE(iterator.valid());
-        EXPECT_EQ(iterator.key(), expected);
+        EXPECT_EQ(iterator.entry(), expected);
         iterator.Next();
     }
     EXPECT_FALSE(iterator.valid());
@@ -175,24 +175,24 @@ TEST(SkipListTest, IteratesSeeksAndMovesBackward) {
     iterator.SeekToFirst();
     for (const std::uint64_t expected : std::array<std::uint64_t, 4>{10, 20, 30, 40}) {
         ASSERT_TRUE(iterator.valid());
-        EXPECT_EQ(iterator.key(), expected);
+        EXPECT_EQ(iterator.entry(), expected);
         iterator.Next();
     }
     EXPECT_FALSE(iterator.valid());
 
     iterator.Seek(25);
     ASSERT_TRUE(iterator.valid());
-    EXPECT_EQ(iterator.key(), 30U);
+    EXPECT_EQ(iterator.entry(), 30U);
     iterator.Seek(40);
     ASSERT_TRUE(iterator.valid());
-    EXPECT_EQ(iterator.key(), 40U);
+    EXPECT_EQ(iterator.entry(), 40U);
     iterator.Seek(41);
     EXPECT_FALSE(iterator.valid());
 
     iterator.SeekToLast();
     for (const std::uint64_t expected : std::array<std::uint64_t, 4>{40, 30, 20, 10}) {
         ASSERT_TRUE(iterator.valid());
-        EXPECT_EQ(iterator.key(), expected);
+        EXPECT_EQ(iterator.entry(), expected);
         iterator.Prev();
     }
     EXPECT_FALSE(iterator.valid());
@@ -220,7 +220,7 @@ TEST(SkipListTest, MatchesRandomizedSetModel) {
             EXPECT_FALSE(iterator.valid());
         } else {
             ASSERT_TRUE(iterator.valid());
-            EXPECT_EQ(iterator.key(), *expected);
+            EXPECT_EQ(iterator.entry(), *expected);
         }
     }
 
@@ -228,7 +228,7 @@ TEST(SkipListTest, MatchesRandomizedSetModel) {
     iterator.SeekToFirst();
     for (const std::uint64_t expected : model) {
         ASSERT_TRUE(iterator.valid());
-        EXPECT_EQ(iterator.key(), expected);
+        EXPECT_EQ(iterator.entry(), expected);
         iterator.Next();
     }
     EXPECT_FALSE(iterator.valid());
@@ -246,19 +246,23 @@ TEST(SkipListTest, StoresArenaBackedBinaryViews) {
     };
 
     const ByteView alpha = allocate_key(std::string_view("a\0x", 3));
+    const ByteView between = allocate_key(std::string_view("a\0y", 3));
     const ByteView beta = allocate_key(std::string_view("b\0y", 3));
+    const ByteView after = allocate_key("z");
     ASSERT_TRUE(list.Insert(beta));
     ASSERT_TRUE(list.Insert(alpha));
     EXPECT_FALSE(list.Insert(alpha));
     EXPECT_TRUE(list.Contains(beta));
+    EXPECT_FALSE(list.Contains(between));
+    EXPECT_FALSE(list.Contains(after));
 
     SkipList<ByteView, ByteViewCompare>::Iterator iterator(list);
     iterator.SeekToFirst();
     ASSERT_TRUE(iterator.valid());
-    EXPECT_TRUE(std::ranges::equal(iterator.key(), alpha));
+    EXPECT_TRUE(std::ranges::equal(iterator.entry(), alpha));
     iterator.Next();
     ASSERT_TRUE(iterator.valid());
-    EXPECT_TRUE(std::ranges::equal(iterator.key(), beta));
+    EXPECT_TRUE(std::ranges::equal(iterator.entry(), beta));
 }
 
 TEST(SkipListTest, ConcurrentReadersObserveOnlyInitializedOrderedNodes) {
@@ -286,7 +290,7 @@ TEST(SkipListTest, ConcurrentReadersObserveOnlyInitializedOrderedNodes) {
                 bool first = true;
                 std::uint64_t previous = 0;
                 while (iterator.valid()) {
-                    const ConcurrentKey& key = iterator.key();
+                    const ConcurrentKey& key = iterator.entry();
                     if (!IsValidConcurrentKey(key) || (!first && key.order <= previous)) {
                         failures.fetch_add(1, std::memory_order_relaxed);
                         break;
@@ -325,7 +329,7 @@ TEST(SkipListTest, ConcurrentReadersObserveOnlyInitializedOrderedNodes) {
     std::size_t final_count = 0;
     std::uint64_t previous = 0;
     while (iterator.valid()) {
-        const ConcurrentKey& key = iterator.key();
+        const ConcurrentKey& key = iterator.entry();
         EXPECT_TRUE(IsValidConcurrentKey(key));
         if (final_count > 0) {
             EXPECT_GT(key.order, previous);
@@ -341,6 +345,15 @@ TEST(SkipListTest, ConcurrentReadersObserveOnlyInitializedOrderedNodes) {
     }
     EXPECT_TRUE(list.Contains(MakeConcurrentKey(0)));
     EXPECT_TRUE(list.Contains(MakeConcurrentKey(Modulus)));
+    EXPECT_FALSE(list.Insert(MakeConcurrentKey(0)));
+
+    std::uint64_t missing = 1;
+    while (missing < Modulus && list.Contains(MakeConcurrentKey(missing))) {
+        ++missing;
+    }
+    ASSERT_LT(missing, Modulus);
+    EXPECT_FALSE(list.Contains(MakeConcurrentKey(missing)));
+    EXPECT_FALSE(list.Contains(MakeConcurrentKey(Modulus + 1U)));
     EXPECT_GT(arena.memory_usage(), 0U);
 }
 

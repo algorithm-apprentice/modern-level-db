@@ -195,8 +195,9 @@ empty value view; an empty stored value is distinguished by lookup kind.
 
 ### Entry ordering and parsing
 
-The skip-list key is a pointer to the packed entry. Its comparator decodes only
-the leading internal-key length and delegates to `InternalKeyComparator`.
+The skip-list Entry is a pointer to the packed MemTable record, which contains
+both the internal key and value. Its comparator decodes only the leading
+internal-key length and delegates to `InternalKeyComparator`.
 Every stored and temporary seek key is constructed internally and therefore
 valid; unchecked prefix parsing is confined to the MemTable implementation.
 

@@ -123,7 +123,7 @@ MemTableLookup MemTable::Lookup(const LookupKey& key) const {
         return {};
     }
 
-    const EntryView entry = DecodeEntry(iterator.key());
+    const EntryView entry = DecodeEntry(iterator.entry());
     const ByteView candidate_user_key =
         entry.internal_key.first(entry.internal_key.size() - InternalKeyTrailerSize);
     if (user_comparator_.Compare(candidate_user_key, key.user_key()) != 0) {
@@ -149,9 +149,9 @@ int MemTable::EntryComparator::operator()(const std::byte* left,
 
 MemTable::Iterator::Iterator(const MemTable& table) noexcept : iterator_(table.table_) {}
 
-ByteView MemTable::Iterator::key() const { return DecodeEntry(iterator_.key()).internal_key; }
+ByteView MemTable::Iterator::key() const { return DecodeEntry(iterator_.entry()).internal_key; }
 
-ByteView MemTable::Iterator::value() const { return DecodeEntry(iterator_.key()).value; }
+ByteView MemTable::Iterator::value() const { return DecodeEntry(iterator_.entry()).value; }
 
 Status MemTable::Iterator::Seek(ByteView internal_key) {
     const Result<InternalKeyView> parsed = ParseInternalKey(internal_key);

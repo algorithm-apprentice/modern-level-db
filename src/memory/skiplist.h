@@ -14,18 +14,20 @@
 
 namespace modern_leveldb {
 
-template <typename Key>
-concept ArenaCompatibleSkipListKey =
-    std::is_default_constructible_v<Key> && std::is_trivially_copy_constructible_v<Key> &&
-    std::is_trivially_destructible_v<Key> && alignof(Key) <= Arena::Alignment;
+template <typename Entry>
+concept ArenaCompatibleSkipListEntry =
+    std::is_default_constructible_v<Entry> && std::is_trivially_copy_constructible_v<Entry> &&
+    std::is_trivially_destructible_v<Entry> && alignof(Entry) <= Arena::Alignment;
 
 // Arena-backed ordered index with one externally serialized writer and concurrent
-// readers. Keys remain immutable after publication; nodes live until arena teardown.
+// readers. Entries remain immutable after publication; nodes live until arena teardown.
 // The comparator, arena, and list must outlive all traversals. Compare must support
 // concurrent calls; its borrowed state is not protected by the link atomics.
-// Any storage referenced by a Key must also remain alive and unchanged.
+// Any storage referenced by an Entry must also remain alive and unchanged.
+// Map-like callers use a pointer or handle Entry whose referenced record contains
+// both the logical key and value; the SkipList itself is an ordered set of Entries.
 // See docs/learning/08-cpp-ownership-errors-and-concurrency.md.
-template <ArenaCompatibleSkipListKey Key, typename Compare>
+template <ArenaCompatibleSkipListEntry Entry, typename Compare>
 class SkipList final {
 private:
     struct Node;
@@ -33,12 +35,7 @@ private:
 
 public:
     explicit SkipList(const Compare& compare, Arena& arena)
-        : compare_(compare), arena_(arena), head_(NewNode(Key{}, MaxHeight)) {
-        static_assert(std::is_trivially_destructible_v<Link>);
-        static_assert(alignof(Link) <= Arena::Alignment);
-        static_assert(sizeof(Link) % alignof(Link) == 0);
-        static_assert(alignof(Node) <= Arena::Alignment);
-    }
+        : compare_(compare), arena_(arena), head_(NewNode(Entry{}, MaxHeight)) {}
 
     SkipList(Compare&&, Arena&) = delete;
     SkipList(const Compare&&, Arena&) = delete;
@@ -48,29 +45,29 @@ public:
     SkipList& operator=(SkipList&&) = delete;
     ~SkipList() = default;
 
-    [[nodiscard]] bool Insert(Key key) {
+    [[nodiscard]] bool Insert(Entry entry) {
         std::array<Node*, MaxHeight> predecessors{};
-        Node* existing = FindGreaterOrEqual(key, predecessors.data());
-        if (existing != nullptr && Equal(existing->key, key)) {
+        Node* existing = FindGreaterOrEqual(entry, predecessors.data());
+        if (existing != nullptr && Equal(existing->entry, entry)) {
             return false;
         }
-        InsertAfterSearch(key, predecessors);
+        InsertAfterSearch(entry, predecessors);
         return true;
     }
 
-    // Requires a unique key, as established by reserved memtable write sequences.
+    // Requires a unique entry, as established by reserved memtable write sequences.
     // Duplicate insertion is a caller error, not a recoverable result here.
-    void InsertTrusted(Key key) {
+    void InsertTrusted(Entry entry) {
         std::array<Node*, MaxHeight> predecessors{};
-        Node* existing = FindGreaterOrEqual(key, predecessors.data());
-        assert(existing == nullptr || !Equal(existing->key, key));
+        Node* existing = FindGreaterOrEqual(entry, predecessors.data());
+        assert(existing == nullptr || !Equal(existing->entry, entry));
         (void)existing;
-        InsertAfterSearch(key, predecessors);
+        InsertAfterSearch(entry, predecessors);
     }
 
-    [[nodiscard]] bool Contains(const Key& key) const {
-        Node* node = FindGreaterOrEqual(key, nullptr);
-        return node != nullptr && Equal(node->key, key);
+    [[nodiscard]] bool Contains(const Entry& entry) const {
+        Node* node = FindGreaterOrEqual(entry, nullptr);
+        return node != nullptr && Equal(node->entry, entry);
     }
 
     class Iterator final {
@@ -85,9 +82,9 @@ public:
 
         [[nodiscard]] bool valid() const noexcept { return node_ != nullptr; }
 
-        [[nodiscard]] const Key& key() const {
+        [[nodiscard]] const Entry& entry() const {
             assert(valid());
-            return node_->key;
+            return node_->entry;
         }
 
         void Next() {
@@ -97,13 +94,13 @@ public:
 
         void Prev() {
             assert(valid());
-            node_ = list_->FindLessThan(node_->key);
+            node_ = list_->FindLessThan(node_->entry);
             if (node_ == list_->head_) {
                 node_ = nullptr;
             }
         }
 
-        void Seek(const Key& target) { node_ = list_->FindGreaterOrEqual(target, nullptr); }
+        void Seek(const Entry& target) { node_ = list_->FindGreaterOrEqual(target, nullptr); }
 
         void SeekToFirst() { node_ = list_->head_->Next(0); }
 
@@ -126,7 +123,7 @@ private:
     static constexpr std::uint64_t RandomMultiplier = 16'807U;
 
     struct Node {
-        explicit Node(Key node_key) noexcept : key(node_key) {}
+        explicit Node(Entry node_entry) noexcept : entry(node_entry) {}
 
         [[nodiscard]] Node* Next(int level) const noexcept {
             return LinkAt(level).load(std::memory_order_acquire);
@@ -152,17 +149,24 @@ private:
             return *std::launder(reinterpret_cast<Link*>(address));
         }
 
-        const Key key;
+        const Entry entry;
     };
+
+    // Nodes and their variable-height trailing links are constructed in Arena
+    // storage and reclaimed without individual destruction.
+    static_assert(std::is_trivially_destructible_v<Link>);
+    static_assert(alignof(Link) <= Arena::Alignment);
+    static_assert(sizeof(Link) % alignof(Link) == 0);
+    static_assert(alignof(Node) <= Arena::Alignment);
+    static_assert((alignof(Link) & (alignof(Link) - 1U)) == 0U);
 
     static constexpr std::size_t LinksOffset() noexcept {
         // Variable-height links follow the fixed node, aligned and constructed
         // separately. Trivial destruction permits whole-arena reclamation.
-        static_assert((alignof(Link) & (alignof(Link) - 1U)) == 0U);
         return (sizeof(Node) + alignof(Link) - 1U) & ~(alignof(Link) - 1U);
     }
 
-    void InsertAfterSearch(Key key, std::array<Node*, MaxHeight>& predecessors) {
+    void InsertAfterSearch(Entry entry, std::array<Node*, MaxHeight>& predecessors) {
         const int height = RandomHeight();
         const int current_height = max_height_.load(std::memory_order_relaxed);
         if (height > current_height) {
@@ -171,7 +175,7 @@ private:
             }
         }
 
-        Node* node = NewNode(key, height);
+        Node* node = NewNode(entry, height);
         if (height > current_height) {
             // Height is only a search hint. A reader seeing the higher level before
             // its first link is published finds the initialized null head link and descends.
@@ -186,10 +190,10 @@ private:
         }
     }
 
-    [[nodiscard]] Node* NewNode(Key key, int height) {
+    [[nodiscard]] Node* NewNode(Entry entry, int height) {
         MutableByteView storage =
             arena_.AllocateAligned(LinksOffset() + sizeof(Link) * static_cast<std::size_t>(height));
-        Node* node = std::construct_at(reinterpret_cast<Node*>(storage.data()), key);
+        Node* node = std::construct_at(reinterpret_cast<Node*>(storage.data()), entry);
         for (int level = 0; level < height; ++level) {
             std::byte* address =
                 storage.data() + LinksOffset() + static_cast<std::size_t>(level) * sizeof(Link);
@@ -215,20 +219,20 @@ private:
         return height;
     }
 
-    [[nodiscard]] bool Equal(const Key& left, const Key& right) const {
+    [[nodiscard]] bool Equal(const Entry& left, const Entry& right) const {
         return compare_(left, right) == 0;
     }
 
-    [[nodiscard]] bool KeyIsAfterNode(const Key& key, Node* node) const {
-        return node != nullptr && compare_(node->key, key) < 0;
+    [[nodiscard]] bool EntryIsAfterNode(const Entry& entry, Node* node) const {
+        return node != nullptr && compare_(node->entry, entry) < 0;
     }
 
-    [[nodiscard]] Node* FindGreaterOrEqual(const Key& key, Node** predecessors) const {
+    [[nodiscard]] Node* FindGreaterOrEqual(const Entry& entry, Node** predecessors) const {
         Node* node = head_;
         int level = max_height_.load(std::memory_order_relaxed) - 1;
         while (true) {
             Node* next = node->Next(level);
-            if (KeyIsAfterNode(key, next)) {
+            if (EntryIsAfterNode(entry, next)) {
                 node = next;
             } else {
                 if (predecessors != nullptr) {
@@ -242,12 +246,12 @@ private:
         }
     }
 
-    [[nodiscard]] Node* FindLessThan(const Key& key) const {
+    [[nodiscard]] Node* FindLessThan(const Entry& entry) const {
         Node* node = head_;
         int level = max_height_.load(std::memory_order_relaxed) - 1;
         while (true) {
             Node* next = node->Next(level);
-            if (next == nullptr || compare_(next->key, key) >= 0) {
+            if (next == nullptr || compare_(next->entry, entry) >= 0) {
                 if (level == 0) {
                     return node;
                 }

@@ -47,8 +47,9 @@ Search moves forward while it can, then drops to a lower level.
 Random node heights give expected logarithmic search without tree rotations.
 Here the branching factor is four and the maximum height is twelve.
 
-The memtable stores pointers to packed arena entries as skip-list keys.
-Its comparator extracts the internal key from each entry.
+The SkipList is an ordered set whose Entry type is a pointer to one packed
+MemTable record. That referenced record contains both the internal key and
+value; the comparator extracts only the internal key for ordering.
 
 The concurrency contract is deliberately narrow:
 
