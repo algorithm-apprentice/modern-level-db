@@ -106,6 +106,12 @@ public:
         const std::filesystem::path& path) = 0;
 };
 
+// Creates the admitted native backend and prepares directory without creating
+// it. Windows requires explicit weak namespace-durability consent; POSIX leaves
+// directory unchanged. On failure, directory is unchanged.
+[[nodiscard]] Result<std::unique_ptr<FileSystem>> CreateDefaultFileSystem(
+    std::filesystem::path& directory, bool allow_weak_namespace_durability, bool allow_mmap_reads);
+
 }  // namespace modern_leveldb
 
 #endif  // MODERN_LEVELDB_PLATFORM_FILE_SYSTEM_H_

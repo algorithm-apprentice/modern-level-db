@@ -18,5 +18,13 @@ TEST(DatabaseWithoutPosixTest, NeedsAFileSystemFromTheCaller) {
     EXPECT_EQ(database.error().code(), ErrorCode::NotSupported);
 }
 
+TEST(DatabaseWithoutPosixTest, DefaultFactoryReportsUnsupportedWithoutChangingDirectory) {
+    std::filesystem::path directory("db");
+    const auto created = CreateDefaultFileSystem(directory, true, true);
+    ASSERT_FALSE(created.has_value());
+    EXPECT_EQ(created.error().code(), ErrorCode::NotSupported);
+    EXPECT_EQ(directory, std::filesystem::path("db"));
+}
+
 }  // namespace
 }  // namespace modern_leveldb
