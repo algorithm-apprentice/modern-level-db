@@ -38,27 +38,6 @@ Result<ByteView> ConsumeBatchValue(ByteView& input) {
     return *value;
 }
 
-std::uint32_t ConsumeVarint32Unchecked(ByteView& input) noexcept {
-    std::uint32_t value = 0;
-    std::size_t shift = 0;
-    while (true) {
-        const unsigned int byte = std::to_integer<unsigned int>(input.front());
-        input = input.subspan(1);
-        value |= static_cast<std::uint32_t>(byte & 0x7fU) << shift;
-        if ((byte & 0x80U) == 0U) {
-            return value;
-        }
-        shift += 7U;
-    }
-}
-
-ByteView ConsumeLengthPrefixedUnchecked(ByteView& input) noexcept {
-    const std::uint32_t length = ConsumeVarint32Unchecked(input);
-    const ByteView value = input.first(length);
-    input = input.subspan(length);
-    return value;
-}
-
 void EncodeBatchValue(MutableByteView& output, ByteView value) noexcept {
     EncodeVarint32Trusted(output, static_cast<std::uint32_t>(value.size()));
     std::ranges::copy(value, output.begin());
@@ -129,10 +108,10 @@ std::optional<WriteBatchEntry> WriteBatchReader::Next() noexcept {
 
     const auto kind = static_cast<ValueKind>(std::to_integer<std::uint8_t>(remaining_.front()));
     remaining_ = remaining_.subspan(1);
-    const ByteView key = ConsumeLengthPrefixedUnchecked(remaining_);
+    const ByteView key = ConsumeLengthPrefixedTrusted(remaining_);
     ByteView value;
     if (kind == ValueKind::Value) {
-        value = ConsumeLengthPrefixedUnchecked(remaining_);
+        value = ConsumeLengthPrefixedTrusted(remaining_);
     }
 
     const WriteBatchEntry entry{
