@@ -36,6 +36,15 @@ TEST(ResultTest, FormatsErrorForDiagnostics) {
     EXPECT_EQ(error.ToString(), "invalid_argument: block size must be positive");
 }
 
+TEST(ResultTest, FormatsEmptyAndUnsupportedErrors) {
+    const Error empty = Error::Io("");
+    const Error unsupported = Error::NotSupported("direct I/O");
+
+    EXPECT_EQ(empty.ToString(), "io");
+    EXPECT_EQ(unsupported.code(), ErrorCode::NotSupported);
+    EXPECT_EQ(unsupported.ToString(), "not_supported: direct I/O");
+}
+
 TEST(ResultTest, CapturesFactoryCallSite) {
     const std::uint_least32_t expected_line = __LINE__ + 1;
     const Error error = Error::Corruption("invalid record");
@@ -53,6 +62,7 @@ TEST(ResultTest, ExposesStableErrorCodeNames) {
     EXPECT_EQ(ErrorCodeName(ErrorCode::NotSupported), "not_supported");
     EXPECT_EQ(ErrorCodeName(ErrorCode::Busy), "busy");
     EXPECT_EQ(ErrorCodeName(ErrorCode::Aborted), "aborted");
+    EXPECT_EQ(ErrorCodeName(static_cast<ErrorCode>(0xff)), "unknown");
 }
 
 }  // namespace

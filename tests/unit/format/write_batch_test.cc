@@ -240,6 +240,11 @@ TEST(WriteBatchTest, SequenceValidationIsFailureAtomic) {
     ASSERT_TRUE(batch.Put(AsBytes("last"), AsBytes("value")).has_value());
     const std::vector<std::byte> one_record = Materialize(batch.encoded());
 
+    const Status put_overflow = batch.Put(AsBytes("overflow"), AsBytes("value"));
+    ASSERT_FALSE(put_overflow.has_value());
+    EXPECT_EQ(put_overflow.error().code(), ErrorCode::InvalidArgument);
+    EXPECT_EQ(Materialize(batch.encoded()), one_record);
+
     const Status add_overflow = batch.Delete(AsBytes("overflow"));
     ASSERT_FALSE(add_overflow.has_value());
     EXPECT_EQ(add_overflow.error().code(), ErrorCode::InvalidArgument);
@@ -309,6 +314,9 @@ TEST(WriteBatchTest, CopyAndMovePreserveOwningInvariants) {
     assigned = std::move(moved);
     EXPECT_EQ(Materialize(assigned.encoded()), expected);
     EXPECT_EQ(Materialize(moved.encoded()), std::vector<std::byte>(WriteBatchHeaderSize));
+
+    assigned = std::move(assigned);
+    EXPECT_EQ(Materialize(assigned.encoded()), expected);
 }
 
 TEST(WriteBatchReaderTest, RejectsHeadersShorterThanTwelveBytes) {

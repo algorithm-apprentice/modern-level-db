@@ -249,6 +249,8 @@ TEST(SkipListTest, StoresArenaBackedBinaryViews) {
     const ByteView beta = allocate_key(std::string_view("b\0y", 3));
     ASSERT_TRUE(list.Insert(beta));
     ASSERT_TRUE(list.Insert(alpha));
+    EXPECT_FALSE(list.Insert(alpha));
+    EXPECT_TRUE(list.Contains(beta));
 
     SkipList<ByteView, ByteViewCompare>::Iterator iterator(list);
     iterator.SeekToFirst();
