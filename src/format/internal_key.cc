@@ -23,19 +23,20 @@
 namespace modern_leveldb {
 namespace {
 
+constexpr std::uint64_t PackTrailer(SequenceNumber sequence, ValueKind kind) noexcept {
+    return (sequence << 8U) | static_cast<std::uint8_t>(kind);
+}
+
 struct DecodedInternalKey {
     ByteView user_key;
-    std::uint64_t trailer;
     SequenceNumber sequence;
     ValueKind kind;
+
+    [[nodiscard]] std::uint64_t trailer() const noexcept { return PackTrailer(sequence, kind); }
 };
 
 constexpr bool IsValidValueKind(ValueKind kind) noexcept {
     return kind == ValueKind::Deletion || kind == ValueKind::Value;
-}
-
-constexpr std::uint64_t PackTrailer(SequenceNumber sequence, ValueKind kind) noexcept {
-    return (sequence << 8U) | static_cast<std::uint8_t>(kind);
 }
 
 bool TryDecodeInternalKey(ByteView encoded, DecodedInternalKey& decoded) noexcept {
@@ -56,7 +57,6 @@ bool TryDecodeInternalKey(ByteView encoded, DecodedInternalKey& decoded) noexcep
 
     decoded = {
         .user_key = encoded.first(trailer_offset),
-        .trailer = trailer,
         .sequence = trailer >> 8U,
         .kind = kind,
     };
@@ -219,10 +219,12 @@ int InternalKeyComparator::Compare(ByteView left, ByteView right) const noexcept
     if (user_order != 0) {
         return user_order;
     }
-    if (left_key.trailer > right_key.trailer) {
+    const std::uint64_t left_trailer = left_key.trailer();
+    const std::uint64_t right_trailer = right_key.trailer();
+    if (left_trailer > right_trailer) {
         return -1;
     }
-    if (left_key.trailer < right_key.trailer) {
+    if (left_trailer < right_trailer) {
         return 1;
     }
     return 0;
