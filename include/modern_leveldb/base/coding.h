@@ -38,9 +38,9 @@ void AppendVarint64(std::vector<std::byte>& output, std::uint64_t value);
 [[nodiscard]] Result<std::uint32_t> ConsumeVarint32(ByteView& input);
 [[nodiscard]] Result<std::uint64_t> ConsumeVarint64(ByteView& input);
 
-// Appends a varint32 length and the bytes. The value may alias output.
-// An oversized value returns InvalidArgument without changing output.
-[[nodiscard]] Status AppendLengthPrefixed(std::vector<std::byte>& output, ByteView value);
+// Appends a varint32 length and the bytes. Requires a value of at most uint32
+// bytes whose storage does not overlap output.
+void AppendLengthPrefixed(std::vector<std::byte>& output, ByteView value);
 [[nodiscard]] Result<ByteView> ConsumeLengthPrefixed(ByteView& input);
 
 [[nodiscard]] std::size_t VarintLength(std::uint64_t value) noexcept;

@@ -1,7 +1,6 @@
 #include "metadata/version_edit.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -57,9 +56,8 @@ void AppendNumberField(std::vector<std::byte>& output, Tag tag,
 }
 
 void AppendField(std::vector<std::byte>& output, ByteView value) {
-    const Status appended = AppendLengthPrefixed(output, value);
-    assert(appended.has_value());
-    (void)appended;
+    // Mutators bound field lengths; the edit owns every field separately from output.
+    AppendLengthPrefixed(output, value);
 }
 
 // Rejects moved-from keys, whose encoding is empty.

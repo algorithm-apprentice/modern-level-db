@@ -80,6 +80,30 @@ TEST(CodingTest, EncodesFixed32InLittleEndianOrder) {
                       }));
 }
 
+TEST(CodingTest, AppendsFixedValuesWithoutChangingExistingBytes) {
+    std::vector output{std::byte{0xaa}, std::byte{0xbb}};
+
+    AppendFixed32(output, 0x78563412U);
+    AppendFixed64(output, 0xfedcba9876543210ULL);
+
+    EXPECT_EQ(output, (std::vector{
+                          std::byte{0xaa},
+                          std::byte{0xbb},
+                          std::byte{0x12},
+                          std::byte{0x34},
+                          std::byte{0x56},
+                          std::byte{0x78},
+                          std::byte{0x10},
+                          std::byte{0x32},
+                          std::byte{0x54},
+                          std::byte{0x76},
+                          std::byte{0x98},
+                          std::byte{0xba},
+                          std::byte{0xdc},
+                          std::byte{0xfe},
+                      }));
+}
+
 TEST(CodingTest, DecodesFixed32AndConsumesOnlyItsBytes) {
     const std::vector input_storage{
         std::byte{0x12}, std::byte{0x34}, std::byte{0x56}, std::byte{0x78}, std::byte{0xff},
@@ -106,6 +130,8 @@ TEST(CodingTest, RejectsTruncatedFixed32WithoutConsumingInput) {
 
     ASSERT_FALSE(value.has_value());
     EXPECT_EQ(value.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(value.error().message(), "truncated fixed32");
+    EXPECT_EQ(input.data(), input_storage.data());
     EXPECT_EQ(input.size(), input_storage.size());
 }
 
@@ -138,6 +164,7 @@ TEST(CodingTest, MatchesFixed64GoldenVector) {
         const auto decoded = ConsumeFixed64(input);
         ASSERT_FALSE(decoded.has_value());
         EXPECT_EQ(decoded.error().code(), ErrorCode::Corruption);
+        EXPECT_EQ(decoded.error().message(), "truncated fixed64");
         EXPECT_EQ(input.data(), golden.data());
         EXPECT_EQ(input.size(), size);
     }
@@ -243,6 +270,33 @@ TEST(CodingTest, MatchesVarint64GoldenVectors) {
     }
 }
 
+TEST(CodingTest, AppendsVarintsWithoutChangingExistingBytes) {
+    std::vector output{std::byte{0xaa}, std::byte{0xbb}};
+
+    AppendVarint32(output, std::numeric_limits<std::uint32_t>::max());
+    AppendVarint64(output, std::numeric_limits<std::uint64_t>::max());
+
+    EXPECT_EQ(output, (std::vector{
+                          std::byte{0xaa},
+                          std::byte{0xbb},
+                          std::byte{0xff},
+                          std::byte{0xff},
+                          std::byte{0xff},
+                          std::byte{0xff},
+                          std::byte{0x0f},
+                          std::byte{0xff},
+                          std::byte{0xff},
+                          std::byte{0xff},
+                          std::byte{0xff},
+                          std::byte{0xff},
+                          std::byte{0xff},
+                          std::byte{0xff},
+                          std::byte{0xff},
+                          std::byte{0xff},
+                          std::byte{0x01},
+                      }));
+}
+
 TEST(CodingTest, RoundTripsVarint64Boundaries) {
     const std::vector<std::uint64_t> expected{
         0U,
@@ -333,7 +387,7 @@ TEST(CodingTest, RejectsOverlongVarint64WithoutConsumingInput) {
 
 TEST(CodingTest, RoundTripsLengthPrefixedBytes) {
     std::vector<std::byte> output;
-    ASSERT_TRUE(AppendLengthPrefixed(output, AsBytes(std::string_view{"a\0b", 3})));
+    AppendLengthPrefixed(output, AsBytes(std::string_view{"a\0b", 3}));
     output.push_back(std::byte{0xff});
     ByteView input = output;
 
@@ -345,55 +399,16 @@ TEST(CodingTest, RoundTripsLengthPrefixedBytes) {
     EXPECT_EQ(input.front(), std::byte{0xff});
 }
 
-TEST(CodingTest, AppendsLengthPrefixedBytesFromSameVector) {
-    for (const bool reallocate : {false, true}) {
-        SCOPED_TRACE(reallocate);
-        std::vector<std::byte> output{std::byte{'a'}, std::byte{0}, std::byte{'b'}};
-        if (reallocate) {
-            output.resize(output.capacity(), std::byte{'x'});
-        } else {
-            output.reserve(64);
-        }
-        const std::vector<std::byte> original = output;
-        std::vector<std::byte> expected = original;
-        AppendVarint32(expected, static_cast<std::uint32_t>(original.size()));
-        expected.insert(expected.end(), original.begin(), original.end());
-
-        ASSERT_TRUE(AppendLengthPrefixed(output, ByteView(output)));
-
-        EXPECT_EQ(output, expected);
-    }
-}
-
-TEST(CodingTest, AppendsLengthPrefixedBytesFromSubspan) {
-    for (const bool reallocate : {false, true}) {
-        SCOPED_TRACE(reallocate);
-        std::vector<std::byte> output{std::byte{'a'}, std::byte{'b'}, std::byte{'c'},
-                                      std::byte{'d'}};
-        if (reallocate) {
-            output.resize(output.capacity(), std::byte{'x'});
-        } else {
-            output.reserve(64);
-        }
-        std::vector<std::byte> expected = output;
-        expected.insert(expected.end(), {std::byte{2}, std::byte{'b'}, std::byte{'c'}});
-
-        ASSERT_TRUE(AppendLengthPrefixed(output, ByteView(output).subspan(1, 2)));
-
-        EXPECT_EQ(output, expected);
-    }
-}
-
 TEST(CodingTest, AppendsEmptyLengthPrefixedBytes) {
     std::vector<std::byte> output;
-    ASSERT_TRUE(AppendLengthPrefixed(output, {}));
+    AppendLengthPrefixed(output, {});
     EXPECT_EQ(output, (std::vector<std::byte>{std::byte{0}}));
 
-    output.resize(output.capacity(), std::byte{'x'});
+    output.push_back(std::byte{'x'});
     std::vector<std::byte> expected = output;
     expected.push_back(std::byte{0});
 
-    ASSERT_TRUE(AppendLengthPrefixed(output, ByteView(output).subspan(output.size())));
+    AppendLengthPrefixed(output, {});
 
     EXPECT_EQ(output, expected);
 }
