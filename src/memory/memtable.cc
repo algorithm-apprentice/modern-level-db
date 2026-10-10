@@ -22,14 +22,6 @@ struct EntryView {
     ByteView value;
 };
 
-bool IsValidValueKind(ValueKind kind) noexcept {
-    return kind == ValueKind::Deletion || kind == ValueKind::Value;
-}
-
-std::uint64_t PackTrailer(SequenceNumber sequence, ValueKind kind) noexcept {
-    return (sequence << 8U) | static_cast<std::uint8_t>(kind);
-}
-
 ByteView DecodeInternalKey(const std::byte* entry) noexcept {
     return ConsumeLengthPrefixedTrusted(entry);
 }
@@ -41,13 +33,6 @@ EntryView DecodeEntry(const std::byte* entry) noexcept {
         .internal_key = internal_key,
         .value = value,
     };
-}
-
-ValueKind DecodeValueKind(ByteView internal_key) noexcept {
-    const ByteView trailer = internal_key.last<InternalKeyTrailerSize>();
-    return static_cast<ValueKind>(DecodeFixed64(std::span<const std::byte, InternalKeyTrailerSize>(
-                                      trailer.data(), InternalKeyTrailerSize)) &
-                                  0xffU);
 }
 
 std::size_t TrustedEncodedSize(ByteView key, ByteView value) noexcept {
@@ -67,7 +52,7 @@ const std::byte* EncodeEntry(Arena& arena, SequenceNumber sequence, ValueKind ki
     output = output.subspan(key.size());
     EncodeFixed64(
         std::span<std::byte, InternalKeyTrailerSize>(output.data(), InternalKeyTrailerSize),
-        PackTrailer(sequence, kind));
+        PackInternalKeyTrailer(sequence, kind));
     output = output.subspan(InternalKeyTrailerSize);
 
     EncodeLengthPrefixedTrusted(output, value);
@@ -145,7 +130,7 @@ MemTableLookup MemTable::Lookup(const LookupKey& key) const {
         return {};
     }
 
-    if (DecodeValueKind(entry.internal_key) == ValueKind::Deletion) {
+    if (DecodeInternalKeyValueKind(entry.internal_key) == ValueKind::Deletion) {
         return {
             .kind = MemTableLookupKind::Deletion,
             .value = {},

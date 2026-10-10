@@ -22,33 +22,21 @@
 namespace modern_leveldb {
 namespace {
 
-constexpr std::uint64_t PackTrailer(SequenceNumber sequence, ValueKind kind) noexcept {
-    return (sequence << 8U) | static_cast<std::uint8_t>(kind);
-}
-
-constexpr bool IsValidValueKind(ValueKind kind) noexcept {
-    return kind == ValueKind::Deletion || kind == ValueKind::Value;
-}
-
 bool TryDecodeInternalKey(ByteView encoded, InternalKeyView& decoded) noexcept {
     if (encoded.size() < InternalKeyTrailerSize) {
         return false;
     }
 
     const std::size_t trailer_offset = encoded.size() - InternalKeyTrailerSize;
-    std::uint64_t trailer = 0;
-    for (std::size_t index = 0; index < InternalKeyTrailerSize; ++index) {
-        trailer |= std::to_integer<std::uint64_t>(encoded[trailer_offset + index]) << (index * 8U);
-    }
-
-    const auto kind = static_cast<ValueKind>(trailer & 0xffU);
+    const std::uint64_t trailer = DecodeInternalKeyTrailer(encoded);
+    const ValueKind kind = DecodeInternalKeyValueKind(trailer);
     if (!IsValidValueKind(kind)) {
         return false;
     }
 
     decoded = {
         .user_key = encoded.first(trailer_offset),
-        .sequence = trailer >> 8U,
+        .sequence = DecodeInternalKeySequence(trailer),
         .kind = kind,
     };
     return true;
@@ -58,7 +46,7 @@ std::vector<std::byte> EncodeUnchecked(ByteView user_key, SequenceNumber sequenc
     std::vector<std::byte> encoded;
     encoded.reserve(user_key.size() + InternalKeyTrailerSize);
     encoded.insert(encoded.end(), user_key.begin(), user_key.end());
-    AppendFixed64(encoded, PackTrailer(sequence, kind));
+    AppendFixed64(encoded, PackInternalKeyTrailer(sequence, kind));
     return encoded;
 }
 
@@ -102,7 +90,7 @@ LookupKey LookupKey::CreateTrusted(ByteView user_key, SequenceNumber sequence) {
     output = output.subspan(user_key.size());
     EncodeFixed64(
         std::span<std::byte, InternalKeyTrailerSize>(output.data(), InternalKeyTrailerSize),
-        PackTrailer(sequence, SeekValueKind));
+        PackInternalKeyTrailer(sequence, SeekValueKind));
     return result;
 }
 
@@ -154,7 +142,7 @@ void LookupKey::ResetToCanonicalEmpty() noexcept {
     inline_storage_[0] = static_cast<std::byte>(InternalKeyTrailerSize);
     EncodeFixed64(std::span<std::byte, InternalKeyTrailerSize>(
                       inline_storage_.data() + internal_key_offset_, InternalKeyTrailerSize),
-                  PackTrailer(0, SeekValueKind));
+                  PackInternalKeyTrailer(0, SeekValueKind));
 }
 
 Result<InternalKey> InternalKey::Create(ByteView user_key, SequenceNumber sequence,
@@ -181,13 +169,15 @@ ByteView InternalKey::user_key() const noexcept {
     return ByteView(encoded_).first(encoded_.size() - InternalKeyTrailerSize);
 }
 
-SequenceNumber InternalKey::sequence() const noexcept { return trailer() >> 8U; }
+SequenceNumber InternalKey::sequence() const noexcept {
+    return DecodeInternalKeySequence(trailer());
+}
 
-ValueKind InternalKey::kind() const noexcept { return static_cast<ValueKind>(trailer() & 0xffU); }
+ValueKind InternalKey::kind() const noexcept { return DecodeInternalKeyValueKind(trailer()); }
 
 std::uint64_t InternalKey::trailer() const noexcept {
     assert(encoded_.size() >= InternalKeyTrailerSize);
-    return DecodeFixed64(ByteView(encoded_).last<InternalKeyTrailerSize>());
+    return DecodeInternalKeyTrailer(encoded_);
 }
 
 int InternalKeyComparator::Compare(ByteView left, ByteView right) const noexcept {
@@ -232,7 +222,7 @@ void InternalKeyComparator::FindShortestSeparator(std::vector<std::byte>& start,
         return;
     }
 
-    AppendFixed64(shortened, PackTrailer(MaxSequenceNumber, SeekValueKind));
+    AppendFixed64(shortened, PackInternalKeyTrailer(MaxSequenceNumber, SeekValueKind));
     if (Compare(shortened, limit) < 0) {
         start = std::move(shortened);
     }
@@ -251,7 +241,7 @@ void InternalKeyComparator::FindShortSuccessor(std::vector<std::byte>& key) cons
         return;
     }
 
-    AppendFixed64(successor, PackTrailer(MaxSequenceNumber, SeekValueKind));
+    AppendFixed64(successor, PackInternalKeyTrailer(MaxSequenceNumber, SeekValueKind));
     key = std::move(successor);
 }
 

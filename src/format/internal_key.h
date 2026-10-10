@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "modern_leveldb/base/bytes.h"
+#include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/comparator.h"
 #include "modern_leveldb/base/result.h"
 
@@ -30,6 +31,43 @@ enum class ValueKind : std::uint8_t {
 };
 
 inline constexpr ValueKind SeekValueKind = ValueKind::Value;
+
+[[nodiscard]] constexpr bool IsValidValueKind(ValueKind kind) noexcept {
+    return kind == ValueKind::Deletion || kind == ValueKind::Value;
+}
+
+[[nodiscard]] constexpr ValueKind DecodeValueKind(std::byte encoded) noexcept {
+    return static_cast<ValueKind>(std::to_integer<std::uint8_t>(encoded));
+}
+
+// Requires a present kind byte and advances past it.
+[[nodiscard]] inline ValueKind ConsumeValueKindTrusted(ByteView& input) noexcept {
+    const ValueKind kind = DecodeValueKind(input.front());
+    input = input.subspan(1);
+    return kind;
+}
+
+[[nodiscard]] constexpr std::uint64_t PackInternalKeyTrailer(SequenceNumber sequence,
+                                                             ValueKind kind) noexcept {
+    return (sequence << 8U) | static_cast<std::uint8_t>(kind);
+}
+
+[[nodiscard]] constexpr SequenceNumber DecodeInternalKeySequence(std::uint64_t trailer) noexcept {
+    return trailer >> 8U;
+}
+
+[[nodiscard]] constexpr ValueKind DecodeInternalKeyValueKind(std::uint64_t trailer) noexcept {
+    return DecodeValueKind(static_cast<std::byte>(trailer & 0xffU));
+}
+
+// Requires a complete internal-key trailer.
+[[nodiscard]] inline std::uint64_t DecodeInternalKeyTrailer(ByteView encoded) noexcept {
+    return DecodeFixed64(encoded.last<InternalKeyTrailerSize>());
+}
+
+[[nodiscard]] inline ValueKind DecodeInternalKeyValueKind(ByteView encoded) noexcept {
+    return DecodeInternalKeyValueKind(DecodeInternalKeyTrailer(encoded));
+}
 
 // Decoded view over borrowed encoded bytes; user_key never owns its storage.
 struct InternalKeyView {
