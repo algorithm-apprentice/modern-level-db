@@ -8,6 +8,7 @@
 #include <span>
 #include <vector>
 
+#include "base/coding_internal.h"
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
@@ -95,10 +96,7 @@ const std::byte* EncodeEntry(Arena& arena, SequenceNumber sequence, ValueKind ki
     MutableByteView output = arena.Allocate(encoded_size);
     const std::byte* const entry = output.data();
     const std::size_t internal_key_size = key.size() + InternalKeyTrailerSize;
-    const bool encoded_key_length =
-        EncodeVarint32(output, static_cast<std::uint32_t>(internal_key_size));
-    assert(encoded_key_length);
-    (void)encoded_key_length;
+    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(internal_key_size));
 
     std::ranges::copy(key, output.begin());
     output = output.subspan(key.size());
@@ -107,10 +105,7 @@ const std::byte* EncodeEntry(Arena& arena, SequenceNumber sequence, ValueKind ki
         PackTrailer(sequence, kind));
     output = output.subspan(InternalKeyTrailerSize);
 
-    const bool encoded_value_length =
-        EncodeVarint32(output, static_cast<std::uint32_t>(value.size()));
-    assert(encoded_value_length);
-    (void)encoded_value_length;
+    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(value.size()));
     std::ranges::copy(value, output.begin());
     output = output.subspan(value.size());
     assert(output.empty());
@@ -255,10 +250,7 @@ void MemTable::Iterator::SeekEncoded(ByteView internal_key) {
     const std::size_t prefix_size = VarintLength(internal_key.size());
     seek_key_.resize(prefix_size + internal_key.size());
     MutableByteView output(seek_key_);
-    const bool encoded_length =
-        EncodeVarint32(output, static_cast<std::uint32_t>(internal_key.size()));
-    assert(encoded_length);
-    (void)encoded_length;
+    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(internal_key.size()));
     std::ranges::copy(internal_key, output.begin());
     output = output.subspan(internal_key.size());
     assert(output.empty());

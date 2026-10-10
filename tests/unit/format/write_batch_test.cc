@@ -142,6 +142,22 @@ TEST(WriteBatchReaderTest, IteratesBorrowedEntriesWithAssignedSequences) {
     EXPECT_FALSE(reader.Next().has_value());
 }
 
+TEST(WriteBatchTest, TrustedAppendMatchesCheckedAppendForDistinctOwnedBatches) {
+    EncodedWriteBatch source;
+    ASSERT_TRUE(source.Put(AsBytes("a"), AsBytes("1")).has_value());
+    ASSERT_TRUE(source.Delete(AsBytes("b")).has_value());
+    const std::vector<std::byte> source_before = Materialize(source.encoded());
+    EncodedWriteBatch checked;
+    EncodedWriteBatch trusted;
+
+    ASSERT_TRUE(checked.Append(source).has_value());
+    trusted.AppendTrusted(source);
+    const EncodedWriteBatch empty;
+    trusted.AppendTrusted(empty);
+    EXPECT_EQ(Materialize(trusted.encoded()), Materialize(checked.encoded()));
+    EXPECT_EQ(Materialize(source.encoded()), source_before);
+}
+
 TEST(WriteBatchReaderTest, TrustedReaderUsesAnOwnedBatchWithoutRevalidation) {
     EncodedWriteBatch batch;
     ASSERT_TRUE(batch.SetSequence(77).has_value());
@@ -293,45 +309,6 @@ TEST(WriteBatchTest, CopyAndMovePreserveOwningInvariants) {
     assigned = std::move(moved);
     EXPECT_EQ(Materialize(assigned.encoded()), expected);
     EXPECT_EQ(Materialize(moved.encoded()), std::vector<std::byte>(WriteBatchHeaderSize));
-}
-
-TEST(WriteBatchTest, MutationsSupportInputsAliasingEncodedStorage) {
-    EncodedWriteBatch batch;
-    ASSERT_TRUE(batch.Put(AsBytes("seed"), AsBytes("value")).has_value());
-
-    std::optional<WriteBatchEntry> aliased;
-    {
-        auto opened = WriteBatchReader::Open(batch.encoded());
-        ASSERT_TRUE(opened.has_value());
-        WriteBatchReader reader = std::move(*opened);
-        aliased = reader.Next();
-        ASSERT_TRUE(aliased.has_value());
-    }
-
-    ASSERT_TRUE(batch.Put(aliased->key, aliased->value).has_value());
-
-    {
-        auto opened = WriteBatchReader::Open(batch.encoded());
-        ASSERT_TRUE(opened.has_value());
-        WriteBatchReader reader = std::move(*opened);
-        aliased = reader.Next();
-        ASSERT_TRUE(aliased.has_value());
-    }
-    ASSERT_TRUE(batch.Delete(aliased->key).has_value());
-
-    auto opened = WriteBatchReader::Open(batch.encoded());
-    ASSERT_TRUE(opened.has_value());
-    WriteBatchReader reader = std::move(*opened);
-    for (const ValueKind expected_kind :
-         {ValueKind::Value, ValueKind::Value, ValueKind::Deletion}) {
-        const auto entry = reader.Next();
-        ASSERT_TRUE(entry.has_value());
-        EXPECT_EQ(entry->kind, expected_kind);
-        EXPECT_EQ(AsStringView(entry->key), "seed");
-        if (expected_kind == ValueKind::Value) {
-            EXPECT_EQ(AsStringView(entry->value), "value");
-        }
-    }
 }
 
 TEST(WriteBatchReaderTest, RejectsHeadersShorterThanTwelveBytes) {

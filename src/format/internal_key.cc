@@ -14,6 +14,7 @@
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
 #include "instrumentation/read_diagnostics.h"
 #endif
+#include "base/coding_internal.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/comparator.h"
@@ -113,10 +114,7 @@ Result<LookupKey> LookupKey::Create(ByteView user_key, SequenceNumber sequence) 
     result.internal_key_offset_ = prefix_size;
 
     MutableByteView output(result.data(), encoded_size);
-    const bool encoded_length =
-        EncodeVarint32(output, static_cast<std::uint32_t>(internal_key_size));
-    assert(encoded_length);
-    (void)encoded_length;
+    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(internal_key_size));
     std::ranges::copy(user_key, output.begin());
     output = output.subspan(user_key.size());
     EncodeFixed64(
@@ -154,9 +152,7 @@ ByteView LookupKey::internal_key() const noexcept {
 
 ByteView LookupKey::user_key() const noexcept {
     const ByteView encoded_internal_key = internal_key();
-    if (encoded_internal_key.size() < InternalKeyTrailerSize) {
-        return {};
-    }
+    assert(encoded_internal_key.size() >= InternalKeyTrailerSize);
     return encoded_internal_key.first(encoded_internal_key.size() - InternalKeyTrailerSize);
 }
 
@@ -199,9 +195,7 @@ Result<InternalKey> InternalKey::Decode(ByteView encoded) {
 }
 
 ByteView InternalKey::user_key() const noexcept {
-    if (encoded_.size() < InternalKeyTrailerSize) {
-        return {};
-    }
+    assert(encoded_.size() >= InternalKeyTrailerSize);
     return ByteView(encoded_).first(encoded_.size() - InternalKeyTrailerSize);
 }
 
@@ -277,7 +271,7 @@ void InternalKeyComparator::FindShortestSeparator(std::vector<std::byte>& start,
     }
 
     AppendFixed64(shortened, PackTrailer(MaxSequenceNumber, SeekValueKind));
-    if (Compare(start, shortened) < 0 && Compare(shortened, limit) < 0) {
+    if (CompareTrusted(start, shortened) < 0 && CompareTrusted(shortened, limit) < 0) {
         start = std::move(shortened);
     }
 }
@@ -296,7 +290,7 @@ void InternalKeyComparator::FindShortSuccessor(std::vector<std::byte>& key) cons
     }
 
     AppendFixed64(successor, PackTrailer(MaxSequenceNumber, SeekValueKind));
-    if (Compare(key, successor) < 0) {
+    if (CompareTrusted(key, successor) < 0) {
         key = std::move(successor);
     }
 }

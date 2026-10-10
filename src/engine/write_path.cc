@@ -18,13 +18,9 @@ namespace {
 constexpr std::size_t MaximumGroupSize = std::size_t{1} << 20U;
 constexpr std::size_t SmallBatchGrowth = std::size_t{128} << 10U;
 
-// Appends a batch to a group that is numbered from zero, which fails only if
-// the count overflows: the group's first batch starts an empty group, and the
-// size limit keeps the count of a larger group small.
+// Scratch starts at sequence zero; the group-size limit also bounds its record count.
 void AppendToGroup(EncodedWriteBatch& group, const EncodedWriteBatch& batch) {
-    const Status appended = group.Append(batch);
-    assert(appended.has_value());
-    static_cast<void>(appended);
+    group.AppendTrusted(batch);
 }
 
 }  // namespace

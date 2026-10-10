@@ -10,6 +10,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "base/coding_internal.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
 
@@ -169,6 +170,11 @@ void AppendVarint32(std::vector<std::byte>& output, std::uint32_t value) {
 
 void AppendVarint64(std::vector<std::byte>& output, std::uint64_t value) {
     AppendVarint(output, value);
+}
+
+void EncodeVarint32Trusted(MutableByteView& output, std::uint32_t value) noexcept {
+    assert(output.size() >= VarintLength(value));
+    EncodeVarintTrusted(output, value);
 }
 
 bool EncodeVarint32(MutableByteView& output, std::uint32_t value) noexcept {
