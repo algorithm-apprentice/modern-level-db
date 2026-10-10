@@ -37,13 +37,13 @@ struct Options {
     // otherwise equivalent keys can be reported missing. Leave unset for
     // comparators that consider different byte strings equal.
     std::optional<std::uint32_t> bloom_bits_per_key;
-    // Snappy matches LevelDB's default. Incompressible blocks are stored raw.
+    // Compression is selected per block; incompressible blocks are stored raw.
     Compression compression = Compression::Snappy;
-    // Used only by Zstd; LevelDB supports levels -5 through 22.
+    // Used only by Zstd; accepted levels are -5 through 22.
     int zstd_compression_level = 1;
     // Syncs the initial empty WAL and requests the backend's namespace barrier
     // before accepting writes. Windows' explicit weak-namespace mode cannot
-    // persist directory entries. Set false to match LevelDB's creation policy.
+    // persist directory entries. False omits this initial/rotation protection.
     bool sync_wal_creation = true;
     // Required by the owned Windows backend, whose directory entries are not
     // durably synchronized. File Sync still flushes bytes, but OS crash/power
@@ -52,12 +52,16 @@ struct Options {
 };
 
 struct ReadOptions {
-    // Must be a live snapshot from the database used by the operation.
+    // Null chooses the operation's current sequence. Otherwise the Snapshot must
+    // stay live, unmoved, and belong to the database used by the operation.
     const Snapshot* snapshot = nullptr;
+    // Controls new block-cache insertions, not existing hits, table reuse, or OS caching.
     bool fill_cache = true;
 };
 
 struct WriteOptions {
+    // Requests a WAL data barrier before publishing success. Does not strengthen
+    // namespace durability or guarantee rollback when a write fails.
     bool sync = false;
 };
 

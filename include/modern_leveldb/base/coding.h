@@ -11,6 +11,8 @@
 
 namespace modern_leveldb {
 
+// Persistent integers use little-endian fixed fields or seven-bit varint groups,
+// not native struct layout. See docs/learning/02-bytes-and-formats.md.
 void EncodeFixed32(std::span<std::byte, sizeof(std::uint32_t)> output,
                    std::uint32_t value) noexcept;
 void EncodeFixed64(std::span<std::byte, sizeof(std::uint64_t)> output,
@@ -23,11 +25,14 @@ void EncodeFixed64(std::span<std::byte, sizeof(std::uint64_t)> output,
 void AppendFixed32(std::vector<std::byte>& output, std::uint32_t value);
 void AppendFixed64(std::vector<std::byte>& output, std::uint64_t value);
 
+// Consume helpers advance input only on success; returned byte views borrow
+// its original backing storage. Malformed input reports Corruption.
 [[nodiscard]] Result<std::uint32_t> ConsumeFixed32(ByteView& input);
 [[nodiscard]] Result<std::uint64_t> ConsumeFixed64(ByteView& input);
 
 void AppendVarint32(std::vector<std::byte>& output, std::uint32_t value);
 void AppendVarint64(std::vector<std::byte>& output, std::uint64_t value);
+// Advances output on success; insufficient space returns false without consuming it.
 [[nodiscard]] bool EncodeVarint32(MutableByteView& output, std::uint32_t value) noexcept;
 
 [[nodiscard]] Result<std::uint32_t> ConsumeVarint32(ByteView& input);

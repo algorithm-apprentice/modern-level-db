@@ -199,6 +199,9 @@ TEST(InternalKeyTest, MatchesLevelDbGoldenEncodings) {
     };
 
     const std::array binary_user_key{std::byte{0x00}, std::byte{0xff}, std::byte{0x10}};
+    // Literal expectations separate the layout oracle from encode/decode agreement:
+    // "foo" is 66 6f 6f, then (sequence << 8 | kind) in little-endian bytes.
+    // Sequence 256 with Deletion therefore starts its trailer 00 00 01.
     const std::vector<Vector> vectors{
         {AsBytes(""), 0, ValueKind::Deletion,
          Bytes({0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})},

@@ -164,6 +164,8 @@ template <typename Database>
 std::array<double, 3> Trial(const std::filesystem::path& path, const std::vector<Record>& records,
                             const std::vector<std::size_t>& order) {
     std::array<double, 3> result{};
+    // Write timing includes database construction/destruction, unlike read timing
+    // below. Interpret each workload separately rather than comparing these phases.
     result[0] = Measure(records.size(), [&] {
         Database database(path);
         for (const auto index : order) {
@@ -174,6 +176,7 @@ std::array<double, 3> Trial(const std::filesystem::path& path, const std::vector
     for (const auto index : order) {
         database.Read(records[index]);
     }
+    // Warmup reads populate caches before measuring the repeated access order.
     result[1] = Measure(records.size(), [&] {
         for (const auto index : order) {
             database.Read(records[index]);

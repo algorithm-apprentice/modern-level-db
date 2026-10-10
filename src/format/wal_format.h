@@ -12,6 +12,9 @@
 
 namespace modern_leveldb {
 
+// Logical records are split into physical fragments that never cross a block.
+// A header is masked CRC32C (4 bytes), little-endian length (2), and type (1);
+// the checksum covers type plus payload. See docs/learning/04-wal-and-recovery.md.
 inline constexpr std::size_t WalBlockSize = 32U * 1'024U;
 inline constexpr std::size_t WalHeaderSize = 7;
 
@@ -29,6 +32,9 @@ struct WalFragment {
     ByteView payload;
 };
 
+// Streams fragments without owning the logical payload. The fragmenter and
+// unchanged payload must outlive the cursor; finish one cursor before starting
+// another because both would otherwise mutate the same block-offset state.
 class WalFragmenter final {
 public:
     class Cursor final {
@@ -106,6 +112,8 @@ struct WalDecodeError {
 
 using WalDecodeResult = std::expected<WalDecodeOutcome, WalDecodeError>;
 
+// Decodes one physical fragment and borrows its payload from encoded. Recovery
+// actions identify a safe skip boundary; deciding to continue is the caller's policy.
 [[nodiscard]] WalDecodeResult DecodeWalFragment(ByteView encoded, bool verify_checksum = true);
 
 }  // namespace modern_leveldb

@@ -21,6 +21,9 @@ enum class BlockKeyFormat {
 
 // An immutable encoded block. Construction validates only the restart-array
 // region; iterators validate entries lazily as they reach them.
+// Entries store shared-prefix length, key-suffix length, value length, suffix,
+// and value. Restart entries store full keys; the trailing fixed32 offsets/count
+// permit bounded reconstruction. See docs/learning/05-tables-filters-and-caches.md.
 class Block final {
 private:
     struct Layout {
@@ -61,8 +64,9 @@ private:
     Layout layout_;
 };
 
-// Reads a block, which and whose comparator must outlive the iterator. A new
-// iterator is not positioned. Keys and values remain valid until it moves.
+// Requires sorted keys under the borrowed comparator. Backing block storage and
+// comparator must outlive the iterator, including after an owning block is moved.
+// A new iterator is not positioned. Keys and values remain valid until it moves.
 // Positioning calls recover from an earlier corruption and start over.
 class Block::Iterator final {
 public:

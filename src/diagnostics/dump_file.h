@@ -14,8 +14,10 @@ namespace modern_leveldb {
 [[nodiscard]] Result<std::string> EscapeDiagnosticPath(const std::filesystem::path& path);
 [[nodiscard]] Status AppendDiagnosticLine(WritableFile& output, std::string line);
 
-// Dumps one canonical WAL, MANIFEST, or SSTable file. The output must not
-// alias the input or another database file.
+// Inspects one canonical WAL, MANIFEST, or SSTable from a closed database or
+// stable offline copy. The output must not alias any database file. Decoding
+// visited records is not backup, repair, or certification of all file bytes.
+// See docs/reference/storage-diagnostics.md.
 [[nodiscard]] Status DumpFile(FileSystem& file_system, const std::filesystem::path& path,
                               WritableFile& output);
 

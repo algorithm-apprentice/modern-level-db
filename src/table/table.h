@@ -30,7 +30,7 @@ struct TableOptions {
     // Not owned; must outlive every table that uses it.
     BlockCache* block_cache = nullptr;
     // Production tables contain internal keys. Direct test/tool callers may
-    // leave this false to read arbitrary-key LevelDB tables defensively.
+    // leave this false to read arbitrary-key tables defensively.
     bool use_trusted_internal_key_comparison = false;
 };
 
@@ -47,6 +47,9 @@ enum class TableLookupKind {
 
 // An immutable SSTable of internal keys. Its const members are safe for
 // concurrent calls.
+// Open checks the footer and index topology. Metaindex/filter validation requires
+// a configured filter policy; data entries are checked only when read. The owned
+// file also retains any borrowed mapped block bytes.
 class Table final {
 private:
     class BlockReference;
@@ -54,7 +57,8 @@ private:
 public:
     class Iterator;
 
-    // The comparator must outlive the table.
+    // The comparator and optional block cache must outlive the table. External
+    // mutation/truncation of its backing file is outside the immutable-file contract.
     [[nodiscard]] static Result<std::unique_ptr<Table>> Open(
         std::unique_ptr<RandomAccessFile> file, std::uint64_t file_size,
         const InternalKeyComparator& comparator, const TableOptions& options);

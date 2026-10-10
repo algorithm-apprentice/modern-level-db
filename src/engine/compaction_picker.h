@@ -14,8 +14,7 @@
 
 namespace modern_leveldb {
 
-// Level 0 needs compaction once it has this many files, LevelDB's
-// kL0_CompactionTrigger.
+// Overlapping level-0 files amplify reads; this count triggers consolidation.
 inline constexpr std::uint32_t Level0CompactionTrigger = 4;
 
 // The level that most needs compaction and how much: at least 1 means that the
@@ -45,25 +44,22 @@ struct Compaction {
     InternalKey compact_pointer;
 };
 
-// Returns LevelDB's best level and score for levels 0 to NumLevels - 2, as its
-// VersionSet::Finalize computes them: level 0 scores its file count divided by
-// Level0CompactionTrigger, and every deeper level its total file size divided
-// by 10 MiB times ten for each level below 1. A tie goes to the first level.
+// Scores pressure for levels with an output level. Level 0 uses file count;
+// deeper levels use bytes relative to a 10 MiB budget growing tenfold per level.
+// A score >= 1 is full, and ties choose the shallower level.
 [[nodiscard]] CompactionScore ScoreCompaction(const Version& version);
 
-// Returns the compaction that LevelDB's VersionSet::PickCompaction picks: a
-// size compaction of the best level if its score is at least 1, starting from
-// the first file whose largest key follows the level's compact pointer, and
-// otherwise a seek compaction starting from its file, or nothing. The inputs
-// then grow as LevelDB's do: overlapping level-0 files, boundary files that
-// share a user key, the next level's overlapping files, and more files of the
-// level if that keeps the next level's inputs and stays below 25 times the
-// target file size.
+// Chooses size pressure first, otherwise a file with an exhausted seek budget,
+// or nothing. A compact pointer rotates size-driven work through the level.
 //
-// Requires the comparator that orders the version, the version set's compact
-// pointers, a seek compaction whose file is in the version at its level, which
-// is below NumLevels - 1, and a target file size whose 25-fold fits in 64
-// bits.
+// Expands level-0 overlaps transitively and includes user-key boundary files
+// plus next-level overlaps, preserving first-source read correctness. Extra
+// source files are admitted only without new next-level inputs and below the
+// 25-fold target-size work bound. See docs/learning/07-writes-and-compaction.md.
+//
+// Requires the version's comparator and compact pointers. Any seek candidate
+// must be live at its stated level below NumLevels - 1. The target's 25-fold
+// must fit in 64 bits.
 [[nodiscard]] std::optional<Compaction> PickCompaction(
     std::shared_ptr<const Version> version, const InternalKeyComparator& comparator,
     std::span<const std::optional<InternalKey>, NumLevels> compact_pointers,

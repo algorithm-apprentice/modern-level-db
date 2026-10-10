@@ -33,12 +33,10 @@
 
 namespace modern_leveldb {
 
-// LevelDB's kL0_SlowdownWritesTrigger: when the current version has at least
-// this many level-0 table files, a non-forced MakeRoomForWrite call first
-// sleeps a millisecond once.
+// Give compaction time before level-0 pressure becomes a hard stall: non-forced
+// writes sleep a millisecond once when the current version reaches this count.
 inline constexpr std::size_t WriteDelayLevel0FileCountThreshold = 8;
-// LevelDB's kL0_StopWritesTrigger: when the current version has at least this
-// many level-0 table files, a write that needs a new memtable waits for
+// At this level-0 count, a write that needs a new memtable waits for
 // background work. Writes that still have room can proceed.
 inline constexpr std::size_t WriteStallLevel0FileCountThreshold = 12;
 
@@ -69,7 +67,7 @@ struct DatabaseEngineOptions {
     bool allow_weak_namespace_durability = false;
 };
 
-// Returns the options clipped to LevelDB's ranges: max_open_files to 74
+// Clips resource policy to supported ranges: max_open_files to 74
 // through 50,000, write_buffer_size to 64 KiB through 1 GiB, max_file_size to
 // 1 MiB through 1 GiB, and the block size to 1 KiB through 4 MiB.
 [[nodiscard]] DatabaseEngineOptions SanitizeOptions(DatabaseEngineOptions options);
@@ -102,8 +100,10 @@ struct DatabaseEngineState {
     std::optional<Error> sticky_error;
 };
 
-// An open database, as LevelDB's DBImpl. Its methods are safe to call from
-// several threads.
+// Coordinates visibility, durability, and reclamation. The mutex protects
+// topology, queues, snapshots, and publication; serialized memtable insertion
+// and file I/O can run outside it with retained sources.
+// Methods support concurrent calls, never races with destruction.
 class DatabaseEngine final {
     struct PrivateTag {
         explicit PrivateTag() = default;

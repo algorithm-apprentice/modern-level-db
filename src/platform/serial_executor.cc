@@ -15,6 +15,8 @@ SerialExecutor::SerialExecutor()
     : worker_([this](std::stop_token stop_token) { Run(stop_token); }) {}
 
 SerialExecutor::~SerialExecutor() {
+    // Detach pending callback owners under the mutex, but destroy them after the
+    // worker joins and outside the lock; callbacks may own other engine resources.
     std::deque<std::unique_ptr<BackgroundTask>> canceled_tasks;
     {
         std::lock_guard queue_lock(queue_mutex_);
@@ -58,6 +60,7 @@ void SerialExecutor::Run(std::stop_token stop_token) {
             task = std::move(tasks_.front());
             tasks_.pop_front();
         }
+        // Callback execution must not hold the queue mutex: tasks may schedule work.
         (*task)(stop_token);
     }
 }

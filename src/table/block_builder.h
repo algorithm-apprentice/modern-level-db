@@ -11,6 +11,7 @@
 namespace modern_leveldb {
 
 // Builds one sorted block with prefix-compressed keys and restart points.
+// Restart entries reset prefix sharing so seeks need not reconstruct from byte zero.
 class BlockBuilder final {
 public:
     // The restart interval must be at least one.

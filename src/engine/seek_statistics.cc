@@ -10,8 +10,7 @@
 namespace modern_leveldb {
 
 std::function<std::uint64_t()> ReadSamplingPeriods(std::uint32_t seed) {
-    // LevelDB's Random is the Park-Miller generator of std::minstd_rand0, and it
-    // masks its seed to 31 bits.
+    // A 31-bit Park-Miller generator gives reproducible sampling for a fixed seed.
     return [random = std::minstd_rand0(seed & 0x7fffffffU)]() mutable -> std::uint64_t {
         return random() % (2 * ReadBytesPeriod);
     };

@@ -80,7 +80,7 @@ public:
     }
     [[nodiscard]] std::span<const NewFile> new_files() const noexcept { return new_files_; }
 
-    // Returns the LevelDB encoding, with fields in LevelDB's canonical order.
+    // Encodes tagged MANIFEST fields in a deterministic canonical order.
     [[nodiscard]] std::vector<std::byte> Encode() const;
     // Accepts fields in any order. A repeated scalar field keeps its last value.
     [[nodiscard]] static Result<VersionEdit> Decode(ByteView encoded);

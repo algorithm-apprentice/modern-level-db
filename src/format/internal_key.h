@@ -17,6 +17,10 @@ namespace modern_leveldb {
 
 using SequenceNumber = std::uint64_t;
 
+// History is encoded as user_key || fixed64((sequence << 8) | kind). The trailer
+// holds a 56-bit sequence and an 8-bit kind. Comparison orders user keys ascending
+// and numeric trailers descending, so a snapshot seek finds the newest visible entry.
+// See docs/learning/02-bytes-and-formats.md and docs/learning/03-memory-and-mvcc.md.
 inline constexpr SequenceNumber MaxSequenceNumber = (std::uint64_t{1} << 56U) - 1U;
 inline constexpr std::size_t InternalKeyTrailerSize = 8;
 
@@ -27,6 +31,7 @@ enum class ValueKind : std::uint8_t {
 
 inline constexpr ValueKind SeekValueKind = ValueKind::Value;
 
+// Borrows the encoded input; parsing does not retain or copy user_key storage.
 struct ParsedInternalKey {
     ByteView user_key;
     SequenceNumber sequence;
@@ -35,6 +40,8 @@ struct ParsedInternalKey {
 
 [[nodiscard]] Result<ParsedInternalKey> ParseInternalKey(ByteView encoded);
 
+// Owns a seek target in both length-prefixed memtable and internal-key forms.
+// Views borrow this object; reacquire them after a move (inline storage can relocate).
 class LookupKey final {
 public:
     [[nodiscard]] static Result<LookupKey> Create(ByteView user_key, SequenceNumber sequence);
@@ -64,6 +71,7 @@ private:
     std::size_t internal_key_offset_ = 0;
 };
 
+// Owns one version's encoded key. Views require live, unmoved owning storage.
 class InternalKey final {
 public:
     [[nodiscard]] static Result<InternalKey> Create(ByteView user_key, SequenceNumber sequence,
@@ -98,7 +106,9 @@ public:
     InternalKeyComparator(const Comparator&&) = delete;
 
     [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override;
-    // Both operands must contain an internal-key trailer.
+    // Both operands must contain a trailer. Memtable encoders and checked table
+    // entries establish the trusted domain; unlike Compare, this does not give
+    // malformed short keys a defensive total order. The user comparator is borrowed.
     [[nodiscard]] int CompareTrusted(ByteView left, ByteView right) const noexcept;
     [[nodiscard]] int Compare(const InternalKey& left, const InternalKey& right) const noexcept {
         return Compare(left.encoded(), right.encoded());

@@ -34,6 +34,8 @@ struct State {
 };
 
 inline State Observe(Control& control) noexcept {
+    // Interlocked observations, not volatile alone, synchronize this protocol.
+    // A changed epoch rejects an active flag observed across an interval boundary.
     const LONG64 before = ::InterlockedCompareExchange64(&control.epoch, 0, 0);
     const LONG active = ::InterlockedCompareExchange(&control.active, 0, 0);
     const LONG failure = ::InterlockedCompareExchange(&control.failure, 0, 0);

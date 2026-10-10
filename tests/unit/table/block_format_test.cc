@@ -185,7 +185,7 @@ TEST(BlockTrailerTest, StoresTypeNoneAndTheMaskedChecksum) {
     const auto trailer =
         EncodeBlockTrailer(Bytes({'h', 'e', 'l', 'l', 'o'}), BlockCompression::None);
 
-    // LevelDB's trailer for "hello": type 0, then the masked CRC32C of "hello\0".
+    // Trailer is type 0 followed by masked CRC32C of data plus type ("hello\0").
     EXPECT_EQ(Materialize(trailer), Bytes({0x00, 0x97, 0xa8, 0x8f, 0x83}));
 }
 

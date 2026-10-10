@@ -14,6 +14,10 @@ namespace modern_leveldb {
 
 inline constexpr std::size_t WriteBatchHeaderSize = 12;
 
+// fixed64(first_sequence) || fixed32(count) || ordered records. A Put record has
+// a kind byte and length-prefixed key/value; Delete has only the key. Each record
+// consumes the next sequence. Framing/checksums belong to the WAL, not this payload.
+// See docs/learning/02-bytes-and-formats.md.
 struct WriteBatchEntry {
     SequenceNumber sequence;
     ValueKind kind;
@@ -25,8 +29,12 @@ class EncodedWriteBatch;
 
 class WriteBatchReader final {
 public:
+    // Validates the complete external representation before iteration: tags,
+    // lengths, count, sequence range, and no trailing bytes. The reader and its
+    // entries borrow the input, which must stay alive and unchanged.
     [[nodiscard]] static Result<WriteBatchReader> Open(ByteView encoded);
-    // Requires an owned batch whose private encoding invariant holds.
+    // CommitGroup uses the owned batch's private encoding invariant instead of
+    // rescanning disk bytes. The batch must remain alive and unchanged while read.
     [[nodiscard]] static WriteBatchReader OpenTrusted(const EncodedWriteBatch& batch) noexcept;
 
     WriteBatchReader(const WriteBatchReader&) = delete;
@@ -49,6 +57,8 @@ private:
     std::uint32_t index_ = 0;
 };
 
+// Owns bytes whose mutators preserve a fully decodable batch. The write queue
+// temporarily assigns its hidden sequence and restores it before returning.
 class EncodedWriteBatch final {
 public:
     EncodedWriteBatch();

@@ -971,6 +971,9 @@ def aggregate_cells(cells, evidence):
 
 
 def run_matrix(plan_path, output):
+    # Predeclare roles, fixed work, controls, and ordering before measuring.
+    # Recheck binary/source identity around each fresh-process cell so an apparent
+    # improvement cannot silently come from changed work or a replaced executable.
     plan_path = Path(plan_path).resolve(strict=True)
     plan_sha256 = file_digest(plan_path)
     plan = load_plan(plan_path)

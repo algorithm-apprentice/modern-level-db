@@ -52,7 +52,8 @@ template <typename UInt>
         const auto payload = byte & 0x7fU;
         const std::size_t shift = index * PayloadBits;
 
-        // Match LevelDB: unsigned shifting discards excess terminal payload bits.
+        // This decoder accepts excess terminal payload bits by truncating them
+        // to the unsigned result width; a continued group past MaxBytes is an error.
         value |= static_cast<UInt>(payload) << shift;
         if ((byte & 0x80U) == 0U) {
             input = input.subspan(index + 1U);

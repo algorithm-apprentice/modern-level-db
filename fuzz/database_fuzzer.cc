@@ -20,6 +20,9 @@ using fuzz_support::Require;
 using Model = std::map<std::string, std::string>;
 
 void FuzzDatabase(ByteView input) {
+    // A bounded command stream compares latest/snapshot reads against maps and
+    // exercises batches, flush/compaction, and reopen. This is an in-memory model,
+    // not evidence of native filesystem power-loss durability or concurrent writers.
     if (input.empty() || input.size() > 4096) {
         return;
     }
@@ -62,6 +65,8 @@ void FuzzDatabase(ByteView input) {
         Require(entry == expected.end());
     };
 
+    // Each three-byte command selects operation, key, and value pattern; large
+    // values force maintenance without allowing unbounded work per fuzz input.
     for (unsigned step = 0; step < 32 && input.size() >= 3; ++step) {
         const unsigned command = std::to_integer<unsigned>(input[0]);
         const unsigned key_number = std::to_integer<unsigned>(input[1]) % 16;

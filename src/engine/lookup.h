@@ -17,7 +17,8 @@
 namespace modern_leveldb {
 
 // A file that a point read searched without deciding the read before it
-// searched another, which LevelDB charges a seek.
+// searched another: repeated multi-file probes spend this file's seek budget
+// and can trigger compaction even when its level is not full.
 struct SeekCharge {
     std::uint32_t level;
     const Version::File* file;
@@ -49,8 +50,8 @@ Result<bool> LookupValue(const MemTable& memtable, const MemTable* immutable,
 
 // Returns the first file, with its level, that a point read at the internal
 // key would search in the version, if it would search at least two, as
-// LevelDB's Version::RecordReadSample charges a sampled read. Requires a valid
-// internal key.
+// sampled reads charge the first unnecessary overlapping file. Requires a valid
+// internal key; the sample estimates read amplification rather than doing I/O.
 [[nodiscard]] std::optional<SeekCharge> SampleCharge(const Version& version,
                                                      const InternalKeyComparator& comparator,
                                                      ByteView internal_key);

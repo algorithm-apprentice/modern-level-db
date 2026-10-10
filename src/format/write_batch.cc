@@ -110,6 +110,8 @@ Result<WriteBatchReader> WriteBatchReader::Open(ByteView encoded) {
         return std::unexpected(Error::Corruption("write batch sequence range exceeds 56 bits"));
     }
 
+    // Validate everything once so Next can decode borrowed records without
+    // repeating recoverable checks. Mutating the backing bytes breaks this proof.
     ByteView remaining = encoded.subspan(WriteBatchHeaderSize);
     std::uint32_t records_left = count;
     while (records_left > 0) {

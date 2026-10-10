@@ -126,7 +126,8 @@ Status ForEachOverlapping(const Version& version, const InternalKeyComparator& c
             level0.push_back(&file);
         }
     }
-    // Level-0 files are numbered in the order they were written.
+    // Overlapping level-0 files must be searched newest first: an older value
+    // must not win over a later overwrite or deletion.
     std::ranges::sort(level0, std::ranges::greater{},
                       [](const Version::File* file) { return (**file).number; });
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
@@ -189,6 +190,8 @@ Result<bool> LookupValue(const MemTable& memtable, const MemTable* immutable,
                          std::vector<std::byte>& value, std::optional<SeekCharge>& seek,
                          const TableReadOptions& options) {
     seek.reset();
+    // Newest source with a visible entry decides. A tombstone decides absence,
+    // unlike Missing, which permits searching older sources.
     for (const MemTable* source : {&memtable, immutable}) {
         if (source == nullptr) {
             continue;

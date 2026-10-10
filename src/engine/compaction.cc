@@ -22,7 +22,7 @@
 namespace modern_leveldb {
 namespace {
 
-// LevelDB's MaxGrandParentOverlapBytes, relative to the target file size.
+// Bound the next rewrite's overlap relative to this output's target size.
 constexpr std::uint64_t GrandparentOverlapFactor = 10;
 
 void Expect(const Status& status) noexcept {
@@ -37,8 +37,8 @@ InternalKey Decoded(ByteView key) {
     return std::move(decoded).value();
 }
 
-// Sums the grandparents that the entries pass, as LevelDB's
-// Compaction::ShouldStopBefore does.
+// Tracks deeper files passed by the input range, not just emitted entries.
+// This bounds future overlap even when current records are dropped.
 class GrandparentOverlap {
 public:
     GrandparentOverlap(const InternalKeyComparator& comparator,
@@ -72,8 +72,8 @@ private:
     std::uint64_t overlapped_ = 0;
 };
 
-// Answers LevelDB's Compaction::IsBaseLevelForKey for user keys in increasing
-// order, scanning each level below the next one once.
+// Checks whether a tombstone could still hide a value below the output level.
+// Monotonic user keys let each disjoint level be scanned once.
 class BaseLevel {
 public:
     BaseLevel(const Version& version, std::uint32_t level,
@@ -241,8 +241,10 @@ Result<VersionEdit> RunCompaction(FileSystem& file_system, const std::filesystem
             user_key.emplace(parsed->user_key.begin(), parsed->user_key.end());
             last_sequence.reset();
         }
-        // Every reader sees the earlier entry of the user key, or the deletion
-        // hides nothing that remains below the compaction.
+        // Descending history makes the preceding sequence newer. Once that
+        // sequence is visible to the oldest snapshot, this older entry is hidden
+        // for everyone, including when it is a tombstone. Otherwise, dropping a
+        // tombstone requires its visibility to the oldest snapshot and no deeper value.
         const bool drop =
             (last_sequence.has_value() && *last_sequence <= smallest_snapshot) ||
             (parsed->kind == ValueKind::Deletion && parsed->sequence <= smallest_snapshot &&

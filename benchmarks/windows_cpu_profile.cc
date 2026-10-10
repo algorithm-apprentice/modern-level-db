@@ -222,6 +222,9 @@ void VerifyForeignThreadRejection() {
     }
 }
 
+// Launches a child already assigned to a kill-on-close job, inheriting only the
+// selected handles. Cleanup targets this owned job, never all processes sharing
+// the executable name.
 class Process final {
 public:
     explicit Process(const Arguments& args)
@@ -461,6 +464,9 @@ struct StackAggregate {
     std::vector<ProfileFrame> frames;
 };
 
+// Readiness/PDB validation -> active-epoch sampling -> retained report. Stacks
+// are weighted by per-thread CPU deltas, not wall time. Suspending threads for
+// stack walks perturbs execution, so capture is diagnostic, not throughput evidence.
 class Sampler final {
 public:
     Sampler(Process& process, const Arguments& args)
@@ -757,6 +763,8 @@ private:
             }
             const std::uint64_t creation = FileTime(created);
             const std::uint64_t cpu = FileTime(kernel) + FileTime(user);
+            // Creation time separates reused thread IDs; epoch separates measured
+            // intervals so setup or an earlier interval cannot share a CPU baseline.
             const BaselineKey key{id, creation, expected.epoch};
             const auto [position, inserted] = baselines_.try_emplace(key, cpu);
             if (inserted) continue;

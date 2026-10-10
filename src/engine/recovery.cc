@@ -152,6 +152,8 @@ Result<std::vector<std::uint64_t>> PrepareLogsForReplay(FileSystem& file_system,
         return std::unexpected(validated.error());
     }
 
+    // Replay oldest logs first so later sequences cannot be applied ahead of
+    // their history. Reserve all discovered numbers before creating recovery outputs.
     std::ranges::sort(logs);
     const Status marked = MarkReplayLogNumbersUsed(versions, logs);
     if (!marked.has_value()) {
@@ -199,7 +201,8 @@ public:
           built_(&built),
           memtable_(std::make_unique<MemTable>(comparator.user_comparator())) {}
 
-    // Applies every intact record of the log, skipping damaged ones.
+    // Replays complete logical batches. Physical corruption can be skipped here,
+    // unlike authoritative MANIFEST edits; intact malformed batches still fail recovery.
     [[nodiscard]] Status ReplayLog(std::uint64_t number) {
         Result<std::unique_ptr<SequentialFile>> file =
             file_system_->OpenSequential(LogFileName(*directory_, number));

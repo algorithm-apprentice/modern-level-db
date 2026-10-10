@@ -13,7 +13,7 @@ namespace modern_leveldb {
 // Extends an unmasked, finalized checksum, not an internal CRC register.
 [[nodiscard]] std::uint32_t ExtendCrc32c(std::uint32_t crc, ByteView input) noexcept;
 
-// LevelDB's reversible transform for checksums stored in WAL and SSTable files.
+// Reversible masking for stored WAL/table checksums, not cryptographic protection.
 [[nodiscard]] std::uint32_t MaskCrc32c(std::uint32_t crc) noexcept;
 [[nodiscard]] std::uint32_t UnmaskCrc32c(std::uint32_t masked_crc) noexcept;
 

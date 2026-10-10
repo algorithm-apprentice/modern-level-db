@@ -16,6 +16,9 @@ namespace modern_leveldb {
 class WindowsFileOperations;
 class MappedReadLimiter;
 
+// Native backend admitted only with explicit weak-namespace consent. File Sync
+// flushes contents, but SyncDirectory cannot promise name persistence after power loss.
+// See docs/reference/platform-support-and-durability.md for the supported boundary.
 class WindowsFileSystem final : public FileSystem {
 public:
     explicit WindowsFileSystem(bool allow_weak_namespace_durability = false,

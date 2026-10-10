@@ -74,6 +74,8 @@ public:
             }
             started_ = true;
         }
+        // The collector must be ready before the first measured interval. Publish
+        // its epoch identity before active, separating setup from measured work.
         Epoch epoch{};
         epoch.id = static_cast<std::uint64_t>(::InterlockedIncrement64(&control_->epoch));
         epoch.expected = static_cast<std::uint64_t>(iterations);

@@ -49,6 +49,8 @@ MutableByteView Arena::AllocateAligned(std::size_t bytes) {
 }
 
 std::byte* Arena::AllocateFallback(std::size_t bytes) {
+    // Large requests get a dedicated block without replacing the current small
+    // allocation block, preserving its remaining space for subsequent entries.
     if (bytes > DedicatedAllocationThreshold) {
         return AllocateBlock(bytes);
     }

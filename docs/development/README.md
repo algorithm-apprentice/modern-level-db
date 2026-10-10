@@ -13,6 +13,8 @@ repository.
 | Understand CI and quality gates | [CI and quality gates](ci-and-quality-gates.md) |
 | Run comparative benchmarks, selected workloads, diagnostics, and CPU capture | [Benchmarking and profiling](benchmarking-and-profiling.md) |
 | Follow code, comment, formatting, and review conventions | [Code style](code-style.md) |
+| Review source-comment accuracy, contracts, and learning gaps | [Comment audit](comment-audit.md) |
+| Follow comment-only improvement batches, progress, and acceptance criteria | [Comment remediation plan](comment-remediation-plan.md) |
 
 ## Delivery rule
 

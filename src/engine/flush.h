@@ -19,25 +19,21 @@ namespace modern_leveldb {
 
 struct FlushOptions {
     TableBuilderOptions table_options{};
-    // LevelDB's max_file_size, the size at which compaction splits its outputs.
-    // A memtable's table stays above a level whose next level's files that
-    // overlap it total more than ten times this size.
+    // Target compaction output size, also used to cap the future overlap inherited
+    // by a newly flushed table.
     std::uint64_t target_file_size = std::uint64_t{2} << 20U;
 };
 
-// The deepest level at which a memtable's table starts, LevelDB's
-// kMaxMemCompactLevel.
+// Limit direct placement depth so new tables do not skip unlimited maintenance.
 inline constexpr std::uint32_t MaxMemTableOutputLevel = 2;
 
-// Returns the level for a new table that holds the user keys from the smallest
-// to the largest, as LevelDB's Version::PickLevelForMemTableOutput does: 0 if a
-// level-0 file overlaps the range, and otherwise the first level below
-// MaxMemTableOutputLevel whose next level overlaps the range or whose level
-// after that has files overlapping it that total more than ten times the target
-// file size, or MaxMemTableOutputLevel if there is none. A file overlaps the
-// range if it holds one of its keys, both ends included. Requires the smallest
-// key not after the largest under the user comparator that orders the
-// version's keys, and a target file size whose tenfold fits in 64 bits.
+// Places a flushed range as deep as safely possible, up to MaxMemTableOutputLevel.
+// Any level-0 overlap keeps it at level 0. Otherwise stop before next-level
+// overlap or grandparent bytes exceeding ten target files; disjoint placement
+// preserves newest-source read order and limits the next rewrite's cost.
+//
+// Requires an inclusive ordered user-key range under the version's comparator,
+// and a target size whose tenfold fits in 64 bits.
 [[nodiscard]] std::uint32_t PickLevelForMemTableOutput(const Version& version,
                                                        const Comparator& user_comparator,
                                                        ByteView smallest_user_key,
@@ -55,7 +51,8 @@ inline constexpr std::uint32_t MaxMemTableOutputLevel = 2;
 // Touches only its arguments, so the caller need not hold the database mutex.
 // The number must be a fresh file number that the caller keeps from
 // obsolete-file cleanup, and `log_number` must name the log that the memtable
-// after this one writes to, which must already be durable in the directory.
+// after this one writes to, whose creation must already satisfy the selected
+// backend namespace policy. Weak Windows consent is not strict name durability.
 [[nodiscard]] Result<VersionEdit> FlushMemTable(
     FileSystem& file_system, const std::filesystem::path& directory,
     const InternalKeyComparator& comparator, const FlushOptions& options, TableCache& table_cache,

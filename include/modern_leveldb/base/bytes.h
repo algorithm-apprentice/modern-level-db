@@ -7,6 +7,8 @@
 
 namespace modern_leveldb {
 
+// Byte views borrow storage, never own or extend its lifetime. Binary data may
+// contain zero bytes; keep the backing storage live (and unchanged for readers).
 using ByteView = std::span<const std::byte>;
 using MutableByteView = std::span<std::byte>;
 

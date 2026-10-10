@@ -22,11 +22,17 @@ enum class MemTableLookupKind {
     Deletion,
 };
 
+// Missing permits looking in older sources; Deletion decides absence and prevents
+// an older value from resurfacing. A Value view borrows the memtable's arena.
 struct MemTableLookup {
     MemTableLookupKind kind = MemTableLookupKind::Missing;
     ByteView value;
 };
 
+// Stores immutable versioned entries in an arena-backed skip list. One serialized
+// writer can publish entries while readers traverse; sequence filtering controls
+// visibility. The user comparator and this table must outlive readers/iterators.
+// See docs/learning/03-memory-and-mvcc.md.
 class MemTable final {
 private:
     struct EntryComparator {
@@ -49,12 +55,14 @@ public:
     ~MemTable() = default;
 
     [[nodiscard]] Status Add(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value);
-    // Requires a valid owned-batch entry, a reserved sequence, and a unique
-    // internal key.
+    // Requires an owned-batch entry with representable lengths, a reserved sequence,
+    // and a unique internal key, as supplied by InsertBatchTrusted.
     void AddTrusted(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value);
     [[nodiscard]] MemTableLookup Lookup(const LookupKey& key) const;
     [[nodiscard]] std::size_t memory_usage() const noexcept { return arena_.memory_usage(); }
 
+    // Borrowing counter, not a shared owner. The engine retains a rotated table
+    // while these pins exist; other callers must keep the table alive themselves.
     class ReadPin final {
     public:
         ReadPin(const ReadPin&) = delete;

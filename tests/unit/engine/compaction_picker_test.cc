@@ -228,7 +228,8 @@ TEST_F(CompactionPickerTest, ExpandsLevelZeroInputsUntilTheirRangeStopsGrowing) 
 }
 
 TEST_F(CompactionPickerTest, AddsBoundaryFilesThatShareAUserKey) {
-    // Files 21, 24, and 25 split the entries of user key "k".
+    // Files 21, 24, and 25 split descending history of "k". Moving k@5 without
+    // k@3/k@1 would let the shallower older records decide a stale point read.
     const auto level = Make({{1, File(21, Key("a", 9), Key("k", 5), 4 * MiB)},
                              {1, File(24, Key("k", 3), Key("k", 2), 4 * MiB)},
                              {1, File(25, Key("k", 1), Key("m", 1), 4 * MiB)},

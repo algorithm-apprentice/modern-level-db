@@ -113,7 +113,8 @@ std::vector<std::byte> WithRestarts(std::vector<std::byte> entries,
     return entries;
 }
 
-// Entries of the golden block: restart points at offsets 0 and 18.
+// Each of the first two entries is three one-byte lengths + five suffix bytes
+// + one value byte = 9 bytes, so the next full-key restart starts at offset 18.
 std::vector<std::byte> GoldenEntries() {
     return Concat({
         EntryBytes(0, "apple", "1"),

@@ -989,6 +989,9 @@ def validate_native_profile(profile, epochs, measurement, completion, expected_m
     }
 
 
+# One fresh output directory binds the executable, workload/policies, validated
+# completion, and raw artifacts. Setup and measured work have separate contracts;
+# exact report shapes are defined by validators, not this execution map.
 def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=None,
              min_time=None, timeout=None, modern_file_access="default",
              reference_file_access="default", modern_result_ownership="reusable",
@@ -1090,6 +1093,8 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
     }
     manifest_path = output / "manifest.json"
     write_json(manifest_path, manifest)
+    # Mutable workloads use fixed work: adaptive iteration counts change their
+    # state and maintenance pressure, so they cannot share read-workload timing policy.
     benchmark_time = f"{mutation['iterations']}x" if mutation else ("1x" if smoke else f"{min_time}s")
     command = [
         "--case", case, "--database", str(work / "db"),
@@ -1246,6 +1251,8 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
                 profile, epochs,
                 manifest["measurement"], manifest["completion"], snapshot.stem,
             )
+        # Bind the bytes actually validated, rejecting artifact replacement between
+        # reading a report and publishing a successful experiment manifest.
         if any(file_digest(path) != digest for path, digest in artifact_snapshots.items()):
             raise ValueError("validated performance artifact changed before publication")
         manifest["status"] = "complete"

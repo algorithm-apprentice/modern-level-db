@@ -37,8 +37,9 @@ void InsertBatchTrusted(WriteBatchReader& batch, MemTable& memtable);
 [[nodiscard]] Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log,
                                  MemTable& memtable);
 
-// Queues writers under a database mutex and commits the batches of the writers
-// behind the front one with its own, as LevelDB's DBImpl::Write does.
+// Serializes leaders under the database mutex and amortizes WAL work by grouping
+// queued followers. Stack writer records stay alive until completion wakes them.
+// See docs/learning/07-writes-and-compaction.md.
 class WriteQueue final {
 public:
     WriteQueue();
@@ -61,8 +62,8 @@ public:
                                bool sync, Prepare&& prepare, Commit&& commit);
 
     // Requires the lock. Queues a writer without a batch that, at the front,
-    // calls prepare with force set and completes alone, as LevelDB's batch-less
-    // writer does. A group ends before it.
+    // calls prepare with force set and completes alone. It is a rotation barrier:
+    // a write group ends before it, so the log cannot switch during that commit.
     template <typename Prepare>
     [[nodiscard]] Status Force(std::unique_lock<std::mutex>& lock, Prepare&& prepare);
 
