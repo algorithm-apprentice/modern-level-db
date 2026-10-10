@@ -58,10 +58,6 @@ template <typename UInt>
 }
 
 template <typename UInt>
-inline constexpr std::size_t MaxVarintBytes =
-    (std::numeric_limits<UInt>::digits + VarintPayloadBits - 1U) / VarintPayloadBits;
-
-template <typename UInt>
 void EncodeVarintTrusted(MutableByteView& output, UInt value) noexcept {
     static_assert(std::is_unsigned_v<UInt>);
     while (value >= 0x80U) {
@@ -102,8 +98,11 @@ template <typename UInt>
 [[nodiscard]] Result<UInt> ConsumeVarint(ByteView& input) {
     static_assert(std::is_unsigned_v<UInt>);
 
+    constexpr std::size_t ValueBits = std::numeric_limits<UInt>::digits;
+    constexpr std::size_t MaxBytes = (ValueBits + VarintPayloadBits - 1U) / VarintPayloadBits;
+
     UInt value = 0;
-    for (std::size_t index = 0; index < MaxVarintBytes<UInt>; ++index) {
+    for (std::size_t index = 0; index < MaxBytes; ++index) {
         if (index >= input.size()) {
             return std::unexpected(Error::Corruption("truncated varint"));
         }
@@ -120,7 +119,7 @@ template <typename UInt>
             return value;
         }
 
-        if (index + 1U == MaxVarintBytes<UInt>) {
+        if (index + 1U == MaxBytes) {
             return std::unexpected(Error::Corruption("varint overflow"));
         }
     }
