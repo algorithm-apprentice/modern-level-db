@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -97,11 +98,35 @@ Result<std::unique_ptr<VersionSet>> OpenVersions(FileSystem& file_system,
     return VersionSet::Recover(file_system, directory, comparator);
 }
 
-// Checks that every table of the current version has a file, and returns the
-// numbers of the logs to replay in order after marking them used.
-Result<std::vector<std::uint64_t>> SelectLogs(FileSystem& file_system,
-                                              const std::filesystem::path& directory,
-                                              VersionSet& versions) {
+Status ValidateReferencedTableFiles(const Version& version,
+                                    const std::set<std::uint64_t>& existing_table_numbers,
+                                    const std::filesystem::path& directory) {
+    for (std::uint32_t level = 0; level < NumLevels; ++level) {
+        for (const Version::File& file : version.files(level)) {
+            if (!existing_table_numbers.contains(file->number)) {
+                return std::unexpected(Error::Corruption(
+                    "table file is missing: " + PathUtf8(TableFileName(directory, file->number))
+                                                    .value_or("<unrepresentable>")));
+            }
+        }
+    }
+    return {};
+}
+
+Status MarkReplayLogNumbersUsed(VersionSet& versions, std::span<const std::uint64_t> log_numbers) {
+    for (const std::uint64_t number : log_numbers) {
+        if (!versions.MarkFileNumberUsed(number).has_value()) {
+            return std::unexpected(Error::Corruption(
+                "log file number is beyond the file number limit: " + std::to_string(number)));
+        }
+    }
+    return {};
+}
+
+// Validates referenced tables and reserves the selected log numbers before replay.
+Result<std::vector<std::uint64_t>> PrepareLogsForReplay(FileSystem& file_system,
+                                                        const std::filesystem::path& directory,
+                                                        VersionSet& versions) {
     const Result<std::vector<std::filesystem::path>> names = file_system.ListDirectory(directory);
     if (!names.has_value()) {
         return std::unexpected(names.error());
@@ -122,22 +147,15 @@ Result<std::vector<std::uint64_t>> SelectLogs(FileSystem& file_system,
         }
     }
 
-    for (std::uint32_t level = 0; level < NumLevels; ++level) {
-        for (const Version::File& file : versions.current()->files(level)) {
-            if (!tables.contains(file->number)) {
-                return std::unexpected(Error::Corruption(
-                    "table file is missing: " + PathUtf8(TableFileName(directory, file->number))
-                                                    .value_or("<unrepresentable>")));
-            }
-        }
+    const Status validated = ValidateReferencedTableFiles(*versions.current(), tables, directory);
+    if (!validated.has_value()) {
+        return std::unexpected(validated.error());
     }
 
     std::ranges::sort(logs);
-    for (const std::uint64_t number : logs) {
-        if (!versions.MarkFileNumberUsed(number).has_value()) {
-            return std::unexpected(Error::Corruption(
-                "log file number is beyond the file number limit: " + std::to_string(number)));
-        }
+    const Status marked = MarkReplayLogNumbersUsed(versions, logs);
+    if (!marked.has_value()) {
+        return std::unexpected(marked.error());
     }
     return logs;
 }
@@ -303,7 +321,8 @@ Result<RecoveredDatabase> RecoverDatabase(FileSystem& file_system,
         return std::unexpected(std::move(versions).error());
     }
     VersionSet& set = **versions;
-    const Result<std::vector<std::uint64_t>> logs = SelectLogs(file_system, directory, set);
+    const Result<std::vector<std::uint64_t>> logs =
+        PrepareLogsForReplay(file_system, directory, set);
     if (!logs.has_value()) {
         return std::unexpected(logs.error());
     }

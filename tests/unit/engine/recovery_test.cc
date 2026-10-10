@@ -407,6 +407,33 @@ TEST_F(RecoveryTest, RejectsLogNumbersBeyondTheLimit) {
     ExpectError({}, ErrorCode::Corruption);
 }
 
+TEST_F(RecoveryTest, ValidatesReferencedTablesBeforeReplayLogNumbers) {
+    static_cast<void>(Recover());
+    WriteLog(2, {Batch(1, {Put{"a", "1"}})});
+    static_cast<void>(Recover({}));
+    const auto table = TableFileName(directory_, 4);
+    const auto contents = file_system_.Contents(table).value();
+    file_system_.Erase(table);
+    const auto invalid_log = LogFileName(directory_, FileNumberLimit);
+    file_system_.Write(invalid_log, {});
+
+    const auto missing_table = TryRecover({});
+    ASSERT_FALSE(missing_table.has_value());
+    EXPECT_EQ(missing_table.error().code(), ErrorCode::Corruption);
+    EXPECT_TRUE(missing_table.error().message().starts_with("table file is missing: "));
+
+    file_system_.Write(table, contents);
+    const auto invalid_number = TryRecover({});
+    ASSERT_FALSE(invalid_number.has_value());
+    EXPECT_EQ(invalid_number.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(
+        invalid_number.error().message(),
+        "log file number is beyond the file number limit: " + std::to_string(FileNumberLimit));
+
+    file_system_.Erase(invalid_log);
+    EXPECT_EQ(TableEntries(*Recover({}).versions), (Entries{{"a@1", "1"}}));
+}
+
 TEST_F(RecoveryTest, RejectsASecondRecoveryWhileLocked) {
     const RecoveredDatabase recovered = Recover();
 
