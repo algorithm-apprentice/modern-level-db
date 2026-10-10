@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
@@ -69,9 +70,12 @@ public:
     EncodedWriteBatch& operator=(EncodedWriteBatch&& source);
     ~EncodedWriteBatch() = default;
 
+    // Inputs are copied and must not refer to this batch's private encoding.
     [[nodiscard]] Status Put(ByteView key, ByteView value);
     [[nodiscard]] Status Delete(ByteView key);
     [[nodiscard]] Status Append(const EncodedWriteBatch& source);
+    // WriteQueue uses this for distinct owned batches after bounding group size/count.
+    void AppendTrusted(const EncodedWriteBatch& source);
     [[nodiscard]] Status SetSequence(SequenceNumber sequence);
     void Clear() noexcept;
 
@@ -82,6 +86,7 @@ public:
 private:
     [[nodiscard]] Status AppendRecord(ValueKind kind, ByteView key, ByteView value);
     [[nodiscard]] Status ValidateAdditionalRecords(std::uint32_t additional) const;
+    void AppendRecords(std::string_view records, std::uint32_t count);
     void SetCount(std::uint32_t count) noexcept;
 
     std::string encoded_;

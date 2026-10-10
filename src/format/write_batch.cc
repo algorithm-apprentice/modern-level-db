@@ -4,7 +4,6 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <limits>
 #include <optional>
 #include <span>
@@ -12,6 +11,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/coding_internal.h"
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
@@ -61,16 +61,6 @@ ByteView ConsumeLengthPrefixedUnchecked(ByteView& input) noexcept {
     return value;
 }
 
-bool Aliases(ByteView value, ByteView storage) noexcept {
-    if (value.empty()) {
-        return false;
-    }
-    assert(!storage.empty());
-    const std::less<const std::byte*> before;
-    return before(value.data(), storage.data() + storage.size()) &&
-           before(storage.data(), value.data() + value.size());
-}
-
 // GCOVR_EXCL_START: these require one logical value larger than 4 GiB
 std::unexpected<Error> KeyTooLong() {
     return std::unexpected(Error::InvalidArgument("write batch key is too long for the memtable"));
@@ -88,9 +78,7 @@ std::unexpected<Error> BatchTooLarge() {
 // GCOVR_EXCL_STOP
 
 void EncodeBatchValue(MutableByteView& output, ByteView value) noexcept {
-    const bool encoded = EncodeVarint32(output, static_cast<std::uint32_t>(value.size()));
-    assert(encoded);
-    static_cast<void>(encoded);
+    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(value.size()));
     std::ranges::copy(value, output.begin());
     output = output.subspan(value.size());
 }
@@ -240,9 +228,22 @@ Status EncodedWriteBatch::Append(const EncodedWriteBatch& source) {
     if (records_too_large) {     // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs more than string max_size
         return BatchTooLarge();  // GCOVR_EXCL_LINE: needs more than string max_size
     }
-    encoded_.append(records.data(), records.size());
-    SetCount(count() + source_count);
+    AppendRecords(records, source_count);
     return {};
+}
+
+void EncodedWriteBatch::AppendTrusted(const EncodedWriteBatch& source) {
+    assert(this != &source);
+    const std::uint32_t source_count = source.count();
+    if (source_count == 0) {
+        return;
+    }
+
+    assert(source_count <= std::numeric_limits<std::uint32_t>::max() - count());
+    assert(IsSequenceRangeValid(sequence(), count() + source_count));
+    const std::string_view records = AsStringView(source.encoded().subspan(WriteBatchHeaderSize));
+    assert(records.size() <= encoded_.max_size() - encoded_.size());
+    AppendRecords(records, source_count);
 }
 
 Status EncodedWriteBatch::AppendRecord(ValueKind kind, ByteView key, ByteView value) {
@@ -261,18 +262,6 @@ Status EncodedWriteBatch::AppendRecord(ValueKind kind, ByteView key, ByteView va
     const bool record_too_large = record_size > encoded_.max_size() - encoded_.size();
     if (record_too_large) {      // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs more than string max_size
         return BatchTooLarge();  // GCOVR_EXCL_LINE: needs more than string max_size
-    }
-
-    const ByteView storage = encoded();
-    std::string stable_key;
-    if (Aliases(key, storage)) {
-        stable_key.assign(AsStringView(key));
-        key = AsBytes(stable_key);
-    }
-    std::string stable_value;
-    if (Aliases(value, storage)) {
-        stable_value.assign(AsStringView(value));
-        value = AsBytes(stable_value);
     }
 
     const std::size_t old_size = encoded_.size();
@@ -324,6 +313,11 @@ Status EncodedWriteBatch::ValidateAdditionalRecords(std::uint32_t additional) co
             Error::InvalidArgument("write batch sequence range exceeds 56 bits"));
     }
     return {};
+}
+
+void EncodedWriteBatch::AppendRecords(std::string_view records, std::uint32_t count) {
+    encoded_.append(records.data(), records.size());
+    SetCount(this->count() + count);
 }
 
 void EncodedWriteBatch::SetCount(std::uint32_t count) noexcept {

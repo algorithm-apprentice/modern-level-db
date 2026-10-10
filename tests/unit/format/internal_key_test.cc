@@ -50,6 +50,21 @@ public:
     void FindShortSuccessor(std::vector<std::byte>&) const override {}
 };
 
+class InvalidSeparatorComparator final : public Comparator {
+public:
+    int Compare(ByteView left, ByteView right) const noexcept override {
+        return BytewiseComparator().Compare(left, right);
+    }
+
+    std::string_view Name() const noexcept override { return "test.InvalidSeparatorComparator"; }
+
+    void FindShortestSeparator(std::vector<std::byte>& start, ByteView) const override {
+        start.assign(1, std::byte{'z'});
+    }
+
+    void FindShortSuccessor(std::vector<std::byte>&) const override {}
+};
+
 static_assert(std::is_constructible_v<InternalKeyComparator, TestComparator&>);
 static_assert(!std::is_constructible_v<InternalKeyComparator, TestComparator&&>);
 static_assert(!std::is_constructible_v<InternalKeyComparator, const TestComparator&&>);
@@ -469,6 +484,18 @@ TEST(InternalKeyComparatorTest, MatchesLevelDbShortestSeparatorCases) {
     const auto reverse_limit = Encoded("foo", 200, ValueKind::Value);
     comparator.FindShortestSeparator(reverse_prefix, reverse_limit);
     EXPECT_EQ(reverse_prefix, Encoded("foobar", 100, ValueKind::Value));
+}
+
+TEST(InternalKeyComparatorTest, RejectsASeparatorAtOrPastTheLimit) {
+    const InvalidSeparatorComparator invalid;
+    InternalKeyComparator comparator(invalid);
+    const auto original = Encoded("aa", 100, ValueKind::Value);
+    auto start = original;
+    const auto limit = Encoded("c", 200, ValueKind::Value);
+
+    comparator.FindShortestSeparator(start, limit);
+
+    EXPECT_EQ(start, original);
 }
 
 TEST(InternalKeyComparatorTest, MatchesLevelDbShortSuccessorCases) {
