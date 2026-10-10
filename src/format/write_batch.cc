@@ -54,9 +54,8 @@ Result<WriteBatchReader> WriteBatchReader::Open(ByteView encoded) {
             return std::unexpected(Error::Corruption("write batch count exceeds encoded records"));
         }
 
-        const auto kind = static_cast<ValueKind>(std::to_integer<std::uint8_t>(remaining.front()));
-        remaining = remaining.subspan(1);
-        if (kind != ValueKind::Deletion && kind != ValueKind::Value) {
+        const ValueKind kind = ConsumeValueKindTrusted(remaining);
+        if (!IsValidValueKind(kind)) {
             return std::unexpected(Error::Corruption("write batch has an unknown value kind"));
         }
 
@@ -92,8 +91,7 @@ std::optional<WriteBatchEntry> WriteBatchReader::Next() noexcept {
         return std::nullopt;
     }
 
-    const auto kind = static_cast<ValueKind>(std::to_integer<std::uint8_t>(remaining_.front()));
-    remaining_ = remaining_.subspan(1);
+    const ValueKind kind = ConsumeValueKindTrusted(remaining_);
     const ByteView key = ConsumeLengthPrefixedTrusted(remaining_);
     ByteView value;
     if (kind == ValueKind::Value) {

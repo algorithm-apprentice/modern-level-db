@@ -83,7 +83,9 @@ inline constexpr ValueKind SeekValueKind = ValueKind::Value;
 ```
 
 The numeric enum values and trailer size are persistent format constants and
-must not change.
+must not change. Value-kind byte decoding, validity checks, and internal-key
+trailer packing/extraction use the shared format helpers; callers do not
+reinterpret raw kind bytes independently.
 
 ### Borrowed decoded view
 

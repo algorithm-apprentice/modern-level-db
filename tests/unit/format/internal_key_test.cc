@@ -111,7 +111,7 @@ int ReferenceCompare(const Comparator& comparator, ByteView left, ByteView right
         return user_order;
     }
     const auto trailer = [](const InternalKeyView& key) {
-        return (key.sequence << 8U) | static_cast<std::uint8_t>(key.kind);
+        return PackInternalKeyTrailer(key.sequence, key.kind);
     };
     if (trailer(left_key) > trailer(right_key)) {
         return -1;
@@ -128,6 +128,27 @@ TEST(InternalKeyTest, PersistentConstantsMatchLevelDb) {
     EXPECT_EQ(SeekValueKind, ValueKind::Value);
     EXPECT_EQ(InternalKeyTrailerSize, 8U);
     EXPECT_EQ(MaxSequenceNumber, (std::uint64_t{1} << 56U) - 1U);
+}
+
+TEST(InternalKeyTest, ValueKindAndTrailerHelpersRoundTrip) {
+    EXPECT_TRUE(IsValidValueKind(DecodeValueKind(std::byte{0})));
+    EXPECT_TRUE(IsValidValueKind(DecodeValueKind(std::byte{1})));
+    EXPECT_FALSE(IsValidValueKind(DecodeValueKind(std::byte{2})));
+
+    std::array encoded_kinds{std::byte{1}, std::byte{0x7f}};
+    ByteView remaining = encoded_kinds;
+    EXPECT_EQ(ConsumeValueKindTrusted(remaining), ValueKind::Value);
+    ASSERT_EQ(remaining.size(), 1U);
+    EXPECT_EQ(remaining.front(), std::byte{0x7f});
+
+    constexpr SequenceNumber Sequence = 42;
+    const std::uint64_t trailer = PackInternalKeyTrailer(Sequence, ValueKind::Deletion);
+    EXPECT_EQ(DecodeInternalKeySequence(trailer), Sequence);
+    EXPECT_EQ(DecodeInternalKeyValueKind(trailer), ValueKind::Deletion);
+
+    const InternalKey key = MakeKey("key", Sequence, ValueKind::Deletion);
+    EXPECT_EQ(DecodeInternalKeyTrailer(key.encoded()), trailer);
+    EXPECT_EQ(DecodeInternalKeyValueKind(key.encoded()), ValueKind::Deletion);
 }
 
 TEST(LookupKeyTest, MatchesLevelDbGoldenEncodingAndViews) {
