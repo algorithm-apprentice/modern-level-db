@@ -10,9 +10,9 @@
 #include <utility>
 #include <vector>
 
+#include "base/result_internal.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/comparator.h"
-#include "modern_leveldb/base/result.h"
 
 namespace modern_leveldb {
 namespace {
@@ -23,11 +23,6 @@ using Files = std::vector<Version::File>;
 // expressed relative to the target output size.
 constexpr std::uint64_t ExpandedCompactionFactor = 25;
 constexpr std::uint64_t GrandparentOverlapFactor = 10;
-
-void Expect(const Status& status) noexcept {
-    assert(status.has_value());
-    static_cast<void>(status);
-}
 
 // Geometric level capacity keeps each deeper level an order of magnitude larger.
 double MaxBytesForLevel(std::uint32_t level) {
@@ -233,10 +228,10 @@ bool IsTrivialMove(const Compaction& compaction, std::uint64_t target_file_size)
 
 VersionEdit CompactionEdit(const Compaction& compaction) {
     VersionEdit edit;
-    Expect(edit.AddCompactPointer(compaction.level, compaction.compact_pointer));
+    AssertSuccess(edit.AddCompactPointer(compaction.level, compaction.compact_pointer));
     for (std::uint32_t which = 0; which < compaction.inputs.size(); ++which) {
         for (const Version::File& file : compaction.inputs[which]) {
-            Expect(edit.RemoveFile(compaction.level + which, file->number));
+            AssertSuccess(edit.RemoveFile(compaction.level + which, file->number));
         }
     }
     return edit;

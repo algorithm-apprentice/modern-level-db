@@ -1,13 +1,13 @@
 #include "engine/flush.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
 #include <utility>
 
+#include "base/result_internal.h"
 #include "engine/build_table.h"
 
 namespace modern_leveldb {
@@ -105,9 +105,7 @@ Result<VersionEdit> FlushMemTable(FileSystem& file_system, const std::filesystem
         PickLevelForMemTableOutput(base, comparator.user_comparator(), file.smallest.user_key(),
                                    file.largest.user_key(), options.target_file_size);
     // A built table has a fresh number and valid keys at a valid level.
-    const Status added = edit.AddFile(level, std::move(file));
-    assert(added.has_value());
-    static_cast<void>(added);
+    AssertSuccess(edit.AddFile(level, std::move(file)));
     return edit;
 }
 

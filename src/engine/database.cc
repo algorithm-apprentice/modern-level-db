@@ -19,6 +19,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/result_internal.h"
 #include "engine/compaction.h"
 #include "engine/compaction_picker.h"
 #include "engine/flush.h"
@@ -575,9 +576,7 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
     if (IsTrivialMove(*compaction, max_file_size_)) {
         VersionEdit edit = CompactionEdit(*compaction);
         // The file is valid at the next level, which nothing there overlaps.
-        const Status added = edit.AddFile(compaction->level + 1, *compaction->inputs[0].front());
-        assert(added.has_value());
-        static_cast<void>(added);
+        AssertSuccess(edit.AddFile(compaction->level + 1, *compaction->inputs[0].front()));
         FinishCompaction(versions_->LogAndApply(std::move(edit), lock));
         return false;
     }

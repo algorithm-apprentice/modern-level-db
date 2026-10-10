@@ -1,6 +1,5 @@
 #include "engine/build_table.h"
 
-#include <cassert>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
@@ -8,18 +7,12 @@
 #include <optional>
 #include <utility>
 
+#include "base/result_internal.h"
 #include "metadata/filenames.h"
 #include "modern_leveldb/base/bytes.h"
 
 namespace modern_leveldb {
 namespace {
-
-// Decodes a memtable key, which the table builder accepted as an internal key.
-InternalKey Decoded(ByteView key) {
-    Result<InternalKey> decoded = InternalKey::Decode(key);
-    assert(decoded.has_value());
-    return std::move(decoded).value();
-}
 
 // Adds the entries from the iterator's position to a table in the file and
 // finishes the table, which closes the file. Returns the table's size and
@@ -75,8 +68,8 @@ Result<std::optional<FileMetadata>> BuildTable(FileSystem& file_system,
         static_cast<void>(file_system.RemoveFile(path));
         return std::unexpected(std::move(size).error());
     }
-    InternalKey smallest_key = Decoded(smallest);
-    InternalKey largest_key = Decoded(largest);
+    InternalKey smallest_key = TakeTrusted(InternalKey::Decode(smallest));
+    InternalKey largest_key = TakeTrusted(InternalKey::Decode(largest));
     FileMetadata metadata{
         .number = number,
         .file_size = *size,

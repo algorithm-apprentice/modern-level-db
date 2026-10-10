@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/result_internal.h"
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
@@ -34,9 +35,7 @@ TableBuilder::TableBuilder(std::unique_ptr<WritableFile> file,
     Record(ValidateCompressionOptions(compression_, zstd_compression_level_));
     if (options.filter_policy.has_value()) {
         filter_block_.emplace(*options.filter_policy);
-        const Status started = filter_block_->StartBlock(0);
-        assert(started.has_value());
-        (void)started;
+        AssertSuccess(filter_block_->StartBlock(0));
         filter_key_.assign("filter.");
         filter_key_.append(options.filter_policy->Name());
     }
@@ -182,9 +181,7 @@ void TableBuilder::WriteTail() {
         WriteRawBlock(filter_block_->Finish(), BlockCompression::None, filter_handle);
         std::vector<std::byte> handle;
         AppendBlockHandle(handle, filter_handle);
-        const Status added = metaindex.Add(AsBytes(filter_key_), handle);
-        assert(added.has_value());
-        (void)added;
+        AssertSuccess(metaindex.Add(AsBytes(filter_key_), handle));
     }
     BlockHandle metaindex_handle{};
     WriteBlock(metaindex.Finish(), metaindex_handle);
