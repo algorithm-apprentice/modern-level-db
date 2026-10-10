@@ -233,7 +233,7 @@ Result<VersionEdit> RunCompaction(FileSystem& file_system, const std::filesystem
                 return std::unexpected(finished.error());
             }
         }
-        const Result<ParsedInternalKey> parsed = ParseInternalKey(key);
+        const Result<InternalKeyView> parsed = ParseInternalKey(key);
         if (!parsed.has_value()) {
             return std::unexpected(parsed.error());
         }

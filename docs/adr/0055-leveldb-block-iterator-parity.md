@@ -61,7 +61,7 @@ It does not cover:
 - Default mmap policy, also Milestone 3.
 - Memtable/version intrusive read pins, lazy point-read file visitation, seek
   charging, or reusable public output, which are Milestone 4.
-- Broader trusted comparison in memtables, merging iterators, file metadata,
+- Broader internal-key comparison in memtables, merging iterators, file metadata,
   or compaction bookkeeping.
 
 ## Pinned block mapping
@@ -236,24 +236,11 @@ from the count or reading a restart.
 
 ## Internal-key comparison boundary
 
-Keep `InternalKeyComparator::Compare(ByteView, ByteView)` unchanged for
-arbitrary callers and malformed-key deterministic ordering.
-
-Add:
-
-```cpp
-int InternalKeyComparator::CompareTrusted(
-    ByteView left, ByteView right) const noexcept;
-```
-
-It requires both operands to contain the eight-byte internal-key trailer,
-asserts that precondition in debug builds, compares user keys directly, and
-then compares decoded fixed64 trailers in descending order. It does not
-validate value kinds.
-
-Add a private/internal `TrustedInternalKeyComparator` adapter implementing the
-generic `Comparator` interface. Its shortening functions forward to the
-defensive comparator and are unused by block iteration.
+`InternalKeyComparator::Compare(ByteView, ByteView)` has one domain: both
+operands contain the eight-byte internal-key trailer. It asserts that
+precondition in debug builds, compares user keys directly, and then compares
+decoded fixed64 trailers in descending order. It does not assign an order to
+malformed short bytes or validate value-kind semantics.
 
 `BlockKeyFormat::Internal` establishes memory safety before every comparison:
 
@@ -266,24 +253,23 @@ Consumers return corruption when they parse an encountered key.
 
 ## Table boundary and direct-safe mode
 
-Extend internal `TableOptions` with:
+Internal `TableOptions` selects the block-key format explicitly:
 
 ```cpp
-bool use_trusted_internal_key_comparison = false;
+BlockKeyFormat block_key_format = BlockKeyFormat::Internal;
 ```
 
-`DatabaseEngine` sets it to true for every production table. Direct table
-tests/callers may leave it false, retaining defensive comparison for
-arbitrary-key LevelDB golden tables.
+Production tables use the default internal-key format. Direct format tests and
+diagnostic traversal may select `BlockKeyFormat::Arbitrary` for bytewise
+comparison of plain-key or malformed-key tables.
 
-`Table` owns one `TrustedInternalKeyComparator` beside its defensive
-`InternalKeyComparator` reference. It selects:
+`Table` selects:
 
-- Trusted comparator plus `BlockKeyFormat::Internal` in production mode.
-- Defensive comparator plus `BlockKeyFormat::Arbitrary` in direct-safe mode.
+- `InternalKeyComparator` plus `BlockKeyFormat::Internal` for database tables.
+- `BytewiseComparator` plus `BlockKeyFormat::Arbitrary` for explicit format
+  inspection.
 
-The adapter belongs to `Table`, not `Block`, so a block-cache entry retains no
-comparator pointer.
+No block-cache entry retains a comparator pointer.
 
 ### Table open
 
@@ -296,7 +282,7 @@ comparator pointer.
   whose `shared` length is zero. Every restart in a nonempty entry region must
   be consumed exactly once; an empty block retains its sole restart at zero.
 - `ValidateIndex` therefore visits every physical index entry, parses every
-  key in trusted mode, validates every exact handle/range/non-overlap value,
+  key in internal-key mode, validates every exact handle/range/non-overlap value,
   and cannot leave an unchecked entry reachable through restart binary search.
 - Metaindex validation likewise covers every physical entry before filter
   lookup.
@@ -317,7 +303,7 @@ remain writer-established format invariants, matching pinned LevelDB.
 6. Compares the parsed user key and copies the result as before; reusable
    output belongs to Milestone 4.
 
-No `.value()` assumes a parse that a defensive comparator happened to prove.
+No `.value()` assumes a parse that comparison happened to prove.
 
 ### Table iteration
 
@@ -325,8 +311,8 @@ Every index/data block move returns `Status`. `Table::Iterator` propagates it,
 clears its current block/data iterator on failure, and remains recoverable by a
 later positioning call.
 
-In trusted mode, `Table::Iterator::Seek` parses the raw internal target before
-the first trusted comparison. `SeekToFirst`, `SeekToLast`, `Next`, and `Prev`
+In internal-key mode, `Table::Iterator::Seek` parses the raw internal target
+before the first comparison. `SeekToFirst`, `SeekToLast`, `Next`, and `Prev`
 rely on the per-entry minimum-length check and let higher layers parse semantic
 kinds when encountered.
 
@@ -444,11 +430,11 @@ No other deviation may be introduced without amending and reviewing this ADR.
 
 ### Comparator and table tests
 
-- Randomized trusted/defensive sign equivalence for valid internal keys and
-  custom user comparators.
-- Defensive malformed-key total order remains unchanged.
-- Debug assertions reject direct short trusted operands.
-- Table open rejects a malformed index entry/key before trusted use.
+- Randomized comparison against a decoded reference for valid internal keys
+  and custom user comparators.
+- Debug assertions reject direct short operands.
+- Table open rejects a malformed internal index entry/key before comparison.
+- Explicit arbitrary-key tables use bytewise comparison.
 - Index/metaindex open rejects a first restart other than zero, duplicate or
   descending restarts, a restart into an entry payload, a restart without
   `shared == 0`, and any physical entry/key/handle omitted by a malicious

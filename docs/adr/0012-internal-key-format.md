@@ -3,10 +3,10 @@
 - Status: Accepted
 - Date: 2026-09-22
 
-[ADR-0051](0051-trusted-internal-key-comparison.md) designs a separate
-trusted comparison operation for callers with explicit validity boundaries.
-The defensive malformed-key ordering below remains the general byte-view
-contract until that candidate passes admission.
+[ADR-0051](0051-trusted-internal-key-comparison.md) records the rejected
+two-operation comparison experiment. Later block-iterator work established
+explicit key-format boundaries; the current comparator has one internal-key
+domain and does not order malformed short bytes.
 
 ## Context
 
@@ -85,19 +85,19 @@ inline constexpr ValueKind SeekValueKind = ValueKind::Value;
 The numeric enum values and trailer size are persistent format constants and
 must not change.
 
-### Borrowed parsed representation
+### Borrowed decoded view
 
 ```cpp
-struct ParsedInternalKey {
+struct InternalKeyView {
   ByteView user_key;
   SequenceNumber sequence;
   ValueKind kind;
 };
 
-Result<ParsedInternalKey> ParseInternalKey(ByteView encoded);
+Result<InternalKeyView> ParseInternalKey(ByteView encoded);
 ```
 
-`ParsedInternalKey::user_key` borrows from the encoded input. Parsing does not
+`InternalKeyView::user_key` borrows from the encoded input. Parsing does not
 allocate or modify input.
 
 - Inputs shorter than eight bytes return `Corruption`.
@@ -120,10 +120,11 @@ class InternalKey {
 };
 ```
 
-`InternalKey` owns a `std::vector<std::byte>` and is copyable and movable as a
-normal metadata value. It has no default invalid state and no mutating setter.
-Returned byte views remain valid until the key is destroyed, moved from, or
-assigned.
+`InternalKey` owns only the canonical encoded `std::vector<std::byte>` and is
+copyable and movable as a normal metadata value. Its accessors derive the user
+key, sequence, and kind from those bytes instead of caching a second logical
+representation. It has no default invalid state and no mutating setter. Returned
+byte views remain valid until the key is destroyed, moved from, or assigned.
 
 `Create` rejects sequence numbers above `MaxSequenceNumber` and invalid enum
 values with `InvalidArgument`. `Decode` validates before copying and reports
@@ -151,11 +152,12 @@ class InternalKeyComparator final : public Comparator {
 The comparator borrows a user comparator that must outlive it. For valid keys,
 ordering exactly matches LevelDB.
 
-The base comparator cannot return an error. To avoid undefined behavior on
-corrupted inputs, malformed keys have a deterministic total order:
-
-- Malformed keys sort before valid keys.
-- Two malformed keys use bytewise comparison of their complete encodings.
+Comparison is defined only for byte views that contain the eight-byte trailer.
+Encoders, owning `InternalKey` values, memtable entries, and checked table/block
+boundaries establish that structural domain. Debug builds assert it; malformed
+external bytes return `Corruption` before comparison instead of receiving an
+artificial order. Direct arbitrary-key table tests select bytewise comparison
+explicitly.
 
 Separator and successor operations leave malformed inputs unchanged. For valid
 inputs, they shorten only the user-key portion. A replacement is accepted only

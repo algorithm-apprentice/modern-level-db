@@ -29,9 +29,9 @@ struct TableOptions {
     std::optional<BloomFilterPolicy> filter_policy;
     // Not owned; must outlive every table that uses it.
     BlockCache* block_cache = nullptr;
-    // Production tables contain internal keys. Direct test/tool callers may
-    // leave this false to read arbitrary-key tables defensively.
-    bool use_trusted_internal_key_comparison = false;
+    // Production tables contain internal keys. Direct format tests may select
+    // arbitrary bytewise keys explicitly.
+    BlockKeyFormat block_key_format = BlockKeyFormat::Internal;
 };
 
 struct TableReadOptions {
@@ -80,7 +80,7 @@ public:
 
 private:
     Table(std::unique_ptr<RandomAccessFile> file, std::uint64_t blocks_end,
-          const InternalKeyComparator& comparator, bool trusted_internal_keys, Block index,
+          const InternalKeyComparator& comparator, BlockKeyFormat block_key_format, Block index,
           std::optional<FilterBlockReader> filter, BlockCache* block_cache,
           std::uint64_t cache_id) noexcept;
 
@@ -91,7 +91,6 @@ private:
     // Offset of the footer, which follows every block.
     std::uint64_t blocks_end_;
     const InternalKeyComparator* comparator_;
-    TrustedInternalKeyComparator trusted_comparator_;
     const Comparator* block_comparator_;
     BlockKeyFormat block_key_format_;
     Block index_;

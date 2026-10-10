@@ -31,14 +31,14 @@ enum class ValueKind : std::uint8_t {
 
 inline constexpr ValueKind SeekValueKind = ValueKind::Value;
 
-// Borrows the encoded input; parsing does not retain or copy user_key storage.
-struct ParsedInternalKey {
+// Decoded view over borrowed encoded bytes; user_key never owns its storage.
+struct InternalKeyView {
     ByteView user_key;
     SequenceNumber sequence;
     ValueKind kind;
 };
 
-[[nodiscard]] Result<ParsedInternalKey> ParseInternalKey(ByteView encoded);
+[[nodiscard]] Result<InternalKeyView> ParseInternalKey(ByteView encoded);
 
 // Owns a seek target in both length-prefixed memtable and internal-key forms.
 // Views borrow this object; reacquire them after a move (inline storage can relocate).
@@ -89,16 +89,14 @@ public:
 
     [[nodiscard]] ByteView encoded() const noexcept { return encoded_; }
     [[nodiscard]] ByteView user_key() const noexcept;
-    [[nodiscard]] SequenceNumber sequence() const noexcept { return sequence_; }
-    [[nodiscard]] ValueKind kind() const noexcept { return kind_; }
+    [[nodiscard]] SequenceNumber sequence() const noexcept;
+    [[nodiscard]] ValueKind kind() const noexcept;
 
 private:
-    InternalKey(std::vector<std::byte> encoded, SequenceNumber sequence, ValueKind kind)
-        : encoded_(std::move(encoded)), sequence_(sequence), kind_(kind) {}
+    explicit InternalKey(std::vector<std::byte> encoded) : encoded_(std::move(encoded)) {}
 
+    [[nodiscard]] std::uint64_t trailer() const noexcept;
     std::vector<std::byte> encoded_;
-    SequenceNumber sequence_;
-    ValueKind kind_;
 };
 
 class InternalKeyComparator final : public Comparator {
@@ -109,10 +107,8 @@ public:
     InternalKeyComparator(const Comparator&&) = delete;
 
     [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override;
-    // Both operands must contain a trailer. Memtable encoders and checked table
-    // entries establish the trusted domain; unlike Compare, this does not give
-    // malformed short keys a defensive total order. The user comparator is borrowed.
-    [[nodiscard]] int CompareTrusted(ByteView left, ByteView right) const noexcept;
+    // Both operands must contain a trailer. Encoders and checked read boundaries
+    // establish this comparator domain; malformed bytes are errors, not sortable keys.
     [[nodiscard]] int Compare(const InternalKey& left, const InternalKey& right) const noexcept {
         return Compare(left.encoded(), right.encoded());
     }
@@ -125,28 +121,6 @@ public:
 
 private:
     const Comparator& user_comparator_;
-};
-
-class TrustedInternalKeyComparator final : public Comparator {
-public:
-    explicit TrustedInternalKeyComparator(const InternalKeyComparator& comparator) noexcept
-        : comparator_(&comparator) {}
-    TrustedInternalKeyComparator(InternalKeyComparator&&) = delete;
-    TrustedInternalKeyComparator(const InternalKeyComparator&&) = delete;
-
-    [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override {
-        return comparator_->CompareTrusted(left, right);
-    }
-    [[nodiscard]] std::string_view Name() const noexcept override { return comparator_->Name(); }
-    void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const override {
-        comparator_->FindShortestSeparator(start, limit);
-    }
-    void FindShortSuccessor(std::vector<std::byte>& key) const override {
-        comparator_->FindShortSuccessor(key);
-    }
-
-private:
-    const InternalKeyComparator* comparator_;
 };
 
 }  // namespace modern_leveldb

@@ -288,8 +288,8 @@ protected:
         return options;
     }
 
-    static TableOptions Trusted(TableOptions options = {}) {
-        options.use_trusted_internal_key_comparison = true;
+    static TableOptions ArbitraryKeys(TableOptions options = {}) {
+        options.block_key_format = BlockKeyFormat::Arbitrary;
         return options;
     }
 
@@ -397,7 +397,7 @@ TEST_F(TableTest, ReadsLevelDbTables) {
 
 TEST_F(TableTest, ReadsLevelDbSnappyAndZstdGoldenTables) {
     for (const std::string_view encoded : {SnappyCompressedTable, ZstdCompressedTable}) {
-        const auto table = Open(FromHex(encoded));
+        const auto table = Open(FromHex(encoded), ArbitraryKeys());
         ASSERT_NE(table, nullptr);
         const std::vector<Entry> entries = ScanForward(*table);
         ASSERT_EQ(entries.size(), 2U);
@@ -759,7 +759,7 @@ TEST_F(TableTest, RejectsEveryMalformedIndexEntryAndRestartTopology) {
                 ErrorCode::Corruption);
 }
 
-TEST_F(TableTest, TrustedOpenRejectsMalformedIndexKeys) {
+TEST_F(TableTest, OpenRejectsMalformedInternalIndexKeys) {
     const auto assemble = [&](ByteView index_key) {
         TableAssembler table;
         const BlockHandle data = table.AddBlock(BlockOf({{Key("a", 1), AsBytes("value")}}));
@@ -767,10 +767,10 @@ TEST_F(TableTest, TrustedOpenRejectsMalformedIndexKeys) {
         return table.Finish(table.AddBlock(BlockOf({})), index);
     };
 
-    ExpectError(TryOpen(assemble(AsBytes("short")), Trusted()), ErrorCode::Corruption);
+    ExpectError(TryOpen(assemble(AsBytes("short"))), ErrorCode::Corruption);
     std::vector<std::byte> unknown = Key("z", 1);
     unknown[unknown.size() - InternalKeyTrailerSize] = std::byte{2};
-    ExpectError(TryOpen(assemble(unknown), Trusted()), ErrorCode::Corruption);
+    ExpectError(TryOpen(assemble(unknown)), ErrorCode::Corruption);
 }
 
 TEST_F(TableTest, RejectsIndexValuesThatAreNotBlockHandles) {
@@ -1066,9 +1066,9 @@ TEST_F(TableTest, ReportsDamagedDataBlocks) {
     EXPECT_FALSE(unreachable_iterator.valid());
 }
 
-TEST_F(TableTest, TrustedIteratorsRejectInvalidSeekTargetsAndRecover) {
-    const auto table = Open(
-        BuildTable({{Key("a", 1), Materialize(AsBytes("value"))}}, {}, comparator_), Trusted());
+TEST_F(TableTest, InternalKeyIteratorsRejectInvalidSeekTargetsAndRecover) {
+    const auto table =
+        Open(BuildTable({{Key("a", 1), Materialize(AsBytes("value"))}}, {}, comparator_));
     ASSERT_NE(table, nullptr);
     Table::Iterator iterator(*table);
 
@@ -1084,7 +1084,7 @@ TEST_F(TableTest, TrustedIteratorsRejectInvalidSeekTargetsAndRecover) {
     EXPECT_EQ(Materialize(iterator.key()), Key("a", 1));
 }
 
-TEST_F(TableTest, TrustedReadsRejectInvalidDataKeysAndIterationDefersUnknownKinds) {
+TEST_F(TableTest, InternalKeyReadsRejectInvalidDataKeysAndIterationDefersUnknownKinds) {
     const auto assemble = [&](ByteView data_key) {
         TableAssembler table;
         const BlockHandle data = table.AddBlock(BlockOf({{data_key, AsBytes("value")}}));
@@ -1092,7 +1092,7 @@ TEST_F(TableTest, TrustedReadsRejectInvalidDataKeysAndIterationDefersUnknownKind
         return table.Finish(table.AddBlock(BlockOf({})), index);
     };
 
-    const auto short_table = Open(assemble(AsBytes("short")), Trusted());
+    const auto short_table = Open(assemble(AsBytes("short")));
     ASSERT_NE(short_table, nullptr);
     ExpectError(TryGet(*short_table, "short", MaxSequenceNumber), ErrorCode::Corruption);
     Table::Iterator short_iterator(*short_table);
@@ -1101,7 +1101,7 @@ TEST_F(TableTest, TrustedReadsRejectInvalidDataKeysAndIterationDefersUnknownKind
 
     std::vector<std::byte> unknown = Key("a", 1);
     unknown[unknown.size() - InternalKeyTrailerSize] = std::byte{2};
-    const auto unknown_table = Open(assemble(unknown), Trusted());
+    const auto unknown_table = Open(assemble(unknown));
     ASSERT_NE(unknown_table, nullptr);
     ExpectError(TryGet(*unknown_table, "a", MaxSequenceNumber), ErrorCode::Corruption);
     Table::Iterator unknown_iterator(*unknown_table);
@@ -1122,7 +1122,7 @@ TEST_F(TableTest, LazyDataCorruptionPropagatesAndPositioningRecovers) {
     const std::vector<std::byte> first_key = Key("a", 1);
     AppendEntry(forward_entries, 0, first_key, AsBytes("first"));
     forward_entries.push_back(std::byte{0x80});
-    const auto forward_table = Open(assemble(RawBlock(std::move(forward_entries), {0})), Trusted());
+    const auto forward_table = Open(assemble(RawBlock(std::move(forward_entries), {0})));
     ASSERT_NE(forward_table, nullptr);
 
     ExpectError(TryGet(*forward_table, "b", MaxSequenceNumber), ErrorCode::Corruption);
@@ -1144,7 +1144,7 @@ TEST_F(TableTest, LazyDataCorruptionPropagatesAndPositioningRecovers) {
     const std::uint32_t last_offset = static_cast<std::uint32_t>(backward_entries.size());
     AppendEntry(backward_entries, 0, last_key, AsBytes("last"));
     const auto backward_table =
-        Open(assemble(RawBlock(std::move(backward_entries), {0, last_offset})), Trusted());
+        Open(assemble(RawBlock(std::move(backward_entries), {0, last_offset})));
     ASSERT_NE(backward_table, nullptr);
 
     Table::Iterator backward(*backward_table);
@@ -1308,10 +1308,9 @@ TEST_F(TableTest, MatchesAnOrderedModel) {
             // The lookup finds the first entry at or after the target if it has the
             // target's user key.
             const auto lookup = Get(*table, user, sequence);
-            const auto parsed =
-                first < entries.size()
-                    ? ParseInternalKey(entries[first].key)
-                    : Result<ParsedInternalKey>(std::unexpected(Error::NotFound("")));
+            const auto parsed = first < entries.size()
+                                    ? ParseInternalKey(entries[first].key)
+                                    : Result<InternalKeyView>(std::unexpected(Error::NotFound("")));
             if (parsed.has_value() && AsStringView(parsed->user_key) == user) {
                 ASSERT_TRUE(lookup.has_value()) << user << "@" << sequence;
                 EXPECT_EQ(lookup->kind, parsed->kind);

@@ -268,7 +268,7 @@ Result<bool> LookupValue(const MemTable& memtable, const MemTable* immutable,
 std::optional<SeekCharge> SampleCharge(const Version& version,
                                        const InternalKeyComparator& comparator,
                                        ByteView internal_key) {
-    const Result<ParsedInternalKey> parsed = ParseInternalKey(internal_key);
+    const Result<InternalKeyView> parsed = ParseInternalKey(internal_key);
     assert(parsed.has_value());
     SelectionTimer selection;
     std::optional<Candidate> first;

@@ -68,8 +68,6 @@ public:
 static_assert(std::is_constructible_v<InternalKeyComparator, TestComparator&>);
 static_assert(!std::is_constructible_v<InternalKeyComparator, TestComparator&&>);
 static_assert(!std::is_constructible_v<InternalKeyComparator, const TestComparator&&>);
-static_assert(std::is_constructible_v<TrustedInternalKeyComparator, const InternalKeyComparator&>);
-static_assert(!std::is_constructible_v<TrustedInternalKeyComparator, InternalKeyComparator&&>);
 static_assert(!std::is_copy_constructible_v<LookupKey>);
 static_assert(!std::is_copy_assignable_v<LookupKey>);
 static_assert(std::is_move_constructible_v<LookupKey>);
@@ -104,6 +102,25 @@ std::vector<std::byte> Encoded(std::string_view user_key, SequenceNumber sequenc
 }
 
 int Sign(int value) noexcept { return (value > 0) - (value < 0); }
+
+int ReferenceCompare(const Comparator& comparator, ByteView left, ByteView right) {
+    const InternalKeyView left_key = ParseInternalKey(left).value();
+    const InternalKeyView right_key = ParseInternalKey(right).value();
+    const int user_order = comparator.Compare(left_key.user_key, right_key.user_key);
+    if (user_order != 0) {
+        return user_order;
+    }
+    const auto trailer = [](const InternalKeyView& key) {
+        return (key.sequence << 8U) | static_cast<std::uint8_t>(key.kind);
+    };
+    if (trailer(left_key) > trailer(right_key)) {
+        return -1;
+    }
+    if (trailer(left_key) < trailer(right_key)) {
+        return 1;
+    }
+    return 0;
+}
 
 TEST(InternalKeyTest, PersistentConstantsMatchLevelDb) {
     EXPECT_EQ(static_cast<std::uint8_t>(ValueKind::Deletion), 0U);
@@ -346,21 +363,6 @@ TEST(InternalKeyComparatorTest, ExposesItsUserComparator) {
     EXPECT_EQ(&comparator.user_comparator(), &BytewiseComparator());
 }
 
-TEST(InternalKeyComparatorTest, TrustedAdapterForwardsNonComparisonOperations) {
-    const InternalKeyComparator comparator(BytewiseComparator());
-    const TrustedInternalKeyComparator trusted(comparator);
-    EXPECT_EQ(trusted.Name(), comparator.Name());
-
-    std::vector<std::byte> separator = Encoded("foo", 100, ValueKind::Value);
-    const std::vector<std::byte> limit = Encoded("hello", 200, ValueKind::Value);
-    trusted.FindShortestSeparator(separator, limit);
-    EXPECT_EQ(separator, Encoded("g", MaxSequenceNumber, SeekValueKind));
-
-    std::vector<std::byte> successor = Encoded("foo", 100, ValueKind::Value);
-    trusted.FindShortSuccessor(successor);
-    EXPECT_EQ(successor, Encoded("g", MaxSequenceNumber, SeekValueKind));
-}
-
 TEST(InternalKeyComparatorTest, OrdersUserKeyAscendingAndTrailerDescending) {
     InternalKeyComparator comparator(BytewiseComparator());
     const InternalKey a_new = MakeKey("a", 100, ValueKind::Value);
@@ -375,7 +377,7 @@ TEST(InternalKeyComparatorTest, OrdersUserKeyAscendingAndTrailerDescending) {
     EXPECT_EQ(comparator.Compare(a_new, a_new), 0);
 }
 
-TEST(InternalKeyComparatorTest, TrustedComparisonMatchesDefensiveComparisonForValidKeys) {
+TEST(InternalKeyComparatorTest, MatchesDecodedReferenceForValidKeys) {
     std::mt19937_64 random(20260924);
     std::uniform_int_distribution<std::size_t> length(0, 64);
     std::uniform_int_distribution<unsigned int> byte(0, 255);
@@ -386,7 +388,6 @@ TEST(InternalKeyComparatorTest, TrustedComparisonMatchesDefensiveComparisonForVa
     for (const Comparator* user_comparator :
          {&BytewiseComparator(), static_cast<const Comparator*>(&reverse)}) {
         const InternalKeyComparator comparator(*user_comparator);
-        const TrustedInternalKeyComparator trusted(comparator);
         for (int iteration = 0; iteration < 5000; ++iteration) {
             std::vector<std::byte> left_user(length(random));
             std::vector<std::byte> right_user(length(random));
@@ -401,67 +402,22 @@ TEST(InternalKeyComparatorTest, TrustedComparisonMatchesDefensiveComparisonForVa
             const std::vector<std::byte> right =
                 Encoded(right_user, sequence(random), static_cast<ValueKind>(kind(random)));
 
-            EXPECT_EQ(Sign(trusted.Compare(left, right)), Sign(comparator.Compare(left, right)));
-            EXPECT_EQ(Sign(comparator.CompareTrusted(left, right)),
-                      Sign(comparator.Compare(left, right)));
+            EXPECT_EQ(Sign(comparator.Compare(left, right)),
+                      Sign(ReferenceCompare(*user_comparator, left, right)));
         }
     }
 }
 
 #ifndef NDEBUG
-TEST(InternalKeyComparatorDeathTest, TrustedComparisonRejectsShortOperands) {
+TEST(InternalKeyComparatorDeathTest, ComparisonRejectsShortOperands) {
     const InternalKeyComparator comparator(BytewiseComparator());
     const std::vector<std::byte> short_key(InternalKeyTrailerSize - 1);
     const std::vector<std::byte> valid = Encoded("valid", 1, ValueKind::Value);
 
-    EXPECT_DEATH(static_cast<void>(comparator.CompareTrusted(short_key, valid)), "");
-    EXPECT_DEATH(static_cast<void>(comparator.CompareTrusted(valid, short_key)), "");
+    EXPECT_DEATH(static_cast<void>(comparator.Compare(short_key, valid)), "");
+    EXPECT_DEATH(static_cast<void>(comparator.Compare(valid, short_key)), "");
 }
 #endif
-
-TEST(InternalKeyComparatorTest, GivesMalformedKeysDeterministicTotalOrder) {
-    InternalKeyComparator comparator(BytewiseComparator());
-    const std::vector<std::byte> malformed_a{std::byte{'a'}};
-    const std::vector<std::byte> malformed_b{std::byte{'b'}};
-    const std::vector<std::byte> unknown_kind(InternalKeyTrailerSize, std::byte{2});
-    const InternalKey valid = MakeKey("", 0, ValueKind::Deletion);
-
-    EXPECT_LT(comparator.Compare(malformed_a, malformed_b), 0);
-    EXPECT_LT(comparator.Compare(malformed_b, valid.encoded()), 0);
-    EXPECT_LT(comparator.Compare(unknown_kind, valid.encoded()), 0);
-    EXPECT_GT(comparator.Compare(valid.encoded(), malformed_a), 0);
-}
-
-TEST(InternalKeyComparatorTest, MaintainsStrictOrderAcrossMalformedAndValidKeys) {
-    InternalKeyComparator comparator(BytewiseComparator());
-    const InternalKey valid_a = MakeKey("a", 2, ValueKind::Value);
-    const InternalKey valid_b = MakeKey("b", 1, ValueKind::Deletion);
-    const std::vector<std::vector<std::byte>> keys{
-        {},
-        {std::byte{'a'}},
-        std::vector<std::byte>(InternalKeyTrailerSize, std::byte{2}),
-        std::vector<std::byte>(valid_a.encoded().begin(), valid_a.encoded().end()),
-        std::vector<std::byte>(valid_b.encoded().begin(), valid_b.encoded().end()),
-    };
-
-    for (std::size_t left = 0; left < keys.size(); ++left) {
-        EXPECT_EQ(comparator.Compare(keys[left], keys[left]), 0);
-        for (std::size_t right = 0; right < keys.size(); ++right) {
-            EXPECT_EQ(comparator.Compare(keys[left], keys[right]),
-                      -comparator.Compare(keys[right], keys[left]));
-        }
-    }
-
-    std::vector<std::vector<std::byte>> sorted = keys;
-    std::ranges::sort(sorted, [&](const auto& left, const auto& right) {
-        return comparator.Compare(left, right) < 0;
-    });
-    for (std::size_t first = 0; first < sorted.size(); ++first) {
-        for (std::size_t second = first + 1; second < sorted.size(); ++second) {
-            EXPECT_LT(comparator.Compare(sorted[first], sorted[second]), 0);
-        }
-    }
-}
 
 TEST(InternalKeyComparatorTest, MatchesLevelDbShortestSeparatorCases) {
     InternalKeyComparator comparator(BytewiseComparator());

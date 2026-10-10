@@ -139,7 +139,7 @@ TEST(TablePosixTest, MappedUncompressedBlockBypassesTheBlockCache) {
     ASSERT_TRUE(file.has_value()) << file.error().ToString();
     TableOptions options;
     options.block_cache = &cache;
-    options.use_trusted_internal_key_comparison = true;
+    options.block_key_format = BlockKeyFormat::Internal;
     Result<std::unique_ptr<Table>> table =
         Table::Open(std::move(*file), built.size, comparator, options);
     ASSERT_TRUE(table.has_value()) << table.error().ToString();
@@ -177,7 +177,7 @@ TEST(TablePosixTest, CachedCopiedUncompressedBlockOutlivesTable) {
     ASSERT_TRUE(file.has_value()) << file.error().ToString();
     TableOptions options;
     options.block_cache = &cache;
-    options.use_trusted_internal_key_comparison = true;
+    options.block_key_format = BlockKeyFormat::Internal;
     Result<std::unique_ptr<Table>> table =
         Table::Open(std::move(*file), built.size, comparator, options);
     ASSERT_TRUE(table.has_value()) << table.error().ToString();
@@ -220,7 +220,7 @@ TEST(TablePosixTest, CachedMappedCompressedBlockOutlivesTable) {
     ASSERT_TRUE(file.has_value()) << file.error().ToString();
     TableOptions options;
     options.block_cache = &cache;
-    options.use_trusted_internal_key_comparison = true;
+    options.block_key_format = BlockKeyFormat::Internal;
     Result<std::unique_ptr<Table>> table =
         Table::Open(std::move(*file), built.size, comparator, options);
     ASSERT_TRUE(table.has_value()) << table.error().ToString();

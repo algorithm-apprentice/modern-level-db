@@ -30,7 +30,7 @@ constexpr bool IsValidValueKind(ValueKind kind) noexcept {
     return kind == ValueKind::Deletion || kind == ValueKind::Value;
 }
 
-bool TryDecodeInternalKey(ByteView encoded, ParsedInternalKey& decoded) noexcept {
+bool TryDecodeInternalKey(ByteView encoded, InternalKeyView& decoded) noexcept {
     if (encoded.size() < InternalKeyTrailerSize) {
         return false;
     }
@@ -64,8 +64,8 @@ std::vector<std::byte> EncodeUnchecked(ByteView user_key, SequenceNumber sequenc
 
 }  // namespace
 
-Result<ParsedInternalKey> ParseInternalKey(ByteView encoded) {
-    ParsedInternalKey decoded;
+Result<InternalKeyView> ParseInternalKey(ByteView encoded) {
+    InternalKeyView decoded;
     if (!TryDecodeInternalKey(encoded, decoded)) {
         if (encoded.size() < InternalKeyTrailerSize) {
             return std::unexpected(Error::Corruption("internal key is shorter than its trailer"));
@@ -165,7 +165,7 @@ Result<InternalKey> InternalKey::Create(ByteView user_key, SequenceNumber sequen
     if (!IsValidValueKind(kind)) {
         return std::unexpected(Error::InvalidArgument("internal key value kind is unsupported"));
     }
-    return InternalKey(EncodeUnchecked(user_key, sequence, kind), sequence, kind);
+    return InternalKey(EncodeUnchecked(user_key, sequence, kind));
 }
 
 Result<InternalKey> InternalKey::Decode(ByteView encoded) {
@@ -173,8 +173,7 @@ Result<InternalKey> InternalKey::Decode(ByteView encoded) {
     if (!parsed.has_value()) {
         return std::unexpected(parsed.error());
     }
-    return InternalKey(std::vector<std::byte>(encoded.begin(), encoded.end()), parsed->sequence,
-                       parsed->kind);
+    return InternalKey(std::vector<std::byte>(encoded.begin(), encoded.end()));
 }
 
 ByteView InternalKey::user_key() const noexcept {
@@ -182,38 +181,16 @@ ByteView InternalKey::user_key() const noexcept {
     return ByteView(encoded_).first(encoded_.size() - InternalKeyTrailerSize);
 }
 
-int InternalKeyComparator::Compare(ByteView left, ByteView right) const noexcept {
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    read_diagnostics::Add(read_diagnostics::Counter::InternalKeyComparisons);
-#endif
-    ParsedInternalKey left_key;
-    ParsedInternalKey right_key;
-    const bool left_valid = TryDecodeInternalKey(left, left_key);
-    const bool right_valid = TryDecodeInternalKey(right, right_key);
+SequenceNumber InternalKey::sequence() const noexcept { return trailer() >> 8U; }
 
-    if (left_valid != right_valid) {
-        return left_valid ? 1 : -1;
-    }
-    if (!left_valid) {
-        return BytewiseComparator().Compare(left, right);
-    }
+ValueKind InternalKey::kind() const noexcept { return static_cast<ValueKind>(trailer() & 0xffU); }
 
-    const int user_order = user_comparator_.Compare(left_key.user_key, right_key.user_key);
-    if (user_order != 0) {
-        return user_order;
-    }
-    const std::uint64_t left_trailer = PackTrailer(left_key.sequence, left_key.kind);
-    const std::uint64_t right_trailer = PackTrailer(right_key.sequence, right_key.kind);
-    if (left_trailer > right_trailer) {
-        return -1;
-    }
-    if (left_trailer < right_trailer) {
-        return 1;
-    }
-    return 0;
+std::uint64_t InternalKey::trailer() const noexcept {
+    assert(encoded_.size() >= InternalKeyTrailerSize);
+    return DecodeFixed64(ByteView(encoded_).last<InternalKeyTrailerSize>());
 }
 
-int InternalKeyComparator::CompareTrusted(ByteView left, ByteView right) const noexcept {
+int InternalKeyComparator::Compare(ByteView left, ByteView right) const noexcept {
     assert(left.size() >= InternalKeyTrailerSize);
     assert(right.size() >= InternalKeyTrailerSize);
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
@@ -242,8 +219,8 @@ std::string_view InternalKeyComparator::Name() const noexcept {
 
 void InternalKeyComparator::FindShortestSeparator(std::vector<std::byte>& start,
                                                   ByteView limit) const {
-    ParsedInternalKey start_key;
-    ParsedInternalKey limit_key;
+    InternalKeyView start_key;
+    InternalKeyView limit_key;
     if (!TryDecodeInternalKey(start, start_key) || !TryDecodeInternalKey(limit, limit_key)) {
         return;
     }
@@ -256,13 +233,13 @@ void InternalKeyComparator::FindShortestSeparator(std::vector<std::byte>& start,
     }
 
     AppendFixed64(shortened, PackTrailer(MaxSequenceNumber, SeekValueKind));
-    if (CompareTrusted(shortened, limit) < 0) {
+    if (Compare(shortened, limit) < 0) {
         start = std::move(shortened);
     }
 }
 
 void InternalKeyComparator::FindShortSuccessor(std::vector<std::byte>& key) const {
-    ParsedInternalKey decoded;
+    InternalKeyView decoded;
     if (!TryDecodeInternalKey(key, decoded)) {
         return;
     }

@@ -127,7 +127,7 @@ protected:
                 Table::Iterator iterator(**table);
                 Status status = iterator.SeekToFirst();
                 while (status.has_value() && iterator.valid()) {
-                    const ParsedInternalKey key = ParseInternalKey(iterator.key()).value();
+                    const InternalKeyView key = ParseInternalKey(iterator.key()).value();
                     entries[std::string(AsStringView(key.user_key)) + "@" +
                             std::to_string(key.sequence)] =
                         key.kind == ValueKind::Deletion

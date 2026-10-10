@@ -65,7 +65,7 @@ std::vector<std::byte> Encoded(const InternalKey& key) {
 
 // Describes an entry as "key@sequence=value" or "key@sequence deleted".
 std::string Describe(ByteView internal_key, ByteView value, bool with_value) {
-    const Result<ParsedInternalKey> parsed = ParseInternalKey(internal_key);
+    const Result<InternalKeyView> parsed = ParseInternalKey(internal_key);
     EXPECT_TRUE(parsed.has_value());
     std::string text =
         std::string(AsStringView(parsed->user_key)) + "@" + std::to_string(parsed->sequence);
@@ -219,7 +219,7 @@ public:
     BlockCache blocks{std::size_t{1} << 20U};
     TableOptions table_options{.filter_policy = std::nullopt,
                                .block_cache = &blocks,
-                               .use_trusted_internal_key_comparison = true};
+                               .block_key_format = BlockKeyFormat::Internal};
     TableCache cache{file_system, directory, comparator, table_options, 100};
     CompactionOptions options;
     std::vector<std::uint64_t> numbers;

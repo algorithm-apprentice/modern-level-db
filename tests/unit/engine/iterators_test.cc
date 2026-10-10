@@ -84,7 +84,7 @@ std::vector<std::byte> Key(std::string_view user_key, SequenceNumber sequence,
 
 TableOptions InternalTableOptions() {
     TableOptions options;
-    options.use_trusted_internal_key_comparison = true;
+    options.block_key_format = BlockKeyFormat::Internal;
     return options;
 }
 
@@ -93,7 +93,7 @@ std::string Describe(const InternalIterator& iterator) {
     if (!iterator.valid()) {
         return "<end>";
     }
-    const ParsedInternalKey key = ParseInternalKey(iterator.key()).value();
+    const InternalKeyView key = ParseInternalKey(iterator.key()).value();
     return std::string(AsStringView(key.user_key)) + "@" + std::to_string(key.sequence) + "=" +
            std::string(AsStringView(iterator.value()));
 }

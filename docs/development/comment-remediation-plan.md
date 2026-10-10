@@ -195,7 +195,7 @@ Add concise entry maps to the format and memory headers, then comment
 only the implementation transitions that require a proof.
 
 Cover internal-key packing and comparator order; batch fields and
-complete checked validation; `OpenTrusted` and `CompareTrusted`
+complete checked validation; `OpenTrusted` and internal comparison
 caller/lifetime obligations; arena allocation and whole-arena reclamation;
 skip-list single-writer assumptions and acquire/release publication;
 memtable value/deletion/missing semantics and borrowed values.

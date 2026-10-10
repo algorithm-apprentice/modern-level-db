@@ -26,8 +26,7 @@ std::int64_t InitialAllowedSeeks(std::uint64_t file_size) noexcept {
 
 bool FileBefore(const InternalKeyComparator& comparator, const Version::File& left,
                 const Version::File& right) noexcept {
-    const int order =
-        comparator.CompareTrusted(left->smallest.encoded(), right->smallest.encoded());
+    const int order = comparator.Compare(left->smallest.encoded(), right->smallest.encoded());
     return order != 0 ? order < 0 : left->number < right->number;
 }
 
@@ -135,8 +134,8 @@ Version VersionBuilder::BuildTrusted(const InternalKeyComparator& comparator, co
 #endif
 
     for (const NewFile& added : edit.new_files()) {
-        assert(comparator.CompareTrusted(added.file.smallest.encoded(),
-                                         added.file.largest.encoded()) <= 0);
+        assert(comparator.Compare(added.file.smallest.encoded(), added.file.largest.encoded()) <=
+               0);
 #ifndef NDEBUG
         assert(live.insert(added.file.number).second);
 #endif
@@ -163,8 +162,8 @@ Version VersionBuilder::BuildTrusted(const InternalKeyComparator& comparator, co
                 return;
             }
             if (level > 0 && !files.empty()) {
-                assert(comparator.CompareTrusted(files.back()->largest.encoded(),
-                                                 file->smallest.encoded()) < 0);
+                assert(comparator.Compare(files.back()->largest.encoded(),
+                                          file->smallest.encoded()) < 0);
             }
             files.push_back(file);
         };

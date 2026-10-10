@@ -251,30 +251,21 @@ TEST_F(DbIteratorTest, MatchesAModel) {
 }
 
 TEST_F(DbIteratorTest, RejectsKeysThatAreNotInternalKeys) {
-    // Keys that are not internal keys, a short one and one with an unknown kind,
-    // sort before every internal key.
-    std::vector<ScriptedEntry> entries = Versions();
-    entries.push_back({.key = Bytes("x"), .value = Bytes("bad")});
-    std::vector<std::byte> unknown = Put("c", 9, "bad").key;
-    unknown[unknown.size() - InternalKeyTrailerSize] = std::byte{0x7f};
-    entries.push_back({.key = unknown, .value = Bytes("bad")});
-    const auto iterator = Open(entries, 10);
-    const auto expect_corruption = [&](const Status& moved) {
+    const auto short_iterator = Open({ScriptedEntry{.key = Bytes("x"), .value = Bytes("bad")}}, 10);
+    const auto expect_corruption = [](DbIterator& iterator, const Status& moved) {
         ASSERT_FALSE(moved.has_value());
         EXPECT_EQ(moved.error().code(), ErrorCode::Corruption) << moved.error().ToString();
-        EXPECT_FALSE(iterator->valid());
+        EXPECT_FALSE(iterator.valid());
     };
 
-    // Moving forward from the first entry.
-    expect_corruption(iterator->SeekToFirst());
-    // Stepping back over the entries of the first user key.
-    EXPECT_EQ(After(iterator->Seek(AsBytes("a")), *iterator), "a=a5");
-    expect_corruption(iterator->Prev());
-    // Looking past the first user key's entries for an earlier one.
-    EXPECT_EQ(After(iterator->SeekToLast(), *iterator), "f=f5");
-    EXPECT_EQ(After(iterator->Prev(), *iterator), "e=e7");
-    EXPECT_EQ(After(iterator->Prev(), *iterator), "c=c6");
-    expect_corruption(iterator->Prev());
+    expect_corruption(*short_iterator, short_iterator->SeekToFirst());
+
+    std::vector<std::byte> unknown = Put("c", 9, "bad").key;
+    unknown[unknown.size() - InternalKeyTrailerSize] = std::byte{0x7f};
+    const auto unknown_iterator =
+        Open({ScriptedEntry{.key = std::move(unknown), .value = Bytes("bad")}}, 10);
+
+    expect_corruption(*unknown_iterator, unknown_iterator->SeekToLast());
 }
 
 TEST_F(DbIteratorTest, FailsWithAnyInternalMove) {
@@ -338,7 +329,7 @@ public:
                                 },
                             .sample =
                                 [this](ByteView internal_key) {
-                                    const ParsedInternalKey parsed =
+                                    const InternalKeyView parsed =
                                         ParseInternalKey(internal_key).value();
                                     samples_.push_back(std::string(AsStringView(parsed.user_key)) +
                                                        "@" + std::to_string(parsed.sequence));

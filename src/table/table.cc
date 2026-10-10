@@ -110,13 +110,14 @@ BlockHandle IndexHandle(ByteView value) {
 // Checks that the index values are handles of blocks before the footer that
 // follow one another without overlapping, so that an offset identifies a block
 // in the block cache.
-Status ValidateIndex(const Block& index, std::uint64_t blocks_end, bool trusted_internal_keys) {
+Status ValidateIndex(const Block& index, std::uint64_t blocks_end,
+                     BlockKeyFormat block_key_format) {
     std::uint64_t next_offset = 0;
     const Block::EntryVisitor visitor =
         [&](ByteView key,                        // GCOVR_EXCL_LINE: GCC 13 misses lambda invocation
             ByteView encoded_value) -> Status {  // GCOVR_EXCL_LINE: GCC 13 misses invocation
-        if (trusted_internal_keys) {
-            const Result<ParsedInternalKey> parsed = ParseInternalKey(key);
+        if (block_key_format == BlockKeyFormat::Internal) {
+            const Result<InternalKeyView> parsed = ParseInternalKey(key);
             if (!parsed.has_value()) {
                 return std::unexpected(parsed.error());
             }
@@ -203,8 +204,7 @@ Result<std::unique_ptr<Table>> Table::Open(std::unique_ptr<RandomAccessFile> fil
     if (!index.has_value()) {
         return std::unexpected(std::move(index).error());
     }
-    const Status valid =
-        ValidateIndex(*index, blocks_end, options.use_trusted_internal_key_comparison);
+    const Status valid = ValidateIndex(*index, blocks_end, options.block_key_format);
     if (!valid.has_value()) {
         return std::unexpected(valid.error());
     }
@@ -221,26 +221,25 @@ Result<std::unique_ptr<Table>> Table::Open(std::unique_ptr<RandomAccessFile> fil
     const std::uint64_t cache_id =
         options.block_cache != nullptr ? options.block_cache->NewId() : 0;
     // GCOVR_EXCL_START: allocation failure propagates as an exception
-    auto table = std::unique_ptr<Table>(new Table(
-        std::move(file), blocks_end, comparator, options.use_trusted_internal_key_comparison,
-        std::move(*index), std::move(filter), options.block_cache, cache_id));
+    auto table = std::unique_ptr<Table>(
+        new Table(std::move(file), blocks_end, comparator, options.block_key_format,
+                  std::move(*index), std::move(filter), options.block_cache, cache_id));
     // GCOVR_EXCL_STOP
     return table;
 }
 
 // GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
 Table::Table(std::unique_ptr<RandomAccessFile> file, std::uint64_t blocks_end,
-             const InternalKeyComparator& comparator, bool trusted_internal_keys, Block index,
+             const InternalKeyComparator& comparator, BlockKeyFormat block_key_format, Block index,
              std::optional<FilterBlockReader> filter, BlockCache* block_cache,
              std::uint64_t cache_id) noexcept
     : file_(std::move(file)),
       blocks_end_(blocks_end),
       comparator_(&comparator),
-      trusted_comparator_(comparator),
-      block_comparator_(trusted_internal_keys ? static_cast<const Comparator*>(&trusted_comparator_)
-                                              : static_cast<const Comparator*>(comparator_)),
-      block_key_format_(trusted_internal_keys ? BlockKeyFormat::Internal
-                                              : BlockKeyFormat::Arbitrary),
+      block_comparator_(block_key_format == BlockKeyFormat::Internal
+                            ? static_cast<const Comparator*>(comparator_)
+                            : &BytewiseComparator()),
+      block_key_format_(block_key_format),
       index_(std::move(index)),
       filter_(std::move(filter)),
       block_cache_(block_cache),
@@ -294,7 +293,7 @@ Result<TableLookupKind> Table::Get(const LookupKey& key, std::vector<std::byte>&
     if (!entry.valid()) {
         return TableLookupKind::Missing;
     }
-    const Result<ParsedInternalKey> parsed = ParseInternalKey(entry.key());
+    const Result<InternalKeyView> parsed = ParseInternalKey(entry.key());
     if (!parsed.has_value()) {
         return std::unexpected(parsed.error());
     }
@@ -404,7 +403,7 @@ Status Table::Iterator::SeekToLast() {
 
 Status Table::Iterator::Seek(ByteView target) {
     if (table_->block_key_format_ == BlockKeyFormat::Internal) {
-        const Result<ParsedInternalKey> parsed = ParseInternalKey(target);
+        const Result<InternalKeyView> parsed = ParseInternalKey(target);
         if (!parsed.has_value()) {
             return Fail(parsed.error());
         }
