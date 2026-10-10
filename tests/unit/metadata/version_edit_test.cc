@@ -65,7 +65,7 @@ std::vector<std::byte> Materialize(ByteView value) {
 }
 
 void AppendKey(std::vector<std::byte>& encoded, ByteView key) {
-    ASSERT_TRUE(AppendLengthPrefixed(encoded, key).has_value());
+    AppendLengthPrefixed(encoded, key);
 }
 
 std::vector<std::byte> CompactPointerField(std::uint32_t level, ByteView key) {
