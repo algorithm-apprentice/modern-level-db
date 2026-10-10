@@ -5,7 +5,11 @@ function(modern_leveldb_extended_test name tier)
   )
   target_link_libraries("${name}" PRIVATE modern_leveldb::modern_leveldb GTest::gtest_main)
   modern_leveldb_set_project_warnings("${name}" PRIVATE)
-  gtest_discover_tests("${name}" PROPERTIES LABELS "${tier}" TIMEOUT 180)
+  gtest_discover_tests(
+    "${name}"
+    DISCOVERY_TIMEOUT "${modern_leveldb_gtest_discovery_timeout}"
+    PROPERTIES LABELS "${tier}" TIMEOUT 180
+  )
 endfunction()
 
 modern_leveldb_extended_test(

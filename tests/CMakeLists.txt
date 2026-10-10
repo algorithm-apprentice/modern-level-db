@@ -122,6 +122,11 @@ target_link_libraries(
 modern_leveldb_set_project_warnings(modern_leveldb_unit_tests PRIVATE)
 
 include(GoogleTest)
+set(modern_leveldb_gtest_discovery_timeout 5)
+if(WIN32)
+  # Cold Windows runners can exceed GoogleTest's five-second discovery default.
+  set(modern_leveldb_gtest_discovery_timeout 30)
+endif()
 set(unit_test_timeout 10)
 if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
   # The kernel-lock case owns three child runs, each bounded to five seconds.
@@ -129,6 +134,7 @@ if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
 endif()
 gtest_discover_tests(
   modern_leveldb_unit_tests
+  DISCOVERY_TIMEOUT "${modern_leveldb_gtest_discovery_timeout}"
   PROPERTIES
     LABELS unit
     TIMEOUT "${unit_test_timeout}"
@@ -150,6 +156,7 @@ target_link_libraries(
 modern_leveldb_set_project_warnings(modern_leveldb_cache_allocation_tests PRIVATE)
 gtest_discover_tests(
   modern_leveldb_cache_allocation_tests
+  DISCOVERY_TIMEOUT "${modern_leveldb_gtest_discovery_timeout}"
   PROPERTIES
     LABELS unit
     TIMEOUT 10
@@ -184,6 +191,7 @@ target_link_libraries(
 modern_leveldb_set_project_warnings(modern_leveldb_public_api_tests PRIVATE)
 gtest_discover_tests(
   modern_leveldb_public_api_tests
+  DISCOVERY_TIMEOUT "${modern_leveldb_gtest_discovery_timeout}"
   PROPERTIES
     LABELS unit
     TIMEOUT 10
@@ -209,6 +217,7 @@ target_link_libraries(modern_leveldb_compression_failure_tests PRIVATE GTest::gt
 modern_leveldb_set_project_warnings(modern_leveldb_compression_failure_tests PRIVATE)
 gtest_discover_tests(
   modern_leveldb_compression_failure_tests
+  DISCOVERY_TIMEOUT "${modern_leveldb_gtest_discovery_timeout}"
   PROPERTIES LABELS unit TIMEOUT 10
 )
 
@@ -283,6 +292,7 @@ set_tests_properties(
 if(MODERN_LEVELDB_BUILD_EXTENDED_TESTS)
   add_subdirectory(extended)
 endif()
+unset(modern_leveldb_gtest_discovery_timeout)
 
 if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_test(
