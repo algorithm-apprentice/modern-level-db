@@ -91,9 +91,7 @@ DatabaseEngineOptions EngineOptions(const Options& options, BlockCompression com
     return engine;
 }
 
-}  // namespace
-
-Result<Database> Database::Open(Options options, std::filesystem::path directory) {
+Result<DatabaseEngineOptions> PrepareEngineOptions(const Options& options) {
     if (options.block_restart_interval == 0) {
         return std::unexpected(
             Error::InvalidArgument("block_restart_interval must be at least one"));
@@ -106,9 +104,18 @@ Result<Database> Database::Open(Options options, std::filesystem::path directory
     if (!valid.has_value()) {
         return std::unexpected(valid.error());
     }
-    DatabaseEngineOptions engine_options = EngineOptions(options, *compression);
+    return EngineOptions(options, *compression);
+}
+
+}  // namespace
+
+Result<Database> Database::Open(Options options, std::filesystem::path directory) {
+    Result<DatabaseEngineOptions> engine_options = PrepareEngineOptions(options);
+    if (!engine_options.has_value()) {
+        return std::unexpected(std::move(engine_options).error());
+    }
     Result<std::unique_ptr<DatabaseEngine>> engine =
-        DatabaseEngine::Open(std::move(engine_options), std::move(directory));
+        DatabaseEngine::Open(std::move(*engine_options), std::move(directory));
     if (!engine.has_value()) {
         return std::unexpected(std::move(engine).error());
     }

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -63,6 +64,25 @@ TEST(PublicOptionsTest, PreservesTheLegacyAggregateMemberOrder) {
     EXPECT_EQ(options.compression, Compression::Zstd);
     EXPECT_EQ(options.zstd_compression_level, -3);
     EXPECT_TRUE(options.sync_wal_creation);
+}
+
+TEST(PublicOptionsTest, PreservesAdmissionFailurePriorityBeforeBackendOpening) {
+    Options options;
+    options.block_restart_interval = 0;
+    options.compression = static_cast<Compression>(3);
+    options.zstd_compression_level = 23;
+    const auto expect_error = [&](std::string_view message) {
+        const auto rejected = Database::Open(options, {});
+        ASSERT_FALSE(rejected.has_value());
+        EXPECT_EQ(rejected.error().code(), ErrorCode::InvalidArgument);
+        EXPECT_EQ(rejected.error().message(), message);
+    };
+
+    expect_error("block_restart_interval must be at least one");
+    options.block_restart_interval = 16;
+    expect_error("compression type is invalid");
+    options.compression = Compression::Zstd;
+    expect_error("Zstd compression level is outside [-5, 22]");
 }
 
 TEST(PublicWriteBatchTest, OwnsCopiesAppendsAndClearsOperations) {

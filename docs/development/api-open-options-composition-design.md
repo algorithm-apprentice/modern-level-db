@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Design proposal for A01 in the
+Design accepted in #187 for A01 in the
 [production composition plan](production-function-composition-plan.md).
 Design publication/merge precedes production implementation.
 
@@ -123,3 +123,36 @@ Independent bounded design review found no significant issues in this
 preparation/Open composition and its validation/ownership/test contracts.
 The reviewer did not execute tests or builds, verify remote CI, or certify
 implementation, platform execution or whole-file completion.
+
+## Implementation record
+
+Implementation follows merged #187, with original-production characterization
+committed before the option-preparation extraction.
+
+| Function | Responsibility and stopping boundary |
+|---|---|
+| `PrepareEngineOptions` | Composes restart admission, existing enum translation, existing compression validation and existing option conversion, retaining original stage Error copies. |
+| `Database::Open` | Composes preparation, engine acquisition and shared owning state construction; moves prepared errors/options without moving comparator ownership early. |
+
+Existing converters, mappings, shared state layout, public signatures and native
+engine lifecycle are unchanged. No coverage exclusions, thresholds, exception
+handling, filesystem policy or allocation ownership changes.
+The existing recursive frontiers above remain open.
+
+Two new public cases and strengthened existing cases pass on original source
+before extraction. They prove exact mixed-invalid priority against an empty
+directory, exact native rejection text/no directory creation, both admitted
+Zstd endpoints and out-of-range unused Zstd levels for None/Snappy.
+Existing comparator/child-handle lifetimes and public readback stay covered,
+without claiming readback verifies encoded compression type.
+
+The actual `modern_leveldb_public_api_tests` target is rebuilt for both runs;
+building `modern_leveldb_unit_tests` alone does not rebuild these cases.
+All 16 selected PublicOptionsTest/PublicDatabaseTest cases pass before and
+after with exact JUnit case-set parity, both new cases present and no failures,
+errors or skips. Warnings-as-errors build and formatting, documentation and
+whitespace checks pass. Independent combined implementation review found no
+significant issues and separately confirmed the existing XML case sets without
+executing tests. Local Windows execution does not certify the backend-disabled
+configuration or allocation-failure behavior. Applicable exact published-head
+CI remains required before merge.
