@@ -530,21 +530,33 @@ private:
     ScopedHandle handle_;
 };
 
-Result<std::unique_ptr<WritableFile>> OpenWriter(
-    const std::filesystem::path& path, bool append,
-    const std::shared_ptr<WindowsFileOperations>& operations) {
+Result<ScopedHandle> OpenRegularFile(const std::filesystem::path& path, DWORD access, DWORD share,
+                                     DWORD disposition, DWORD flags,
+                                     const std::shared_ptr<WindowsFileOperations>& operations,
+                                     bool lock_contention = false) {
     auto native = NativePath(path);
     if (!native.has_value()) {
         return std::unexpected(native.error());
     }
-    auto handle = OpenHandle(*native, GENERIC_WRITE, 0, append ? OPEN_ALWAYS : CREATE_ALWAYS,
-                             FILE_ATTRIBUTE_NORMAL, operations);
+    auto handle =
+        OpenHandle(*native, access, share, disposition, flags, operations, lock_contention);
     if (!handle.has_value()) {
         return std::unexpected(handle.error());
     }
     const Status valid = CheckKind(handle->get(), path, false, *operations);
     if (!valid.has_value()) {
         return std::unexpected(valid.error());
+    }
+    return handle;
+}
+
+Result<std::unique_ptr<WritableFile>> OpenWriter(
+    const std::filesystem::path& path, bool append,
+    const std::shared_ptr<WindowsFileOperations>& operations) {
+    auto handle = OpenRegularFile(path, GENERIC_WRITE, 0, append ? OPEN_ALWAYS : CREATE_ALWAYS,
+                                  FILE_ATTRIBUTE_NORMAL, operations);
+    if (!handle.has_value()) {
+        return std::unexpected(std::move(handle).error());
     }
     if (append) {
         LARGE_INTEGER zero{};
@@ -648,36 +660,20 @@ Result<std::filesystem::path> WindowsFileSystem::PrepareDatabaseDirectory(
 
 Result<std::unique_ptr<SequentialFile>> WindowsFileSystem::OpenSequential(
     const std::filesystem::path& path) {
-    auto native = NativePath(path);
-    if (!native.has_value()) {
-        return std::unexpected(native.error());
-    }
-    auto file = OpenHandle(*native, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
-                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, operations_);
+    auto file = OpenRegularFile(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, operations_);
     if (!file.has_value()) {
-        return std::unexpected(file.error());
-    }
-    const Status valid = CheckKind(file->get(), path, false, *operations_);
-    if (!valid.has_value()) {
-        return std::unexpected(valid.error());
+        return std::unexpected(std::move(file).error());
     }
     return std::make_unique<WindowsSequentialFile>(std::move(*file), path, operations_);
 }
 
 Result<std::unique_ptr<RandomAccessFile>> WindowsFileSystem::OpenRandomAccess(
     const std::filesystem::path& path, std::optional<std::uint64_t> expected_size) {
-    auto native = NativePath(path);
-    if (!native.has_value()) {
-        return std::unexpected(native.error());
-    }
-    auto file = OpenHandle(*native, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
-                           OPEN_EXISTING, FILE_FLAG_OVERLAPPED, operations_);
+    auto file = OpenRegularFile(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
+                                OPEN_EXISTING, FILE_FLAG_OVERLAPPED, operations_);
     if (!file.has_value()) {
-        return std::unexpected(file.error());
-    }
-    const Status valid = CheckKind(file->get(), path, false, *operations_);
-    if (!valid.has_value()) {
-        return std::unexpected(valid.error());
+        return std::unexpected(std::move(file).error());
     }
     const auto copied = [&]() -> Result<std::unique_ptr<RandomAccessFile>> {
         return std::make_unique<WindowsRandomAccessFile>(std::move(*file), path, operations_);
@@ -904,19 +900,11 @@ Status WindowsFileSystem::SyncDirectory(const std::filesystem::path& path) {
 }
 
 Result<std::unique_ptr<FileLock>> WindowsFileSystem::LockFile(const std::filesystem::path& path) {
-    auto native = NativePath(path);
-    if (!native.has_value()) {
-        return std::unexpected(native.error());
-    }
     auto file =
-        OpenHandle(*native, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                   OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, operations_, true);
+        OpenRegularFile(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, operations_, true);
     if (!file.has_value()) {
-        return std::unexpected(file.error());
-    }
-    const Status valid = CheckKind(file->get(), path, false, *operations_);
-    if (!valid.has_value()) {
-        return std::unexpected(valid.error());
+        return std::unexpected(std::move(file).error());
     }
     OVERLAPPED overlapped{};
     if (!::LockFileEx(file->get(), LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, MAXDWORD,
