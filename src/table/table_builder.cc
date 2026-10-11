@@ -164,12 +164,7 @@ void TableBuilder::WriteRawBlock(ByteView contents, BlockCompression type, Block
     }
 }
 
-void TableBuilder::WriteTail() {
-    if (!data_block_.empty()) {
-        WriteDataBlock();
-    }
-
-    BlockBuilder metaindex(restart_interval_);
+void TableBuilder::AddFilterIndexEntry(BlockBuilder& metaindex) {
     if (filter_block_.has_value()) {
         BlockHandle filter_handle{};
         WriteRawBlock(filter_block_->Finish(), BlockCompression::None, filter_handle);
@@ -177,15 +172,36 @@ void TableBuilder::WriteTail() {
         AppendBlockHandle(handle, filter_handle);
         metaindex.Add(AsBytes(filter_key_), handle);
     }
-    BlockHandle metaindex_handle{};
-    WriteBlock(metaindex.Finish(), metaindex_handle);
+}
 
+BlockHandle TableBuilder::WriteMetaindex() {
+    BlockBuilder metaindex(restart_interval_);
+    AddFilterIndexEntry(metaindex);
+    BlockHandle handle{};
+    WriteBlock(metaindex.Finish(), handle);
+    return handle;
+}
+
+void TableBuilder::AddFinalIndexEntry() {
     if (pending_index_entry_) {
         comparator_->FindShortSuccessor(last_key_);
         AddPendingIndexEntry();
     }
-    BlockHandle index_handle{};
-    WriteBlock(index_block_.Finish(), index_handle);
+}
+
+BlockHandle TableBuilder::WriteIndex() {
+    AddFinalIndexEntry();
+    BlockHandle handle{};
+    WriteBlock(index_block_.Finish(), handle);
+    return handle;
+}
+
+void TableBuilder::WriteTail() {
+    if (!data_block_.empty()) {
+        WriteDataBlock();
+    }
+    const BlockHandle metaindex_handle = WriteMetaindex();
+    const BlockHandle index_handle = WriteIndex();
     if (first_error_.has_value()) {
         return;
     }

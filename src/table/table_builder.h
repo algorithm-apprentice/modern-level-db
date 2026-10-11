@@ -79,6 +79,10 @@ private:
     void WriteDataBlock();
     void WriteBlock(ByteView contents, BlockHandle& handle);
     void WriteRawBlock(ByteView contents, BlockCompression type, BlockHandle& handle);
+    void AddFilterIndexEntry(BlockBuilder& metaindex);
+    void AddFinalIndexEntry();
+    [[nodiscard]] BlockHandle WriteMetaindex();
+    [[nodiscard]] BlockHandle WriteIndex();
     void WriteTail();
 
     std::unique_ptr<WritableFile> file_;
