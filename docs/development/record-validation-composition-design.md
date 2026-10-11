@@ -2,9 +2,10 @@
 
 ## Status and scope
 
-Design proposal for F01/F02 in the
+Design accepted in #185 for F01/F02 in the
 [production composition plan](production-function-composition-plan.md).
-No production implementation is included in this design PR.
+No production implementation was included in the design PR. The subsequent
+extraction is tracked below.
 
 Scope is the checked record proof in `src/format/write_batch.cc` and physical
 fragment bounds/checksum composition in `src/format/wal_format.cc`.
@@ -164,3 +165,48 @@ does not certify trusted paths, fragmentation or whole-production recursion.
 Independent bounded design review found no significant issues in these
 contracts and proposed extraction boundaries. It did not execute tests or
 builds, verify remote CI, or certify implementation or whole-file completion.
+
+## Implementation record
+
+Implementation follows merged #185. Separate topic commits characterize the
+unchanged public operations, extract the batch proof, and compose WAL payload
+admission/checksum verification.
+
+### Responsibility ledger
+
+| Function | Composition or stopping boundary |
+|---|---|
+| `ValidateBatchRecord` | Composes byte presence/kind admission with existing checked key and conditional value length-field primitives; retains each original field-error copy. |
+| `ValidateBatchRecords` | Owns the proof cursor and composes counted per-record validation with final full-consumption admission; moves failed errors through its new layer. |
+| `WriteBatchReader::Open` | Composes original header admission/decoding, complete record proof and borrowed reader construction without another trusted scan. |
+| `DecodeFailure` | One failure-envelope grammar retaining original Error, failure/action and default/trusted encoded size; unexpected return supports both result types without copying the envelope. |
+| `ReadWalPayloadSize` | Composes header admission, original two-byte field decode, capacity admission and complete physical-record bounds. |
+| `WalChecksumMatches` | One coupled type-plus-payload checksum predicate using existing stored-CRC/unmask/CRC primitives under proved bounds. |
+| `DecodeWalFragment` | Composes size proof, zero-marker handling, exact borrowed payload, optional checksum verification, type admission and original outcome construction. |
+
+Trusted batch iteration/mutation, unchecked sequence-header compatibility,
+fragmentation and WAL reader recovery state transitions are unchanged.
+No byte ownership, error text/recovery metadata, public API, coverage exclusions,
+thresholds or exception policy changed. Broader named recursive frontiers
+remain open; neither file is wholly certified by this extraction.
+
+### Characterization and local evidence
+
+Four new public-operation cases pass on unchanged production before extraction.
+Batch mixed-field/record faults preserve kind/key/value/count/trailing priority.
+WAL mixed structural/checksum/type faults preserve the full error tuple even
+with verification disabled; nonempty Zero stays unknown rather than an end
+marker. A complete block-capacity payload retains its original borrowed pointer.
+Existing corruption cases now assert exact messages and all recovery fields.
+Golden records, borrowed iteration, zero markers and caller recovery cases stay
+in the selection.
+
+The batch-proof slice passes all 17 batch cases. The combined batch/fragmenter/
+decoder/reader/writer selection passes the same 58 cases before and after
+extraction, with exact JUnit case-set parity and no failures, errors or skips.
+The warnings-as-errors Debug build and formatting, documentation and whitespace
+checks pass. Independent combined implementation review found no significant
+issues in the source/test diff and this record. The reviewer did not execute
+tests; the main agent separately verified the execution evidence.
+No allocation-failure injection or authoritative remote coverage is claimed by
+these local checks.

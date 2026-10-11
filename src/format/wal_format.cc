@@ -52,14 +52,40 @@ std::uint32_t DecodeStoredCrc(ByteView encoded) noexcept {
     return crc;
 }
 
-WalDecodeResult DecodeFailure(WalDecodeFailure failure, WalRecoveryAction recovery,
-                              std::string message, std::size_t encoded_size = 0) {
+std::unexpected<WalDecodeError> DecodeFailure(WalDecodeFailure failure, WalRecoveryAction recovery,
+                                              std::string message, std::size_t encoded_size = 0) {
     return std::unexpected(WalDecodeError{
         .error = Error::Corruption(std::move(message)),
         .failure = failure,
         .recovery = recovery,
         .encoded_size = encoded_size,
     });
+}
+
+std::expected<std::size_t, WalDecodeError> ReadWalPayloadSize(ByteView encoded) {
+    if (encoded.size() < WalHeaderSize) {
+        return DecodeFailure(WalDecodeFailure::TruncatedHeader, WalRecoveryAction::DropBlock,
+                             "WAL physical record has a truncated header");
+    }
+
+    const std::size_t payload_size =
+        std::to_integer<std::size_t>(encoded[4]) | (std::to_integer<std::size_t>(encoded[5]) << 8U);
+    if (payload_size > MaximumWalPayload) {
+        return DecodeFailure(WalDecodeFailure::PayloadTooLarge, WalRecoveryAction::DropBlock,
+                             "WAL physical record payload exceeds block capacity");
+    }
+    if (encoded.size() < WalHeaderSize + payload_size) {
+        return DecodeFailure(WalDecodeFailure::TruncatedPayload, WalRecoveryAction::DropBlock,
+                             "WAL physical record has a truncated payload");
+    }
+    return payload_size;
+}
+
+bool WalChecksumMatches(ByteView encoded, ByteView payload) noexcept {
+    const std::uint32_t expected = UnmaskCrc32c(DecodeStoredCrc(encoded));
+    const std::byte type_byte = encoded[6];
+    const std::uint32_t actual = ExtendCrc32c(Crc32c(ByteView(&type_byte, 1)), payload);
+    return actual == expected;
 }
 
 }  // namespace
@@ -118,26 +144,14 @@ std::optional<WalFragment> WalFragmenter::Cursor::Next() noexcept {
 }
 
 WalDecodeResult DecodeWalFragment(ByteView encoded, bool verify_checksum) {
-    if (encoded.size() < WalHeaderSize) {
-        return DecodeFailure(WalDecodeFailure::TruncatedHeader, WalRecoveryAction::DropBlock,
-                             "WAL physical record has a truncated header");
+    std::expected<std::size_t, WalDecodeError> payload_size = ReadWalPayloadSize(encoded);
+    if (!payload_size.has_value()) {
+        return std::unexpected(std::move(payload_size).error());
     }
 
-    const std::size_t payload_size =
-        std::to_integer<std::size_t>(encoded[4]) | (std::to_integer<std::size_t>(encoded[5]) << 8U);
-    if (payload_size > MaximumWalPayload) {
-        return DecodeFailure(WalDecodeFailure::PayloadTooLarge, WalRecoveryAction::DropBlock,
-                             "WAL physical record payload exceeds block capacity");
-    }
-
-    const std::size_t encoded_size = WalHeaderSize + payload_size;
-    if (encoded.size() < encoded_size) {
-        return DecodeFailure(WalDecodeFailure::TruncatedPayload, WalRecoveryAction::DropBlock,
-                             "WAL physical record has a truncated payload");
-    }
-
+    const std::size_t encoded_size = WalHeaderSize + *payload_size;
     const auto type = static_cast<WalRecordType>(std::to_integer<std::uint8_t>(encoded[6]));
-    if (type == WalRecordType::Zero && payload_size == 0) {
+    if (type == WalRecordType::Zero && *payload_size == 0) {
         return WalDecodeOutcome{
             .kind = WalDecodeKind::EndOfBlock,
             .type = WalRecordType::Zero,
@@ -146,15 +160,10 @@ WalDecodeResult DecodeWalFragment(ByteView encoded, bool verify_checksum) {
         };
     }
 
-    const ByteView payload = encoded.subspan(WalHeaderSize, payload_size);
-    if (verify_checksum) {
-        const std::uint32_t expected = UnmaskCrc32c(DecodeStoredCrc(encoded));
-        const std::byte type_byte = encoded[6];
-        const std::uint32_t actual = ExtendCrc32c(Crc32c(ByteView(&type_byte, 1)), payload);
-        if (actual != expected) {
-            return DecodeFailure(WalDecodeFailure::ChecksumMismatch, WalRecoveryAction::DropBlock,
-                                 "WAL physical record checksum mismatch");
-        }
+    const ByteView payload = encoded.subspan(WalHeaderSize, *payload_size);
+    if (verify_checksum && !WalChecksumMatches(encoded, payload)) {
+        return DecodeFailure(WalDecodeFailure::ChecksumMismatch, WalRecoveryAction::DropBlock,
+                             "WAL physical record checksum mismatch");
     }
 
     if (!IsFragmentType(type)) {

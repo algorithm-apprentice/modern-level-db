@@ -79,6 +79,17 @@ std::vector<std::byte> Pattern(std::size_t size) {
     return result;
 }
 
+void ExpectDecodeFailure(const WalDecodeResult& result, WalDecodeFailure failure,
+                         WalRecoveryAction recovery, std::string_view message,
+                         std::size_t encoded_size = 0) {
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().error.code(), ErrorCode::Corruption);
+    EXPECT_EQ(result.error().error.message(), message);
+    EXPECT_EQ(result.error().failure, failure);
+    EXPECT_EQ(result.error().recovery, recovery);
+    EXPECT_EQ(result.error().encoded_size, encoded_size);
+}
+
 TEST(WalFormatTest, PersistentConstantsMatchLevelDb) {
     EXPECT_EQ(WalBlockSize, 32U * 1'024U);
     EXPECT_EQ(WalHeaderSize, 7U);
@@ -244,11 +255,9 @@ TEST(WalDecoderTest, ReportsTrustedUnknownTypeAsSkippable) {
 
     const auto decoded = DecodeWalFragment(encoded);
 
-    ASSERT_FALSE(decoded.has_value());
-    EXPECT_EQ(decoded.error().failure, WalDecodeFailure::UnknownType);
-    EXPECT_EQ(decoded.error().recovery, WalRecoveryAction::SkipPhysicalRecord);
-    EXPECT_EQ(decoded.error().encoded_size, encoded.size());
-    EXPECT_EQ(decoded.error().error.code(), ErrorCode::Corruption);
+    ExpectDecodeFailure(decoded, WalDecodeFailure::UnknownType,
+                        WalRecoveryAction::SkipPhysicalRecord,
+                        "WAL physical record has an unknown type", encoded.size());
 }
 
 TEST(WalDecoderTest, BadChecksumOnUnknownTypeDropsBlock) {
@@ -256,10 +265,8 @@ TEST(WalDecoderTest, BadChecksumOnUnknownTypeDropsBlock) {
 
     const auto decoded = DecodeWalFragment(encoded);
 
-    ASSERT_FALSE(decoded.has_value());
-    EXPECT_EQ(decoded.error().failure, WalDecodeFailure::ChecksumMismatch);
-    EXPECT_EQ(decoded.error().recovery, WalRecoveryAction::DropBlock);
-    EXPECT_EQ(decoded.error().encoded_size, 0U);
+    ExpectDecodeFailure(decoded, WalDecodeFailure::ChecksumMismatch, WalRecoveryAction::DropBlock,
+                        "WAL physical record checksum mismatch");
 }
 
 TEST(WalDecoderTest, CanDisableChecksumVerification) {
@@ -267,8 +274,8 @@ TEST(WalDecoderTest, CanDisableChecksumVerification) {
         PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full), AsBytes("payload"), false);
 
     const auto verified = DecodeWalFragment(encoded);
-    ASSERT_FALSE(verified.has_value());
-    EXPECT_EQ(verified.error().failure, WalDecodeFailure::ChecksumMismatch);
+    ExpectDecodeFailure(verified, WalDecodeFailure::ChecksumMismatch, WalRecoveryAction::DropBlock,
+                        "WAL physical record checksum mismatch");
 
     const auto unchecked = DecodeWalFragment(encoded, false);
     ASSERT_TRUE(unchecked.has_value());
@@ -280,18 +287,17 @@ TEST(WalDecoderTest, RejectsTruncatedHeaderAndPayload) {
         SCOPED_TRACE(size);
         const std::vector<std::byte> encoded(size, std::byte{0});
         const auto decoded = DecodeWalFragment(encoded);
-        ASSERT_FALSE(decoded.has_value());
-        EXPECT_EQ(decoded.error().failure, WalDecodeFailure::TruncatedHeader);
-        EXPECT_EQ(decoded.error().recovery, WalRecoveryAction::DropBlock);
+        ExpectDecodeFailure(decoded, WalDecodeFailure::TruncatedHeader,
+                            WalRecoveryAction::DropBlock,
+                            "WAL physical record has a truncated header");
     }
 
     std::vector<std::byte> encoded =
         PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full), AsBytes("abc"));
     encoded.pop_back();
     const auto decoded = DecodeWalFragment(encoded);
-    ASSERT_FALSE(decoded.has_value());
-    EXPECT_EQ(decoded.error().failure, WalDecodeFailure::TruncatedPayload);
-    EXPECT_EQ(decoded.error().recovery, WalRecoveryAction::DropBlock);
+    ExpectDecodeFailure(decoded, WalDecodeFailure::TruncatedPayload, WalRecoveryAction::DropBlock,
+                        "WAL physical record has a truncated payload");
 }
 
 TEST(WalDecoderTest, RejectsPayloadLargerThanPhysicalBlockCapacity) {
@@ -303,9 +309,8 @@ TEST(WalDecoderTest, RejectsPayloadLargerThanPhysicalBlockCapacity) {
 
     const auto decoded = DecodeWalFragment(encoded);
 
-    ASSERT_FALSE(decoded.has_value());
-    EXPECT_EQ(decoded.error().failure, WalDecodeFailure::PayloadTooLarge);
-    EXPECT_EQ(decoded.error().recovery, WalRecoveryAction::DropBlock);
+    ExpectDecodeFailure(decoded, WalDecodeFailure::PayloadTooLarge, WalRecoveryAction::DropBlock,
+                        "WAL physical record payload exceeds block capacity");
 }
 
 TEST(WalDecoderTest, TreatsNonemptyZeroTypeAsUnknown) {
@@ -314,9 +319,54 @@ TEST(WalDecoderTest, TreatsNonemptyZeroTypeAsUnknown) {
 
     const auto decoded = DecodeWalFragment(encoded);
 
-    ASSERT_FALSE(decoded.has_value());
-    EXPECT_EQ(decoded.error().failure, WalDecodeFailure::UnknownType);
-    EXPECT_EQ(decoded.error().recovery, WalRecoveryAction::SkipPhysicalRecord);
+    ExpectDecodeFailure(decoded, WalDecodeFailure::UnknownType,
+                        WalRecoveryAction::SkipPhysicalRecord,
+                        "WAL physical record has an unknown type", encoded.size());
+}
+
+TEST(WalDecoderTest, BoundsFailuresPrecedeChecksumAndTypeFailures) {
+    auto oversized = PhysicalRecord(9, {}, false);
+    const std::size_t impossible_length = WalBlockSize - WalHeaderSize + 1;
+    oversized[4] = static_cast<std::byte>(impossible_length & 0xffU);
+    oversized[5] = static_cast<std::byte>((impossible_length >> 8U) & 0xffU);
+    auto truncated = PhysicalRecord(9, AsBytes("abc"), false);
+    truncated.pop_back();
+
+    for (const bool verify_checksum : {true, false}) {
+        SCOPED_TRACE(verify_checksum);
+        ExpectDecodeFailure(DecodeWalFragment(oversized, verify_checksum),
+                            WalDecodeFailure::PayloadTooLarge, WalRecoveryAction::DropBlock,
+                            "WAL physical record payload exceeds block capacity");
+        ExpectDecodeFailure(DecodeWalFragment(truncated, verify_checksum),
+                            WalDecodeFailure::TruncatedPayload, WalRecoveryAction::DropBlock,
+                            "WAL physical record has a truncated payload");
+    }
+}
+
+TEST(WalDecoderTest, DisablingChecksumKeepsUnknownTypeAndNonemptyZeroRecovery) {
+    for (const std::uint8_t type : {std::uint8_t{0}, std::uint8_t{9}}) {
+        SCOPED_TRACE(type);
+        const auto encoded = PhysicalRecord(type, AsBytes("x"), false);
+        ExpectDecodeFailure(DecodeWalFragment(encoded), WalDecodeFailure::ChecksumMismatch,
+                            WalRecoveryAction::DropBlock, "WAL physical record checksum mismatch");
+        ExpectDecodeFailure(DecodeWalFragment(encoded, false), WalDecodeFailure::UnknownType,
+                            WalRecoveryAction::SkipPhysicalRecord,
+                            "WAL physical record has an unknown type", encoded.size());
+    }
+}
+
+TEST(WalDecoderTest, BorrowsACompletePayloadAtPhysicalBlockCapacity) {
+    const auto payload = Pattern(WalBlockSize - WalHeaderSize);
+    const auto encoded = PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full), payload);
+
+    const auto decoded = DecodeWalFragment(encoded);
+
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_EQ(decoded->kind, WalDecodeKind::Fragment);
+    EXPECT_EQ(decoded->type, WalRecordType::Full);
+    EXPECT_EQ(decoded->encoded_size, WalBlockSize);
+    EXPECT_EQ(decoded->payload.data(), encoded.data() + WalHeaderSize);
+    EXPECT_TRUE(std::ranges::equal(decoded->payload, payload));
 }
 
 }  // namespace
