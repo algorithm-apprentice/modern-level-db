@@ -1,4 +1,3 @@
-#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
@@ -43,7 +42,7 @@ void DatabaseEngine::MaybeScheduleBackgroundWork() {
     if (background_scheduled_ || closing_ || sticky_error_.has_value()) {
         return;
     }
-    if (immutable_ == nullptr && !NeedsCompaction()) {
+    if (!write_buffers_.has_immutable() && !NeedsCompaction()) {
         return;
     }
     background_scheduled_ = true;
@@ -64,7 +63,7 @@ void DatabaseEngine::BackgroundCall() {
     std::unique_lock lock(mutex_);
     if (!closing_ && !sticky_error_.has_value()) {
         try {
-            if (immutable_ != nullptr) {
+            if (write_buffers_.has_immutable()) {
                 FlushImmutable(lock);
             } else {
                 BackgroundCompaction(lock);
@@ -81,33 +80,18 @@ void DatabaseEngine::BackgroundCall() {
     background_finished_.notify_all();
 }
 
-void DatabaseEngine::ClearImmutable() {
-    assert(immutable_ != nullptr);
-    if (immutable_->read_pins_ != 0) {
-        read_pinned_memtables_.push_back(std::move(immutable_));
-    } else {
-        immutable_.reset();
-    }
-}
-
-void DatabaseEngine::ReleaseReadPinnedMemtables() {
-    std::erase_if(read_pinned_memtables_, [](const std::shared_ptr<const MemTable>& table) {
-        return table->read_pins_ == 0;
-    });
-}
-
 void DatabaseEngine::FlushImmutable(std::unique_lock<std::mutex>& lock) {
     const std::shared_ptr<const Version> base = versions_->current();
     const std::uint64_t number = versions_->NewFileNumber();
     // Retain the output number before unlocked I/O: cleanup must not mistake
     // an unfinished/uninstalled table for an obsolete file.
     pending_outputs_.insert(number);
-    const std::shared_ptr<const MemTable> immutable = immutable_;
-    const std::uint64_t log_number = log_number_;
+    const std::shared_ptr<const MemTable> immutable = write_buffers_.immutable_owner();
+    const std::uint64_t log_number = write_buffers_.log_number();
     lock.unlock();
     FlushOptions options;
-    options.table_options = table_options_;
-    options.target_file_size = max_file_size_;
+    options.table_options = policy_.table_options;
+    options.target_file_size = policy_.max_file_size;
     Result<VersionEdit> edit =
         modern_leveldb::FlushMemTable(*file_system_, directory_, comparator_, options, table_cache_,
                                       *immutable, number, *base, log_number);
@@ -128,8 +112,7 @@ void DatabaseEngine::FlushImmutable(std::unique_lock<std::mutex>& lock) {
         return;
     }
     pending_outputs_.erase(number);
-    ClearImmutable();
-    has_immutable_.store(false, std::memory_order_relaxed);
+    write_buffers_.ClearImmutable();
     seek_statistics_.Retain(*versions_->current());
     background_finished_.notify_all();
     RemoveObsoleteFiles(lock);
@@ -151,11 +134,11 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
     const std::shared_ptr<const Version> current = versions_->current();
     const std::optional<Compaction> compaction =
         PickCompaction(current, comparator_, versions_->compact_pointers(),
-                       seek_statistics_.FileToCompact(*current), max_file_size_);
+                       seek_statistics_.FileToCompact(*current), policy_.max_file_size);
     // The need that scheduled this task remains, since only background work
     // installs versions or drops the file to compact.
     assert(compaction.has_value());
-    if (IsTrivialMove(*compaction, max_file_size_)) {
+    if (IsTrivialMove(*compaction, policy_.max_file_size)) {
         VersionEdit edit = CompactionEdit(*compaction);
         // The file is valid at the next level, which nothing there overlaps.
         AssertSuccess(edit.AddFile(compaction->level + 1, *compaction->inputs[0].front()));
@@ -167,8 +150,8 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
     const std::unique_ptr<InternalIterator> input =
         NewCompactionIterator(*compaction, table_cache_, comparator_);
     CompactionOptions options;
-    options.table_options = table_options_;
-    options.target_file_size = max_file_size_;
+    options.table_options = policy_.table_options;
+    options.target_file_size = policy_.max_file_size;
     CompactionHooks hooks;
     hooks.new_file_number = [this, &outputs] {
         const std::lock_guard guard(mutex_);
@@ -209,12 +192,12 @@ Status DatabaseEngine::BeforeCompactionEntry() {
     if (closing_) {
         return std::unexpected(Error::Aborted("the database is closing"));
     }
-    if (!has_immutable_.load(std::memory_order_relaxed)) {
+    if (!write_buffers_.HasImmutableForCompaction()) {
         return {};
     }
     std::unique_lock lock(mutex_);
     // Only background work, which this is, drops the immutable memtable.
-    assert(immutable_ != nullptr);
+    assert(write_buffers_.has_immutable());
     FlushImmutable(lock);
     if (sticky_error_.has_value()) {
         return StickyError();

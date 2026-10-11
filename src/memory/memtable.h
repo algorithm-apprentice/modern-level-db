@@ -14,7 +14,7 @@
 
 namespace modern_leveldb {
 
-class DatabaseEngine;
+class WriteBufferState;
 
 enum class MemTableLookupKind {
     Missing,
@@ -119,7 +119,7 @@ public:
     };
 
 private:
-    friend class DatabaseEngine;
+    friend class WriteBufferState;
 
     EntryComparator entry_comparator_;
     Arena arena_;

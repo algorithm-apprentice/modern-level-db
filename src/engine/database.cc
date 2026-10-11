@@ -93,10 +93,10 @@ DatabaseEngine::DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options,
     : owned_file_system_(std::move(owned_file_system)),
       owned_block_cache_(OwnedBlockCache(options)),
       owned_clock_(OwnedClock(options)),
-      write_buffer_size_(options.write_buffer_size),
-      max_file_size_(options.max_file_size),
-      sync_wal_creation_(options.sync_wal_creation),  // GCOVR_EXCL_LINE: GCC constructor clone
-      table_options_(options.table_options),
+      policy_{.write_buffer_size = options.write_buffer_size,
+              .max_file_size = options.max_file_size,
+              .sync_wal_creation = options.sync_wal_creation,
+              .table_options = options.table_options},  // GCOVR_EXCL_LINE: GCC constructor clone
       directory_(std::move(directory)),
       file_system_(options.file_system != nullptr ? options.file_system : owned_file_system_.get()),
       clock_(options.clock != nullptr ? options.clock : owned_clock_.get()),
@@ -112,9 +112,9 @@ DatabaseEngine::~DatabaseEngine() {
     closing_ = true;
     // No write can use the log any longer. Destruction has no caller to receive
     // a close error; resource release is not a data-durability acknowledgment.
-    if (log_ != nullptr) {
+    if (write_buffers_.has_log()) {
         try {
-            static_cast<void>(log_->Close());
+            static_cast<void>(write_buffers_.log().Close());
         } catch (...) {
             // Destructors cannot report close failures; continue releasing resources.
         }
@@ -136,10 +136,8 @@ Status DatabaseEngine::Recover(const DatabaseEngineOptions& options) {
     std::unique_lock lock(mutex_);
     lock_ = std::move(recovered->lock);
     versions_ = std::move(recovered->versions);
-    log_ = std::move(recovered->log);
-    log_number_ = recovered->log_number;
-    memtable_ = std::make_shared<MemTable>(comparator_.user_comparator());
-    published_mutable_memtable_bytes_ = memtable_->memory_usage();
+    write_buffers_.InstallRecovered(std::move(recovered->log), recovered->log_number,
+                                    std::make_shared<MemTable>(comparator_.user_comparator()));
     RemoveObsoleteFiles(lock);
     // Only a task that cannot be scheduled records an error here.
     MaybeScheduleBackgroundWork();

@@ -38,9 +38,9 @@ Result<std::uint64_t> LevelFileBytes(std::span<const Version::File> files, std::
 
 // GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
 DatabaseEngine::ReadSources::ReadSources(DatabaseEngine& engine) noexcept : engine_(&engine) {
-    memtable_.emplace(engine.memtable_->PinRead());
-    if (engine.immutable_ != nullptr) {
-        immutable_.emplace(engine.immutable_->PinRead());
+    memtable_.emplace(engine.write_buffers_.mutable_table().PinRead());
+    if (engine.write_buffers_.has_immutable()) {
+        immutable_.emplace(engine.write_buffers_.immutable_owner()->PinRead());
     }
     version_.emplace(engine.versions_->PinCurrent());
 }
@@ -49,7 +49,7 @@ DatabaseEngine::ReadSources::~ReadSources() {
     version_.reset();
     immutable_.reset();
     memtable_.reset();
-    engine_->ReleaseReadPinnedMemtables();
+    engine_->write_buffers_.ReleaseReadPinnedMemtables();
 }
 // GCOVR_EXCL_STOP
 
@@ -98,9 +98,9 @@ std::unique_ptr<DbIterator> DatabaseEngine::NewIterator(const DatabaseEngineRead
     std::unique_lock lock(mutex_);
     const SequenceNumber sequence =
         options.snapshot.has_value() ? *options.snapshot : versions_->last_sequence();
-    std::unique_ptr<InternalIterator> internal =
-        NewInternalIterator(memtable_, immutable_, versions_->current(), table_cache_, comparator_,
-                            ReadOptionsFor(options));
+    std::unique_ptr<InternalIterator> internal = NewInternalIterator(
+        write_buffers_.mutable_owner(), write_buffers_.immutable_owner(), versions_->current(),
+        table_cache_, comparator_, ReadOptionsFor(options));
     ReadSampling sampling;
     sampling.next_period = ReadSamplingPeriods(++seed_);
     sampling.sample = [this](ByteView internal_key) { RecordReadSample(internal_key); };
@@ -148,9 +148,9 @@ Result<DatabaseEngineState> DatabaseEngine::GetState() {
     state.snapshot_count = snapshots_.size();
     state.oldest_snapshot_sequence = snapshots_.oldest();
     state.write_queue_depth = write_queue_.size();
-    state.mutable_memtable_bytes = published_mutable_memtable_bytes_;
-    if (immutable_ != nullptr) {
-        state.immutable_memtable_bytes = immutable_->memory_usage();
+    state.mutable_memtable_bytes = write_buffers_.published_mutable_bytes();
+    if (write_buffers_.has_immutable()) {
+        state.immutable_memtable_bytes = write_buffers_.immutable_owner()->memory_usage();
     }
     state.protected_output_count = pending_outputs_.size();
     state.background_work_scheduled = background_scheduled_;
