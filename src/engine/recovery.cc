@@ -149,6 +149,28 @@ Result<std::vector<std::uint64_t>> PrepareLogsForReplay(FileSystem& file_system,
     return logs;
 }
 
+Result<std::unique_ptr<WalWriter>> CreateRecoveryLog(FileSystem& file_system,
+                                                     const std::filesystem::path& directory,
+                                                     std::uint64_t number, bool sync_creation) {
+    Result<std::unique_ptr<WritableFile>> file =
+        file_system.OpenWritable(LogFileName(directory, number));
+    if (!file.has_value()) {
+        return std::unexpected(std::move(file).error());
+    }
+    auto log = std::make_unique<WalWriter>(std::move(*file));
+    if (sync_creation) {
+        const Status synced = log->Sync();
+        if (!synced.has_value()) {
+            return std::unexpected(synced.error());
+        }
+        const Status directory_synced = file_system.SyncDirectory(directory);
+        if (!directory_synced.has_value()) {
+            return std::unexpected(directory_synced.error());
+        }
+    }
+    return log;
+}
+
 // Evicts the tables that a recovery wrote from the table cache unless the
 // recovery succeeds.
 class BuiltTables final {
@@ -329,21 +351,10 @@ Result<RecoveredDatabase> RecoverDatabase(FileSystem& file_system,
     set.SetLastSequence(std::max(set.last_sequence(), *last_sequence));
 
     const std::uint64_t log_number = set.NewFileNumber();
-    Result<std::unique_ptr<WritableFile>> log_file =
-        file_system.OpenWritable(LogFileName(directory, log_number));
-    if (!log_file.has_value()) {
-        return std::unexpected(std::move(log_file).error());
-    }
-    auto log = std::make_unique<WalWriter>(std::move(*log_file));
-    if (options.sync_wal_creation) {
-        const Status log_synced = log->Sync();
-        if (!log_synced.has_value()) {
-            return std::unexpected(log_synced.error());
-        }
-        const Status directory_synced = file_system.SyncDirectory(directory);
-        if (!directory_synced.has_value()) {
-            return std::unexpected(directory_synced.error());
-        }
+    Result<std::unique_ptr<WalWriter>> log =
+        CreateRecoveryLog(file_system, directory, log_number, options.sync_wal_creation);
+    if (!log.has_value()) {
+        return std::unexpected(std::move(log).error());
     }
     edit.SetLogNumber(log_number);
     edit.SetPrevLogNumber(0);
@@ -356,7 +367,7 @@ Result<RecoveredDatabase> RecoverDatabase(FileSystem& file_system,
     RecoveredDatabase recovered{
         .lock = std::move(*lock),
         .versions = std::move(*versions),
-        .log = std::move(log),
+        .log = std::move(*log),
         .log_number = log_number,
     };
     return recovered;
