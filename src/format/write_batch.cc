@@ -18,6 +18,48 @@ namespace modern_leveldb {
 constexpr std::size_t SequenceOffset = 0;
 constexpr std::size_t CountOffset = sizeof(std::uint64_t);
 
+namespace {
+
+Status ValidateBatchRecord(ByteView& remaining) {
+    if (remaining.empty()) {
+        return std::unexpected(Error::Corruption("write batch count exceeds encoded records"));
+    }
+
+    const ValueKind kind = ConsumeValueKindTrusted(remaining);
+    if (!IsValidValueKind(kind)) {
+        return std::unexpected(Error::Corruption("write batch has an unknown value kind"));
+    }
+
+    Result<ByteView> key = ConsumeLengthPrefixed(remaining);
+    if (!key.has_value()) {
+        return std::unexpected(key.error());
+    }
+    if (kind == ValueKind::Value) {
+        Result<ByteView> value = ConsumeLengthPrefixed(remaining);
+        if (!value.has_value()) {
+            return std::unexpected(value.error());
+        }
+    }
+    return {};
+}
+
+Status ValidateBatchRecords(ByteView remaining, std::uint32_t count) {
+    for (std::uint32_t index = 0; index < count; ++index) {
+        Status record = ValidateBatchRecord(remaining);
+        if (!record.has_value()) {
+            return std::unexpected(std::move(record).error());
+        }
+    }
+
+    if (!remaining.empty()) {
+        return std::unexpected(Error::Corruption("write batch has trailing bytes"));
+    }
+
+    return {};
+}
+
+}  // namespace
+
 Result<WriteBatchReader> WriteBatchReader::Open(ByteView encoded) {
     if (encoded.size() < WriteBatchHeaderSize) {
         return std::unexpected(Error::Corruption("write batch is shorter than its header"));
@@ -30,33 +72,10 @@ Result<WriteBatchReader> WriteBatchReader::Open(ByteView encoded) {
 
     // Validate everything once so Next can decode borrowed records without
     // repeating recoverable checks. Mutating the backing bytes breaks this proof.
-    ByteView remaining = encoded.subspan(WriteBatchHeaderSize);
-    for (std::uint32_t index = 0; index < count; ++index) {
-        if (remaining.empty()) {
-            return std::unexpected(Error::Corruption("write batch count exceeds encoded records"));
-        }
-
-        const ValueKind kind = ConsumeValueKindTrusted(remaining);
-        if (!IsValidValueKind(kind)) {
-            return std::unexpected(Error::Corruption("write batch has an unknown value kind"));
-        }
-
-        Result<ByteView> key = ConsumeLengthPrefixed(remaining);
-        if (!key.has_value()) {
-            return std::unexpected(key.error());
-        }
-        if (kind == ValueKind::Value) {
-            Result<ByteView> value = ConsumeLengthPrefixed(remaining);
-            if (!value.has_value()) {
-                return std::unexpected(value.error());
-            }
-        }
+    Status records = ValidateBatchRecords(encoded.subspan(WriteBatchHeaderSize), count);
+    if (!records.has_value()) {
+        return std::unexpected(std::move(records).error());
     }
-
-    if (!remaining.empty()) {
-        return std::unexpected(Error::Corruption("write batch has trailing bytes"));
-    }
-
     return WriteBatchReader(encoded.subspan(WriteBatchHeaderSize), sequence, count);
 }
 
