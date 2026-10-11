@@ -155,13 +155,28 @@ TEST_F(DatabaseTest, WritersWaitOnlyWhileAnImmutableMemtableExists) {
 TEST_F(DatabaseTest, ReturnsTheErrorOfANewLogThatCannotBeCreated) {
     const auto database = Open();
     Fill(*database, "a");
+    const auto before = database->GetState();
+    ASSERT_TRUE(before.has_value());
     // The new log fails to open, and then its directory entry fails to sync.
     for (const std::size_t failing : {std::size_t{0}, std::size_t{1}}) {
         SCOPED_TRACE(failing);
+        const std::size_t start = file_system_.operations().size();
         FailInOperations(failing);
         const Status failed = Put(*database, "b", "1");
         ASSERT_FALSE(failed.has_value());
+        EXPECT_EQ(failed.error().code(), ErrorCode::Io);
         EXPECT_EQ(failed.error().message(), "injected failure");
+        const auto after = database->GetState();
+        ASSERT_TRUE(after.has_value());
+        EXPECT_EQ(after->last_sequence, before->last_sequence);
+        EXPECT_EQ(after->mutable_memtable_bytes, before->mutable_memtable_bytes);
+        EXPECT_FALSE(after->immutable_memtable_bytes.has_value());
+        EXPECT_FALSE(after->sticky_error.has_value());
+        EXPECT_FALSE(after->background_work_scheduled);
+        for (const auto& operation : OperationsSince(start)) {
+            EXPECT_FALSE(operation.starts_with("close ")) << operation;
+            EXPECT_FALSE(operation.starts_with("append ")) << operation;
+        }
     }
 
     // Nothing stops later writes, which switch the log.
@@ -176,13 +191,30 @@ TEST_F(DatabaseTest, ReturnsTheErrorOfANewLogThatCannotBeCreated) {
 TEST_F(DatabaseTest, StopsWritesWhenTheOldLogCannotBeClosed) {
     const auto database = Open();
     Fill(*database, "a");
+    const auto before = database->GetState();
+    ASSERT_TRUE(before.has_value());
+    const std::size_t start = file_system_.operations().size();
     FailInOperations(2);
 
     const Status failed = Put(*database, "b", "1");
     ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), ErrorCode::Io);
     EXPECT_EQ(failed.error().message(), "injected failure");
+    const auto after = database->GetState();
+    ASSERT_TRUE(after.has_value());
+    EXPECT_EQ(after->last_sequence, before->last_sequence);
+    ASSERT_TRUE(after->immutable_memtable_bytes.has_value());
+    EXPECT_EQ(*after->immutable_memtable_bytes, before->mutable_memtable_bytes);
+    EXPECT_LT(after->mutable_memtable_bytes, before->mutable_memtable_bytes);
+    ASSERT_TRUE(after->sticky_error.has_value());
+    EXPECT_EQ(after->sticky_error->code(), ErrorCode::Io);
+    EXPECT_EQ(after->sticky_error->message(), "injected failure");
+    for (const auto& operation : OperationsSince(start)) {
+        EXPECT_FALSE(operation.starts_with("append ")) << operation;
+    }
     const Status later = Put(*database, "c", "1");
     ASSERT_FALSE(later.has_value());
+    EXPECT_EQ(later.error().code(), ErrorCode::Io);
     EXPECT_EQ(later.error().message(), "injected failure");
     EXPECT_EQ(Get(*database, "a"), Large());
     // The sticky error keeps the immutable memtable from being flushed.
@@ -193,6 +225,9 @@ TEST_F(DatabaseTest, StopsWritesWhenTheOldLogCannotBeClosed) {
 TEST_F(DatabaseTest, StopsWritesWhenClosingTheOldLogThrows) {
     const auto database = Open();
     Fill(*database, "a");
+    const auto before = database->GetState();
+    ASSERT_TRUE(before.has_value());
+    const std::size_t start = file_system_.operations().size();
     file_system_.SetOperationHook([](std::string_view operation) -> Status {
         if (operation.starts_with("close ") && operation.ends_with(".log")) {
             throw std::runtime_error("thrown");
@@ -203,6 +238,17 @@ TEST_F(DatabaseTest, StopsWritesWhenClosingTheOldLogThrows) {
     EXPECT_THROW(static_cast<void>(Put(*database, "b", "1")), std::runtime_error);
     file_system_.SetOperationHook({});
 
+    const auto after = database->GetState();
+    ASSERT_TRUE(after.has_value());
+    EXPECT_EQ(after->last_sequence, before->last_sequence);
+    EXPECT_EQ(after->mutable_memtable_bytes, before->mutable_memtable_bytes);
+    EXPECT_FALSE(after->immutable_memtable_bytes.has_value());
+    ASSERT_TRUE(after->sticky_error.has_value());
+    EXPECT_EQ(after->sticky_error->code(), ErrorCode::Aborted);
+    EXPECT_EQ(after->sticky_error->message(), "old WAL close threw during rotation");
+    for (const auto& operation : OperationsSince(start)) {
+        EXPECT_FALSE(operation.starts_with("append ")) << operation;
+    }
     const Status later = Put(*database, "c", "1");
     ASSERT_FALSE(later.has_value());
     EXPECT_EQ(later.error().code(), ErrorCode::Aborted);

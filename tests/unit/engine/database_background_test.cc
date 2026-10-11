@@ -385,7 +385,17 @@ TEST_F(DatabaseTest, MovesALoneFileToTheNextLevelWithoutRewritingIt) {
         file_system_.SetOperationHook({});
         const Status failed = database->WaitForBackgroundWork();
         ASSERT_FALSE(failed.has_value());
+        EXPECT_EQ(failed.error().code(), ErrorCode::Io);
         EXPECT_EQ(failed.error().message(), "injected failure");
+        const auto state = database->GetState();
+        ASSERT_TRUE(state.has_value());
+        EXPECT_EQ(state->levels[0].file_count, 4U);
+        EXPECT_EQ(state->levels[1].file_count, 0U);
+        EXPECT_EQ(state->protected_output_count, 0U);
+        EXPECT_FALSE(state->background_work_scheduled);
+        ASSERT_TRUE(state->sticky_error.has_value());
+        EXPECT_EQ(state->sticky_error->code(), ErrorCode::Io);
+        EXPECT_EQ(state->sticky_error->message(), "injected failure");
     }
     EXPECT_EQ(Levels(), "4 0 0 0 0 0 0");
 
@@ -400,6 +410,13 @@ TEST_F(DatabaseTest, MovesALoneFileToTheNextLevelWithoutRewritingIt) {
     }
     EXPECT_EQ(Levels(), "3 1 0 0 0 0 0");
     EXPECT_EQ(Numbers(FileType::Table), tables);
+    const auto state = database->GetState();
+    ASSERT_TRUE(state.has_value());
+    EXPECT_EQ(state->levels[0].file_count, 3U);
+    EXPECT_EQ(state->levels[1].file_count, 1U);
+    EXPECT_EQ(state->protected_output_count, 0U);
+    EXPECT_FALSE(state->sticky_error.has_value());
+    EXPECT_FALSE(state->background_work_scheduled);
     EXPECT_EQ(executor_.queued(), 0U);
     for (const std::string_view key : {"a", "c", "e", "g"}) {
         EXPECT_EQ(Get(*database, key), key);
