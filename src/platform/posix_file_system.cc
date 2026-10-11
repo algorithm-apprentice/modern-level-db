@@ -28,6 +28,7 @@
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
 #include "instrumentation/read_diagnostics.h"
 #endif
+#include "base/result_internal.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
 #include "platform/file_system.h"
@@ -462,7 +463,7 @@ public:
             buffer_size_ = data.size();
             return {};
         }
-        return RememberError(WriteAll(descriptor_, data));
+        return RememberFirstError(first_error_, WriteAll(descriptor_, data));
     }
 
     Status Flush() override {
@@ -480,7 +481,7 @@ public:
         if (!status.has_value()) {
             return status;
         }
-        return RememberError(SyncDescriptor(descriptor_, path_, true));
+        return RememberFirstError(first_error_, SyncDescriptor(descriptor_, path_, true));
     }
 
     Status Close() override {
@@ -494,24 +495,14 @@ public:
 
         ScopedDescriptor descriptor(std::exchange(descriptor_, -1));
         Status status = FlushBuffer(descriptor.get());
-        const Status close_status = CloseDescriptor(descriptor.Release(), path_);
+        Status close_status = CloseDescriptor(descriptor.Release(), path_);
         if (!status.has_value()) {
             return status;
         }
-        return RememberError(close_status);
+        return RememberFirstError(first_error_, std::move(close_status));
     }
 
 private:
-    Status RememberError(Status status) {
-        if (!status.has_value() && !first_error_.has_value()) {
-            first_error_ = status.error();
-        }
-        if (first_error_.has_value()) {
-            return std::unexpected(*first_error_);
-        }
-        return {};
-    }
-
     Status FlushBuffer(int descriptor) {
         if (first_error_.has_value()) {
             return std::unexpected(*first_error_);
@@ -522,7 +513,7 @@ private:
 
         const ByteView data(buffer_.data(), buffer_size_);
         buffer_size_ = 0;
-        return RememberError(WriteAll(descriptor, data));
+        return RememberFirstError(first_error_, WriteAll(descriptor, data));
     }
 
     Status WriteAll(int descriptor, ByteView data) {

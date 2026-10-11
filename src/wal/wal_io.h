@@ -38,7 +38,6 @@ public:
 
 private:
     [[nodiscard]] Status CheckUsable(std::string_view operation) const;
-    [[nodiscard]] Status RememberError(Status status);
     [[nodiscard]] Status Append(ByteView data);
 
     std::unique_ptr<WritableFile> file_;

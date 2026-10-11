@@ -6,6 +6,8 @@
 #include <string>
 #include <string_view>
 
+#include "base/result_internal.h"
+
 namespace modern_leveldb {
 namespace {
 
@@ -63,6 +65,26 @@ TEST(ResultTest, ExposesStableErrorCodeNames) {
     EXPECT_EQ(ErrorCodeName(ErrorCode::Busy), "busy");
     EXPECT_EQ(ErrorCodeName(ErrorCode::Aborted), "aborted");
     EXPECT_EQ(ErrorCodeName(static_cast<ErrorCode>(0xff)), "unknown");
+}
+
+TEST(ResultInternalTest, RemembersTheFirstFailureAcrossLaterStatuses) {
+    std::optional<Error> first_error;
+    EXPECT_TRUE(RememberFirstError(first_error, {}).has_value());
+    EXPECT_FALSE(first_error.has_value());
+
+    const Status first =
+        RememberFirstError(first_error, std::unexpected(Error::Io("first write failed")));
+    ASSERT_FALSE(first.has_value());
+    EXPECT_EQ(first.error().message(), "first write failed");
+
+    const Status later_success = RememberFirstError(first_error, {});
+    ASSERT_FALSE(later_success.has_value());
+    EXPECT_EQ(later_success.error().message(), "first write failed");
+
+    const Status later_failure =
+        RememberFirstError(first_error, std::unexpected(Error::Io("later close failed")));
+    ASSERT_FALSE(later_failure.has_value());
+    EXPECT_EQ(later_failure.error().message(), "first write failed");
 }
 
 }  // namespace

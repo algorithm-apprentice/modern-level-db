@@ -18,6 +18,7 @@
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
 #include "instrumentation/read_diagnostics.h"
 #endif
+#include "base/result_internal.h"
 #include "platform/mapped_read_limiter.h"
 #include "platform/path.h"
 #include "platform/windows_file_system_internal.h"
@@ -462,7 +463,7 @@ public:
             buffer_size_ = data.size();
             return {};
         }
-        return Remember(WriteAll(data));
+        return RememberFirstError(first_error_, WriteAll(data));
     }
     Status Flush() override {
         if (first_error_.has_value()) {
@@ -470,7 +471,7 @@ public:
         }
         const ByteView bytes(buffer_.data(), buffer_size_);
         buffer_size_ = 0;
-        return Remember(WriteAll(bytes));
+        return RememberFirstError(first_error_, WriteAll(bytes));
     }
     Status Sync() override {
         const Status flushed = Flush();
@@ -478,29 +479,21 @@ public:
             return flushed;
         }
         if (!operations_->Sync(file_.get())) {
-            return Remember(std::unexpected(FileError("sync", path_, ::GetLastError())));
+            return RememberFirstError(first_error_,
+                                      std::unexpected(FileError("sync", path_, ::GetLastError())));
         }
         return {};
     }
     Status Close() override {
         const Status flushed = Flush();
-        const Status closed = CloseHandle(file_, path_);
+        Status closed = CloseHandle(file_, path_);
         if (!flushed.has_value()) {
             return flushed;
         }
-        return Remember(closed);
+        return RememberFirstError(first_error_, std::move(closed));
     }
 
 private:
-    Status Remember(Status status) {
-        if (!status.has_value() && !first_error_.has_value()) {
-            first_error_ = status.error();
-        }
-        if (first_error_.has_value()) {
-            return std::unexpected(*first_error_);
-        }
-        return {};
-    }
     Status WriteAll(ByteView data) {
         while (!data.empty()) {
             DWORD written = 0;

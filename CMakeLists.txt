@@ -54,6 +54,7 @@ set(
     src/base/comparator.cc
     src/base/crc32c.cc
     src/base/hash.cc
+    src/base/result_internal.cc
     src/cache/sharded_lru_cache_core.cc
     src/diagnostics/dump_command.cc
     src/diagnostics/dump_file.cc
