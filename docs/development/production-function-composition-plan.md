@@ -325,6 +325,24 @@ subject to the completion criterion below.
 
 ## Representative recursive designs
 
+### M06/M07/M08 implementation record
+
+The [metadata composition design](metadata-composition-design.md) was reviewed
+and accepted in #177 independently of the offline dump implementation.
+The paired compound-payload encoders/decoders, trusted delta preparation,
+shared metadata owner creation, and per-level merge are implemented in small
+topic commits for one combined PR. Its design document records every new
+function's composition or responsibility-based stopping boundary.
+
+Characterization passed before changing production code, including exact
+compound errors, zero-size bytes, mixed-failure order, L0 ties/replacements,
+retained ownership and budgets, and a measured comparison-count ceiling.
+The same 79 focused cases passed before/after the combined extraction.
+Independent implementation review found no actionable issues and separately
+confirmed before/after and per-slice JUnit evidence without executing tests.
+Exact-head CI remains the delivery gate; all other recursive-review frontiers
+remain open.
+
 ### MANIFEST recovery
 
 `VersionSet::Recover` composes acquisition, record replay, and finalization.

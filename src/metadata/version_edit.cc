@@ -49,6 +49,27 @@ void AppendField(std::vector<std::byte>& output, ByteView value) {
     AppendLengthPrefixed(output, value);
 }
 
+void AppendCompactPointer(std::vector<std::byte>& output, const CompactPointer& pointer) {
+    AppendTag(output, Tag::CompactPointer);
+    AppendVarint32(output, pointer.level);
+    AppendField(output, pointer.key.encoded());
+}
+
+void AppendDeletedFile(std::vector<std::byte>& output, const DeletedFile& file) {
+    AppendTag(output, Tag::DeletedFile);
+    AppendVarint32(output, file.level);
+    AppendVarint64(output, file.number);
+}
+
+void AppendNewFile(std::vector<std::byte>& output, const NewFile& entry) {
+    AppendTag(output, Tag::NewFile);
+    AppendVarint32(output, entry.level);
+    AppendVarint64(output, entry.file.number);
+    AppendVarint64(output, entry.file.file_size);
+    AppendField(output, entry.file.smallest.encoded());
+    AppendField(output, entry.file.largest.encoded());
+}
+
 // Rejects moved-from keys, whose encoding is empty.
 [[nodiscard]] bool IsValidInternalKey(const InternalKey& key) {
     return ParseInternalKey(key.encoded()).has_value();
@@ -156,22 +177,13 @@ std::vector<std::byte> VersionEdit::Encode() const {
     AppendNumberField(output, Tag::NextFileNumber, next_file_number_);
     AppendNumberField(output, Tag::LastSequence, last_sequence_);
     for (const CompactPointer& pointer : compact_pointers_) {
-        AppendTag(output, Tag::CompactPointer);
-        AppendVarint32(output, pointer.level);
-        AppendField(output, pointer.key.encoded());
+        AppendCompactPointer(output, pointer);
     }
     for (const DeletedFile& file : deleted_files_) {
-        AppendTag(output, Tag::DeletedFile);
-        AppendVarint32(output, file.level);
-        AppendVarint64(output, file.number);
+        AppendDeletedFile(output, file);
     }
     for (const NewFile& entry : new_files_) {
-        AppendTag(output, Tag::NewFile);
-        AppendVarint32(output, entry.level);
-        AppendVarint64(output, entry.file.number);
-        AppendVarint64(output, entry.file.file_size);
-        AppendField(output, entry.file.smallest.encoded());
-        AppendField(output, entry.file.largest.encoded());
+        AppendNewFile(output, entry);
     }
     return output;
 }
@@ -192,7 +204,6 @@ Result<VersionEdit> VersionEdit::Decode(ByteView encoded) {
 }
 
 Status VersionEdit::DecodeField(std::uint32_t tag, ByteView& input) {
-    std::uint32_t level = 0;
     std::uint64_t number = 0;
     switch (static_cast<Tag>(tag)) {
         case Tag::Comparator: {
@@ -227,46 +238,61 @@ Status VersionEdit::DecodeField(std::uint32_t tag, ByteView& input) {
             }
             last_sequence_ = number;
             return {};
-        case Tag::CompactPointer: {
-            std::optional<InternalKey> key;
-            if (!ReadLevel(input, level) || !ReadInternalKey(input, key)) {
-                return Malformed("compact pointer");
-            }
-            compact_pointers_.push_back(CompactPointer{.level = level, .key = std::move(*key)});
-            return {};
-        }
+        case Tag::CompactPointer:
+            return DecodeCompactPointer(input);
         case Tag::DeletedFile:
-            if (!ReadLevel(input, level) || !ReadFileNumber(input, number)) {
-                return Malformed("deleted file");
-            }
-            deleted_files_.insert(DeletedFile{.level = level, .number = number});
-            return {};
-        case Tag::NewFile: {
-            std::uint64_t file_size = 0;
-            std::optional<InternalKey> smallest;
-            std::optional<InternalKey> largest;
-            if (!ReadLevel(input, level) || !ReadFileNumber(input, number) ||
-                !ReadNumber(input, file_size) || !ReadInternalKey(input, smallest) ||
-                !ReadInternalKey(input, largest)) {
-                return Malformed("new file");
-            }
-            // Build the entry first. Inside the push_back expression, GCC adds member
-            // cleanup branches that only an allocation failure could take.
-            NewFile entry{
-                .level = level,
-                .file =
-                    FileMetadata{
-                        .number = number,
-                        .file_size = file_size,
-                        .smallest = std::move(*smallest),
-                        .largest = std::move(*largest),
-                    },
-            };
-            new_files_.push_back(std::move(entry));
-            return {};
-        }
+            return DecodeDeletedFile(input);
+        case Tag::NewFile:
+            return DecodeNewFile(input);
     }
     return std::unexpected(Error::Corruption("version edit has an unknown tag"));
+}
+
+Status VersionEdit::DecodeCompactPointer(ByteView& input) {
+    std::uint32_t level = 0;
+    std::optional<InternalKey> key;
+    if (!ReadLevel(input, level) || !ReadInternalKey(input, key)) {
+        return Malformed("compact pointer");
+    }
+    compact_pointers_.push_back(CompactPointer{.level = level, .key = std::move(*key)});
+    return {};
+}
+
+Status VersionEdit::DecodeDeletedFile(ByteView& input) {
+    std::uint32_t level = 0;
+    std::uint64_t number = 0;
+    if (!ReadLevel(input, level) || !ReadFileNumber(input, number)) {
+        return Malformed("deleted file");
+    }
+    deleted_files_.insert(DeletedFile{.level = level, .number = number});
+    return {};
+}
+
+Status VersionEdit::DecodeNewFile(ByteView& input) {
+    std::uint32_t level = 0;
+    std::uint64_t number = 0;
+    std::uint64_t file_size = 0;
+    std::optional<InternalKey> smallest;
+    std::optional<InternalKey> largest;
+    if (!ReadLevel(input, level) || !ReadFileNumber(input, number) ||
+        !ReadNumber(input, file_size) || !ReadInternalKey(input, smallest) ||
+        !ReadInternalKey(input, largest)) {
+        return Malformed("new file");
+    }
+    // Build the entry first. Inside the push_back expression, GCC adds member
+    // cleanup branches that only an allocation failure could take.
+    NewFile entry{
+        .level = level,
+        .file =
+            FileMetadata{
+                .number = number,
+                .file_size = file_size,
+                .smallest = std::move(*smallest),
+                .largest = std::move(*largest),
+            },
+    };
+    new_files_.push_back(std::move(entry));
+    return {};
 }
 
 }  // namespace modern_leveldb

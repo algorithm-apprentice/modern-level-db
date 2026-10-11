@@ -2,20 +2,20 @@
 
 ## Status and delivery boundary
 
-Reviewed design proposal for M06 compound MANIFEST decoding and its paired
+Design accepted in #177 for M06 compound MANIFEST decoding and its paired
 encoding frontier, M07 trusted-edit preparation, and M08 per-level
 merging/shared ordering from the
 [production composition plan](production-function-composition-plan.md).
 The source baseline is `e9b5d6d5b35849f33034a7cef0bbeb71e7691d86`.
 
-No implementation is included. This design is independent of #176's offline
-dump refactor: it branches from main without those commits, its reviewed
-metadata source/test context is identical, and this PR adds only this document.
+The design-only PR was independent of #176's offline dump refactor: it branched
+from main without those commits, its reviewed metadata source/test context was
+identical, and it added only this document.
 Non-conflicting independent PRs may be published concurrently. Actual
 code/interface dependencies still determine implementation and merge order.
 
-Independent design review precedes publication; implementation starts only
-after this design-only PR merges. One implementation PR can cover these related
+Independent design review preceded publication; implementation started only
+after this design-only PR merged. One implementation PR covers these related
 metadata slices, with small internal commits and separate combined review.
 When implementing, avoid concurrent edits to shared plan ledgers in other PRs.
 
@@ -213,3 +213,72 @@ Before concurrent publication, the main agent verified that the metadata
 source, dependent comparator/caller headers and files, and metadata test context
 match between main and #176's reviewed head. This document does not change
 #176's shared production-plan ledger or other paths.
+
+## Implementation record
+
+The implementation begins after accepted design #177, with separate commits
+for characterization, paired payload encoding/decoding, trusted preparation,
+and per-level merging. The validation baseline is merged main
+`8c8384885162d3eeb2f62aa18a56327b429467b8`: #176 merged while characterization
+was in progress, and its diagnostic cases were included before extraction.
+No metadata implementation preceded the unchanged-code characterization.
+
+### Responsibility ledger
+
+| Function | Composition or leaf boundary |
+|---|---|
+| `VersionEdit::Encode` | Composes original optional scalar emission and container-order compound payload encoding. |
+| `AppendCompactPointer` | Composes tag, level varint, and existing length-prefixed internal-key bytes. |
+| `AppendDeletedFile` | Composes tag, level, and nonzero file-number encoding primitives. |
+| `AppendNewFile` | Composes tag, level, number, size, and smallest/largest length-prefixed key encoding in persistent order. |
+| `VersionEdit::DecodeField` | Dispatches compound tags to private payload children; original comparator/scalar validation and error policy remain explicit. |
+| `DecodeCompactPointer` | Composes checked level/key readers, owned payload construction, and insertion after complete decode. |
+| `DecodeDeletedFile` | Composes checked level/nonzero-number reads and ordered-set insertion. |
+| `DecodeNewFile` | Composes all five checked readers, complete owned metadata construction, and insertion. The original separate materialization and field-specific failure remain. |
+| `MakeVersionFile` | Composes one metadata copy, existing initial-budget calculation, and immutable shared-owner construction. It never rebuilds a retained base file. |
+| `VersionBuilder::Apply` | Reuses metadata construction only after original per-entry liveness/key-range validation. Remaining checked orchestration is not certified. |
+| `CountByLevel` | Leaf: one histogram over validated record levels, coupling level projection and counter increment. Shared by deletion and addition ranges without callbacks. |
+| `ReserveChanges` | Composes both histograms and the original level-order deletion/addition vector reservation. |
+| `CollectDeletions` | Leaf: ordered distribution of deletion numbers into their reserved per-level vectors. Set order supplies the later membership-search invariant. |
+| `InitializeAdditions` | Composes insertion-order record traversal, owned metadata creation, and per-level pin collection. |
+| `PrepareChanges` | Owns temporary delta arrays and composes reservation, deletion collection, and complete addition initialization before level merging. |
+| `AppendRetainedFile` | Leaf: one conditional base-pin append governed by existing sorted deletion membership; no new file passes through this deletion gate. |
+| `AppendBasePrefix` | Composes comparator-bounded monotonic base advancement and retained-pin appends before one addition. |
+| `AppendRemainingBase` | Composes remaining monotonic base advancement and retained-pin appends after additions. |
+| `MergeLevelFiles` | Composes addition-only sorting through `FileBefore`, original output reservation, each base prefix/unconditional addition append, and tail draining. The sort lambda delegates directly to the existing ordering primitive. |
+| `VersionBuilder::BuildTrusted` | Composes complete delta preparation and per-level merge into owned version topology. |
+| `VersionBuilder::Build` | Reuses the same `FileBefore` ordering in checked sorting; collection and overlap errors remain separate from trusted construction. |
+
+The `PreparedChanges` aggregate owns only temporary vectors; original separate
+deletion/addition arrays and reservation/population/allocation order remain.
+The merge iterators borrow the unchanged base, and output pins retain metadata.
+Existing reader/key/comparator internals, seek-budget arithmetic, checked
+builder orchestration, and other production functions remain later frontiers.
+This ledger is not whole-file or production-wide certification.
+
+### Characterization and local evidence
+
+Five new public-operation cases and the strengthened large-base case passed
+on unchanged metadata code. They check exact compound error messages and first
+semantic failure, exact zero-size bytes, L0 ties/replacements/empty deltas,
+untouched pointer identity and input preservation, seek-budget boundaries, and
+the actual `base_file_count + 1` comparison ceiling for one addition.
+The counting comparator uses relaxed atomic accounting and unchanged bytewise
+ordering, with its counter reset after checked base construction.
+
+The paired payload slice passed all 22 `VersionEditTest` cases. Preparation
+passed the 13 version/builder cases. The combined focused selection contains
+79 cases across VersionEdit, Version, VersionBuilder, VersionSet, and DumpFile;
+all passed before and after extraction. Its exact JUnit case sets are checked
+with no failures, errors, or skips. The MSVC Debug warnings-as-errors build
+passed. These are execution results, not allocation-failure injection or
+whole-suite/production-wide proof.
+
+Independent combined implementation review inspected the complete seven-file
+diff, coupled types/callers/tests, accepted-design conformance, and this ledger,
+and found no actionable issues. The reviewer independently read both 79-case
+JUnit files and the 22-case payload and 13-case preparation files, confirming
+their case counts and absence of failures, errors, or skips. It did not execute
+builds or tests. Exact published-head GCC 13 changed-branch coverage and all
+applicable CI remain required before merge; local MSVC execution and static
+review do not establish those gates or GitHub approval.

@@ -269,6 +269,20 @@ TEST(VersionEditTest, RoundTripsBoundaryValues) {
     EXPECT_EQ(decoded.last_sequence(), MaxSequenceNumber);
 }
 
+TEST(VersionEditTest, RoundTripsZeroFileSizeWithCanonicalBytes) {
+    VersionEdit edit;
+    ASSERT_TRUE(edit.AddFile(0, File(1, 0)).has_value());
+    std::vector<std::byte> expected = Bytes({NewFileTag, 0, 1, 0});
+    AppendKey(expected, Key("a", 1).encoded());
+    AppendKey(expected, Key("z", 2).encoded());
+
+    EXPECT_EQ(edit.Encode(), expected);
+    const VersionEdit decoded = Decoded(expected);
+    ASSERT_EQ(decoded.new_files().size(), 1U);
+    EXPECT_EQ(decoded.new_files().front().file.file_size, 0U);
+    EXPECT_EQ(decoded.Encode(), expected);
+}
+
 TEST(VersionEditTest, LaterScalarValuesReplaceEarlierOnes) {
     VersionEdit edit;
     edit.SetComparatorName("old");
@@ -535,6 +549,51 @@ TEST(VersionEditTest, ReportsTheFieldOfATruncatedPayload) {
     ExpectCorruption(Bytes({CompactPointerTag, 0x01}), "compact pointer");
     ExpectCorruption(Bytes({DeletedFileTag, 0x01}), "deleted file");
     ExpectCorruption(Bytes({NewFileTag, 0x01, 0x01, 0x01}), "new file");
+}
+
+TEST(VersionEditTest, ReportsExactCompoundErrorsAtEveryPayloadBoundary) {
+    const std::vector<std::byte> key = Materialize(Key("a", 1).encoded());
+    const std::vector<std::byte> malformed_key = Bytes({'a', 0x02, 1, 0, 0, 0, 0, 0, 0});
+    const auto expect_error = [](ByteView encoded, std::string_view field) {
+        const Result<VersionEdit> decoded = VersionEdit::Decode(encoded);
+        ASSERT_FALSE(decoded.has_value());
+        EXPECT_EQ(decoded.error().code(), ErrorCode::Corruption);
+        EXPECT_EQ(decoded.error().message(), "malformed version edit " + std::string(field));
+    };
+
+    for (const auto& encoded :
+         {Bytes({CompactPointerTag}), Bytes({CompactPointerTag, 0x80}),
+          Bytes({CompactPointerTag, 0, 0x80}), Bytes({CompactPointerTag, 0, 9, 'a'}),
+          CompactPointerField(0, malformed_key), CompactPointerField(NumLevels, key)}) {
+        expect_error(encoded, "compact pointer");
+    }
+    for (const auto& encoded :
+         {Bytes({DeletedFileTag}), Bytes({DeletedFileTag, 0x80}), Bytes({DeletedFileTag, 0, 0x80}),
+          DeletedFileField(0, 0), DeletedFileField(NumLevels, 1)}) {
+        expect_error(encoded, "deleted file");
+    }
+
+    std::vector<std::byte> missing_largest = Bytes({NewFileTag, 0, 1, 0});
+    AppendKey(missing_largest, key);
+    std::vector<std::byte> truncated_largest = missing_largest;
+    truncated_largest.push_back(std::byte{9});
+    truncated_largest.push_back(std::byte{'a'});
+    for (const auto& encoded :
+         {Bytes({NewFileTag}), Bytes({NewFileTag, 0x80}), Bytes({NewFileTag, 0, 0x80}),
+          Bytes({NewFileTag, 0, 1, 0x80}), Bytes({NewFileTag, 0, 1, 0}),
+          Bytes({NewFileTag, 0, 1, 0, 9, 'a'}), missing_largest, truncated_largest,
+          NewFileField(0, 1, malformed_key, key), NewFileField(0, 1, key, malformed_key),
+          NewFileField(0, 0, key, key), NewFileField(NumLevels, 1, key, key)}) {
+        expect_error(encoded, "new file");
+    }
+
+    for (const auto& [encoded, field] :
+         std::vector<std::pair<std::vector<std::byte>, std::string_view>>{
+             {CompactPointerField(NumLevels, key), "compact pointer"},
+             {DeletedFileField(0, 0), "deleted file"},
+             {NewFileField(0, 1, key, malformed_key), "new file"}}) {
+        expect_error(Concat({encoded, Bytes({8})}), field);
+    }
 }
 
 }  // namespace

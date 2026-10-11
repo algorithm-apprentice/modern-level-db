@@ -1,6 +1,7 @@
 #include "metadata/version.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -26,6 +27,101 @@ bool FileBefore(const InternalKeyComparator& comparator, const Version::File& le
                 const Version::File& right) noexcept {
     const int order = comparator.Compare(left->smallest.encoded(), right->smallest.encoded());
     return order != 0 ? order < 0 : left->number < right->number;
+}
+
+Version::File MakeVersionFile(const FileMetadata& metadata) {
+    FileMetadata file = metadata;
+    file.allowed_seeks = InitialAllowedSeeks(file.file_size);
+    return std::make_shared<const FileMetadata>(std::move(file));
+}
+
+using LevelCounts = std::array<std::size_t, NumLevels>;
+
+struct PreparedChanges {
+    std::array<std::vector<std::uint64_t>, NumLevels> deletions;
+    std::array<std::vector<Version::File>, NumLevels> additions;
+};
+
+template <typename Records>
+LevelCounts CountByLevel(const Records& records) {
+    LevelCounts counts{};
+    for (const auto& record : records) {
+        ++counts[record.level];
+    }
+    return counts;
+}
+
+void ReserveChanges(PreparedChanges& changes, const VersionEdit& edit) {
+    const LevelCounts deletion_counts = CountByLevel(edit.deleted_files());
+    const LevelCounts addition_counts = CountByLevel(edit.new_files());
+    for (std::uint32_t level = 0; level < NumLevels; ++level) {
+        changes.deletions[level].reserve(deletion_counts[level]);
+        changes.additions[level].reserve(addition_counts[level]);
+    }
+}
+
+void CollectDeletions(PreparedChanges& changes, const VersionEdit& edit) {
+    for (const DeletedFile& deleted : edit.deleted_files()) {
+        changes.deletions[deleted.level].push_back(deleted.number);
+    }
+}
+
+void InitializeAdditions(PreparedChanges& changes, const VersionEdit& edit) {
+    for (const NewFile& added : edit.new_files()) {
+        changes.additions[added.level].push_back(MakeVersionFile(added.file));
+    }
+}
+
+PreparedChanges PrepareChanges(const VersionEdit& edit) {
+    PreparedChanges changes;
+    ReserveChanges(changes, edit);
+    CollectDeletions(changes, edit);
+    InitializeAdditions(changes, edit);
+    return changes;
+}
+
+void AppendRetainedFile(std::vector<Version::File>& output, const Version::File& file,
+                        std::span<const std::uint64_t> deletions) {
+    if (!std::ranges::binary_search(deletions, file->number)) {
+        output.push_back(file);
+    }
+}
+
+using FileIterator = std::span<const Version::File>::iterator;
+
+void AppendBasePrefix(const InternalKeyComparator& comparator, FileIterator& current,
+                      FileIterator end, const Version::File& limit,
+                      std::span<const std::uint64_t> deletions,
+                      std::vector<Version::File>& output) {
+    while (current != end && FileBefore(comparator, *current, limit)) {
+        AppendRetainedFile(output, *current, deletions);
+        ++current;
+    }
+}
+
+void AppendRemainingBase(FileIterator current, FileIterator end,
+                         std::span<const std::uint64_t> deletions,
+                         std::vector<Version::File>& output) {
+    while (current != end) {
+        AppendRetainedFile(output, *current, deletions);
+        ++current;
+    }
+}
+
+void MergeLevelFiles(const InternalKeyComparator& comparator,
+                     std::span<const Version::File> existing,
+                     std::span<const std::uint64_t> deletions,
+                     std::vector<Version::File>& additions, std::vector<Version::File>& output) {
+    std::ranges::sort(additions, [&](const Version::File& left, const Version::File& right) {
+        return FileBefore(comparator, left, right);
+    });
+    output.reserve(existing.size() + additions.size());
+    auto current = existing.begin();
+    for (const Version::File& file : additions) {
+        AppendBasePrefix(comparator, current, existing.end(), file, deletions, output);
+        output.push_back(file);
+    }
+    AppendRemainingBase(current, existing.end(), deletions, output);
 }
 
 }  // namespace
@@ -61,10 +157,8 @@ Status VersionBuilder::Apply(const VersionEdit& edit) {
                 Error::InvalidArgument("file " + std::to_string(added.file.number) +
                                        " has its smallest key after its largest"));
         }
-        FileMetadata file = added.file;
-        file.allowed_seeks = InitialAllowedSeeks(file.file_size);
-        levels_[added.level].emplace(file.number,
-                                     std::make_shared<const FileMetadata>(std::move(file)));
+        Version::File file = MakeVersionFile(added.file);
+        levels_[added.level].emplace(added.file.number, std::move(file));
     }
     return {};
 }
@@ -78,8 +172,7 @@ Result<Version> VersionBuilder::Build() const {
             files.push_back(entry.second);
         }
         std::ranges::sort(files, [this](const Version::File& left, const Version::File& right) {
-            const int order = comparator_->Compare(left->smallest, right->smallest);
-            return order != 0 ? order < 0 : left->number < right->number;
+            return FileBefore(*comparator_, left, right);
         });
         for (std::size_t index = 1; level > 0 && index < files.size(); ++index) {
             if (comparator_->Compare(files[index - 1]->largest, files[index]->smallest) >= 0) {
@@ -95,63 +188,11 @@ Result<Version> VersionBuilder::Build() const {
 
 Version VersionBuilder::BuildTrusted(const InternalKeyComparator& comparator, const Version& base,
                                      const VersionEdit& edit) {
-    std::array<std::size_t, NumLevels> deletion_counts{};
-    std::array<std::size_t, NumLevels> addition_counts{};
-    for (const DeletedFile& deleted : edit.deleted_files()) {
-        ++deletion_counts[deleted.level];
-    }
-    for (const NewFile& added : edit.new_files()) {
-        ++addition_counts[added.level];
-    }
-
-    std::array<std::vector<std::uint64_t>, NumLevels> deletions;
-    std::array<std::vector<Version::File>, NumLevels> additions;
-    for (std::uint32_t level = 0; level < NumLevels; ++level) {
-        deletions[level].reserve(deletion_counts[level]);
-        additions[level].reserve(addition_counts[level]);
-    }
-    for (const DeletedFile& deleted : edit.deleted_files()) {
-        deletions[deleted.level].push_back(deleted.number);
-    }
-
-    for (const NewFile& added : edit.new_files()) {
-        FileMetadata file = added.file;
-        file.allowed_seeks = InitialAllowedSeeks(file.file_size);
-        additions[added.level].push_back(std::make_shared<const FileMetadata>(std::move(file)));
-    }
-
+    PreparedChanges changes = PrepareChanges(edit);
     Version version;
     for (std::uint32_t level = 0; level < NumLevels; ++level) {
-        std::vector<Version::File>& added = additions[level];
-        std::ranges::sort(added, [&](const Version::File& left, const Version::File& right) {
-            return FileBefore(comparator, left, right);
-        });
-        const std::span<const Version::File> existing = base.files(level);
-        std::vector<Version::File>& files = version.files_[level];
-        files.reserve(existing.size() + added.size());
-
-        const auto deleted = [&](std::uint64_t number) {
-            return std::ranges::binary_search(deletions[level], number);
-        };
-        const auto append = [&](const Version::File& file, bool existing_file) {
-            if (existing_file && deleted(file->number)) {
-                return;
-            }
-            files.push_back(file);
-        };
-
-        auto current = existing.begin();
-        for (const Version::File& file : added) {
-            while (current != existing.end() && FileBefore(comparator, *current, file)) {
-                append(*current, true);
-                ++current;
-            }
-            append(file, false);
-        }
-        while (current != existing.end()) {
-            append(*current, true);
-            ++current;
-        }
+        MergeLevelFiles(comparator, base.files(level), changes.deletions[level],
+                        changes.additions[level], version.files_[level]);
     }
     return version;
 }
