@@ -122,17 +122,12 @@ public:
     // finishes the output once it reaches the target file size.
     [[nodiscard]] Status Add(ByteView key, ByteView value) {
         if (!builder_.has_value()) {
-            number_ = hooks_.new_file_number();
-            const std::filesystem::path path = TableFileName(directory_, number_);
-            Result<std::unique_ptr<WritableFile>> file = file_system_.OpenWritable(path);
-            if (!file.has_value()) {
-                return std::unexpected(std::move(file).error());
+            Status opened = Open(key);
+            if (!opened.has_value()) {
+                return opened;
             }
-            builder_.emplace(std::move(*file), comparator_, options_.table_options);
-            smallest_.assign(key.begin(), key.end());
         }
-        largest_.assign(key.begin(), key.end());
-        const Status added = builder_->AddTrusted(key, value);
+        const Status added = Append(key, value);
         if (!added.has_value()) {
             return added;
         }
@@ -144,27 +139,58 @@ public:
 
     // Finishes the open output and checks that its table opens.
     [[nodiscard]] Status Finish() {
-        const Status finished = builder_->Finish();
-        const std::uint64_t size = builder_->file_size();
-        builder_.reset();
+        const Result<std::uint64_t> finished = FinishBuilder();
         if (!finished.has_value()) {
-            return finished;
+            return std::unexpected(finished.error());
         }
+        const std::uint64_t size = *finished;
         const Result<TableCache::Handle> table = table_cache_.Find(number_, size);
         if (!table.has_value()) {
             return std::unexpected(table.error());
         }
+        FileMetadata output = MakeMetadata(size);
+        finished_.push_back(std::move(output));
+        return {};
+    }
+
+private:
+    [[nodiscard]] Status Open(ByteView key) {
+        number_ = hooks_.new_file_number();
+        const std::filesystem::path path = TableFileName(directory_, number_);
+        Result<std::unique_ptr<WritableFile>> file = file_system_.OpenWritable(path);
+        if (!file.has_value()) {
+            return std::unexpected(std::move(file).error());
+        }
+        builder_.emplace(std::move(*file), comparator_, options_.table_options);
+        smallest_.assign(key.begin(), key.end());
+        return {};
+    }
+
+    [[nodiscard]] Status Append(ByteView key, ByteView value) {
+        largest_.assign(key.begin(), key.end());
+        return builder_->AddTrusted(key, value);
+    }
+
+    [[nodiscard]] Result<std::uint64_t> FinishBuilder() {
+        Status finished = builder_->Finish();
+        const std::uint64_t size = builder_->file_size();
+        builder_.reset();
+        if (!finished.has_value()) {
+            return std::unexpected(std::move(finished).error());
+        }
+        return size;
+    }
+
+    [[nodiscard]] FileMetadata MakeMetadata(std::uint64_t size) const {
         InternalKey smallest = TakeTrusted(InternalKey::Decode(smallest_));
         InternalKey largest = TakeTrusted(InternalKey::Decode(largest_));
         FileMetadata output{.number = number_,
                             .file_size = size,
                             .smallest = std::move(smallest),
                             .largest = std::move(largest)};
-        finished_.push_back(std::move(output));
-        return {};
+        return output;
     }
 
-private:
     FileSystem& file_system_;
     const std::filesystem::path& directory_;
     const InternalKeyComparator& comparator_;
