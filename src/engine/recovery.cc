@@ -110,6 +110,29 @@ Status MarkReplayLogNumbersUsed(VersionSet& versions, std::span<const std::uint6
     return {};
 }
 
+struct ReplayInputs {
+    std::set<std::uint64_t> tables;
+    std::vector<std::uint64_t> logs;
+};
+
+ReplayInputs CollectReplayInputs(std::span<const std::filesystem::path> names,
+                                 std::uint64_t current_log, std::uint64_t previous_log) {
+    ReplayInputs inputs;
+    for (const std::filesystem::path& name : names) {
+        const std::optional<ParsedFileName> parsed = ParseNativeFileName(name);
+        if (!parsed.has_value()) {
+            continue;
+        }
+        if (parsed->type == FileType::Table) {
+            inputs.tables.insert(parsed->number);
+        } else if (parsed->type == FileType::Log &&
+                   (parsed->number >= current_log || parsed->number == previous_log)) {
+            inputs.logs.push_back(parsed->number);
+        }
+    }
+    return inputs;
+}
+
 // Validates referenced tables and reserves the selected log numbers before replay.
 Result<std::vector<std::uint64_t>> PrepareLogsForReplay(FileSystem& file_system,
                                                         const std::filesystem::path& directory,
@@ -118,35 +141,22 @@ Result<std::vector<std::uint64_t>> PrepareLogsForReplay(FileSystem& file_system,
     if (!names.has_value()) {
         return std::unexpected(names.error());
     }
-    std::set<std::uint64_t> tables;
-    std::vector<std::uint64_t> logs;
-    for (const std::filesystem::path& name : *names) {
-        const std::optional<ParsedFileName> parsed = ParseNativeFileName(name);
-        if (!parsed.has_value()) {
-            continue;
-        }
-        if (parsed->type == FileType::Table) {
-            tables.insert(parsed->number);
-        } else if (parsed->type == FileType::Log &&
-                   (parsed->number >= versions.log_number() ||
-                    parsed->number == versions.prev_log_number())) {
-            logs.push_back(parsed->number);
-        }
-    }
-
-    const Status validated = ValidateReferencedTableFiles(*versions.current(), tables, directory);
+    ReplayInputs inputs =
+        CollectReplayInputs(*names, versions.log_number(), versions.prev_log_number());
+    const Status validated =
+        ValidateReferencedTableFiles(*versions.current(), inputs.tables, directory);
     if (!validated.has_value()) {
         return std::unexpected(validated.error());
     }
 
     // Replay oldest logs first so later sequences cannot be applied ahead of
     // their history. Reserve all discovered numbers before creating recovery outputs.
-    std::ranges::sort(logs);
-    const Status marked = MarkReplayLogNumbersUsed(versions, logs);
+    std::ranges::sort(inputs.logs);
+    const Status marked = MarkReplayLogNumbersUsed(versions, inputs.logs);
     if (!marked.has_value()) {
         return std::unexpected(marked.error());
     }
-    return logs;
+    return std::move(inputs.logs);
 }
 
 Result<std::unique_ptr<WalWriter>> CreateRecoveryLog(FileSystem& file_system,
@@ -309,6 +319,44 @@ private:
     SequenceNumber last_sequence_ = 0;
 };
 
+Result<SequenceNumber> ReplayLogs(LogReplay& replay, std::span<const std::uint64_t> log_numbers) {
+    for (const std::uint64_t number : log_numbers) {
+        const Status replayed = replay.ReplayLog(number);
+        if (!replayed.has_value()) {
+            return std::unexpected(replayed.error());
+        }
+    }
+    const Result<SequenceNumber> last_sequence = replay.Finish();
+    if (!last_sequence.has_value()) {
+        return std::unexpected(last_sequence.error());
+    }
+    return *last_sequence;
+}
+
+struct RecoveryLog {
+    std::unique_ptr<WalWriter> writer;
+    std::uint64_t number;
+};
+
+Result<RecoveryLog> InstallRecoveryLog(FileSystem& file_system,
+                                       const std::filesystem::path& directory, VersionSet& versions,
+                                       VersionEdit& edit, bool sync_creation) {
+    const std::uint64_t number = versions.NewFileNumber();
+    Result<std::unique_ptr<WalWriter>> log =
+        CreateRecoveryLog(file_system, directory, number, sync_creation);
+    if (!log.has_value()) {
+        return std::unexpected(std::move(log).error());
+    }
+    edit.SetLogNumber(number);
+    edit.SetPrevLogNumber(0);
+    const Status applied = versions.LogAndApply(std::move(edit));
+    if (!applied.has_value()) {
+        return std::unexpected(applied.error());
+    }
+    RecoveryLog installed{.writer = std::move(*log), .number = number};
+    return installed;
+}
+
 }  // namespace
 
 Result<RecoveredDatabase> RecoverDatabase(FileSystem& file_system,
@@ -338,37 +386,23 @@ Result<RecoveredDatabase> RecoverDatabase(FileSystem& file_system,
     VersionEdit edit;
     BuiltTables built(table_cache);
     LogReplay replay(file_system, directory, comparator, options, table_cache, set, edit, built);
-    for (const std::uint64_t number : *logs) {
-        const Status replayed = replay.ReplayLog(number);
-        if (!replayed.has_value()) {
-            return std::unexpected(replayed.error());
-        }
-    }
-    const Result<SequenceNumber> last_sequence = replay.Finish();
+    Result<SequenceNumber> last_sequence = ReplayLogs(replay, *logs);
     if (!last_sequence.has_value()) {
-        return std::unexpected(last_sequence.error());
+        return std::unexpected(std::move(last_sequence).error());
     }
     set.SetLastSequence(std::max(set.last_sequence(), *last_sequence));
 
-    const std::uint64_t log_number = set.NewFileNumber();
-    Result<std::unique_ptr<WalWriter>> log =
-        CreateRecoveryLog(file_system, directory, log_number, options.sync_wal_creation);
+    Result<RecoveryLog> log =
+        InstallRecoveryLog(file_system, directory, set, edit, options.sync_wal_creation);
     if (!log.has_value()) {
         return std::unexpected(std::move(log).error());
     }
-    edit.SetLogNumber(log_number);
-    edit.SetPrevLogNumber(0);
-    const Status applied = set.LogAndApply(std::move(edit));
-    if (!applied.has_value()) {
-        return std::unexpected(applied.error());
-    }
-
     built.Keep();
     RecoveredDatabase recovered{
         .lock = std::move(*lock),
         .versions = std::move(*versions),
-        .log = std::move(*log),
-        .log_number = log_number,
+        .log = std::move(log->writer),
+        .log_number = log->number,
     };
     return recovered;
 }

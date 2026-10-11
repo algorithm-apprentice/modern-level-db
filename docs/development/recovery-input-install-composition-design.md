@@ -2,9 +2,10 @@
 
 ## Status and bounded scope
 
-Design proposal for R01/R02 from the
+Accepted design for R01/R02 from the
 [production composition plan](production-function-composition-plan.md).
-This design-only batch changes no production code or shared ledger.
+Design-only #191 was independently reviewed and merged after all 20 exact-head
+checks succeeded. The separate implementation record follows below.
 
 Scope is PrepareLogsForReplay and RecoverDatabase in `src/engine/recovery.cc`.
 Extract directory-entry inventory, selected-log replay/final flush, and new
@@ -166,3 +167,53 @@ Independent design review found no significant issue after inspecting recovery
 source/tests and lower-level version/WAL contracts. It did not execute builds
 or tests. The error-copy boundaries and original parent ownership lifetimes
 remain explicit implementation-review requirements.
+
+## Implementation record
+
+Characterization was committed before production edits. Two new cases prove an
+empty selected set still installs the exact new WAL/sequence and an earlier
+replay failure suppresses later replay/output installation while allowing
+same-cache retry. The existing required-log test now reverses the successful
+directory listing and verifies exact selected sequential-open order plus original
+output numbers; unknown, legacy and temporary names do not reserve numbers.
+Mixed missing-table/invalid-log priority checks exact missing-table text.
+Every-operation failure matrices now check error code as well as message.
+
+The test-local listing override required its original const qualification;
+that compile-only harness mistake was fixed before the recorded passing
+original-production run and characterization commit. Actual selected test
+names are RecoveryTest, VersionSetTest, InsertBatchTest and CommitGroupTest,
+not a nonexistent WritePathTest suite.
+
+Subsequent inventory and replay/install topic commits implement exactly the five
+ledger definitions above. ReplayLogs retains both original error-copy guards;
+new parent envelope propagation moves. InstallRecoveryLog retains the WAL/error
+and checked-install boundaries and returns its named private RecoveryLog owner.
+RecoverDatabase retains parent-owned replay/eviction guards, maximum sequence
+update, Keep-after-install and the same named returned aggregate.
+
+All 46 selected recovery/version/insertion/commit cases pass before/after with
+exact unique JUnit case-set equality, both added names present and no
+failures/errors/skips. The inventory slice passes all 17 RecoveryTest cases,
+including both failure matrices. Each production slice rebuilt the actual
+modern_leveldb_unit_tests target in Windows Debug.
+
+The shared production ledger is intentionally not edited in this implementation
+while #190 owns its pending updates. These R01/R02
+delivery records can be incorporated by the next single ledger writer.
+Remaining LogReplay, version/WAL/native ownership and allocation-injection
+frontiers are not certified.
+
+Independent combined implementation review found no significant production
+correctness/design issue, but noted that selected logs 5/7/8 were below the
+already recovered allocation counter, so output numbers alone did not prove
+reservation. The required-log test now selects 5/7/20, explicitly orders their
+opens, and expects table 21/new WAL 22. The strengthened test passed in all
+46 cases against the original accepted-design recovery source and restored
+reviewed extraction, with exact JUnit parity.
+
+A bounded independent follow-up confirmed the high-number oracle resolves the
+finding and independently inspected both 46-case XML sets. It did not execute
+tests, rereview unchanged production, or independently prove source provenance;
+the main agent verified the original-source/restored-source build sequence.
+Authoritative exact-head remote CI remains the delivery gate.

@@ -36,6 +36,20 @@ namespace {
 
 using test_support::MemoryFileSystem;
 
+class ReverseListingFileSystem final : public MemoryFileSystem {
+public:
+    Result<std::vector<std::filesystem::path>> ListDirectory(
+        const std::filesystem::path& path) const override {
+        auto names = MemoryFileSystem::ListDirectory(path);
+        if (names.has_value() && reverse_listing) {
+            std::ranges::reverse(*names);
+        }
+        return names;
+    }
+
+    bool reverse_listing = false;
+};
+
 template <typename T>
 concept RecoverableWith = requires(FileSystem& file_system, T&& comparator, TableCache& cache) {
     RecoverDatabase(file_system, std::filesystem::path(), std::forward<T>(comparator),
@@ -157,7 +171,7 @@ protected:
         return numbers;
     }
 
-    MemoryFileSystem file_system_;
+    ReverseListingFileSystem file_system_;
     const std::filesystem::path directory_ = std::filesystem::path("db");
     InternalKeyComparator comparator_{BytewiseComparator()};
     TableCache table_cache_{file_system_, directory_, comparator_, {}, 100};
@@ -320,15 +334,88 @@ TEST_F(RecoveryTest, ReplaysTheLogsThatTheManifestNeeds) {
     WriteLog(4, {Batch(40, {Put{"below", "x"}})});
     WriteLog(5, {Batch(10, {Put{"previous", "p"}})});
     WriteLog(7, {Batch(20, {Put{"current", "c"}})});
-    WriteLog(8, {Batch(30, {Put{"newer", "n"}})});
+    WriteLog(20, {Batch(30, {Put{"newer", "n"}})});
+    file_system_.Write(directory_ / "ignored", {});
+    file_system_.Write(directory_ / "000090.sst", {});
+    file_system_.Write(directory_ / "000099.dbtmp", {});
+    file_system_.reverse_listing = true;
+    const std::size_t start = file_system_.operations().size();
 
     const RecoveredDatabase recovered = Recover({});
 
+    std::vector<std::string> opened_logs;
+    for (const std::string& operation : OperationsSince(start)) {
+        if (operation.starts_with("open_sequential ") && operation.ends_with(".log")) {
+            opened_logs.push_back(operation);
+        }
+    }
+    EXPECT_EQ(opened_logs,
+              (std::vector<std::string>{"open_sequential 000005.log", "open_sequential 000007.log",
+                                        "open_sequential 000020.log"}));
     EXPECT_EQ(TableEntries(*recovered.versions),
               (Entries{{"previous@10", "p"}, {"current@20", "c"}, {"newer@30", "n"}}));
-    EXPECT_EQ(TableNumbers(*recovered.versions, 0), (std::vector<std::uint64_t>{10}));
+    EXPECT_EQ(TableNumbers(*recovered.versions, 0), (std::vector<std::uint64_t>{21}));
     EXPECT_EQ(recovered.versions->last_sequence(), 100U);
-    EXPECT_EQ(recovered.log_number, 11U);
+    EXPECT_EQ(recovered.log_number, 22U);
+}
+
+TEST_F(RecoveryTest, InstallsANewLogWithoutSelectedReplayInputs) {
+    static_cast<void>(Recover());
+    {
+        auto versions = VersionSet::Recover(file_system_, directory_, comparator_);
+        ASSERT_TRUE(versions.has_value());
+        for (int allocated = 0; allocated < 5; ++allocated) {
+            static_cast<void>((*versions)->NewFileNumber());
+        }
+        VersionEdit edit;
+        edit.SetLogNumber(7);
+        edit.SetPrevLogNumber(0);
+        (*versions)->SetLastSequence(100);
+        ASSERT_TRUE((*versions)->LogAndApply(std::move(edit)).has_value());
+    }
+    const std::size_t start = file_system_.operations().size();
+    const auto recovered = TryRecover({});
+    ASSERT_TRUE(recovered.has_value());
+    EXPECT_TRUE(TableNumbers(*recovered->versions, 0).empty());
+    EXPECT_EQ(recovered->versions->last_sequence(), 100U);
+    EXPECT_EQ(recovered->versions->prev_log_number(), 0U);
+    EXPECT_EQ(recovered->log_number, 10U);
+    EXPECT_EQ(recovered->versions->log_number(), recovered->log_number);
+    const auto contents = file_system_.Contents(LogFileName(directory_, recovered->log_number));
+    ASSERT_TRUE(contents.has_value());
+    EXPECT_TRUE(contents->empty());
+    const auto operations = OperationsSince(start);
+    EXPECT_TRUE(std::ranges::none_of(operations, [](std::string_view operation) {
+        return operation.starts_with("open_sequential ") && operation.ends_with(".log");
+    }));
+    EXPECT_NE(std::ranges::find(operations, "sync 000010.log"), operations.end());
+    EXPECT_NE(std::ranges::find(operations, "append MANIFEST-000009"), operations.end());
+}
+
+TEST_F(RecoveryTest, StopsBeforeLaterReplayAndInstallationAfterAReplayFailure) {
+    static_cast<void>(Recover());
+    WriteLog(2, {Batch(1, {Put{"a", "1"}})});
+    WriteLog(3, {Batch(2, {Put{"b", "2"}})});
+    file_system_.SetOperationHook([](std::string_view operation) -> Status {
+        if (operation == "open_sequential 000002.log") {
+            return std::unexpected(Error::Io("replay open failed"));
+        }
+        return {};
+    });
+    const std::size_t start = file_system_.operations().size();
+    const auto failed = TryRecover({});
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), ErrorCode::Io);
+    EXPECT_EQ(failed.error().message(), "replay open failed");
+    const auto operations = OperationsSince(start);
+    EXPECT_EQ(std::ranges::find(operations, "open_sequential 000003.log"), operations.end());
+    EXPECT_TRUE(std::ranges::none_of(operations, [](std::string_view operation) {
+        return operation.starts_with("open_writable ");
+    }));
+    file_system_.SetOperationHook({});
+    const auto recovered = TryRecover({});
+    ASSERT_TRUE(recovered.has_value());
+    EXPECT_EQ(TableEntries(*recovered->versions), (Entries{{"a@1", "1"}, {"b@2", "2"}}));
 }
 
 TEST_F(RecoveryTest, SkipsDamagedRecordsAndTruncatedTails) {
@@ -420,7 +507,7 @@ TEST_F(RecoveryTest, ValidatesReferencedTablesBeforeReplayLogNumbers) {
     const auto missing_table = TryRecover({});
     ASSERT_FALSE(missing_table.has_value());
     EXPECT_EQ(missing_table.error().code(), ErrorCode::Corruption);
-    EXPECT_TRUE(missing_table.error().message().starts_with("table file is missing: "));
+    EXPECT_EQ(missing_table.error().message(), "table file is missing: db/000004.ldb");
 
     file_system_.Write(table, contents);
     const auto invalid_number = TryRecover({});
@@ -458,6 +545,7 @@ TEST_F(RecoveryTest, CreatesTheDatabaseAfterAFailure) {
             RecoverDatabase(file_system, directory_, comparator_, Creating(), cache);
 
         ASSERT_FALSE(failed.has_value());
+        EXPECT_EQ(failed.error().code(), ErrorCode::Io);
         EXPECT_EQ(failed.error().message(), "injected failure");
         auto recovered = RecoverDatabase(file_system, directory_, comparator_, Creating(), cache);
         ASSERT_TRUE(recovered.has_value()) << recovered.error().ToString();
@@ -517,6 +605,7 @@ void RecoveryTest::ExpectRecoveryAfterEveryFailure(const RecoveryOptions& option
         const auto failed = RecoverDatabase(file_system, directory_, comparator_, options, cache);
 
         ASSERT_FALSE(failed.has_value());
+        EXPECT_EQ(failed.error().code(), ErrorCode::Io);
         EXPECT_EQ(failed.error().message(), "injected failure");
         // No table that the failed recovery wrote is cached.
         const std::vector<std::string> operations(
