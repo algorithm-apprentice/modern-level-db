@@ -319,6 +319,44 @@ private:
     SequenceNumber last_sequence_ = 0;
 };
 
+Result<SequenceNumber> ReplayLogs(LogReplay& replay, std::span<const std::uint64_t> log_numbers) {
+    for (const std::uint64_t number : log_numbers) {
+        const Status replayed = replay.ReplayLog(number);
+        if (!replayed.has_value()) {
+            return std::unexpected(replayed.error());
+        }
+    }
+    const Result<SequenceNumber> last_sequence = replay.Finish();
+    if (!last_sequence.has_value()) {
+        return std::unexpected(last_sequence.error());
+    }
+    return *last_sequence;
+}
+
+struct RecoveryLog {
+    std::unique_ptr<WalWriter> writer;
+    std::uint64_t number;
+};
+
+Result<RecoveryLog> InstallRecoveryLog(FileSystem& file_system,
+                                       const std::filesystem::path& directory, VersionSet& versions,
+                                       VersionEdit& edit, bool sync_creation) {
+    const std::uint64_t number = versions.NewFileNumber();
+    Result<std::unique_ptr<WalWriter>> log =
+        CreateRecoveryLog(file_system, directory, number, sync_creation);
+    if (!log.has_value()) {
+        return std::unexpected(std::move(log).error());
+    }
+    edit.SetLogNumber(number);
+    edit.SetPrevLogNumber(0);
+    const Status applied = versions.LogAndApply(std::move(edit));
+    if (!applied.has_value()) {
+        return std::unexpected(applied.error());
+    }
+    RecoveryLog installed{.writer = std::move(*log), .number = number};
+    return installed;
+}
+
 }  // namespace
 
 Result<RecoveredDatabase> RecoverDatabase(FileSystem& file_system,
@@ -348,37 +386,23 @@ Result<RecoveredDatabase> RecoverDatabase(FileSystem& file_system,
     VersionEdit edit;
     BuiltTables built(table_cache);
     LogReplay replay(file_system, directory, comparator, options, table_cache, set, edit, built);
-    for (const std::uint64_t number : *logs) {
-        const Status replayed = replay.ReplayLog(number);
-        if (!replayed.has_value()) {
-            return std::unexpected(replayed.error());
-        }
-    }
-    const Result<SequenceNumber> last_sequence = replay.Finish();
+    Result<SequenceNumber> last_sequence = ReplayLogs(replay, *logs);
     if (!last_sequence.has_value()) {
-        return std::unexpected(last_sequence.error());
+        return std::unexpected(std::move(last_sequence).error());
     }
     set.SetLastSequence(std::max(set.last_sequence(), *last_sequence));
 
-    const std::uint64_t log_number = set.NewFileNumber();
-    Result<std::unique_ptr<WalWriter>> log =
-        CreateRecoveryLog(file_system, directory, log_number, options.sync_wal_creation);
+    Result<RecoveryLog> log =
+        InstallRecoveryLog(file_system, directory, set, edit, options.sync_wal_creation);
     if (!log.has_value()) {
         return std::unexpected(std::move(log).error());
     }
-    edit.SetLogNumber(log_number);
-    edit.SetPrevLogNumber(0);
-    const Status applied = set.LogAndApply(std::move(edit));
-    if (!applied.has_value()) {
-        return std::unexpected(applied.error());
-    }
-
     built.Keep();
     RecoveredDatabase recovered{
         .lock = std::move(*lock),
         .versions = std::move(*versions),
-        .log = std::move(*log),
-        .log_number = log_number,
+        .log = std::move(log->writer),
+        .log_number = log->number,
     };
     return recovered;
 }
