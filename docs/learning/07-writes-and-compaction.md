@@ -203,7 +203,8 @@ single-background-work pipeline.
 |---|---|---|---|
 | [`write_path.h`](../../src/engine/write_path.h) | `WriteQueue::Write`, guards, completion | Which writer owns group preparation and who receives its result? | [`write_path_test.cc`](../../tests/unit/engine/write_path_test.cc) |
 | [`write_path.cc`](../../src/engine/write_path.cc) | `CommitGroup`, `BuildGroup` | Why must WAL append/sync precede trusted MemTable insertion? | [`write_path_test.cc`](../../tests/unit/engine/write_path_test.cc) |
-| [`database.cc`](../../src/engine/database.cc) | `MakeRoomForWrite`, rotation, background call | When do foreground writers delay, stop, or hand work to the background? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
+| [`database_write.cc`](../../src/engine/database_write.cc) | `MakeRoomForWrite`, rotation, commit | When do foreground writers delay, stop, or publish a completed group? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
+| [`database_background.cc`](../../src/engine/database_background.cc) | background call, flush installation, compaction | How is foreground maintenance debt discharged without holding the mutex through I/O? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
 | [`flush.cc`](../../src/engine/flush.cc) | `FlushMemTable`, output-level choice | Why can some flush outputs start below L0? | [`flush_test.cc`](../../tests/unit/engine/flush_test.cc) |
 | [`compaction_picker.cc`](../../src/engine/compaction_picker.cc) | scores, overlaps, trivial moves | Which files must join one compaction input set? | [`compaction_picker_test.cc`](../../tests/unit/engine/compaction_picker_test.cc) |
 | [`compaction.cc`](../../src/engine/compaction.cc) | retention, tombstones, output splitting | Which history can be dropped without changing any retained view? | [`compaction_test.cc`](../../tests/unit/engine/compaction_test.cc) |

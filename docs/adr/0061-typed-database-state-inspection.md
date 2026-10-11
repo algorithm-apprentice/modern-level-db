@@ -506,7 +506,7 @@ transitions. It is a separate future feature.
 
 - [Modern public database API](../../include/modern_leveldb/db.h)
 - [Modern database engine](../../src/engine/database.h)
-- [Modern write commit](../../src/engine/database.cc)
+- [Modern write commit](../../src/engine/database_write.cc)
 - [Modern arena accounting](../../src/memory/arena.h)
 - [Modern read diagnostics](../../src/instrumentation/read_diagnostics.h)
 - [Need-driven simplicity](0010-need-driven-simplicity.md)

@@ -184,7 +184,7 @@ Cache hits and mapped pages complicate the relationship to physical I/O.
 
 | Entry point | Interface or symbol | Question to answer | Representative evidence |
 |---|---|---|---|
-| [`database.cc`](../../src/engine/database.cc) | `Get`, `ReadSources`, `NewIterator` | Which snapshot and source owners are captured under the mutex? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
+| [`database_read.cc`](../../src/engine/database_read.cc) | `Get`, `ReadSources`, `NewIterator` | Which snapshot and source owners are captured under the mutex? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
 | [`lookup.cc`](../../src/engine/lookup.cc) | `LookupValue`, overlapping-file visitation | Why do deletion and missing produce different control flow? | [`lookup_test.cc`](../../tests/unit/engine/lookup_test.cc) |
 | [`iterators.cc`](../../src/engine/iterators.cc) | merge and concatenating iterators | Why are L0 and nonzero levels composed differently? | [`iterators_test.cc`](../../tests/unit/engine/iterators_test.cc) |
 | [`db_iterator.cc`](../../src/engine/db_iterator.cc) | public visibility and direction state | How are internal versions collapsed into one user-key stream? | [`db_iterator_test.cc`](../../tests/unit/engine/db_iterator_test.cc) |
