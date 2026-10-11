@@ -203,6 +203,27 @@ TEST(MemTableTest, InsertionEncodesAndResolvesEntries) {
     EXPECT_EQ(AsStringView(oldest.value), "old");
 }
 
+TEST(MemTableTest, PackedEntryCodecFeedsLookupAndIteration) {
+    const std::array key{std::byte{0x00}, std::byte{'k'}, std::byte{0xff}, std::byte{0x7f}};
+    const std::array value{std::byte{0xff}, std::byte{0x00}, std::byte{'v'}};
+    MemTable table{BytewiseComparator()};
+    table.Add(7, ValueKind::Value, key, value);
+
+    const MemTableLookup found = table.Lookup(MakeLookup(key, 7));
+    ASSERT_EQ(found.kind, MemTableLookupKind::Value);
+    EXPECT_TRUE(std::ranges::equal(found.value, value));
+
+    MemTable::Iterator iterator(table);
+    iterator.SeekToFirst();
+    ASSERT_TRUE(iterator.valid());
+    const Result<InternalKeyView> decoded = ParseInternalKey(iterator.key());
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_TRUE(std::ranges::equal(decoded->user_key, key));
+    EXPECT_EQ(decoded->sequence, 7U);
+    EXPECT_EQ(decoded->kind, ValueKind::Value);
+    EXPECT_TRUE(std::ranges::equal(iterator.value(), value));
+}
+
 #ifndef NDEBUG
 TEST(MemTableDeathTest, InsertionAssertsUniqueInternalKeys) {
     MemTable table{BytewiseComparator()};
