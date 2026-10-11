@@ -1,0 +1,288 @@
+#include <algorithm>
+#include <cassert>
+#include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <set>
+#include <stop_token>
+#include <utility>
+#include <vector>
+
+#include "base/result_internal.h"
+#include "engine/compaction.h"
+#include "engine/compaction_picker.h"
+#include "engine/database.h"
+#include "engine/flush.h"
+#include "metadata/filenames.h"
+#include "metadata/version.h"
+#include "metadata/version_edit.h"
+#include "platform/file_system.h"
+
+namespace modern_leveldb {
+
+Status DatabaseEngine::WaitForBackgroundWork() {
+    std::unique_lock lock(mutex_);
+    background_finished_.wait(lock, [this] { return !background_scheduled_; });
+    if (background_error_.has_value()) {
+        return BackgroundError();
+    }
+    return {};
+}
+
+bool DatabaseEngine::NeedsCompaction() const {
+    const Version& current = *versions_->current_raw();
+    if (ScoreCompaction(current).score >= 1) {
+        return true;
+    }
+    return seek_statistics_.HasFileToCompact(current);
+}
+
+void DatabaseEngine::MaybeScheduleBackgroundWork() {
+    if (background_scheduled_ || closing_ || background_error_.has_value()) {
+        return;
+    }
+    if (immutable_ == nullptr && !NeedsCompaction()) {
+        return;
+    }
+    background_scheduled_ = true;
+    Status scheduled;
+    try {
+        scheduled = executor_->Schedule([this](std::stop_token) { BackgroundCall(); });
+    } catch (...) {
+        scheduled =
+            std::unexpected(Error::Aborted("scheduling background work threw an exception"));
+    }
+    if (!scheduled.has_value()) {
+        background_scheduled_ = false;
+        RecordBackgroundError(scheduled.error());
+    }
+}
+
+void DatabaseEngine::BackgroundCall() {
+    std::unique_lock lock(mutex_);
+    if (!closing_ && !background_error_.has_value()) {
+        try {
+            if (immutable_ != nullptr) {
+                FlushImmutable(lock);
+            } else {
+                BackgroundCompaction(lock);
+            }
+        } catch (...) {
+            if (!lock.owns_lock()) {
+                lock.lock();
+            }
+            RecordBackgroundError(Error::Aborted("background work stopped with an exception"));
+        }
+    }
+    background_scheduled_ = false;
+    MaybeScheduleBackgroundWork();
+    background_finished_.notify_all();
+}
+
+void DatabaseEngine::ClearImmutable() {
+    assert(immutable_ != nullptr);
+    if (immutable_->read_pins_ != 0) {
+        read_pinned_memtables_.push_back(std::move(immutable_));
+    } else {
+        immutable_.reset();
+    }
+}
+
+void DatabaseEngine::ReleaseReadPinnedMemtables() {
+    std::erase_if(read_pinned_memtables_, [](const std::shared_ptr<const MemTable>& table) {
+        return table->read_pins_ == 0;
+    });
+}
+
+void DatabaseEngine::FlushImmutable(std::unique_lock<std::mutex>& lock) {
+    const std::shared_ptr<const Version> base = versions_->current();
+    const std::uint64_t number = versions_->NewFileNumber();
+    // Retain the output number before unlocked I/O: cleanup must not mistake
+    // an unfinished/uninstalled table for an obsolete file.
+    pending_outputs_.insert(number);
+    const std::shared_ptr<const MemTable> immutable = immutable_;
+    const std::uint64_t log_number = log_number_;
+    lock.unlock();
+    FlushOptions options;
+    options.table_options = table_options_;
+    options.target_file_size = max_file_size_;
+    Result<VersionEdit> edit =
+        modern_leveldb::FlushMemTable(*file_system_, directory_, comparator_, options, table_cache_,
+                                      *immutable, number, *base, log_number);
+    lock.lock();
+    Status applied;
+    if (!edit.has_value()) {
+        applied = std::unexpected(std::move(edit).error());
+    } else if (closing_) {
+        applied = std::unexpected(Error::Aborted("the database closed during a flush"));
+    } else {
+        applied = versions_->LogAndApply(std::move(*edit), lock);
+    }
+    if (!applied.has_value()) {
+        // Recorded first, so that no cleanup removes a table that the edit may
+        // still reference.
+        RecordBackgroundError(applied.error());
+        pending_outputs_.erase(number);
+        return;
+    }
+    pending_outputs_.erase(number);
+    ClearImmutable();
+    has_immutable_.store(false, std::memory_order_relaxed);
+    seek_statistics_.Retain(*versions_->current());
+    background_finished_.notify_all();
+    RemoveObsoleteFiles(lock);
+}
+
+void DatabaseEngine::BackgroundCompaction(std::unique_lock<std::mutex>& lock) {
+    std::vector<std::uint64_t> outputs;
+    const bool compacted = Compact(lock, outputs);
+    for (const std::uint64_t number : outputs) {
+        pending_outputs_.erase(number);
+    }
+    if (compacted) {
+        RemoveObsoleteFiles(lock);
+    }
+}
+
+bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
+                             std::vector<std::uint64_t>& outputs) {
+    const std::shared_ptr<const Version> current = versions_->current();
+    const std::optional<Compaction> compaction =
+        PickCompaction(current, comparator_, versions_->compact_pointers(),
+                       seek_statistics_.FileToCompact(*current), max_file_size_);
+    // The need that scheduled this task remains, since only background work
+    // installs versions or drops the file to compact.
+    assert(compaction.has_value());
+    if (IsTrivialMove(*compaction, max_file_size_)) {
+        VersionEdit edit = CompactionEdit(*compaction);
+        // The file is valid at the next level, which nothing there overlaps.
+        AssertSuccess(edit.AddFile(compaction->level + 1, *compaction->inputs[0].front()));
+        FinishCompaction(versions_->LogAndApply(std::move(edit), lock));
+        return false;
+    }
+
+    const SequenceNumber smallest_snapshot =
+        snapshots_.empty() ? versions_->last_sequence() : *snapshots_.begin();
+    const std::unique_ptr<InternalIterator> input =
+        NewCompactionIterator(*compaction, table_cache_, comparator_);
+    CompactionOptions options;
+    options.table_options = table_options_;
+    options.target_file_size = max_file_size_;
+    CompactionHooks hooks;
+    hooks.new_file_number = [this, &outputs] {
+        const std::lock_guard guard(mutex_);
+        const std::uint64_t number = versions_->NewFileNumber();
+        pending_outputs_.insert(number);
+        outputs.push_back(number);
+        return number;
+    };
+    hooks.before_entry = [this] { return BeforeCompactionEntry(); };
+    lock.unlock();
+    Result<VersionEdit> edit =
+        RunCompaction(*file_system_, directory_, comparator_, options, table_cache_, *compaction,
+                      *input, smallest_snapshot, hooks);
+    lock.lock();
+    Status applied;
+    if (!edit.has_value()) {
+        applied = std::unexpected(std::move(edit).error());
+    } else if (closing_) {
+        // Closing can begin after the last per-entry check; do not install a
+        // completed output into an engine already shutting down.
+        applied = std::unexpected(Error::Aborted("the database closed during a compaction"));
+    } else {
+        applied = versions_->LogAndApply(std::move(*edit), lock);
+    }
+    FinishCompaction(applied);
+    return true;
+}
+
+void DatabaseEngine::FinishCompaction(const Status& applied) {
+    if (!applied.has_value()) {
+        RecordBackgroundError(applied.error());
+        return;
+    }
+    seek_statistics_.Retain(*versions_->current());
+}
+
+Status DatabaseEngine::BeforeCompactionEntry() {
+    if (closing_) {
+        return std::unexpected(Error::Aborted("the database is closing"));
+    }
+    if (!has_immutable_.load(std::memory_order_relaxed)) {
+        return {};
+    }
+    std::unique_lock lock(mutex_);
+    // Only background work, which this is, drops the immutable memtable.
+    assert(immutable_ != nullptr);
+    FlushImmutable(lock);
+    if (background_error_.has_value()) {
+        return BackgroundError();
+    }
+    return {};
+}
+
+void DatabaseEngine::RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock) {
+    // Uncertain metadata failure forbids reclamation: either durable topology
+    // may still need the files. Otherwise retain all pinned Versions and outputs.
+    if (background_error_.has_value()) {
+        return;
+    }
+    // Recovery and every flush set the previous log number to zero.
+    assert(versions_->prev_log_number() == 0);
+    std::set<std::uint64_t> live = versions_->LiveFiles();
+    live.insert(pending_outputs_.begin(), pending_outputs_.end());
+    const Result<std::vector<std::filesystem::path>> children =
+        file_system_->ListDirectory(directory_);
+    if (!children.has_value()) {
+        return;
+    }
+    std::vector<std::filesystem::path> obsolete;
+    for (const std::filesystem::path& child : *children) {
+        const std::optional<ParsedFileName> parsed = ParseNativeFileName(child);
+        if (!parsed.has_value()) {
+            continue;
+        }
+        bool keep = true;
+        switch (parsed->type) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/5 default of an exhaustive switch
+            case FileType::Log:
+                keep = parsed->number >= versions_->log_number();
+                break;
+            case FileType::Descriptor:
+                keep = parsed->number >= versions_->manifest_file_number();
+                break;
+            case FileType::Table:
+            case FileType::Temp:
+                keep = live.contains(parsed->number);
+                break;
+            case FileType::Lock:
+            case FileType::Current:
+                break;
+        }
+        if (keep) {
+            continue;
+        }
+        if (parsed->type == FileType::Table) {
+            table_cache_.Evict(parsed->number);
+        }
+        obsolete.push_back(directory_ / child.filename());
+    }
+    lock.unlock();
+    for (const std::filesystem::path& path : obsolete) {
+        static_cast<void>(file_system_->RemoveFile(path));
+    }
+    lock.lock();
+}
+
+void DatabaseEngine::RecordBackgroundError(Error error) {
+    // Keeps the first error.
+    background_error_ = background_error_.value_or(std::move(error));
+    background_finished_.notify_all();
+}
+
+std::unexpected<Error> DatabaseEngine::BackgroundError() const {
+    return std::unexpected(*background_error_);
+}
+
+}  // namespace modern_leveldb

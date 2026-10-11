@@ -171,7 +171,8 @@ Both can increase resource use without copying the entire database.
 | [`arena.cc`](../../src/memory/arena.cc) | `Arena::Allocate`, aligned allocation | What lifetime and accounting does one allocation join? | [`arena_test.cc`](../../tests/unit/memory/arena_test.cc) |
 | [`skiplist.h`](../../src/memory/skiplist.h) | `Insert`, search, iterator | What does the single writer establish before release publication? | [`skiplist_test.cc`](../../tests/unit/memory/skiplist_test.cc) |
 | [`memtable.cc`](../../src/memory/memtable.cc) | `Add`, `Lookup`, `Iterator`, read pin | How does one packed entry support snapshots and deletions? | [`memtable_test.cc`](../../tests/unit/memory/memtable_test.cc) |
-| [`database.cc`](../../src/engine/database.cc) | `CommitWrite`, `GetSnapshot`, `ReleaseSnapshot` | When does a sequence become visible, and what retains old state? | [`public_api_native_test.cc`](../../tests/unit/api/public_api_native_test.cc) |
+| [`database_write.cc`](../../src/engine/database_write.cc) | `CommitWrite` | When does a completed MemTable mutation become visible? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
+| [`database_read.cc`](../../src/engine/database_read.cc) | `GetSnapshot`, `ReleaseSnapshot` | Which sequence keeps old state visible to a reader? | [`public_api_native_test.cc`](../../tests/unit/api/public_api_native_test.cc) |
 
 For design history, read [ADR-0015](../adr/0015-concurrent-skiplist.md),
 [ADR-0017](../adr/0017-arena-backed-memtable.md), and the memory invariants

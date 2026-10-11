@@ -62,6 +62,9 @@ set(
     src/engine/compaction.cc
     src/engine/compaction_picker.cc
     src/engine/database.cc
+    src/engine/database_background.cc
+    src/engine/database_read.cc
+    src/engine/database_write.cc
     src/engine/db_iterator.cc
     src/engine/flush.cc
     src/engine/iterators.cc

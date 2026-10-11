@@ -151,7 +151,10 @@ Read these entry points without following every helper yet:
 |---|---|---|---|
 | [`db.h`](../../include/modern_leveldb/db.h) | `Database` | What can an application ask the engine to do? | [`public_api_test.cc`](../../tests/unit/api/public_api_test.cc) |
 | [`database.h`](../../src/engine/database.h) | `DatabaseEngine` members | Which owners and synchronization domains exist per database? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
-| [`database.cc`](../../src/engine/database.cc) | `Write`, `Get`, `BackgroundCall` | Where do foreground and background paths meet? | [`database_model_test.cc`](../../tests/model/database_model_test.cc) |
+| [`database.cc`](../../src/engine/database.cc) | `Open`, construction, recovery installation | Which stable resources and recovered owners form one database? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
+| [`database_write.cc`](../../src/engine/database_write.cc) | `Write`, rotation, commit | Where does foreground mutation cross durability and visibility boundaries? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
+| [`database_read.cc`](../../src/engine/database_read.cc) | `Get`, iterator creation, snapshots | Which read view is captured under the database mutex? | [`database_model_test.cc`](../../tests/model/database_model_test.cc) |
+| [`database_background.cc`](../../src/engine/database_background.cc) | `BackgroundCall`, flush, compaction | Where does foreground pressure become background maintenance? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
 | [`recovery.cc`](../../src/engine/recovery.cc) | `RecoverDatabase` | What must be reconstructed before writes start? | [`recovery_test.cc`](../../tests/unit/engine/recovery_test.cc) |
 
 The dependency direction is important: the public facade depends on the
