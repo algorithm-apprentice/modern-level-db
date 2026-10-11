@@ -46,6 +46,21 @@ constexpr std::uint64_t MiB = std::uint64_t{1} << 20U;
 constexpr ValueKind Deleted = ValueKind::Deletion;
 constexpr ValueKind Put = ValueKind::Value;
 
+class DeeperTrackingComparator final : public Comparator {
+public:
+    int Compare(ByteView left, ByteView right) const noexcept override {
+        if (AsStringView(left) == "zz-deeper" || AsStringView(right) == "zz-deeper") {
+            ++deeper_comparisons;
+        }
+        return BytewiseComparator().Compare(left, right);
+    }
+    std::string_view Name() const noexcept override { return "test.DeeperTracking"; }
+    void FindShortestSeparator(std::vector<std::byte>&, ByteView) const override {}
+    void FindShortSuccessor(std::vector<std::byte>&) const override {}
+
+    mutable int deeper_comparisons = 0;
+};
+
 struct Entry {
     std::string_view key;
     SequenceNumber sequence;
@@ -394,6 +409,54 @@ TEST(CompactionTest, WritesNothingWhenEveryEntryIsDropped) {
     EXPECT_TRUE(harness.file_system.operations().empty());
 }
 
+TEST(CompactionTest, SkipsDeeperCoverageForShadowedAndSnapshotInvisibleDeletions) {
+    Harness harness;
+    DeeperTrackingComparator user_comparator;
+    const InternalKeyComparator comparator(user_comparator);
+    TableCache cache(harness.file_system, harness.directory, comparator, harness.table_options,
+                     100);
+    const Compaction compaction = Harness::MakeCompaction(
+        harness.MakeVersion({{1, Metadata(10, "a", "z")}, {4, Metadata(40, "a", "zz-deeper")}}), 1,
+        {10}, {});
+    const auto input =
+        Harness::Input(comparator, {{"k", 10}, {"k", 9, Deleted}, {"k", 8}, {"m", 11, Deleted}});
+    user_comparator.deeper_comparisons = 0;
+    const auto edit = RunCompaction(harness.file_system, harness.directory, comparator,
+                                    harness.options, cache, compaction, *input, 10, harness.hooks);
+    ASSERT_TRUE(edit.has_value());
+    EXPECT_EQ(user_comparator.deeper_comparisons, 0);
+    EXPECT_EQ(harness.Contents(*edit), (Outputs{{"k@10=v", "m@11 deleted"}}));
+}
+
+TEST(CompactionTest, OutputMetadataOwnsBoundsAfterAllSourceOwnersAreReleased) {
+    std::optional<VersionEdit> result;
+    std::uint64_t stored_size = 0;
+    {
+        Harness harness;
+        const Compaction compaction = Harness::MakeCompaction(
+            harness.MakeVersion({{1, Metadata(10, "a", "z")}}), 1, {10}, {});
+        const auto input = harness.Input({{"a", 3}, {"z", 2}});
+        auto edit = harness.Run(compaction, *input);
+        ASSERT_TRUE(edit.has_value());
+        const auto contents = harness.file_system.Contents(harness.directory / "000100.ldb");
+        ASSERT_TRUE(contents.has_value());
+        stored_size = contents->size();
+        result.emplace(std::move(*edit));
+    }
+    ASSERT_EQ(result->new_files().size(), 1U);
+    const FileMetadata& file = result->new_files()[0].file;
+    EXPECT_EQ(file.number, 100U);
+    EXPECT_EQ(file.file_size, stored_size);
+    EXPECT_EQ(AsStringView(file.smallest.user_key()), "a");
+    EXPECT_EQ(AsStringView(file.largest.user_key()), "z");
+    const auto smallest = ParseInternalKey(file.smallest.encoded());
+    const auto largest = ParseInternalKey(file.largest.encoded());
+    ASSERT_TRUE(smallest.has_value());
+    ASSERT_TRUE(largest.has_value());
+    EXPECT_EQ(smallest->sequence, 3U);
+    EXPECT_EQ(largest->sequence, 2U);
+}
+
 TEST(CompactionTest, EndsOutputsAtTheTargetSize) {
     Harness harness;
     // Each 1,000-byte value fills a block of about 1,026 bytes.
@@ -505,8 +568,64 @@ TEST(CompactionTest, CallsTheHooksAndStopsAtAnError) {
 
     ASSERT_FALSE(edit.has_value());
     EXPECT_EQ(edit.error().code(), ErrorCode::Aborted);
+    EXPECT_EQ(edit.error().message(), "stopped");
     EXPECT_EQ(harness.entries_seen, 3);
     EXPECT_EQ(harness.numbers, (std::vector<std::uint64_t>{100}));
+    EXPECT_EQ(std::ranges::find(harness.file_system.operations(), "sync_directory db"),
+              harness.file_system.operations().end());
+}
+
+TEST(CompactionTest, HookFailureWinsOverAnInvalidKey) {
+    Harness harness;
+    const Compaction compaction =
+        Harness::MakeCompaction(harness.MakeVersion({{1, Metadata(10, "a", "z")}}), 1, {10}, {});
+    harness.stop_at_entry = 1;
+    ScriptedIterator input(BytewiseComparator(),
+                           {{.key = std::vector<std::byte>(3, std::byte{'b'}), .value = {}}});
+    const auto edit = harness.Run(compaction, input);
+    ASSERT_FALSE(edit.has_value());
+    EXPECT_EQ(edit.error().code(), ErrorCode::Aborted);
+    EXPECT_EQ(edit.error().message(), "stopped");
+    EXPECT_EQ(harness.entries_seen, 1);
+    EXPECT_TRUE(harness.numbers.empty());
+    EXPECT_TRUE(harness.file_system.operations().empty());
+}
+
+TEST(CompactionTest, GrandparentBoundaryFinishingPrecedesInvalidKeyParsing) {
+    for (const bool fail_finish : {false, true}) {
+        SCOPED_TRACE(fail_finish);
+        Harness harness;
+        harness.options.target_file_size = MiB;
+        const Compaction compaction =
+            Harness::MakeCompaction(harness.MakeVersion({{1, Metadata(10, "a", "z")},
+                                                         {3, Metadata(30, "a", "a", 11 * MiB)}}),
+                                    1, {10}, {});
+        std::vector<std::byte> invalid = Encoded(Key("b", 1));
+        invalid[invalid.size() - InternalKeyTrailerSize] = std::byte{0x7f};
+        ScriptedIterator input(harness.comparator, {{.key = Encoded(Key("a", 9)), .value = {}},
+                                                    {.key = std::move(invalid), .value = {}}});
+        if (fail_finish) {
+            harness.file_system.SetOperationHook([](std::string_view operation) -> Status {
+                if (operation == "sync 000100.ldb") {
+                    return std::unexpected(Error::Io("boundary finish failed"));
+                }
+                return {};
+            });
+        }
+        const auto edit = harness.Run(compaction, input);
+        ASSERT_FALSE(edit.has_value());
+        EXPECT_EQ(edit.error().code(), fail_finish ? ErrorCode::Io : ErrorCode::Corruption);
+        if (fail_finish) {
+            EXPECT_EQ(edit.error().message(), "boundary finish failed");
+        }
+        const auto& operations = harness.file_system.operations();
+        EXPECT_NE(std::ranges::find(operations, "sync 000100.ldb"), operations.end());
+        EXPECT_NE(std::ranges::find(operations, "close 000100.ldb"), operations.end());
+        EXPECT_EQ(std::ranges::find(operations, "sync_directory db"), operations.end());
+        EXPECT_EQ(
+            std::ranges::find(operations, "open_random_access 000100.ldb") == operations.end(),
+            fail_finish);
+    }
 }
 
 TEST(CompactionTest, RejectsAKeyThatIsNotAnInternalKey) {
@@ -567,6 +686,7 @@ TEST(CompactionTest, ReturnsTheErrorOfEveryFailedInputMove) {
         SCOPED_TRACE(failing);
         const auto [edit, ignored] = run(failing);
         ASSERT_FALSE(edit.has_value());
+        EXPECT_EQ(edit.error().code(), ErrorCode::Io);
         EXPECT_EQ(edit.error().message(), "injected failure");
     }
 }
@@ -602,9 +722,28 @@ TEST(CompactionTest, ReturnsTheErrorOfEveryFailedFileOperation) {
             SCOPED_TRACE(failing);
             const auto [edit, ignored] = run(split_by_size, failing);
             ASSERT_FALSE(edit.has_value());
+            EXPECT_EQ(edit.error().code(), ErrorCode::Io);
             EXPECT_EQ(edit.error().message(), "injected failure");
         }
     }
+}
+
+TEST(CompactionTest, FinalInputFailureSuppressesOutputCompletion) {
+    Harness harness;
+    const Compaction compaction =
+        Harness::MakeCompaction(harness.MakeVersion({{1, Metadata(10, "a", "z")}}), 1, {10}, {});
+    auto script = std::make_shared<MoveScript>();
+    script->fail_at = 3;
+    const auto input = Harness::Input(harness.comparator, {{"a", 2}, {"b", 1}}, script);
+    const auto edit = harness.Run(compaction, *input);
+    ASSERT_FALSE(edit.has_value());
+    EXPECT_EQ(edit.error().code(), ErrorCode::Io);
+    EXPECT_EQ(edit.error().message(), "injected failure");
+    const auto& operations = harness.file_system.operations();
+    EXPECT_EQ(std::ranges::find(operations, "sync 000100.ldb"), operations.end());
+    EXPECT_EQ(std::ranges::find(operations, "open_random_access 000100.ldb"), operations.end());
+    EXPECT_EQ(std::ranges::find(operations, "sync_directory db"), operations.end());
+    EXPECT_TRUE(harness.file_system.Contents(harness.directory / "000100.ldb").has_value());
 }
 
 }  // namespace
