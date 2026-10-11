@@ -90,11 +90,19 @@ Status DbIterator::Seek(ByteView user_key) {
 }
 
 Status DbIterator::Next() {
+    Status moved = AdvanceForNext();
+    if (!moved.has_value()) {
+        return Fail(std::move(moved).error());
+    }
+    return FindNextUserEntry(true);
+}
+
+Status DbIterator::AdvanceForNext() {
     if (forward_) {
         Assign(saved_key_, UserKey(internal_->key()));
         const Status moved = internal_->Next();
         if (!moved.has_value()) {
-            return Fail(moved.error());
+            return std::unexpected(moved.error());
         }
     } else {
         // The internal iterator is before the saved key's entries.
@@ -106,38 +114,48 @@ Status DbIterator::Next() {
             moved = internal_->SeekToFirst();
         }
         if (!moved.has_value()) {
-            return Fail(moved.error());
+            return std::unexpected(moved.error());
         }
     }
-    return FindNextUserEntry(true);
+    return {};
 }
 
 Status DbIterator::Prev() {
     if (forward_) {
-        // Move the internal iterator before the current user key's entries.
-        Assign(saved_key_, UserKey(internal_->key()));
-        while (true) {
-            const Status moved = internal_->Prev();
-            if (!moved.has_value()) {
-                return Fail(moved.error());
-            }
-            if (!internal_->valid()) {
-                valid_ = false;
-                saved_key_.clear();
-                saved_value_.clear();
-                return {};
-            }
-            const Result<InternalKeyView> parsed = ParseInternalKey(internal_->key());
-            if (!parsed.has_value()) {
-                return Fail(parsed.error());
-            }
-            if (user_comparator_->Compare(parsed->user_key, saved_key_) < 0) {
-                break;
-            }
+        Result<bool> positioned = PositionBeforeCurrentUser();
+        if (!positioned.has_value()) {
+            return Fail(std::move(positioned).error());
         }
-        forward_ = false;
+        if (!*positioned) {
+            return {};
+        }
     }
     return FindPrevUserEntry();
+}
+
+Result<bool> DbIterator::PositionBeforeCurrentUser() {
+    Assign(saved_key_, UserKey(internal_->key()));
+    while (true) {
+        const Status moved = internal_->Prev();
+        if (!moved.has_value()) {
+            return std::unexpected(moved.error());
+        }
+        if (!internal_->valid()) {
+            valid_ = false;
+            saved_key_.clear();
+            saved_value_.clear();
+            return false;
+        }
+        const Result<InternalKeyView> parsed = ParseInternalKey(internal_->key());
+        if (!parsed.has_value()) {
+            return std::unexpected(parsed.error());
+        }
+        if (user_comparator_->Compare(parsed->user_key, saved_key_) < 0) {
+            break;
+        }
+    }
+    forward_ = false;
+    return true;
 }
 
 // While skipping, saved_key_ holds the user key whose entries are skipped.
@@ -148,15 +166,8 @@ Status DbIterator::FindNextUserEntry(bool skipping) {
             return Fail(parsed.error());
         }
         CountRead(internal_->key(), internal_->value());
-        if (parsed->sequence <= sequence_) {
-            if (parsed->kind == ValueKind::Deletion) {
-                Assign(saved_key_, parsed->user_key);
-                skipping = true;
-            } else if (!skipping || user_comparator_->Compare(parsed->user_key, saved_key_) > 0) {
-                valid_ = true;
-                saved_key_.clear();
-                return {};
-            }
+        if (ConsiderNextEntry(*parsed, skipping)) {
+            return {};
         }
         const Status moved = internal_->Next();
         if (!moved.has_value()) {
@@ -166,6 +177,20 @@ Status DbIterator::FindNextUserEntry(bool skipping) {
     valid_ = false;
     saved_key_.clear();
     return {};
+}
+
+bool DbIterator::ConsiderNextEntry(const InternalKeyView& entry, bool& skipping) {
+    if (entry.sequence <= sequence_) {
+        if (entry.kind == ValueKind::Deletion) {
+            Assign(saved_key_, entry.user_key);
+            skipping = true;
+        } else if (!skipping || user_comparator_->Compare(entry.user_key, saved_key_) > 0) {
+            valid_ = true;
+            saved_key_.clear();
+            return true;
+        }
+    }
+    return false;
 }
 
 // Walks back over the entries of each user key, keeping the newest visible
@@ -178,34 +203,45 @@ Status DbIterator::FindPrevUserEntry() {
             return Fail(parsed.error());
         }
         CountRead(internal_->key(), internal_->value());
-        if (parsed->sequence <= sequence_) {
-            if (kind != ValueKind::Deletion &&
-                user_comparator_->Compare(parsed->user_key, saved_key_) < 0) {
-                break;
-            }
-            kind = parsed->kind;
-            if (kind == ValueKind::Deletion) {
-                saved_key_.clear();
-                saved_value_.clear();
-            } else {
-                Assign(saved_key_, parsed->user_key);
-                Assign(saved_value_, internal_->value());
-            }
+        if (ConsiderPreviousEntry(*parsed, kind)) {
+            break;
         }
         const Status moved = internal_->Prev();
         if (!moved.has_value()) {
             return Fail(moved.error());
         }
     }
+    FinishReverseScan(kind);
+    return {};
+}
+
+bool DbIterator::ConsiderPreviousEntry(const InternalKeyView& entry, ValueKind& kind) {
+    if (entry.sequence <= sequence_) {
+        if (kind != ValueKind::Deletion &&
+            user_comparator_->Compare(entry.user_key, saved_key_) < 0) {
+            return true;
+        }
+        kind = entry.kind;
+        if (kind == ValueKind::Deletion) {
+            saved_key_.clear();
+            saved_value_.clear();
+        } else {
+            Assign(saved_key_, entry.user_key);
+            Assign(saved_value_, internal_->value());
+        }
+    }
+    return false;
+}
+
+void DbIterator::FinishReverseScan(ValueKind kind) {
     if (kind == ValueKind::Deletion) {
         valid_ = false;
         forward_ = true;
         saved_key_.clear();
         saved_value_.clear();
-        return {};
+        return;
     }
     valid_ = true;
-    return {};
 }
 
 Status DbIterator::Fail(Error error) {
