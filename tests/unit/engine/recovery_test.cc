@@ -334,7 +334,7 @@ TEST_F(RecoveryTest, ReplaysTheLogsThatTheManifestNeeds) {
     WriteLog(4, {Batch(40, {Put{"below", "x"}})});
     WriteLog(5, {Batch(10, {Put{"previous", "p"}})});
     WriteLog(7, {Batch(20, {Put{"current", "c"}})});
-    WriteLog(8, {Batch(30, {Put{"newer", "n"}})});
+    WriteLog(20, {Batch(30, {Put{"newer", "n"}})});
     file_system_.Write(directory_ / "ignored", {});
     file_system_.Write(directory_ / "000090.sst", {});
     file_system_.Write(directory_ / "000099.dbtmp", {});
@@ -351,12 +351,12 @@ TEST_F(RecoveryTest, ReplaysTheLogsThatTheManifestNeeds) {
     }
     EXPECT_EQ(opened_logs,
               (std::vector<std::string>{"open_sequential 000005.log", "open_sequential 000007.log",
-                                        "open_sequential 000008.log"}));
+                                        "open_sequential 000020.log"}));
     EXPECT_EQ(TableEntries(*recovered.versions),
               (Entries{{"previous@10", "p"}, {"current@20", "c"}, {"newer@30", "n"}}));
-    EXPECT_EQ(TableNumbers(*recovered.versions, 0), (std::vector<std::uint64_t>{10}));
+    EXPECT_EQ(TableNumbers(*recovered.versions, 0), (std::vector<std::uint64_t>{21}));
     EXPECT_EQ(recovered.versions->last_sequence(), 100U);
-    EXPECT_EQ(recovered.log_number, 11U);
+    EXPECT_EQ(recovered.log_number, 22U);
 }
 
 TEST_F(RecoveryTest, InstallsANewLogWithoutSelectedReplayInputs) {
