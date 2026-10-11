@@ -78,7 +78,7 @@ dependency. Dependent source and test changes remain in the same small task.
 |---|---|---|---|
 | P01 | Persist policy and the bounded backlog | ADR and style guide agree with this plan | Done |
 | A01 | Remove foundation assertions | Foundation, cache, memory, format, and WAL operations retain their side effects | Delivered in #165 |
-| A02 | Finish table assertion cleanup | Remove assertion-only builder state; retain corruption and terminal-state checks | Prepared, not complete |
+| A02 | Finish table assertion cleanup | Remove assertion-only builder state; retain corruption and terminal-state checks | Delivered in #166 |
 | A03 | Finish metadata assertion cleanup | Remove debug verification only; retain ordered merge and MANIFEST installation | Prepared, not complete |
 | A04 | Finish platform and API assertion cleanup | Retain mapping-slot restoration, explicit validation, and independent termination contracts | Prepared, not complete |
 | A05 | Finish engine assertion cleanup | Retain locks, publication, snapshot ownership, queue completion, and sequence restoration | Prepared, not complete |
@@ -153,11 +153,20 @@ Debug build and 711 unit-labeled checks passed. Seven assertion-only death tests
 were removed; supported behavior tests and static assertions remain. All 20 remote CI checks passed and the implementation merged in #165.
 Its local and remote topic branches were deleted.
 
-A02-A06 remain uncommitted preparation. Their current Debug build succeeded,
-but a combined CTest run reported 12 build-integration failures or not-run
-cases. That run is not a successful full-validation result. Diagnose the
-failure output and rerun in the required toolchain environment before closing
-the corresponding checks.
+A02 merged in #166 after an independent SSTable format/iterator/state review,
+711 passing local unit checks, and all 20 remote CI checks. Its topic branches
+were deleted.
+
+A03 has an independent topology/MANIFEST code review with no actionable
+findings. Reapplying only the three metadata files to merged #166 preserved the
+reviewed source/test tree. The warnings-as-errors MSVC Debug build and 711
+unit checks passed on that revision; remote CI and merge remain required.
+
+A04-A06 are separate locally committed preparation, not delivered changes.
+An earlier combined CTest run reported 12 build-integration failures or not-run
+cases outside the MSVC environment. A later isolated run under `vcvars64`
+passed all 13 integration checks. This does not replace exact-head remote
+checks for subsequent PRs.
 
 Use task status and this document's outcome entries as the handoff, not memory
 of previous conversation turns. Record actual checks after execution; do not
