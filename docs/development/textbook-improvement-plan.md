@@ -83,21 +83,21 @@ dependency. Dependent source and test changes remain in the same small task.
 | P01 | Persist policy and the bounded backlog | ADR and style guide agree with this plan | Done |
 | A01 | Remove foundation assertions | Foundation, cache, memory, format, and WAL operations retain their side effects | Delivered in #165 |
 | A02 | Finish table assertion cleanup | Remove assertion-only builder state; retain corruption and terminal-state checks | Delivered in #166 |
-| A03 | Finish metadata assertion cleanup | Remove debug verification only; retain ordered merge and MANIFEST installation | Consolidated in #167; not yet delivered |
-| A04 | Finish platform and API assertion cleanup | Retain mapping-slot restoration, explicit validation, and independent termination contracts | Consolidated in #167; not yet delivered |
-| A05 | Finish engine assertion cleanup | Retain locks, publication, snapshot ownership, queue completion, and sequence restoration | Consolidated in #167; not yet delivered |
-| A06 | Remove the trusted-status assertion helper | Replace all callers with explicit discard without skipping operations; scan non-instrumentation production code | Consolidated in #167; not yet delivered |
-| D01 | Retire diagnostic entry points | Remove dedicated targets, CLI/report/runner paths, and their tests coherently; ordinary performance remains usable | Consolidated in #167; not yet delivered |
-| D02 | Remove API, key-format, and lookup hooks | Delete diagnostic-only selection timers and parameters, not read-sampling behavior | Consolidated in #167; not yet delivered |
-| D03 | Remove table-cache and SSTable hooks | Preserve cache, filter, decoding, checksum, and copied/mapped behavior | Consolidated in #167; not yet delivered |
-| D04 | Remove native filesystem hooks | Preserve POSIX and Windows acquisition, cleanup, and error contracts | Consolidated in #167; not yet delivered |
-| D05 | Delete the unused instrumentation leaf | Delete its two source files and remaining build macros; no live target or include refers to them | Consolidated in #167; not yet delivered |
-| D06 | Reconcile diagnostic documentation | Current docs advertise supported paths only; historical rationale links to retirement | Consolidated in #167; not yet delivered |
-| F01 | Inventory API and engine orchestration | Name concrete mixed-responsibility functions, or record why no change is needed | Pending |
-| F02 | Inventory storage and recovery orchestration | Review table, WAL, metadata, and recovery; identify complex algorithms to keep intact | Pending |
-| F03 | Inventory foundation and platform composition | Review base, cache, memory, native I/O, and offline diagnostics without inventing wrappers | Pending |
-| F04 | Inventory benchmark and tool composition | Review repository-owned harnesses and scripts separately from engine algorithms | Pending |
-| F05 | Freeze and execute accepted child refactors | Each accepted candidate gets a named task and separate design, checks, and commit | Pending |
+| A03 | Finish metadata assertion cleanup | Remove debug verification only; retain ordered merge and MANIFEST installation | Delivered in #167 |
+| A04 | Finish platform and API assertion cleanup | Retain mapping-slot restoration, explicit validation, and independent termination contracts | Delivered in #167 |
+| A05 | Finish engine assertion cleanup | Retain locks, publication, snapshot ownership, queue completion, and sequence restoration | Delivered in #167 |
+| A06 | Remove the trusted-status assertion helper | Replace all callers with explicit discard without skipping operations; scan non-instrumentation production code | Delivered in #167 |
+| D01 | Retire diagnostic entry points | Remove dedicated targets, CLI/report/runner paths, and their tests coherently; ordinary performance remains usable | Delivered in #167 |
+| D02 | Remove API, key-format, and lookup hooks | Delete diagnostic-only selection timers and parameters, not read-sampling behavior | Delivered in #167 |
+| D03 | Remove table-cache and SSTable hooks | Preserve cache, filter, decoding, checksum, and copied/mapped behavior | Delivered in #167 |
+| D04 | Remove native filesystem hooks | Preserve POSIX and Windows acquisition, cleanup, and error contracts | Delivered in #167 |
+| D05 | Delete the unused instrumentation leaf | Delete its two source files and remaining build macros; no live target or include refers to them | Delivered in #167 |
+| D06 | Reconcile diagnostic documentation | Current docs advertise supported paths only; historical rationale links to retirement | Delivered in #167 |
+| F01 | Inventory API and engine orchestration | Name concrete mixed-responsibility functions, or record why no change is needed | Inventory below; design delivery pending |
+| F02 | Inventory storage and recovery orchestration | Review table, WAL, metadata, and recovery; identify complex algorithms to keep intact | Inventory below; design delivery pending |
+| F03 | Inventory foundation and platform composition | Review base, cache, memory, native I/O, and offline diagnostics without inventing wrappers | Inventory below; design delivery pending |
+| F04 | Inventory benchmark and tool composition | Review repository-owned harnesses and scripts separately from engine algorithms | Inventory below; design delivery pending |
+| F05 | Freeze and execute accepted child refactors | Each accepted candidate gets a named task and separate design, checks, and commit | Three children frozen below; implementation pending |
 | L01 | Reconcile learning and architecture guidance | Source tours, contracts, and examples match the implemented function boundaries | Pending |
 | V01 | Verify the ordinary product | Required build, unit, API, and build-integration checks pass in the configured toolchain | Pending |
 | V02 | Verify storage behavior | Model, compatibility, and crash checks pass in their supported environment | Pending |
@@ -139,6 +139,34 @@ to understand. Keep tightly coupled complex algorithms intact and document that
 decision. Do not add generic callback frameworks, duplicate validation, or
 one-line forwarding helpers solely to make a function shorter.
 
+### Reviewed source inventory
+
+The dispositions below follow actual caller/source/test inspection, not a
+function-length ranking. [ADR-0077](../adr/0077-bounded-orchestration-composition.md)
+records exact helper names, owners, exclusions, and acceptance for the three
+accepted children.
+
+| Area | Inspected flow | Disposition and reason | Characterization |
+|---|---|---|---|
+| F01 API/read state | `Database::Open`, `Get`, `NewIterator`, `PrepareReadOptions`, `EngineOptions`, `DatabaseEngine::GetState` | Keep: validation, translation, read-option preparation and byte aggregation already have explicit stages; retain borrowed Get versus owning iterator/snapshot lifetimes | Public API, snapshot, iterator, state suites |
+| F01 writes/background | `MakeRoomForWrite`, `CommitWrite`, `ApplyBackgroundEdit`, `RemoveObsoleteFiles` | Keep write-pressure/publication state transitions; split obsolete retention/collection as F05-01 | Lifecycle cleanup, sticky error, background scheduling and pinned-Version tests |
+| F02 recovery | `RecoverDatabase`, `PrepareLogsForReplay`, `LogReplay` | Keep replay/flush/sequence stages; extract fresh-WAL durability as F05-02 | Recovery exact operation sequences, failure retry and crash cases |
+| F02 metadata/table/WAL | `VersionSet::Recover`, `LogAndApply`, `Table::Open`, block seek, `WalReader::ReadNext`/`ReadPhysical`, compaction merge | Keep: ordered reconstruction, validation and state-machine algorithms already compose named decoders/builders; extra wrappers would hide ordering | Version/MANIFEST, table/block, WAL, compaction suites |
+| F03 base/format/memory | Fixed/varint coding, write-batch encoding, Arena allocation, SkipList insertion | Keep: shared codecs and allocation/search/publication helpers already separate concerns; tiny forwarding helpers add no concept | Coding, format, arena, skip-list suites |
+| F03 cache/native I/O | `ShardedLruCacheCore::Insert`, POSIX/Windows `OpenRandomAccess` | Keep: allocation/index/LRU/retired destruction and pending-map rollback already expose lock/resource stages; platform fallback policies intentionally differ | Cache reentrant destruction, mapping eligibility/rollback/slot tests |
+| F03 offline diagnostics | `DumpFile`, `DumpWalFramed`, `RunCommand` | Keep: dispatch, framed reading and record formatting are separate; preserve first-corruption accumulation versus immediate output failure | Diagnostic-tool and dump suites |
+| F04 benchmark/CPU | `MutationFixture`, `profile_report.stop_owned`, `summarize_trace` | Keep: fixed-work dispatch, completion and verification are separated; process identity cleanup and weighted aggregation are coupled algorithms | Profile process/parser, mutation stream, CPU calibration/capture suites |
+| F04 performance runner | `run_case` | Extract command construction as F05-03; keep the remaining artifact/process/error transaction intact for this bounded goal | Runner invalid-control, fixed-count, artifact ownership and actual workload tests |
+| F04 parity/tests/examples | Frozen role validators; related recovery/background fixtures, performance tests and existing public examples | Keep: schemas and named test scenarios express their contracts; no duplicate test framework, example API change or unrelated validation refactor is required | Write-parity CI, existing public consumer and harness checks |
+
+### Frozen F05 child list
+
+| Child | Responsibility | Source change surface | State |
+|---|---|---|---|
+| F05-01 | Separate obsolete-file retention, locked collection and unlocked deletion | `database.h`, `database_background.cc` | Awaiting design delivery |
+| F05-02 | Separate fresh recovery WAL acquisition and durability barriers | `recovery.cc` | Awaiting design delivery |
+| F05-03 | Separate pure workload argument construction from experiment lifecycle | `run_performance.py`, `performance_test.py` | Awaiting design delivery |
+
 After the frozen list is delivered, unrelated newly discovered improvements
 belong to a later backlog. Required fixes for defects introduced by this work
 remain part of the current completion goal.
@@ -170,7 +198,7 @@ reviewed source/test tree. The warnings-as-errors MSVC Debug build and 711
 unit checks passed on that revision. Its original #167 head is superseded by the
 consolidated cleanup; old-head checks are not evidence for the expanded PR.
 
-A04-A06 and D01-D06 are combined local preparation, not delivered changes.
+A04-A06 and D01-D06 were combined in #167, rather than separate component PRs.
 An earlier combined CTest run reported 12 build-integration failures or not-run
 cases outside the MSVC environment. A later isolated run under `vcvars64`
 passed all 13 integration checks. This does not replace exact-head remote
@@ -197,8 +225,12 @@ The integrated implementation persona found a retired runner option that could
 bypass rejection when combined with `--help`. Three argument combinations
 reproduced that failure. Early rejection fixed it; the full ordinary performance
 contract check passed again, and a separate narrow persona confirmed resolution.
-No other actionable integrated findings remain. Remote checks must still pass
-on the final published head before merging.
+No other actionable integrated findings remained. All 20 remote checks passed
+on final head `2c339bc02c479a094f0b7790e480583a2c32d7e5`; #167 merged as
+`db6ee9d3f6635bea6d51ceb2c4629ceb220a8511`. The merged tree exactly matched
+the reviewed head. Stable patch IDs confirmed the seven remaining prepared code
+slices were retained. Local/remote delivered branches were deleted and main was
+synchronized; the saved pre-delivery stash remains a recovery archive.
 
 Use task status and this document's outcome entries as the handoff, not memory
 of previous conversation turns. Record actual checks after execution; do not
