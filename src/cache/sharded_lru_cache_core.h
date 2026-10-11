@@ -139,6 +139,10 @@ private:
     [[nodiscard]] static std::size_t ShardIndex(std::uint32_t hash) noexcept;
     [[nodiscard]] static PendingEntry CreateEntry(ByteView key, PendingValue value,
                                                   std::size_t charge);
+    [[nodiscard]] static bool CanAdmit(const Shard& shard, const Entry& entry,
+                                       HandleTable::PreparedInsert prepared) noexcept;
+    static void CommitAdmission(Shard& shard, Entry& entry, HandleTable::PreparedInsert prepared,
+                                Entry*& retired);
     static void DeleteEntry(Entry* entry) noexcept;
     static void Remove(Entry& entry) noexcept;
     static void Append(Entry& list, Entry& entry) noexcept;

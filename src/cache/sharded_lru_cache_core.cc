@@ -188,18 +188,8 @@ ShardedLruCacheCore::Pin ShardedLruCacheCore::Insert(ByteView key, const void* v
     {
         std::lock_guard lock(shard.mutex);
         HandleTable::PreparedInsert prepared = shard.table.PrepareInsert(entry->key(), entry->hash);
-        const std::size_t base_charge =
-            shard.usage - (prepared.existing == nullptr ? 0U : prepared.existing->charge);
-        const bool charge_fits =
-            entry->charge <= std::numeric_limits<std::size_t>::max() - base_charge;
-        if (shard.capacity != 0 && charge_fits) {
-            Entry* replaced = shard.table.CommitInsert(prepared, entry.get());
-            entry->refs = 2;
-            entry->in_cache = true;
-            Append(shard.in_use, *entry);
-            FinishErase(shard, replaced, retired);
-            shard.usage += entry->charge;
-            Evict(shard, retired);
+        if (CanAdmit(shard, *entry, prepared)) {
+            CommitAdmission(shard, *entry, prepared, retired);
         }
     }
     // User value destructors can reenter the cache, so reclamation is outside
@@ -207,6 +197,25 @@ ShardedLruCacheCore::Pin ShardedLruCacheCore::Insert(ByteView key, const void* v
     DeleteRetired(retired);
     Entry* inserted = entry.release();
     return Pin(*this, *inserted);
+}
+
+bool ShardedLruCacheCore::CanAdmit(const Shard& shard, const Entry& entry,
+                                   HandleTable::PreparedInsert prepared) noexcept {
+    const std::size_t base_charge =
+        shard.usage - (prepared.existing == nullptr ? 0U : prepared.existing->charge);
+    const bool charge_fits = entry.charge <= std::numeric_limits<std::size_t>::max() - base_charge;
+    return shard.capacity != 0 && charge_fits;
+}
+
+void ShardedLruCacheCore::CommitAdmission(Shard& shard, Entry& entry,
+                                          HandleTable::PreparedInsert prepared, Entry*& retired) {
+    Entry* replaced = shard.table.CommitInsert(prepared, &entry);
+    entry.refs = 2;
+    entry.in_cache = true;
+    Append(shard.in_use, entry);
+    FinishErase(shard, replaced, retired);
+    shard.usage += entry.charge;
+    Evict(shard, retired);
 }
 
 std::optional<ShardedLruCacheCore::Pin> ShardedLruCacheCore::Lookup(ByteView key) {
