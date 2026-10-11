@@ -2,8 +2,11 @@
 
 > **Historical handoff:** This document records the original profiling
 > research and implementation design. The current build, workload, schema,
-> diagnostics, and CPU-capture procedures are maintained in
+> and CPU-capture procedures are maintained in
 > [development/benchmarking-and-profiling.md](development/benchmarking-and-profiling.md).
+> The fine-grained read-diagnostic target and commands below are historical,
+> not supported entry points; [ADR-0076](adr/0076-textbook-source-composition.md)
+> retires their hooks, collector, and build flags.
 
 ## Purpose and boundary
 

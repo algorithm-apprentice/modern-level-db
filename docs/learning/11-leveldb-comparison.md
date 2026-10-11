@@ -167,5 +167,5 @@ before adding a capability.
 - [Modern database API](../../include/modern_leveldb/db.h)
 - [Modern options](../../include/modern_leveldb/options.h)
 - [Internal engine and existing flush barrier](../../src/engine/database.h)
-- [Existing read diagnostics](../../src/instrumentation/read_diagnostics.h)
+- [Read-diagnostic retirement](../adr/0076-textbook-source-composition.md)
 - [Platform support and durability](../reference/platform-support-and-durability.md)

@@ -422,7 +422,7 @@ index.
 | Directory | Disposition | Files | Change or retain/no-addition rationale |
 |---|---|---|---|
 | `.github/workflows` | N | `ci.yml`, `hardening.yml` | Named jobs, dependency edges, and executable checks already express the gates; contributor procedures belong in the development guide. |
-| `(root)` | R | `CMakeLists.txt` | Keep the explicit separation of ordinary throughput and read instrumentation. |
+| `(root)` | R | `CMakeLists.txt` | Keep ordinary workload and native CPU-capture build boundaries explicit; read instrumentation was retired by ADR-0076. |
 | `benchmarks` | C | `db_bench.cc`, `profiling_bench.cc`, `windows_cpu_profile.cc`, `windows_profile_calibration.cc`, `windows_profile_protocol.h`, `windows_profile_workload.h` | Explain preparation, warmup, fixed work, measured epochs, CPU attribution, process ownership, and verification boundaries. |
 | `benchmarks` | N | `CMakeLists.txt` | Target/policy/test names expose platform selection; the guide owns measurement procedures and validators own report schemas. |
 | `cmake` | R | `Crc32cDependency.cmake`, `GoogleBenchmark.cmake`, `LevelDbReference.cmake` | Retain useful dependency, version-normalization, and reference-provenance explanations. |
@@ -445,8 +445,6 @@ index.
 | `src/engine` | R | `build_table.cc`, `build_table.h`, `db_iterator.cc`, `internal_iterator.h`, `iterators.h`, `recovery.h`, `table_cache.cc`, `table_cache.h` | Preserve existing build/recovery/lifetime contracts and iterator invariants; companion declarations now provide the shared concept map. |
 | `src/format` | C | `internal_key.h`, `wal_format.cc`, `wal_format.h`, `write_batch.cc`, `write_batch.h` | Explain packed order, checked/trusted domains, borrowing, framing, and the exact-header boundary. |
 | `src/format` | N | `internal_key.cc` | Representation and move/view rules belong in the header; named codecs and focused tests expose their implementation details. |
-| `src/instrumentation` | C | `read_diagnostics.h` | Distinguish nested inclusive durations from additive exclusive costs and throughput. |
-| `src/instrumentation` | N | `read_diagnostics.cc` | Session/stage ownership is documented in the header; counters and scoped timing implement it directly. |
 | `src/memory` | C | `arena.cc`, `arena.h`, `memtable.cc`, `memtable.h`, `skiplist.h` | Explain monotonic storage, reserved-byte accounting, one-writer publication, trusted entries, visibility, and borrowing pins. |
 | `src/metadata` | C | `version_edit.h`, `version_set.cc` | Explain canonical edits, allocation-before-I/O, persistence-before-publication, and separate name/data barriers. |
 | `src/metadata` | R | `filenames.cc`, `filenames.h`, `version.h`, `version_edit.cc`, `version_set.h` | Retain parsing, version/topology, edit, and installation contracts that already express the local rules. |
@@ -475,7 +473,7 @@ index.
 | `tests/model` | N | `database_model_test.cc` | Independent map-oracle operations and scenario names are readable without line-by-line narration. |
 | `tests/support` | R | `crash_file_system.h`, `manual_clock.h`, `manual_executor.h`, `memory_file_system.h`, `native_file_system.h`, `scripted_iterator.h`, `windows_crash_child.cc`, `windows_crash_process.cc` | Preserve fault-model, scheduling, backing-resource, scripted-error, and owned-process caveats. |
 | `tests/support` | N | `crash_file_system.cc`, `crash_observation.h`, `database_model.h`, `diagnostic_fixture.cc`, `memory_file_system.cc`, `reference_directory.h`, `table_file.h`, `temporary_directory.h`, `windows_crash_process.h`, `windows_lock_child.cc` | Shared helper contracts and descriptive operations cover these fixtures; avoid duplicating scenarios or API contracts. |
-| `tests/tools` | R | `benchmark_policy_test.py`, `diagnostic_tool_test.py`, `performance_smoke.py`, `read_diagnostics_smoke.py`, `windows_profile_test.py` | Retain focused policy, process, schema, and platform explanations. |
+| `tests/tools` | R | `benchmark_policy_test.py`, `diagnostic_tool_test.py`, `performance_smoke.py`, `windows_profile_test.py` | Retain focused policy, process, schema, and platform explanations. |
 | `tests/tools` | N | `benchmark_gate_test.py`, `check_documentation_test.py`, `ci_changes_test.py`, `performance_test.py`, `profile_process_test.py`, `profile_report_test.py`, `write_parity_test.py` | Scenario names and explicit report/control assertions express their expected behavior; execution maps belong in the production tools. |
 | `tests/unit/api` | N | `public_api_native_test.cc`, `public_api_test.cc`, `public_api_windows_test.cc`, `public_api_without_posix_test.cc` | Public declarations now give the caller rules; descriptive behavior tests remain the evidence. |
 | `tests/unit/base` | N | `bytes_test.cc`, `coding_test.cc`, `comparator_test.cc`, `crc32c_test.cc`, `hash_test.cc`, `result_test.cc` | Named representation/error/ordering cases and literal expectations need no redundant annotations. |

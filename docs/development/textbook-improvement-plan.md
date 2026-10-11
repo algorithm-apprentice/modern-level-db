@@ -41,8 +41,11 @@ The owner requires separate independent persona reviews for design documents
 and implementation changes, including low-risk tasks in this backlog. Publish
 and merge the reviewed design-only PR before implementing its new contract.
 Then review the code with a separate implementation persona and publish a narrow
-implementation PR. A shared accepted design may cover multiple named slices;
-each implementation still needs its own code review.
+implementation PR. A shared accepted design may cover multiple named slices.
+At the owner's subsequent request, the remaining mechanical assertion and
+read-diagnostic deletions are consolidated in #167, with an independent review
+of the complete combined diff. The internal task IDs are verification boundaries,
+not mandatory PR counts. Function-composition changes still use bounded PRs.
 
 Local commits do not imply a published, reviewed, or merged pull request.
 The owner has authorized sequential PR publication and merging when there are
@@ -57,7 +60,8 @@ explicitly permits dependent local preparation while the preceding PR's CI
 runs. Keep it on a separate branch, do not change the published head, and do not
 publish the dependent PR before the predecessor merges. Reapply the local slice
 to the merged base and validate that revision before publication. This limited
-overlap does not authorize parallel unrelated implementation branches.
+overlap also permits genuinely independent PRs when their API, ownership, build,
+and test dependencies do not overlap. Writes in this enlistment remain sequential.
 
 Existing locally prepared work predates this delivery rule. Review its design
 separately, merge that design before publishing implementation, and disclose
@@ -79,16 +83,16 @@ dependency. Dependent source and test changes remain in the same small task.
 | P01 | Persist policy and the bounded backlog | ADR and style guide agree with this plan | Done |
 | A01 | Remove foundation assertions | Foundation, cache, memory, format, and WAL operations retain their side effects | Delivered in #165 |
 | A02 | Finish table assertion cleanup | Remove assertion-only builder state; retain corruption and terminal-state checks | Delivered in #166 |
-| A03 | Finish metadata assertion cleanup | Remove debug verification only; retain ordered merge and MANIFEST installation | Prepared, not complete |
-| A04 | Finish platform and API assertion cleanup | Retain mapping-slot restoration, explicit validation, and independent termination contracts | Prepared, not complete |
-| A05 | Finish engine assertion cleanup | Retain locks, publication, snapshot ownership, queue completion, and sequence restoration | Prepared, not complete |
-| A06 | Remove the trusted-status assertion helper | Replace all callers with explicit discard without skipping operations; scan non-instrumentation production code | Prepared, not complete |
-| D01 | Retire diagnostic entry points | Remove dedicated targets, CLI/report/runner paths, and their tests coherently; ordinary performance remains usable | Pending |
-| D02 | Remove API, key-format, and lookup hooks | Delete diagnostic-only selection timers and parameters, not read-sampling behavior | Pending |
-| D03 | Remove table-cache and SSTable hooks | Preserve cache, filter, decoding, checksum, and copied/mapped behavior | Pending |
-| D04 | Remove native filesystem hooks | Preserve POSIX and Windows acquisition, cleanup, and error contracts | Pending |
-| D05 | Delete the unused instrumentation leaf | Delete its two source files and remaining build macros; no live target or include refers to them | Pending |
-| D06 | Reconcile diagnostic documentation | Current docs advertise supported paths only; historical rationale links to retirement | Pending |
+| A03 | Finish metadata assertion cleanup | Remove debug verification only; retain ordered merge and MANIFEST installation | Consolidated in #167; not yet delivered |
+| A04 | Finish platform and API assertion cleanup | Retain mapping-slot restoration, explicit validation, and independent termination contracts | Consolidated in #167; not yet delivered |
+| A05 | Finish engine assertion cleanup | Retain locks, publication, snapshot ownership, queue completion, and sequence restoration | Consolidated in #167; not yet delivered |
+| A06 | Remove the trusted-status assertion helper | Replace all callers with explicit discard without skipping operations; scan non-instrumentation production code | Consolidated in #167; not yet delivered |
+| D01 | Retire diagnostic entry points | Remove dedicated targets, CLI/report/runner paths, and their tests coherently; ordinary performance remains usable | Consolidated in #167; not yet delivered |
+| D02 | Remove API, key-format, and lookup hooks | Delete diagnostic-only selection timers and parameters, not read-sampling behavior | Consolidated in #167; not yet delivered |
+| D03 | Remove table-cache and SSTable hooks | Preserve cache, filter, decoding, checksum, and copied/mapped behavior | Consolidated in #167; not yet delivered |
+| D04 | Remove native filesystem hooks | Preserve POSIX and Windows acquisition, cleanup, and error contracts | Consolidated in #167; not yet delivered |
+| D05 | Delete the unused instrumentation leaf | Delete its two source files and remaining build macros; no live target or include refers to them | Consolidated in #167; not yet delivered |
+| D06 | Reconcile diagnostic documentation | Current docs advertise supported paths only; historical rationale links to retirement | Consolidated in #167; not yet delivered |
 | F01 | Inventory API and engine orchestration | Name concrete mixed-responsibility functions, or record why no change is needed | Pending |
 | F02 | Inventory storage and recovery orchestration | Review table, WAL, metadata, and recovery; identify complex algorithms to keep intact | Pending |
 | F03 | Inventory foundation and platform composition | Review base, cache, memory, native I/O, and offline diagnostics without inventing wrappers | Pending |
@@ -102,14 +106,17 @@ dependency. Dependent source and test changes remain in the same small task.
 | V05 | Complete independent review and handoff | Resolve actionable findings, record environment gaps and evidence, persist the final outcome | Pending |
 
 Assertion preparation has already touched several source areas in one working
-tree. Those edits are not completed tasks: separate them into the boundaries
-above, audit assertion-only members, and validate each resulting commit. Do not
-commit the entire prepared diff as one large change.
+tree. Audit assertion-only members and retain the small internal commits, but
+publish the remaining mechanical deletion as one PR. Do not mix function
+composition or behavioral changes into that cleanup.
 
 For D01, retire the executable, build/test registrations, benchmark diagnostic
 mode, Python runner/validator, and directly dependent tests together. Keep the
 ordinary macro-zero build temporarily while D02-D04 remove source hooks.
-Delete the orphaned instrumentation leaf and macro definitions only in D05.
+Delete the orphaned instrumentation leaf and macro definitions after those hooks
+are removed. Preserve frozen write-parity comparisons across historical disabled
+definitions and current flagless builds; reject instrumented-only or ambiguous
+compile evidence.
 Ordinary report provenance may retain the constant
 `read_diagnostics_compiled=false`; it is not a remaining instrumentation branch.
 
@@ -160,13 +167,38 @@ were deleted.
 A03 has an independent topology/MANIFEST code review with no actionable
 findings. Reapplying only the three metadata files to merged #166 preserved the
 reviewed source/test tree. The warnings-as-errors MSVC Debug build and 711
-unit checks passed on that revision; remote CI and merge remain required.
+unit checks passed on that revision. Its original #167 head is superseded by the
+consolidated cleanup; old-head checks are not evidence for the expanded PR.
 
-A04-A06 are separate locally committed preparation, not delivered changes.
+A04-A06 and D01-D06 are combined local preparation, not delivered changes.
 An earlier combined CTest run reported 12 build-integration failures or not-run
 cases outside the MSVC environment. A later isolated run under `vcvars64`
 passed all 13 integration checks. This does not replace exact-head remote
 checks for subsequent PRs.
+
+The consolidated #167 source tree passed the warnings-as-errors MSVC Debug
+build and `ctest --test-dir build/windows-debug -L "unit|cmake"`: 710 unit
+checks and 13 CMake integration checks. The extended Windows build passed
+18 model/compatibility/crash checks. The retained optimized profiling build
+passed all 11 performance-labeled checks, including ordinary contracts/smoke,
+fixed-work mutations, profile parsing, and native CPU capture/calibration.
+All selections used `--no-tests=error` and retained JUnit reports.
+
+The documentation validator and all 13 documentation-tool tests passed.
+Three focused frozen-compile tests passed for flagless builds, historical
+disabled definitions, and rejection of instrumented-only/ambiguous evidence;
+the full write-parity suite remains a non-Windows CI requirement. Generated
+Debug/profiling compile commands contain neither the retired collector nor
+its macro. Production/include/benchmark/build scans found no runtime assertion,
+diagnostic macro, include, or dedicated target.
+
+The delivery amendment passed a separate independent design-persona review.
+The integrated implementation persona found a retired runner option that could
+bypass rejection when combined with `--help`. Three argument combinations
+reproduced that failure. Early rejection fixed it; the full ordinary performance
+contract check passed again, and a separate narrow persona confirmed resolution.
+No other actionable integrated findings remain. Remote checks must still pass
+on the final published head before merging.
 
 Use task status and this document's outcome entries as the handoff, not memory
 of previous conversation turns. Record actual checks after execution; do not

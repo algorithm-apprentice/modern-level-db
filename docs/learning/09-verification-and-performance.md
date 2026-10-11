@@ -141,13 +141,13 @@ The remaining presets are separate, optional study sessions:
 
 | Linux/macOS preset | Windows preset | What to study |
 |---|---|---|
-| `release` | `windows-release` | Behavior with optimization and Debug assertions removed |
+| `release` | `windows-release` | Behavior under optimization; production runtime assertions are absent in both configurations |
 | `compatibility` | `windows-compatibility` | Model, upstream compatibility, cross-open, and crash/process tiers |
 | `asan` | Not admitted | Address/undefined-behavior instrumentation with correctness tiers |
 | `tsan` | Not admitted | Race instrumentation with unit/model tiers |
 | `fuzz` | Not admitted | Bounded corpus replay and fuzz smoke campaigns |
 | `benchmarks` | `windows-benchmarks` | Comparative severe-regression guard and native diagnostic baseline |
-| `profiling` | `windows-profiling` | Selected workloads, diagnostics, and profiling contracts |
+| `profiling` | `windows-profiling` | Selected workloads, CPU capture, and profiling contracts |
 | `coverage` | Not admitted | GCC instrumentation and changed-code coverage evidence |
 
 See [building and testing](../development/building-and-testing.md) and
