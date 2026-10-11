@@ -487,6 +487,7 @@ TEST(PublicDatabaseTest, ValidatesOptionsAndRetainsTheComparator) {
     const Result<Database> rejected = Database::Open(invalid, invalid_directory.path());
     ASSERT_FALSE(rejected.has_value());
     EXPECT_EQ(rejected.error().code(), ErrorCode::InvalidArgument);
+    EXPECT_EQ(rejected.error().message(), "block_restart_interval must be at least one");
     EXPECT_FALSE(std::filesystem::exists(invalid_directory.path()));
 
     for (const Compression compression :
@@ -498,6 +499,7 @@ TEST(PublicDatabaseTest, ValidatesOptionsAndRetainsTheComparator) {
         const Result<Database> result = Database::Open(invalid_compression, directory.path());
         ASSERT_FALSE(result.has_value());
         EXPECT_EQ(result.error().code(), ErrorCode::InvalidArgument);
+        EXPECT_EQ(result.error().message(), "compression type is invalid");
         EXPECT_FALSE(std::filesystem::exists(directory.path()));
     }
 
@@ -510,6 +512,7 @@ TEST(PublicDatabaseTest, ValidatesOptionsAndRetainsTheComparator) {
         const Result<Database> result = Database::Open(invalid_level, directory.path());
         ASSERT_FALSE(result.has_value());
         EXPECT_EQ(result.error().code(), ErrorCode::InvalidArgument);
+        EXPECT_EQ(result.error().message(), "Zstd compression level is outside [-5, 22]");
         EXPECT_FALSE(std::filesystem::exists(directory.path()));
     }
 
@@ -527,6 +530,20 @@ TEST(PublicDatabaseTest, ValidatesOptionsAndRetainsTheComparator) {
     opened = std::unexpected(Error::Aborted("release the database"));
     EXPECT_TRUE(retained.expired());
     EXPECT_TRUE(destroyed->load());
+}
+
+TEST(PublicDatabaseTest, AcceptsBothZstdLevelEndpoints) {
+    for (const int level : {-5, 22}) {
+        SCOPED_TRACE(level);
+        TemporaryDatabaseDirectory directory;
+        Options options = CreatingOptions();
+        options.compression = Compression::Zstd;
+        options.zstd_compression_level = level;
+
+        const auto opened = Database::Open(options, directory.path());
+
+        ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+    }
 }
 
 TEST(PublicDatabaseTest, WiresBloomFiltersIntoWrittenTables) {
@@ -561,6 +578,8 @@ TEST(PublicDatabaseTest, WritesAndReopensEveryCompressionMode) {
         options.compression = compression;
         if (compression == Compression::Zstd) {
             options.zstd_compression_level = -5;
+        } else {
+            options.zstd_compression_level = 23;
         }
         {
             Result<Database> opened = Database::Open(options, directory.path());
