@@ -109,6 +109,13 @@ class WindowsProfileTest(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def test_short_owned_workloads_release_before_job_drain_check(self):
+        for _ in range(8):
+            _, result, profile, epochs = capture("wait", duration=200)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIsNotNone(profile)
+            self.assertIsNotNone(epochs)
+
     def test_mismatched_symbols_and_readiness_timeout_are_not_success(self):
         root, result, profile, epochs = capture("hot", symbols=PERFORMANCE_PDB)
         self.assertNotEqual(result.returncode, 0)
