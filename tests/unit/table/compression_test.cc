@@ -124,6 +124,12 @@ TEST(BlockCompressionTest, RejectsMalformedAndUnboundedStreams) {
 
     ExpectCorruption(DecompressBlock(Bytes({0x00}), BlockCompression::None));
     ExpectCorruption(DecompressBlock(Bytes({0x00}), static_cast<BlockCompression>(0xff)));
+    for (const BlockCompression type :
+         {BlockCompression::None, static_cast<BlockCompression>(0xff)}) {
+        const auto invalid = DecompressBlock(Bytes({0x00}), type);
+        ASSERT_FALSE(invalid.has_value());
+        EXPECT_EQ(invalid.error().message(), "block has an invalid compression type");
+    }
 }
 
 TEST(BlockCompressionTest, ReusesScratchAndRejectsUnknownRequests) {
