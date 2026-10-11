@@ -17,16 +17,19 @@
 namespace modern_leveldb {
 namespace {
 
-struct EntryView {
+// Private packed-record codec for MemTable storage. Shared length-prefix and
+// internal-key primitives stay in base/format; this representation has no
+// consumer outside MemTable and its SkipList comparator/iterator.
+struct MemTableEntryView {
     ByteView internal_key;
     ByteView value;
 };
 
-ByteView DecodeInternalKey(const std::byte* entry) noexcept {
+ByteView DecodeMemTableInternalKey(const std::byte* entry) noexcept {
     return ConsumeLengthPrefixedTrusted(entry);
 }
 
-EntryView DecodeEntry(const std::byte* entry) noexcept {
+MemTableEntryView DecodeMemTableEntry(const std::byte* entry) noexcept {
     const ByteView internal_key = ConsumeLengthPrefixedTrusted(entry);
     const ByteView value = ConsumeLengthPrefixedTrusted(entry);
     return {
@@ -35,14 +38,14 @@ EntryView DecodeEntry(const std::byte* entry) noexcept {
     };
 }
 
-std::size_t TrustedEncodedSize(ByteView key, ByteView value) noexcept {
+std::size_t EncodedMemTableEntrySize(ByteView key, ByteView value) noexcept {
     const std::size_t internal_key_size = key.size() + InternalKeyTrailerSize;
     return VarintLength(static_cast<std::uint32_t>(internal_key_size)) + internal_key_size +
            VarintLength(static_cast<std::uint32_t>(value.size())) + value.size();
 }
 
-const std::byte* EncodeEntry(Arena& arena, SequenceNumber sequence, ValueKind kind, ByteView key,
-                             ByteView value, std::size_t encoded_size) {
+const std::byte* EncodeMemTableEntry(Arena& arena, SequenceNumber sequence, ValueKind kind,
+                                     ByteView key, ByteView value, std::size_t encoded_size) {
     MutableByteView output(arena.Allocate(encoded_size), encoded_size);
     const std::byte* const entry = output.data();
     const std::size_t internal_key_size = key.size() + InternalKeyTrailerSize;
@@ -92,8 +95,8 @@ MemTable::MemTable(const Comparator& user_comparator)
 
 void MemTable::Add(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value) {
     assert(IsValidValueKind(kind));
-    const std::byte* const entry =
-        EncodeEntry(arena_, sequence, kind, key, value, TrustedEncodedSize(key, value));
+    const std::byte* const entry = EncodeMemTableEntry(arena_, sequence, kind, key, value,
+                                                       EncodedMemTableEntrySize(key, value));
     table_.Insert(entry);
 }
 
@@ -106,7 +109,7 @@ MemTableLookup MemTable::Lookup(const LookupKey& key) const {
         return {};
     }
 
-    const EntryView entry = DecodeEntry(iterator.entry());
+    const MemTableEntryView entry = DecodeMemTableEntry(iterator.entry());
     const ByteView candidate_user_key =
         entry.internal_key.first(entry.internal_key.size() - InternalKeyTrailerSize);
     if (user_comparator_.Compare(candidate_user_key, key.user_key()) != 0) {
@@ -127,14 +130,16 @@ MemTableLookup MemTable::Lookup(const LookupKey& key) const {
 
 int MemTable::EntryComparator::operator()(const std::byte* left,
                                           const std::byte* right) const noexcept {
-    return comparator.Compare(DecodeInternalKey(left), DecodeInternalKey(right));
+    return comparator.Compare(DecodeMemTableInternalKey(left), DecodeMemTableInternalKey(right));
 }
 
 MemTable::Iterator::Iterator(const MemTable& table) noexcept : iterator_(table.table_) {}
 
-ByteView MemTable::Iterator::key() const { return DecodeEntry(iterator_.entry()).internal_key; }
+ByteView MemTable::Iterator::key() const {
+    return DecodeMemTableEntry(iterator_.entry()).internal_key;
+}
 
-ByteView MemTable::Iterator::value() const { return DecodeEntry(iterator_.entry()).value; }
+ByteView MemTable::Iterator::value() const { return DecodeMemTableEntry(iterator_.entry()).value; }
 
 Status MemTable::Iterator::Seek(ByteView internal_key) {
     const Result<InternalKeyView> parsed = ParseInternalKey(internal_key);
