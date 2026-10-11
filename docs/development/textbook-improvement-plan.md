@@ -21,7 +21,7 @@ behavior and source-style policy.
 
 ## Task execution contract
 
-Only one implementation task is active at a time. A task changes one named
+Only one task is actively being implemented at a time. A task changes one named
 responsibility and its directly dependent declarations, tests, and documentation.
 If its explanation needs several independent responsibilities, split it before
 implementation. Do not use a mechanical function-line limit.
@@ -37,10 +37,32 @@ Each task follows this sequence:
 4. Review the diff, resolve demonstrated defects, and record the outcome.
 5. Persist the slice in a small commit before starting the next implementation.
 
-Use the independent design and pre-owner review gates in
-[ADR-0006](../adr/0006-sequential-pull-request-workflow.md) where required.
-Local commits do not imply a published, reviewed, or merged pull request. Do not
-publish remotely without the owner's instruction.
+The owner requires separate independent persona reviews for design documents
+and implementation changes, including low-risk tasks in this backlog. Publish
+and merge the reviewed design-only PR before implementing its new contract.
+Then review the code with a separate implementation persona and publish a narrow
+implementation PR. A shared accepted design may cover multiple named slices;
+each implementation still needs its own code review.
+
+Local commits do not imply a published, reviewed, or merged pull request.
+The owner has authorized sequential PR publication and merging when there are
+no unresolved actionable review findings and all applicable checks pass on the
+exact published head. Use the `algorithm-apprentice` GitHub account and commit
+identity. Never bypass a failing check or use administrative merge overrides.
+Delete merged local and remote topic branches; retain branches or saved work
+that still contain undelivered changes.
+
+Follow [ADR-0006](../adr/0006-sequential-pull-request-workflow.md). The owner
+explicitly permits dependent local preparation while the preceding PR's CI
+runs. Keep it on a separate branch, do not change the published head, and do not
+publish the dependent PR before the predecessor merges. Reapply the local slice
+to the merged base and validate that revision before publication. This limited
+overlap does not authorize parallel unrelated implementation branches.
+
+Existing locally prepared work predates this delivery rule. Review its design
+separately, merge that design before publishing implementation, and disclose
+that the design review is retrospective rather than claiming a pre-implementation
+gate occurred.
 
 Do not run a large orchestration workflow or make parallel implementation
 branches merely because the backlog has many items. A blocked task stays blocked;
@@ -55,7 +77,7 @@ dependency. Dependent source and test changes remain in the same small task.
 | ID | Small task | Acceptance boundary | Initial state |
 |---|---|---|---|
 | P01 | Persist policy and the bounded backlog | ADR and style guide agree with this plan | Done |
-| A01 | Remove foundation assertions | Foundation, cache, memory, format, and WAL operations retain their side effects | Done |
+| A01 | Remove foundation assertions | Foundation, cache, memory, format, and WAL operations retain their side effects | Locally committed; PR review and delivery pending |
 | A02 | Finish table assertion cleanup | Remove assertion-only builder state; retain corruption and terminal-state checks | Prepared, not complete |
 | A03 | Finish metadata assertion cleanup | Remove debug verification only; retain ordered merge and MANIFEST installation | Prepared, not complete |
 | A04 | Finish platform and API assertion cleanup | Retain mapping-slot restoration, explicit validation, and independent termination contracts | Prepared, not complete |
@@ -116,8 +138,14 @@ remain part of the current completion goal.
 
 ## Evidence and status
 
-The shared-rule changes in ADR-0075 and the source-style policy are committed.
-A01 was committed as `c09c7e6`; its focused foundation run passed 187 tests.
+The shared-rule changes in ADR-0075 and the source-style policy were committed
+locally before sequential PR delivery began. The shared-rule design merged in
+#160; read-option preparation merged in #161. Remaining local commits are not
+evidence of remote delivery.
+
+A01 was committed locally as `c09c7e6`; its focused foundation run passed 187
+tests. It still needs separate code review, isolated-revision verification, and
+an implementation PR after this design is reviewed and merged.
 
 A02-A06 remain uncommitted preparation. Their current Debug build succeeded,
 but a combined CTest run reported 12 build-integration failures or not-run
