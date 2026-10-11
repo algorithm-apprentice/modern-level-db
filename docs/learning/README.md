@@ -44,6 +44,9 @@ not a complete C++ or operating-systems textbook.
 | [10. Guided labs](10-guided-labs.md) | Can I predict and inspect the engine's behavior? | A runnable API example, focused tests, state observation, and storage-file diagnostics |
 
 [The glossary](glossary.md) is a quick reference, not another prerequisite.
+[The concept-to-code index](concept-index.md) is the maintenance map from a
+storage concept to its current contract, implementation entry points, tests,
+and decision history.
 [The LevelDB comparison](11-leveldb-comparison.md) separates existing
 capabilities, intentional differences, and possible learning-oriented
 extensions. It is a proposal list, not an approved implementation roadmap.
@@ -57,7 +60,9 @@ Finish with the snapshot example in lesson 10.
 **Implementation pass:** follow each source-tour table in order. Read a
 function together with its corresponding test before following its callees.
 Use lessons 08 and 09 to explain the lifetime, synchronization, and evidence
-behind each function.
+behind each function. For a concrete change, start from the
+[concept-to-code index](concept-index.md) and follow the
+[document-first development workflow](../development/document-first-development.md).
 
 **Deep pass:** do the labs, answer the self-checks without opening the
 answers, and then read the linked ADRs. Study the parity and profiling ADRs
@@ -91,6 +96,10 @@ Applications do not choose these sequence numbers; the engine assigns them.
 Use the [ADR index](../adr/README.md) to search decisions by topic and
 lifecycle. The direct record links below are useful starting points, not a
 replacement for the current reference documents.
+
+This table gives a broad repository orientation. The maintained
+[concept-to-code index](concept-index.md) provides the finer change-oriented
+map to implementation entry points and representative tests.
 
 | Area | Start here | Decisions to read after the lesson |
 |---|---|---|

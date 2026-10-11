@@ -9,6 +9,7 @@ repository.
 
 | Need | Document |
 |---|---|
+| Start a change from a concept, contract, source index, and evidence map | [Document-first development](document-first-development.md) |
 | Configure, build, and run the test tiers | [Building and testing](building-and-testing.md) |
 | Understand CI and quality gates | [CI and quality gates](ci-and-quality-gates.md) |
 | Run comparative benchmarks, selected workloads, diagnostics, and CPU capture | [Benchmarking and profiling](benchmarking-and-profiling.md) |
@@ -21,7 +22,8 @@ repository.
 Changes follow the sequential pull-request workflow in
 [ADR-0006](../adr/0006-sequential-pull-request-workflow.md):
 
-1. Establish the relevant contract and evidence.
+1. Start from the relevant concept and establish its maintained contract,
+   bounded source map, and evidence.
 2. Deliver one coherent DAG node.
 3. Run the smallest complete validation plus affected consumers.
 4. Obtain the required independent review and close findings.
@@ -30,6 +32,8 @@ Changes follow the sequential pull-request workflow in
 Documentation-only work uses content/structure validation rather than
 artificial product tests. Product behavior still requires TDD and the
 repository's coverage, sanitizer, compatibility, fuzz, and benchmark gates.
+The [document-first workflow](document-first-development.md) explains which
+document class owns each kind of fact and when the concept index must change.
 
 ## Current and historical documents
 
