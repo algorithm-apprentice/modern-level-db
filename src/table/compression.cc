@@ -56,6 +56,43 @@ bool CompressZstdBlock(ByteView raw, int zstd_level, std::vector<std::byte>& scr
     return true;
 }
 
+Result<std::vector<std::byte>> DecompressSnappyBlock(ByteView stored) {
+    std::size_t uncompressed_size = 0;
+    if (!snappy::GetUncompressedLength(reinterpret_cast<const char*>(stored.data()), stored.size(),
+                                       &uncompressed_size)) {
+        return std::unexpected(CorruptCompression("compressed Snappy block has an invalid length"));
+    }
+    std::vector<std::byte> output;
+    if (!PrepareOutput(uncompressed_size, output)) {
+        return std::unexpected(CorruptCompression("compressed Snappy block is too large"));
+    }
+    char empty_output = '\0';
+    char* const destination =
+        output.empty() ? &empty_output : reinterpret_cast<char*>(output.data());
+    if (!snappy::RawUncompress(reinterpret_cast<const char*>(stored.data()), stored.size(),
+                               destination)) {
+        return std::unexpected(CorruptCompression("compressed Snappy block has invalid contents"));
+    }
+    return output;
+}
+
+Result<std::vector<std::byte>> DecompressZstdBlock(ByteView stored) {
+    const unsigned long long declared = ZSTD_getFrameContentSize(stored.data(), stored.size());
+    std::vector<std::byte> output;
+    // The two Zstd error sentinels also exceed the block-size bound.
+    static_assert(ZSTD_CONTENTSIZE_ERROR > MaxBlockSize && ZSTD_CONTENTSIZE_UNKNOWN > MaxBlockSize);
+    if (declared == 0 || declared > std::min(MaxBlockSize, output.max_size())) {
+        return std::unexpected(CorruptCompression("compressed Zstd block has an invalid size"));
+    }
+    output.resize(static_cast<std::size_t>(declared));
+    const std::size_t actual =
+        ZSTD_decompress(output.data(), output.size(), stored.data(), stored.size());
+    if (ZSTD_isError(actual) != 0U || actual != output.size()) {
+        return std::unexpected(CorruptCompression("compressed Zstd block has invalid contents"));
+    }
+    return output;
+}
+
 }  // namespace
 
 Status ValidateCompressionOptions(BlockCompression type, int zstd_level) {
@@ -105,44 +142,11 @@ bool TryCompressBlock(ByteView raw, BlockCompression requested, int zstd_level,
 
 Result<std::vector<std::byte>> DecompressBlock(ByteView stored, BlockCompression type) {
     if (type == BlockCompression::Snappy) {
-        std::size_t uncompressed_size = 0;
-        if (!snappy::GetUncompressedLength(reinterpret_cast<const char*>(stored.data()),
-                                           stored.size(), &uncompressed_size)) {
-            return std::unexpected(
-                CorruptCompression("compressed Snappy block has an invalid length"));
-        }
-        std::vector<std::byte> output;
-        if (!PrepareOutput(uncompressed_size, output)) {
-            return std::unexpected(CorruptCompression("compressed Snappy block is too large"));
-        }
-        char empty_output = '\0';
-        char* const destination =
-            output.empty() ? &empty_output : reinterpret_cast<char*>(output.data());
-        if (!snappy::RawUncompress(reinterpret_cast<const char*>(stored.data()), stored.size(),
-                                   destination)) {
-            return std::unexpected(
-                CorruptCompression("compressed Snappy block has invalid contents"));
-        }
-        return output;
+        return DecompressSnappyBlock(stored);
     }
 
     if (type == BlockCompression::Zstd) {
-        const unsigned long long declared = ZSTD_getFrameContentSize(stored.data(), stored.size());
-        std::vector<std::byte> output;
-        // The two Zstd error sentinels also exceed the block-size bound.
-        static_assert(ZSTD_CONTENTSIZE_ERROR > MaxBlockSize &&
-                      ZSTD_CONTENTSIZE_UNKNOWN > MaxBlockSize);
-        if (declared == 0 || declared > std::min(MaxBlockSize, output.max_size())) {
-            return std::unexpected(CorruptCompression("compressed Zstd block has an invalid size"));
-        }
-        output.resize(static_cast<std::size_t>(declared));
-        const std::size_t actual =
-            ZSTD_decompress(output.data(), output.size(), stored.data(), stored.size());
-        if (ZSTD_isError(actual) != 0U || actual != output.size()) {
-            return std::unexpected(
-                CorruptCompression("compressed Zstd block has invalid contents"));
-        }
-        return output;
+        return DecompressZstdBlock(stored);
     }
 
     return std::unexpected(CorruptCompression("block has an invalid compression type"));
