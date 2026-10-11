@@ -2,7 +2,7 @@
 
 ## Scope
 
-Design proposal for W01/W02 in the
+Design accepted in #202 for W01/W02 in the
 [production composition plan](production-function-composition-plan.md).
 Production changes are limited to WalReader in wal_io.cc/h and directly related
 characterization tests. WalWriter, fragment encoding, DecodeWalFragment,
@@ -124,3 +124,28 @@ Independent design review found the need for an explicit compiler-valid
 non-void dispatch terminator; the std::unreachable rule above resolves it
 without inventing invalid-enum behavior. It found no other significant issue.
 The reviewer inspected source/format/tests without editing or executing tests.
+
+## Implementation evidence
+
+Three new reader cases and strengthened exact physical corruption assertions
+passed on original production at
+`4c2cdd54f0c5da8211407a3e87115efee1a0893a` before extraction. The cases cover
+active empty-First provenance/reset, combined First/Middle interruption with
+rewound Full and no next-block read-ahead, and oversized complete-block
+corruption versus benign final partial tail. Exact JUnit sets verify the same
+67 WalReaderTest/WalWriterTest/WalIoNativeTest/VersionSetTest/RecoveryTest cases
+before/after with no failures/errors/skips; the physical topic passes 25 cases.
+
+The unpublished branch was rebased over unrelated delivered cache #200.
+The four WAL design/source/header/test paths were byte-equivalent after rebase,
+and the integrated unit target was rebuilt before rerunning all 67 cases.
+No public category, writer behavior, Error copy, or backing owner was added.
+The eleven-definition ledger above matches the implemented boundaries.
+The original exhaustive-switch coverage annotation moved with dispatch;
+std::unreachable is the compiler-visible terminator required by design review.
+Remote exact-head coverage remains authoritative.
+
+Independent combined review found no significant issue in the four changed
+paths. It directly verified the same 67 unique cases and zero failures/errors/
+skips in both JUnit artifacts without executing builds/tests or independently
+establishing build/rebase provenance. Cache/MANIFEST changes were excluded.

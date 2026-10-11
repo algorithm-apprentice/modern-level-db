@@ -98,60 +98,84 @@ WalReadResult WalReader::ReadNext() {
         }
 
         if (auto* corruption = std::get_if<WalCorruption>(&**physical)) {
-            if (in_fragmented_record_) {
-                corruption->dropped_bytes += scratch_.size();
-                corruption->offset = partial_record_offset_;
-            }
-            ClearPartial();
-            return Event(std::move(*corruption));
+            return Event(ConsumeCorruption(std::move(*corruption)));
         }
 
-        const PhysicalFragment& fragment = std::get<PhysicalFragment>(**physical);
-        switch (fragment.type) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/5 exhaustive switch default
-            case WalRecordType::Zero:
-                if (HasPartialPayload()) {
-                    return AbandonPartial("WAL fragmented record ended at a zero marker");
-                }
-                ClearPartial();
-                continue;
-
-            case WalRecordType::Full:
-                if (HasPartialPayload()) {
-                    // Leave this fragment unconsumed so the next call returns it.
-                    block_position_ = fragment.block_position;
-                    return AbandonPartial("WAL fragmented record was interrupted by a full record");
-                }
-                ClearPartial();
-                return Event(WalLogicalRecord{.data = fragment.payload, .offset = fragment.offset});
-
-            case WalRecordType::First:
-                if (HasPartialPayload()) {
-                    block_position_ = fragment.block_position;
-                    return AbandonPartial(
-                        "WAL fragmented record was interrupted by a first fragment");
-                }
-                scratch_.assign(fragment.payload.begin(), fragment.payload.end());
-                partial_record_offset_ = fragment.offset;
-                in_fragmented_record_ = true;
-                continue;
-
-            case WalRecordType::Middle:
-            case WalRecordType::Last:
-                if (!in_fragmented_record_) {
-                    return Event(WalCorruption{
-                        .error = Error::Corruption("WAL fragment has no starting fragment"),
-                        .dropped_bytes = fragment.payload.size(),
-                        .offset = fragment.offset,
-                    });
-                }
-                scratch_.insert(scratch_.end(), fragment.payload.begin(), fragment.payload.end());
-                if (fragment.type == WalRecordType::Middle) {
-                    continue;
-                }
-                in_fragmented_record_ = false;
-                return Event(WalLogicalRecord{.data = scratch_, .offset = partial_record_offset_});
+        std::optional<WalReadEvent> event = ConsumeFragment(std::get<PhysicalFragment>(**physical));
+        if (event.has_value()) {
+            return Event(std::move(*event));
         }
     }
+}
+
+WalReadEvent WalReader::ConsumeCorruption(WalCorruption corruption) {
+    if (in_fragmented_record_) {
+        corruption.dropped_bytes += scratch_.size();
+        corruption.offset = partial_record_offset_;
+    }
+    ClearPartial();
+    return corruption;
+}
+
+std::optional<WalReadEvent> WalReader::ConsumeFragment(const PhysicalFragment& fragment) {
+    switch (fragment.type) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/5 exhaustive switch default
+        case WalRecordType::Zero:
+            return ConsumeZero();
+        case WalRecordType::Full:
+            return ConsumeFull(fragment);
+        case WalRecordType::First:
+            return ConsumeFirst(fragment);
+        case WalRecordType::Middle:
+        case WalRecordType::Last:
+            return ConsumeContinuation(fragment);
+    }
+    std::unreachable();
+}
+
+std::optional<WalReadEvent> WalReader::ConsumeZero() {
+    if (HasPartialPayload()) {
+        return AbandonPartial("WAL fragmented record ended at a zero marker");
+    }
+    ClearPartial();
+    return std::nullopt;
+}
+
+std::optional<WalReadEvent> WalReader::ConsumeFull(const PhysicalFragment& fragment) {
+    if (HasPartialPayload()) {
+        // Leave this fragment unconsumed so the next call returns it.
+        block_position_ = fragment.block_position;
+        return AbandonPartial("WAL fragmented record was interrupted by a full record");
+    }
+    ClearPartial();
+    return WalLogicalRecord{.data = fragment.payload, .offset = fragment.offset};
+}
+
+std::optional<WalReadEvent> WalReader::ConsumeFirst(const PhysicalFragment& fragment) {
+    if (HasPartialPayload()) {
+        block_position_ = fragment.block_position;
+        return AbandonPartial("WAL fragmented record was interrupted by a first fragment");
+    }
+    scratch_.assign(fragment.payload.begin(), fragment.payload.end());
+    partial_record_offset_ = fragment.offset;
+    in_fragmented_record_ = true;
+    return std::nullopt;
+}
+
+std::optional<WalReadEvent> WalReader::ConsumeContinuation(const PhysicalFragment& fragment) {
+    if (!in_fragmented_record_) {
+        WalCorruption corruption{
+            .error = Error::Corruption("WAL fragment has no starting fragment"),
+            .dropped_bytes = fragment.payload.size(),
+            .offset = fragment.offset,
+        };
+        return corruption;
+    }
+    scratch_.insert(scratch_.end(), fragment.payload.begin(), fragment.payload.end());
+    if (fragment.type == WalRecordType::Middle) {
+        return std::nullopt;
+    }
+    in_fragmented_record_ = false;
+    return WalLogicalRecord{.data = scratch_, .offset = partial_record_offset_};
 }
 
 Result<std::optional<WalReader::PhysicalRead>> WalReader::ReadPhysical() {
@@ -174,39 +198,51 @@ Result<std::optional<WalReader::PhysicalRead>> WalReader::ReadPhysical() {
             continue;
         }
 
-        const std::uint64_t offset = block_start_offset_ + position;
-        WalDecodeResult decoded = DecodeWalFragment(ByteView(block_).subspan(position, remaining));
-        if (!decoded.has_value()) {
-            WalDecodeError& failure = decoded.error();
-            const std::size_t discarded = failure.recovery == WalRecoveryAction::SkipPhysicalRecord
-                                              ? failure.encoded_size
-                                              : remaining;
-            block_position_ += discarded;
-            // A payload extending past the final partial block is a crash-truncated tail.
-            const bool truncated_tail =
-                eof_seen_ && (failure.failure == WalDecodeFailure::TruncatedPayload ||
-                              failure.failure == WalDecodeFailure::PayloadTooLarge);
-            if (truncated_tail) {
-                continue;
-            }
-            return PhysicalRead(WalCorruption{
-                .error = std::move(failure.error),
-                .dropped_bytes = discarded,
-                .offset = offset,
-            });
+        std::optional<PhysicalRead> decoded = DecodePhysical(position, remaining);
+        if (decoded.has_value()) {
+            return decoded;
         }
-
-        // A zero marker discards the rest of its block.
-        block_position_ = decoded->kind == WalDecodeKind::EndOfBlock
-                              ? block_size_
-                              : position + decoded->encoded_size;
-        return PhysicalRead(PhysicalFragment{
-            .type = decoded->type,
-            .payload = decoded->payload,
-            .offset = offset,
-            .block_position = position,
-        });
     }
+}
+
+std::optional<WalReader::PhysicalRead> WalReader::DecodePhysical(std::size_t position,
+                                                                 std::size_t remaining) {
+    const std::uint64_t offset = block_start_offset_ + position;
+    WalDecodeResult decoded = DecodeWalFragment(ByteView(block_).subspan(position, remaining));
+    if (!decoded.has_value()) {
+        return RecoverPhysicalFailure(decoded.error(), offset, remaining);
+    }
+
+    // A zero marker discards the rest of its block.
+    block_position_ =
+        decoded->kind == WalDecodeKind::EndOfBlock ? block_size_ : position + decoded->encoded_size;
+    return PhysicalRead(PhysicalFragment{
+        .type = decoded->type,
+        .payload = decoded->payload,
+        .offset = offset,
+        .block_position = position,
+    });
+}
+
+std::optional<WalReader::PhysicalRead> WalReader::RecoverPhysicalFailure(WalDecodeError& failure,
+                                                                         std::uint64_t offset,
+                                                                         std::size_t remaining) {
+    const std::size_t discarded = failure.recovery == WalRecoveryAction::SkipPhysicalRecord
+                                      ? failure.encoded_size
+                                      : remaining;
+    block_position_ += discarded;
+    // A payload extending past the final partial block is a crash-truncated tail.
+    const bool truncated_tail =
+        eof_seen_ && (failure.failure == WalDecodeFailure::TruncatedPayload ||
+                      failure.failure == WalDecodeFailure::PayloadTooLarge);
+    if (truncated_tail) {
+        return std::nullopt;
+    }
+    return PhysicalRead(WalCorruption{
+        .error = std::move(failure.error),
+        .dropped_bytes = discarded,
+        .offset = offset,
+    });
 }
 
 Result<bool> WalReader::FillBlock() {
@@ -237,14 +273,14 @@ Result<bool> WalReader::FillBlock() {
     return block_size_ != 0;
 }
 
-WalReadResult WalReader::AbandonPartial(std::string_view reason) {
+WalReadEvent WalReader::AbandonPartial(std::string_view reason) {
     WalCorruption corruption{
         .error = Error::Corruption(std::string(reason)),
         .dropped_bytes = scratch_.size(),
         .offset = partial_record_offset_,
     };
     ClearPartial();
-    return Event(std::move(corruption));
+    return corruption;
 }
 
 void WalReader::ClearPartial() noexcept {
