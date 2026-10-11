@@ -214,6 +214,22 @@ extractions; sharing a file or a suggested wave order is not a prerequisite.
 Re-evaluate this table if an accepted slice changes an interface or adds a
 concrete helper/type dependency.
 
+### Coherent PR-sized batches
+
+At the owner's subsequent request, group related responsibility-sized slices
+into moderately larger PRs to amortize CI. Keep small internal commits and
+focused validation, use one shared reviewed design for a coherent batch, and
+independently review the complete implementation diff and interactions before
+publication. Do not require a PR per helper or mix unrelated subsystems merely
+to increase size.
+
+After the already-published D01a PR, the
+[offline dump composition design](offline-dump-composition-design.md) groups
+D01b, D02, and D03 into the next implementation PR. It reuses D01a's quoted-field
+operation and therefore waits for that implementation to merge before its
+design publication. Engine/native/benchmark work remains outside that batch.
+Do not modify an already-running published head solely to fill the next batch.
+
 ## First implementation slice: D01a
 
 Start with only WAL batch-entry rendering in `FormatWriteBatch`. Table-entry
