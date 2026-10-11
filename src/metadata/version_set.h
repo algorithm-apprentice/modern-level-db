@@ -116,6 +116,8 @@ public:
     [[nodiscard]] Status LogAndApply(VersionEdit edit, std::unique_lock<std::mutex>& lock);
 
 private:
+    struct ManifestRecovery;
+
     // Leaves the version set without a current version until one is installed.
     VersionSet(FileSystem& file_system, std::filesystem::path directory,
                const InternalKeyComparator& comparator) noexcept;
