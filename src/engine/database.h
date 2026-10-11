@@ -15,6 +15,7 @@
 
 #include "engine/db_iterator.h"
 #include "engine/seek_statistics.h"
+#include "engine/snapshot_registry.h"
 #include "engine/table_cache.h"
 #include "engine/write_path.h"
 #include "format/internal_key.h"
@@ -73,8 +74,8 @@ struct DatabaseEngineOptions {
 [[nodiscard]] DatabaseEngineOptions SanitizeOptions(DatabaseEngineOptions options);
 
 struct DatabaseEngineReadOptions {
-    // A sequence that GetSnapshot returned and that is not yet released; without
-    // one, reads see the last sequence.
+    // The sequence of a GetSnapshot registration that is not yet released;
+    // without one, reads see the last sequence.
     std::optional<SequenceNumber> snapshot;
     bool fill_cache = true;
 };
@@ -110,6 +111,8 @@ class DatabaseEngine final {
     };
 
 public:
+    using SnapshotRegistration = SnapshotRegistry::Registration;
+
     // Opens or creates the database in the directory, which it keeps locked.
     [[nodiscard]] static Result<std::unique_ptr<DatabaseEngine>> Open(
         DatabaseEngineOptions options, std::filesystem::path directory);
@@ -125,8 +128,8 @@ public:
     // call may be running.
     ~DatabaseEngine();
 
-    // Commits the batch, syncing the log first if asked. After a background
-    // error, every write returns it.
+    // Commits the batch, syncing the log first if asked. After a sticky error,
+    // every write returns it.
     [[nodiscard]] Status Write(EncodedWriteBatch& batch, bool sync);
 
     // Writes the key's value and returns true, or leaves it unchanged and
@@ -139,10 +142,10 @@ public:
     [[nodiscard]] std::unique_ptr<DbIterator> NewIterator(
         const DatabaseEngineReadOptions& options = {});
 
-    // Returns the last sequence and keeps what it reads until it is released.
-    // Each call needs its own release.
-    [[nodiscard]] SequenceNumber GetSnapshot();
-    void ReleaseSnapshot(SequenceNumber snapshot);
+    // Registers the last sequence and keeps what it reads until the registration
+    // is released. Each call returns a distinct registration.
+    [[nodiscard]] SnapshotRegistration* GetSnapshot();
+    void ReleaseSnapshot(SnapshotRegistration*& snapshot);
 
     // Returns an owning snapshot of the current topology and maintenance state.
     [[nodiscard]] Result<DatabaseEngineState> GetState();
@@ -230,7 +233,7 @@ private:
     std::shared_ptr<const MemTable> immutable_;
     std::vector<std::shared_ptr<const MemTable>> read_pinned_memtables_;
     WriteQueue write_queue_;
-    std::multiset<SequenceNumber> snapshots_;
+    SnapshotRegistry snapshots_;
     std::set<std::uint64_t> pending_outputs_;
     SeekStatistics seek_statistics_;
     // The last seed of an iterator's read sampling.

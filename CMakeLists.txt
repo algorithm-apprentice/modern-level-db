@@ -71,6 +71,7 @@ set(
     src/engine/lookup.cc
     src/engine/recovery.cc
     src/engine/seek_statistics.cc
+    src/engine/snapshot_registry.cc
     src/engine/table_cache.cc
     src/engine/write_path.cc
     src/format/internal_key.cc
