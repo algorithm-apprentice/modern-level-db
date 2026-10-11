@@ -267,24 +267,10 @@ public:
 
     [[nodiscard]] Status Next() override {
         if (!forward_) {
-            // Direction changes must move other children strictly past the
-            // current key, or an equal entry would be emitted again.
-            for (const std::unique_ptr<InternalIterator>& child : children_) {
-                if (child.get() == current_) {
-                    continue;
-                }
-                const Status sought = child->Seek(key());
-                if (!sought.has_value()) {
-                    return Fail(sought.error());
-                }
-                if (child->valid() && comparator_->Compare(key(), child->key()) == 0) {
-                    const Status moved = child->Next();
-                    if (!moved.has_value()) {
-                        return Fail(moved.error());
-                    }
-                }
+            Status turned = TurnForward();
+            if (!turned.has_value()) {
+                return turned;
             }
-            forward_ = true;
         }
         const Status moved = current_->Next();
         if (!moved.has_value()) {
@@ -296,27 +282,10 @@ public:
 
     [[nodiscard]] Status Prev() override {
         if (forward_) {
-            // Restore the reverse-merge invariant: every other child is strictly
-            // before the current key, so equal entries are not replayed.
-            for (const std::unique_ptr<InternalIterator>& child : children_) {
-                if (child.get() == current_) {
-                    continue;
-                }
-                const Status sought = child->Seek(key());
-                if (!sought.has_value()) {
-                    return Fail(sought.error());
-                }
-                Status moved;
-                if (child->valid()) {
-                    moved = child->Prev();
-                } else {
-                    moved = child->SeekToLast();
-                }
-                if (!moved.has_value()) {
-                    return Fail(moved.error());
-                }
+            Status turned = TurnBackward();
+            if (!turned.has_value()) {
+                return turned;
             }
-            forward_ = false;
         }
         const Status moved = current_->Prev();
         if (!moved.has_value()) {
@@ -327,6 +296,65 @@ public:
     }
 
 private:
+    Status TurnForward() {
+        for (const std::unique_ptr<InternalIterator>& child : children_) {
+            if (child.get() == current_) {
+                continue;
+            }
+            Status positioned = PositionAfterCurrent(*child);
+            if (!positioned.has_value()) {
+                return positioned;
+            }
+        }
+        forward_ = true;
+        return {};
+    }
+
+    Status PositionAfterCurrent(InternalIterator& child) {
+        const Status sought = child.Seek(key());
+        if (!sought.has_value()) {
+            return Fail(sought.error());
+        }
+        if (child.valid() && comparator_->Compare(key(), child.key()) == 0) {
+            const Status moved = child.Next();
+            if (!moved.has_value()) {
+                return Fail(moved.error());
+            }
+        }
+        return {};
+    }
+
+    Status TurnBackward() {
+        for (const std::unique_ptr<InternalIterator>& child : children_) {
+            if (child.get() == current_) {
+                continue;
+            }
+            Status positioned = PositionBeforeCurrent(*child);
+            if (!positioned.has_value()) {
+                return positioned;
+            }
+        }
+        forward_ = false;
+        return {};
+    }
+
+    Status PositionBeforeCurrent(InternalIterator& child) {
+        const Status sought = child.Seek(key());
+        if (!sought.has_value()) {
+            return Fail(sought.error());
+        }
+        Status moved;
+        if (child.valid()) {
+            moved = child.Prev();
+        } else {
+            moved = child.SeekToLast();
+        }
+        if (!moved.has_value()) {
+            return Fail(moved.error());
+        }
+        return {};
+    }
+
     void FindSmallest() noexcept {
         InternalIterator* smallest = nullptr;
         for (const std::unique_ptr<InternalIterator>& child : children_) {

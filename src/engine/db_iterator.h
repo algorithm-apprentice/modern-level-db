@@ -61,6 +61,11 @@ public:
     [[nodiscard]] Status Prev();
 
 private:
+    [[nodiscard]] Status AdvanceForNext();
+    [[nodiscard]] Result<bool> PositionBeforeCurrentUser();
+    [[nodiscard]] bool ConsiderNextEntry(const InternalKeyView& entry, bool& skipping);
+    [[nodiscard]] bool ConsiderPreviousEntry(const InternalKeyView& entry, ValueKind& kind);
+    void FinishReverseScan(ValueKind kind);
     [[nodiscard]] Status FindNextUserEntry(bool skipping);
     [[nodiscard]] Status FindPrevUserEntry();
     [[nodiscard]] Status Fail(Error error);

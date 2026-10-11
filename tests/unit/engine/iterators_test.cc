@@ -156,6 +156,114 @@ protected:
     InternalKeyComparator comparator_{BytewiseComparator()};
 };
 
+class RecordingIterator final : public InternalIterator {
+public:
+    RecordingIterator(const Comparator& comparator, std::vector<ScriptedEntry> entries,
+                      std::shared_ptr<MoveScript> script, std::string name,
+                      std::vector<std::string>& moves)
+        : child_(comparator, std::move(entries), std::move(script)),
+          name_(std::move(name)),
+          moves_(&moves) {}
+
+    bool valid() const noexcept override { return child_.valid(); }
+    ByteView key() const noexcept override { return child_.key(); }
+    ByteView value() const noexcept override { return child_.value(); }
+    Status SeekToFirst() override {
+        moves_->push_back(name_ + ":first");
+        return child_.SeekToFirst();
+    }
+    Status SeekToLast() override {
+        moves_->push_back(name_ + ":last");
+        return child_.SeekToLast();
+    }
+    Status Seek(ByteView target) override {
+        moves_->push_back(name_ + ":seek");
+        return child_.Seek(target);
+    }
+    Status Next() override {
+        moves_->push_back(name_ + ":next");
+        return child_.Next();
+    }
+    Status Prev() override {
+        moves_->push_back(name_ + ":prev");
+        return child_.Prev();
+    }
+
+private:
+    ScriptedIterator child_;
+    std::string name_;
+    std::vector<std::string>* moves_;
+};
+
+std::unique_ptr<InternalIterator> RecordedMerge(const InternalKeyComparator& comparator,
+                                                const std::shared_ptr<MoveScript>& script,
+                                                std::vector<std::string>& moves) {
+    const std::vector<std::vector<ScriptedEntry>> entries{
+        {Entry("a", 1, "first"), Entry("b", 1, "first"), Entry("d", 1, "first")},
+        {Entry("b", 1, "second"), Entry("c", 1, "second"), Entry("e", 1, "second")},
+        {},
+    };
+    std::vector<std::unique_ptr<InternalIterator>> children;
+    for (std::size_t index = 0; index < entries.size(); ++index) {
+        children.push_back(std::make_unique<RecordingIterator>(comparator, entries[index], script,
+                                                               std::to_string(index), moves));
+    }
+    return NewMergingIterator(comparator, std::move(children));
+}
+
+TEST_F(MergingIteratorTest, DirectionTransitionsPreserveExactChildMoveOrder) {
+    auto script = std::make_shared<MoveScript>();
+    std::vector<std::string> moves;
+    auto merged = RecordedMerge(comparator_, script, moves);
+    EXPECT_EQ(After(merged->SeekToLast(), *merged), "e@1=second");
+    EXPECT_EQ(After(merged->Prev(), *merged), "d@1=first");
+    EXPECT_EQ(After(merged->Prev(), *merged), "c@1=second");
+    EXPECT_EQ(After(merged->Prev(), *merged), "b@1=second");
+    moves.clear();
+
+    EXPECT_EQ(After(merged->Next(), *merged), "c@1=second");
+    EXPECT_EQ(moves, (std::vector<std::string>{"0:seek", "0:next", "2:seek", "1:next"}));
+    moves.clear();
+    EXPECT_EQ(After(merged->Prev(), *merged), "b@1=second");
+    EXPECT_EQ(moves, (std::vector<std::string>{"0:seek", "0:prev", "2:seek", "2:last", "1:prev"}));
+}
+
+TEST_F(MergingIteratorTest, FailedDirectionTransitionStopsBeforeEveryLaterChildMove) {
+    for (bool forward : {false, true}) {
+        const std::vector<std::string> expected =
+            forward ? std::vector<std::string>{"0:seek", "0:next", "2:seek", "1:next"}
+                    : std::vector<std::string>{"0:seek", "0:prev", "2:seek", "2:last", "1:prev"};
+        for (std::size_t failing = 0; failing < expected.size(); ++failing) {
+            SCOPED_TRACE(forward);
+            SCOPED_TRACE(failing);
+            auto script = std::make_shared<MoveScript>();
+            std::vector<std::string> moves;
+            auto merged = RecordedMerge(comparator_, script, moves);
+            if (forward) {
+                ASSERT_TRUE(merged->SeekToLast().has_value());
+                ASSERT_TRUE(merged->Prev().has_value());
+                ASSERT_TRUE(merged->Prev().has_value());
+                ASSERT_TRUE(merged->Prev().has_value());
+            } else {
+                ASSERT_TRUE(merged->Seek(Key("c", 1)).has_value());
+            }
+            moves.clear();
+            script->fail_at = script->moves + static_cast<int>(failing) + 1;
+
+            const Status failed = forward ? merged->Next() : merged->Prev();
+
+            ASSERT_FALSE(failed.has_value());
+            EXPECT_EQ(failed.error().code(), ErrorCode::Io);
+            EXPECT_EQ(failed.error().message(), "injected failure");
+            EXPECT_FALSE(merged->valid());
+            EXPECT_EQ(moves, std::vector<std::string>(
+                                 expected.begin(),
+                                 expected.begin() + static_cast<std::ptrdiff_t>(failing + 1)));
+            EXPECT_EQ(After(merged->SeekToFirst(), *merged), "a@1=first");
+        }
+    }
+}
+
 TEST_F(MergingIteratorTest, MergesChildrenInOrder) {
     const auto merged = Merge({{Entry("a", 1, "a"), Entry("d", 1, "d"), Entry("g", 1, "g")},
                                {Entry("b", 1, "b"), Entry("e", 1, "e")},
