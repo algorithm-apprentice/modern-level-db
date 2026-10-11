@@ -28,6 +28,34 @@ bool PrepareOutput(std::size_t size, std::vector<std::byte>& output) {
     return true;
 }
 
+bool CompressSnappyBlock(ByteView raw, std::vector<std::byte>& scratch) {
+    const std::size_t bound = snappy::MaxCompressedLength(raw.size());
+    if (!PrepareOutput(bound, scratch)) {
+        return false;
+    }
+    std::size_t compressed_size = bound;
+    snappy::RawCompress(reinterpret_cast<const char*>(raw.data()), raw.size(),
+                        reinterpret_cast<char*>(scratch.data()), &compressed_size);
+    scratch.resize(compressed_size);
+    return true;
+}
+
+bool CompressZstdBlock(ByteView raw, int zstd_level, std::vector<std::byte>& scratch) {
+    const std::size_t bound = ZSTD_compressBound(raw.size());
+    if (ZSTD_isError(bound) != 0U || !PrepareOutput(bound, scratch)) {
+        scratch.clear();
+        return false;
+    }
+    const std::size_t compressed_size =
+        ZSTD_compress(scratch.data(), scratch.size(), raw.data(), raw.size(), zstd_level);
+    if (ZSTD_isError(compressed_size) != 0U) {
+        scratch.clear();
+        return false;
+    }
+    scratch.resize(compressed_size);
+    return true;
+}
+
 }  // namespace
 
 Status ValidateCompressionOptions(BlockCompression type, int zstd_level) {
@@ -54,32 +82,16 @@ bool TryCompressBlock(ByteView raw, BlockCompression requested, int zstd_level,
     switch (requested) {
         case BlockCompression::None:
             return false;
-        case BlockCompression::Snappy: {
-            const std::size_t bound = snappy::MaxCompressedLength(raw.size());
-            if (!PrepareOutput(bound, scratch)) {
+        case BlockCompression::Snappy:
+            if (!CompressSnappyBlock(raw, scratch)) {
                 return false;
             }
-            std::size_t compressed_size = bound;
-            snappy::RawCompress(reinterpret_cast<const char*>(raw.data()), raw.size(),
-                                reinterpret_cast<char*>(scratch.data()), &compressed_size);
-            scratch.resize(compressed_size);
             break;
-        }
-        case BlockCompression::Zstd: {
-            const std::size_t bound = ZSTD_compressBound(raw.size());
-            if (ZSTD_isError(bound) != 0U || !PrepareOutput(bound, scratch)) {
-                scratch.clear();
+        case BlockCompression::Zstd:
+            if (!CompressZstdBlock(raw, zstd_level, scratch)) {
                 return false;
             }
-            const std::size_t compressed_size =
-                ZSTD_compress(scratch.data(), scratch.size(), raw.data(), raw.size(), zstd_level);
-            if (ZSTD_isError(compressed_size) != 0U) {
-                scratch.clear();
-                return false;
-            }
-            scratch.resize(compressed_size);
             break;
-        }
         default:
             return false;
     }
