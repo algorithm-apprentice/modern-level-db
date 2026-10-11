@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <initializer_list>
 #include <limits>
+#include <string_view>
 #include <vector>
 
 #include "table/compression.h"
@@ -20,6 +22,14 @@ struct CodecResults {
     unsigned long long declared = 16;
     bool valid_length = true;
     bool valid_contents = true;
+    int snappy_bound_calls = 0;
+    int snappy_compression_calls = 0;
+    int snappy_length_calls = 0;
+    int snappy_decode_calls = 0;
+    int zstd_bound_calls = 0;
+    int zstd_compression_calls = 0;
+    int zstd_length_calls = 0;
+    int zstd_decode_calls = 0;
 };
 
 CodecResults results;
@@ -29,31 +39,47 @@ CodecResults results;
 // This executable replaces only the codec symbols used by compression.cc.
 namespace snappy {
 
-std::size_t MaxCompressedLength(std::size_t) { return results.bound; }
+std::size_t MaxCompressedLength(std::size_t) {
+    ++results.snappy_bound_calls;
+    return results.bound;
+}
 
 void RawCompress(const char*, std::size_t, char* compressed, std::size_t* size) {
+    ++results.snappy_compression_calls;
     std::fill_n(compressed, results.compressed, 'c');
     *size = results.compressed;
 }
 
 bool GetUncompressedLength(const char*, std::size_t, std::size_t* size) {
+    ++results.snappy_length_calls;
     *size = static_cast<std::size_t>(results.declared);
     return results.valid_length;
 }
 
-bool RawUncompress(const char*, std::size_t, char*) { return results.valid_contents; }
+bool RawUncompress(const char*, std::size_t, char*) {
+    ++results.snappy_decode_calls;
+    return results.valid_contents;
+}
 
 }  // namespace snappy
 
 extern "C" {
 
-std::size_t ZSTD_compressBound(std::size_t) { return results.bound; }
+std::size_t ZSTD_compressBound(std::size_t) {
+    ++results.zstd_bound_calls;
+    return results.bound;
+}
 std::size_t ZSTD_compress(void*, std::size_t, const void*, std::size_t, int) {
+    ++results.zstd_compression_calls;
     return results.compressed;
 }
 unsigned ZSTD_isError(std::size_t code) { return code == CodecError ? 1U : 0U; }
-unsigned long long ZSTD_getFrameContentSize(const void*, std::size_t) { return results.declared; }
+unsigned long long ZSTD_getFrameContentSize(const void*, std::size_t) {
+    ++results.zstd_length_calls;
+    return results.declared;
+}
 std::size_t ZSTD_decompress(void*, std::size_t, const void*, std::size_t) {
+    ++results.zstd_decode_calls;
     return results.decoded;
 }
 
@@ -67,9 +93,10 @@ protected:
     void SetUp() override { results = {}; }
 
     template <typename T>
-    static void ExpectCorruption(const Result<T>& result) {
+    static void ExpectCorruption(const Result<T>& result, std::string_view message) {
         ASSERT_FALSE(result.has_value());
         EXPECT_EQ(result.error().code(), ErrorCode::Corruption);
+        EXPECT_EQ(result.error().message(), message);
     }
 
     std::vector<std::byte> raw_ = std::vector<std::byte>(64, std::byte{'x'});
@@ -78,32 +105,111 @@ protected:
 
 TEST_F(CompressionFailureTest, FallsBackWhenTheCompressionBoundIsTooLarge) {
     results.bound = CodecError;
+    scratch_.assign(10, std::byte{0xff});
     EXPECT_FALSE(TryCompressBlock(raw_, BlockCompression::Snappy, 1, scratch_));
     EXPECT_TRUE(scratch_.empty());
+    EXPECT_EQ(results.snappy_bound_calls, 1);
+    EXPECT_EQ(results.snappy_compression_calls, 0);
+    scratch_.assign(10, std::byte{0xff});
     EXPECT_FALSE(TryCompressBlock(raw_, BlockCompression::Zstd, 1, scratch_));
     EXPECT_TRUE(scratch_.empty());
 
     results.bound = CodecError - 1;
+    scratch_.assign(10, std::byte{0xff});
     EXPECT_FALSE(TryCompressBlock(raw_, BlockCompression::Zstd, 1, scratch_));
     EXPECT_TRUE(scratch_.empty());
+    EXPECT_EQ(results.zstd_bound_calls, 2);
+    EXPECT_EQ(results.zstd_compression_calls, 0);
 }
 
 TEST_F(CompressionFailureTest, FallsBackWhenZstdCompressionFails) {
     results.compressed = CodecError;
+    scratch_.assign(10, std::byte{0xff});
     EXPECT_FALSE(TryCompressBlock(raw_, BlockCompression::Zstd, 1, scratch_));
     EXPECT_TRUE(scratch_.empty());
+    EXPECT_EQ(results.zstd_bound_calls, 1);
+    EXPECT_EQ(results.zstd_compression_calls, 1);
 }
 
 TEST_F(CompressionFailureTest, RejectsAnUnrepresentableSnappyLength) {
     results.declared = CodecError;
-    ExpectCorruption(DecompressBlock(raw_, BlockCompression::Snappy));
+    results.valid_contents = false;
+    ExpectCorruption(DecompressBlock(raw_, BlockCompression::Snappy),
+                     "compressed Snappy block is too large");
+    EXPECT_EQ(results.snappy_length_calls, 1);
+    EXPECT_EQ(results.snappy_decode_calls, 0);
 }
 
 TEST_F(CompressionFailureTest, RejectsZstdFailureAndLengthMismatch) {
     results.decoded = CodecError;
-    ExpectCorruption(DecompressBlock(raw_, BlockCompression::Zstd));
+    ExpectCorruption(DecompressBlock(raw_, BlockCompression::Zstd),
+                     "compressed Zstd block has invalid contents");
     results.decoded = 15;
-    ExpectCorruption(DecompressBlock(raw_, BlockCompression::Zstd));
+    ExpectCorruption(DecompressBlock(raw_, BlockCompression::Zstd),
+                     "compressed Zstd block has invalid contents");
+    EXPECT_EQ(results.zstd_length_calls, 2);
+    EXPECT_EQ(results.zstd_decode_calls, 2);
+}
+
+TEST_F(CompressionFailureTest, AppliesTheStrictSavingsThresholdAfterEachNativeCodec) {
+    const std::size_t threshold = raw_.size() - raw_.size() / 8U;
+    for (const BlockCompression type : {BlockCompression::Snappy, BlockCompression::Zstd}) {
+        for (const std::size_t size : {threshold, threshold - 1}) {
+            SCOPED_TRACE(testing::Message() << static_cast<int>(type) << "/" << size);
+            results = {};
+            results.bound = raw_.size();
+            results.compressed = size;
+            scratch_.assign(10, std::byte{0xff});
+
+            const bool accepted = TryCompressBlock(raw_, type, 1, scratch_);
+
+            EXPECT_EQ(accepted, size < threshold);
+            EXPECT_EQ(scratch_.size(), accepted ? size : 0U);
+            EXPECT_EQ(results.snappy_bound_calls, type == BlockCompression::Snappy ? 1 : 0);
+            EXPECT_EQ(results.snappy_compression_calls, type == BlockCompression::Snappy ? 1 : 0);
+            EXPECT_EQ(results.zstd_bound_calls, type == BlockCompression::Zstd ? 1 : 0);
+            EXPECT_EQ(results.zstd_compression_calls, type == BlockCompression::Zstd ? 1 : 0);
+            EXPECT_EQ(results.snappy_length_calls, 0);
+            EXPECT_EQ(results.snappy_decode_calls, 0);
+            EXPECT_EQ(results.zstd_length_calls, 0);
+            EXPECT_EQ(results.zstd_decode_calls, 0);
+        }
+    }
+}
+
+TEST_F(CompressionFailureTest, ValidatesSnappyLengthBeforeContents) {
+    results.valid_length = false;
+    results.declared = CodecError;
+    results.valid_contents = false;
+    ExpectCorruption(DecompressBlock(raw_, BlockCompression::Snappy),
+                     "compressed Snappy block has an invalid length");
+    EXPECT_EQ(results.snappy_length_calls, 1);
+    EXPECT_EQ(results.snappy_decode_calls, 0);
+
+    results = {};
+    results.valid_contents = false;
+    ExpectCorruption(DecompressBlock(raw_, BlockCompression::Snappy),
+                     "compressed Snappy block has invalid contents");
+    EXPECT_EQ(results.snappy_length_calls, 1);
+    EXPECT_EQ(results.snappy_decode_calls, 1);
+}
+
+TEST_F(CompressionFailureTest, RejectsInvalidZstdSizesBeforeDecoding) {
+    for (const unsigned long long size :
+         {0ULL, ZSTD_CONTENTSIZE_UNKNOWN, ZSTD_CONTENTSIZE_ERROR, 1ULL << 32}) {
+        SCOPED_TRACE(size);
+        results = {};
+        results.declared = size;
+        results.decoded = CodecError;
+
+        ExpectCorruption(DecompressBlock(raw_, BlockCompression::Zstd),
+                         "compressed Zstd block has an invalid size");
+
+        EXPECT_EQ(results.zstd_length_calls, 1);
+        EXPECT_EQ(results.zstd_decode_calls, 0);
+        EXPECT_EQ(results.snappy_length_calls, 0);
+        EXPECT_EQ(results.snappy_decode_calls, 0);
+    }
 }
 
 }  // namespace
