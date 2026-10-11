@@ -256,8 +256,9 @@ TEST_F(MergingIteratorTest, FailedDirectionTransitionStopsBeforeEveryLaterChildM
             EXPECT_EQ(failed.error().code(), ErrorCode::Io);
             EXPECT_EQ(failed.error().message(), "injected failure");
             EXPECT_FALSE(merged->valid());
-            EXPECT_EQ(moves,
-                      std::vector<std::string>(expected.begin(), expected.begin() + failing + 1));
+            EXPECT_EQ(moves, std::vector<std::string>(
+                                 expected.begin(),
+                                 expected.begin() + static_cast<std::ptrdiff_t>(failing + 1)));
             EXPECT_EQ(After(merged->SeekToFirst(), *merged), "a@1=first");
         }
     }
