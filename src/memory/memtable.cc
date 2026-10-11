@@ -88,10 +88,7 @@ const MemTable& MemTable::ReadPin::value() const noexcept {
 }
 
 MemTable::MemTable(const Comparator& user_comparator)
-    : user_comparator_(user_comparator),
-      internal_comparator_(user_comparator),
-      entry_comparator_{internal_comparator_},
-      table_(entry_comparator_, arena_) {}
+    : entry_comparator_(user_comparator), table_(entry_comparator_, arena_) {}
 
 void MemTable::Add(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value) {
     assert(IsValidValueKind(kind));
@@ -112,7 +109,7 @@ MemTableLookup MemTable::Lookup(const LookupKey& key) const {
     const MemTableEntryView entry = DecodeMemTableEntry(iterator.entry());
     const ByteView candidate_user_key =
         entry.internal_key.first(entry.internal_key.size() - InternalKeyTrailerSize);
-    if (user_comparator_.Compare(candidate_user_key, key.user_key()) != 0) {
+    if (entry_comparator_.user_comparator().Compare(candidate_user_key, key.user_key()) != 0) {
         return {};
     }
 
@@ -130,7 +127,8 @@ MemTableLookup MemTable::Lookup(const LookupKey& key) const {
 
 int MemTable::EntryComparator::operator()(const std::byte* left,
                                           const std::byte* right) const noexcept {
-    return comparator.Compare(DecodeMemTableInternalKey(left), DecodeMemTableInternalKey(right));
+    return internal_comparator.Compare(DecodeMemTableInternalKey(left),
+                                       DecodeMemTableInternalKey(right));
 }
 
 MemTable::Iterator::Iterator(const MemTable& table) noexcept : iterator_(table.table_) {}

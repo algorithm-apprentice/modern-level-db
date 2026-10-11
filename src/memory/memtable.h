@@ -31,14 +31,24 @@ struct MemTableLookup {
 
 // Stores immutable versioned entries in an arena-backed skip list. One serialized
 // writer can publish entries while readers traverse; sequence filtering controls
-// visibility. The user comparator and this table must outlive readers/iterators.
+// visibility. The user comparator must outlive the table; the table must outlive
+// readers and iterators.
 // See docs/learning/03-memory-and-mvcc.md.
 class MemTable final {
 private:
+    // Composes internal-key ordering with the packed-entry representation consumed
+    // by the SkipList. The owned internal comparator carries the single borrowed
+    // user-comparator reference.
     struct EntryComparator {
-        const InternalKeyComparator& comparator;
+        explicit EntryComparator(const Comparator& user_comparator)
+            : internal_comparator(user_comparator) {}
 
         [[nodiscard]] int operator()(const std::byte* left, const std::byte* right) const noexcept;
+        [[nodiscard]] const Comparator& user_comparator() const noexcept {
+            return internal_comparator.user_comparator();
+        }
+
+        InternalKeyComparator internal_comparator;
     };
 
     using Table = SkipList<const std::byte*, EntryComparator>;
@@ -111,8 +121,6 @@ public:
 private:
     friend class DatabaseEngine;
 
-    const Comparator& user_comparator_;
-    InternalKeyComparator internal_comparator_;
     EntryComparator entry_comparator_;
     Arena arena_;
     Table table_;
