@@ -170,6 +170,13 @@ evidence; use a separate ordinary run for timing conclusions.
 
 ## Artifacts and provenance
 
+In `tools/run_performance.py`, `benchmark_arguments` constructs the workload
+command as a pure stage: report paths, adaptive read timing or fixed mutation
+counts, and engine-specific controls. `run_case` validates inputs before
+creating output, owns execution/capture, binds validated artifact hashes, and
+cleans up only its verified scratch. Capture-only profile markers are appended
+by the lifecycle, never mixed into ordinary workload construction.
+
 Every runner output directory contains a versioned manifest with:
 
 - executable and relevant symbol/collector hashes;

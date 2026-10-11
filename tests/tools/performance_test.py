@@ -18,6 +18,7 @@ from run_performance import (
     MODERN_RESULT_OWNERSHIP_SEMANTICS,
     MODERN_WAL_CREATION_SEMANTICS,
     MODERN_WRITE_BATCH_OWNERSHIP_SEMANTICS,
+    benchmark_arguments,
     read_json,
     record_diagnostics,
     run_case,
@@ -122,6 +123,86 @@ def completion(case="modern/readrandom/4096"):
     }
 
 
+
+
+class BenchmarkArgumentsTest(unittest.TestCase):
+    def setUp(self):
+        self.output = Path("experiment")
+
+    def test_preserves_exact_default_read_arguments(self):
+        case = "modern/readrandom/4096"
+        self.assertEqual(
+            benchmark_arguments(case, self.output, 3, 0.2, False),
+            [
+                "--case", case, "--database", str(self.output / "work" / "db"),
+                "--completion-report", str(self.output / "completion.json"),
+                "--benchmark_min_time=0.2s", "--benchmark_repetitions=3",
+                "--benchmark_min_warmup_time=0",
+                "--benchmark_enable_random_interleaving=false",
+                "--benchmark_dry_run=false", "--benchmark_list_tests=false",
+                "--benchmark_report_aggregates_only=false", "--benchmark_time_unit=ns",
+                f"--benchmark_out={self.output / 'benchmark.json'}",
+                "--benchmark_out_format=json", "--benchmark_color=false",
+            ],
+        )
+        smoke = benchmark_arguments(case, self.output, 1, 0.2, True)
+        self.assertIn("--benchmark_min_time=1x", smoke)
+        self.assertNotIn("--smoke", smoke)
+        self.assertNotIn("--profile-markers", smoke)
+
+    def test_preserves_each_normal_and_smoke_mutation_budget(self):
+        budgets = {"overwrite": 262144, "writebatch": 8192,
+                   "writesync": 1024, "mixed50": 262144}
+        for engine in ("modern", "leveldb"):
+            for workload, iterations in budgets.items():
+                records = 4096 if workload == "writesync" else 65536
+                case = f"{engine}/{workload}/{records}"
+                for smoke in (False, True):
+                    with self.subTest(case=case, smoke=smoke):
+                        command = benchmark_arguments(case, self.output, 1, 5.0, smoke)
+                        self.assertIn(
+                            f"--benchmark_min_time={1 if smoke else iterations}x", command
+                        )
+                        self.assertEqual("--smoke" in command, smoke)
+                        self.assertNotIn("--profile-markers", command)
+
+    def test_preserves_control_order_and_engine_applicability(self):
+        modern = benchmark_arguments(
+            "modern/readmissing/4096", self.output, 3, 0.2, False,
+            modern_file_access=COPIED_FILE_ACCESS, modern_result_ownership="owning",
+        )
+        self.assertEqual(modern[-4:], [
+            "--modern-file-access", COPIED_FILE_ACCESS,
+            "--modern-result-ownership", "owning",
+        ])
+        batch = benchmark_arguments(
+            "modern/writebatch/65536", self.output, 1, 0.2, True,
+            modern_write_batch_ownership="exclusive", modern_wal_creation="leveldb",
+        )
+        self.assertEqual(batch[-5:], [
+            "--modern-write-batch-ownership", "exclusive",
+            "--modern-wal-creation", "leveldb", "--smoke",
+        ])
+        reference = benchmark_arguments(
+            "leveldb/readrandom/4096", self.output, 3, 0.2, False,
+            reference_file_access=COPIED_FILE_ACCESS,
+        )
+        self.assertEqual(reference[-2:], ["--reference-file-access", COPIED_FILE_ACCESS])
+        self.assertFalse(any(option.startswith("--modern-") for option in reference))
+        default_reference = benchmark_arguments(
+            "leveldb/readrandom/4096", self.output, 3, 0.2, False,
+        )
+        self.assertEqual(default_reference[-2:], ["--reference-file-access", "default"])
+
+    def test_returns_fresh_arguments_without_creating_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "unused"
+            first = benchmark_arguments("modern/readrandom/4096", output, 3, 0.2, False)
+            expected = first.copy()
+            first.append("--profile-markers")
+            second = benchmark_arguments("modern/readrandom/4096", output, 3, 0.2, False)
+            self.assertEqual(second, expected)
+            self.assertFalse(output.exists())
 
 
 class PerformanceReportTest(unittest.TestCase):
