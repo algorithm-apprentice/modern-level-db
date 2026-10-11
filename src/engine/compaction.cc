@@ -36,14 +36,7 @@ public:
     // Returns whether the output must end before the entry with this key. The
     // grandparents passed before the first entry do not count.
     bool ShouldStopBefore(ByteView key) noexcept {
-        while (next_ < grandparents_.size() &&
-               comparator_.Compare(key, grandparents_[next_]->largest.encoded()) > 0) {
-            if (seen_key_) {
-                overlapped_ += grandparents_[next_]->file_size;
-            }
-            ++next_;
-        }
-        seen_key_ = true;
+        AdvancePast(key);
         if (overlapped_ > limit_) {
             overlapped_ = 0;
             return true;
@@ -52,6 +45,17 @@ public:
     }
 
 private:
+    void AdvancePast(ByteView key) noexcept {
+        while (next_ < grandparents_.size() &&
+               comparator_.Compare(key, grandparents_[next_]->largest.encoded()) > 0) {
+            if (seen_key_) {
+                overlapped_ += grandparents_[next_]->file_size;
+            }
+            ++next_;
+        }
+        seen_key_ = true;
+    }
+
     const InternalKeyComparator& comparator_;
     std::span<const Version::File> grandparents_;
     std::uint64_t limit_;
@@ -71,23 +75,27 @@ public:
     // Returns whether no file in the levels below the next one holds the key.
     bool IsBaseLevelForKey(ByteView user_key) noexcept {
         for (std::uint32_t level = first_level_; level < NumLevels; ++level) {
-            const std::span<const Version::File> files = version_.files(level);
-            std::size_t& next = next_[level];
-            while (next < files.size()) {
-                const FileMetadata& file = *files[next];
-                if (user_comparator_.Compare(user_key, file.largest.user_key()) <= 0) {
-                    if (user_comparator_.Compare(user_key, file.smallest.user_key()) >= 0) {
-                        return false;
-                    }
-                    break;
-                }
-                ++next;
+            if (LevelContains(level, user_key)) {
+                return false;
             }
         }
         return true;
     }
 
 private:
+    bool LevelContains(std::uint32_t level, ByteView user_key) noexcept {
+        const std::span<const Version::File> files = version_.files(level);
+        std::size_t& next = next_[level];
+        while (next < files.size()) {
+            const FileMetadata& file = *files[next];
+            if (user_comparator_.Compare(user_key, file.largest.user_key()) <= 0) {
+                return user_comparator_.Compare(user_key, file.smallest.user_key()) >= 0;
+            }
+            ++next;
+        }
+        return false;
+    }
+
     const Version& version_;
     std::uint32_t first_level_;
     const Comparator& user_comparator_;
