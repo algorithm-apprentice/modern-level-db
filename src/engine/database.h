@@ -11,6 +11,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <string_view>
 #include <vector>
 
 #include "engine/db_iterator.h"
@@ -22,6 +23,7 @@
 #include "format/internal_key.h"
 #include "format/write_batch.h"
 #include "memory/memtable.h"
+#include "metadata/version_edit.h"
 #include "metadata/version_set.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/comparator.h"
@@ -201,6 +203,9 @@ private:
     // number. Returns whether it ran one rather than moving a file.
     [[nodiscard]] bool Compact(std::unique_lock<std::mutex>& lock,
                                std::vector<std::uint64_t>& outputs);
+    [[nodiscard]] Status ApplyBackgroundEdit(Result<VersionEdit> edit,
+                                             std::unique_lock<std::mutex>& lock,
+                                             std::string_view closing_error);
     // Records the error of applying a compaction's edit, or forgets the seek
     // budgets that the new version no longer needs.
     void FinishCompaction(const Status& applied);

@@ -338,6 +338,14 @@ externally owned, are not stopped by DatabaseEngine, and must outlive it; the
 engine only waits for its accepted background task to finish. Operational state
 is released before the directory lock.
 
+Small shared rules do not create additional state owners:
+`api/database.cc` prepares read options independently of snapshot retention,
+`engine/iterators` composes supplied file runs for both reads and compaction, and
+DatabaseEngine shares the build-error/closing/edit-install decision while keeping
+flush and compaction completion separate. See
+[ADR-0075](adr/0075-shared-read-and-maintenance-rules.md) for the boundaries and
+rejected broader extractions.
+
 ## Current source layout
 
 ```text

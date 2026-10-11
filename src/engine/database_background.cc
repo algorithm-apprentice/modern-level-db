@@ -6,6 +6,8 @@
 #include <optional>
 #include <set>
 #include <stop_token>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -96,14 +98,8 @@ void DatabaseEngine::FlushImmutable(std::unique_lock<std::mutex>& lock) {
         modern_leveldb::FlushMemTable(*file_system_, directory_, comparator_, options, table_cache_,
                                       *immutable, number, *base, log_number);
     lock.lock();
-    Status applied;
-    if (!edit.has_value()) {
-        applied = std::unexpected(std::move(edit).error());
-    } else if (closing_) {
-        applied = std::unexpected(Error::Aborted("the database closed during a flush"));
-    } else {
-        applied = versions_->LogAndApply(std::move(*edit), lock);
-    }
+    const Status applied =
+        ApplyBackgroundEdit(std::move(edit), lock, "the database closed during a flush");
     if (!applied.has_value()) {
         // Recorded first, so that no cleanup removes a table that the edit may
         // still reference.
@@ -166,18 +162,25 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
         RunCompaction(*file_system_, directory_, comparator_, options, table_cache_, *compaction,
                       *input, smallest_snapshot, hooks);
     lock.lock();
-    Status applied;
-    if (!edit.has_value()) {
-        applied = std::unexpected(std::move(edit).error());
-    } else if (closing_) {
-        // Closing can begin after the last per-entry check; do not install a
-        // completed output into an engine already shutting down.
-        applied = std::unexpected(Error::Aborted("the database closed during a compaction"));
-    } else {
-        applied = versions_->LogAndApply(std::move(*edit), lock);
-    }
+    const Status applied =
+        ApplyBackgroundEdit(std::move(edit), lock, "the database closed during a compaction");
     FinishCompaction(applied);
     return true;
+}
+
+Status DatabaseEngine::ApplyBackgroundEdit(Result<VersionEdit> edit,
+                                           std::unique_lock<std::mutex>& lock,
+                                           std::string_view closing_error) {
+    assert(lock.owns_lock());
+    if (!edit.has_value()) {
+        return std::unexpected(std::move(edit).error());
+    }
+    if (closing_) {
+        // Closing can begin after the last per-entry check; do not install a
+        // completed output into an engine already shutting down.
+        return std::unexpected(Error::Aborted(std::string(closing_error)));
+    }
+    return versions_->LogAndApply(std::move(*edit), lock);
 }
 
 void DatabaseEngine::FinishCompaction(const Status& applied) {

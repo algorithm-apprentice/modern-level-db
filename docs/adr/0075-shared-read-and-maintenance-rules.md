@@ -1,6 +1,6 @@
 # ADR-0075: Shared Read and Maintenance Rules
 
-- Status: Accepted
+- Status: Implemented
 - Date: 2026-10-11
 
 ## Concept and contract
@@ -245,3 +245,31 @@ helper existed. They exercise empty inputs, existing-child preservation, L0
 span order, one deeper-level run, no eager I/O, and Version retention while an
 external input list remains borrowed. Compaction coverage checks selected files
 only in both L0 and deeper runs, both traversal directions, and no cache filling.
+
+### Background installation outcome
+
+Slice 3 shares only `ApplyBackgroundEdit`. It leaves sticky failure, pending-output
+release, immutable reset, notification, seek statistics, and reclamation in their
+original callers. Strengthened characterization tests passed before extraction.
+They distinguish built files from installed topology after a concurrent foreground
+failure, assert immutable/output/sticky state after returned flush errors, and
+check that failed flush/compaction construction never appends a MANIFEST edit or
+reclaims files.
+
+### Integrated verification
+
+An independent static code review of the design and all three implementation
+slices identified no actionable findings. Local verification on 2026-10-11
+passed:
+
+```text
+cmake --build --preset windows-debug --target modern_leveldb_unit_tests modern_leveldb_public_api_tests modern_leveldb_cache_allocation_tests modern_leveldb_compression_failure_tests
+ctest --preset windows-debug -L unit -j 4 --output-on-failure
+cmake --build --preset windows-compatibility --target modern_leveldb_extended_tests
+ctest --preset windows-compatibility -j 4 --output-on-failure
+python tools/check_documentation.py
+```
+
+CTest JUnit evidence records 718 passing unit tests and 18 passing extended
+model/compatibility/crash tests. Remote CI, non-Windows sanitizers, and GCC
+coverage were not run locally.

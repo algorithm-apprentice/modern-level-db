@@ -188,7 +188,7 @@ Cache hits and mapped pages complicate the relationship to physical I/O.
 |---|---|---|---|
 | [`database_read.cc`](../../src/engine/database_read.cc) | `Get`, `ReadSources`, `NewIterator` | Which snapshot and source owners are captured under the mutex? | [`database_read_test.cc`](../../tests/unit/engine/database_read_test.cc) |
 | [`lookup.cc`](../../src/engine/lookup.cc) | `LookupValue`, overlapping-file visitation | Why do deletion and missing produce different control flow? | [`lookup_test.cc`](../../tests/unit/engine/lookup_test.cc) |
-| [`iterators.cc`](../../src/engine/iterators.cc) | merge and concatenating iterators | Why are L0 and nonzero levels composed differently? | [`iterators_test.cc`](../../tests/unit/engine/iterators_test.cc) |
+| [`iterators.cc`](../../src/engine/iterators.cc) | `AppendLevelIterators`, merge and concatenating iterators | Why are L0 and nonzero levels composed differently? | [`iterators_test.cc`](../../tests/unit/engine/iterators_test.cc), [`compaction_test.cc`](../../tests/unit/engine/compaction_test.cc) |
 | [`db_iterator.cc`](../../src/engine/db_iterator.cc) | public visibility and direction state | How are internal versions collapsed into one user-key stream? | [`db_iterator_test.cc`](../../tests/unit/engine/db_iterator_test.cc) |
 | [`seek_statistics.cc`](../../src/engine/seek_statistics.cc) | sampled seek charges | How can reads request future maintenance without changing their result? | [`seek_statistics_test.cc`](../../tests/unit/engine/seek_statistics_test.cc) |
 
