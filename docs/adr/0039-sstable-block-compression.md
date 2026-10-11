@@ -199,8 +199,8 @@ explicitly. The public facade maps its option into the engine.
 - **Always store compressed output.** LevelDB's threshold is part of its
   proven latency/space tradeoff and avoids expansion on small or random data.
 - **Streaming decompression, dictionaries, custom codecs, or per-level
-  policies.** Current blocks are bounded below 4 GiB, and no caller requires
-  those additional contracts.
+  policies.** Sanitized block targets and trusted entry lengths keep current
+  blocks below 4 GiB, and no caller requires those additional contracts.
 
 ## Validation
 

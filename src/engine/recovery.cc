@@ -28,12 +28,10 @@
 namespace modern_leveldb {
 namespace {
 
-// GCOVR_EXCL_START: only keys larger than 4 GiB reach this function
 std::unexpected<Error> InvalidEntry(const Error& error) {
     return std::unexpected(
         Error::Corruption("log record's entry is not valid: " + std::string(error.message())));
 }
-// GCOVR_EXCL_STOP
 
 // Returns the directory that holds the named directory's entry.
 std::filesystem::path ParentDirectory(std::filesystem::path directory) {
@@ -253,9 +251,8 @@ private:
             return {};
         }
         const Status inserted = InsertBatch(*batch, *memtable_);
-        // Sequences increase, so only a key over 4 GiB is rejected.
-        if (!inserted.has_value()) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs a key over 4 GiB
-            return InvalidEntry(inserted.error());  // GCOVR_EXCL_LINE: needs a key over 4 GiB
+        if (!inserted.has_value()) {
+            return InvalidEntry(inserted.error());
         }
         last_sequence_ = batch->sequence() + batch->count() - 1;
         has_entries_ = true;

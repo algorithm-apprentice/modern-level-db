@@ -1,7 +1,6 @@
 #ifndef MODERN_LEVELDB_TESTS_SUPPORT_TABLE_FILE_H_
 #define MODERN_LEVELDB_TESTS_SUPPORT_TABLE_FILE_H_
 
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -20,9 +19,7 @@ inline std::vector<std::byte> EncodeBlock(
     std::initializer_list<std::pair<ByteView, ByteView>> entries) {
     BlockBuilder builder(1);
     for (const auto& [key, value] : entries) {
-        const Status added = builder.Add(key, value);
-        assert(added.has_value());
-        static_cast<void>(added);
+        builder.Add(key, value);
     }
     const ByteView encoded = builder.Finish();
     return {encoded.begin(), encoded.end()};

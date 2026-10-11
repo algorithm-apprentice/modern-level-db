@@ -84,10 +84,7 @@ Status TableBuilder::AddValid(ByteView key, ByteView value) {
     }
     last_key_.assign(key.begin(), key.end());
     ++entry_count_;
-    Record(data_block_.Add(key, value));
-    if (first_error_.has_value()) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs a block over 4 GiB
-        return FirstError();         // GCOVR_EXCL_LINE: needs a block over 4 GiB
-    }
+    data_block_.Add(key, value);
 
     if (data_block_.CurrentSizeEstimate() >= block_size_) {
         WriteDataBlock();
@@ -130,7 +127,7 @@ Status TableBuilder::FirstError() const { return std::unexpected(*first_error_);
 void TableBuilder::AddPendingIndexEntry() {
     std::vector<std::byte> handle;
     AppendBlockHandle(handle, pending_handle_);
-    Record(index_block_.Add(last_key_, handle));
+    index_block_.Add(last_key_, handle);
     pending_index_entry_ = false;
 }
 
@@ -181,7 +178,7 @@ void TableBuilder::WriteTail() {
         WriteRawBlock(filter_block_->Finish(), BlockCompression::None, filter_handle);
         std::vector<std::byte> handle;
         AppendBlockHandle(handle, filter_handle);
-        AssertSuccess(metaindex.Add(AsBytes(filter_key_), handle));
+        metaindex.Add(AsBytes(filter_key_), handle);
     }
     BlockHandle metaindex_handle{};
     WriteBlock(metaindex.Finish(), metaindex_handle);

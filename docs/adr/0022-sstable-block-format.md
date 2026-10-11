@@ -189,11 +189,11 @@ class Block {
 - Keys must be added in strictly increasing order under the comparator that
   will read the block. The builder does not compare keys; the SSTable writer
   validates the order of all keys in a table.
-- `Add` returns `InvalidArgument` and changes nothing if the entry would make
-  the finished block larger than `UINT32_MAX` bytes, because restart offsets
-  and entry lengths are 32-bit. Only inputs larger than 4 GiB reach this
-  guard, so its branch is excluded from coverage under
-  [ADR-0019](0019-test-coverage-policy.md).
+- `Add` is an internal trusted mutation. Entry lengths and the finished block
+  size must fit their 32-bit encodings; Debug builds assert that invariant.
+  The public database path clamps target blocks to at most 4 MiB, and owned
+  write entries already establish representable key and value lengths, so the
+  write hot path does not repeat a 4 GiB runtime check for every entry.
 - `Finish` appends the restart array and returns the block, which stays valid
   until `Reset`. Adding after `Finish` requires `Reset`.
 - An empty builder finishes to an eight-byte block with one restart point.

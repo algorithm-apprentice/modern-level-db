@@ -152,11 +152,10 @@ Unit tests cover:
   a failure.
 - `file_size` and `entry_count`.
 - Every line and branch of the new code, as required by
-  [ADR-0019](0019-test-coverage-policy.md). The only exceptions are branches
-  that forward block or filter size errors that only more than 4 GiB of block
-  data or table offsets beyond 2 TiB can cause; they carry ADR-0019
-  exclusion markers. Filter size errors that a large `bits_per_key` causes
-  are tested.
+  [ADR-0019](0019-test-coverage-policy.md). The only exceptions are
+  filter-size forwarding branches reachable only when table offsets exceed
+  2 TiB; they carry ADR-0019 exclusion markers. Filter size errors that a large
+  `bits_per_key` causes are tested.
 
 A session-only differential helper builds random tables with unmodified
 LevelDB and Modern LevelDB from the same entries and options and compares the

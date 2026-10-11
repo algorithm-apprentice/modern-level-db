@@ -125,9 +125,9 @@ std::vector<std::byte> GoldenEntries() {
 
 std::vector<std::byte> BuildGoldenBlock() {
     BlockBuilder builder(2);
-    EXPECT_TRUE(builder.Add(AsBytes("apple"), AsBytes("1")).has_value());
-    EXPECT_TRUE(builder.Add(AsBytes("applesauce"), AsBytes("2")).has_value());
-    EXPECT_TRUE(builder.Add(AsBytes("banana"), AsBytes("3")).has_value());
+    builder.Add(AsBytes("apple"), AsBytes("1"));
+    builder.Add(AsBytes("applesauce"), AsBytes("2"));
+    builder.Add(AsBytes("banana"), AsBytes("3"));
     return Materialize(builder.Finish());
 }
 
@@ -180,8 +180,8 @@ TEST(BlockBuilderTest, EmptyBuilderFinishesWithOneRestartPoint) {
 
 TEST(BlockBuilderTest, RestartIntervalOneStoresEveryKeyInFull) {
     BlockBuilder builder(1);
-    ASSERT_TRUE(builder.Add(AsBytes("key1"), AsBytes("a")).has_value());
-    ASSERT_TRUE(builder.Add(AsBytes("key2"), AsBytes("b")).has_value());
+    builder.Add(AsBytes("key1"), AsBytes("a"));
+    builder.Add(AsBytes("key2"), AsBytes("b"));
 
     EXPECT_EQ(
         Materialize(builder.Finish()),
@@ -190,9 +190,9 @@ TEST(BlockBuilderTest, RestartIntervalOneStoresEveryKeyInFull) {
 
 TEST(BlockBuilderTest, EstimatesTheFinishedSize) {
     BlockBuilder builder(2);
-    ASSERT_TRUE(builder.Add(AsBytes("apple"), AsBytes("1")).has_value());
-    ASSERT_TRUE(builder.Add(AsBytes("applesauce"), AsBytes("2")).has_value());
-    ASSERT_TRUE(builder.Add(AsBytes("banana"), AsBytes("3")).has_value());
+    builder.Add(AsBytes("apple"), AsBytes("1"));
+    builder.Add(AsBytes("applesauce"), AsBytes("2"));
+    builder.Add(AsBytes("banana"), AsBytes("3"));
 
     const std::size_t estimate = builder.CurrentSizeEstimate();
 
@@ -202,16 +202,16 @@ TEST(BlockBuilderTest, EstimatesTheFinishedSize) {
 
 TEST(BlockBuilderTest, ResetStartsANewBlock) {
     BlockBuilder builder(2);
-    ASSERT_TRUE(builder.Add(AsBytes("zebra"), AsBytes("z")).has_value());
+    builder.Add(AsBytes("zebra"), AsBytes("z"));
     (void)builder.Finish();
 
     builder.Reset();
 
     EXPECT_TRUE(builder.empty());
     EXPECT_EQ(builder.CurrentSizeEstimate(), 8U);
-    ASSERT_TRUE(builder.Add(AsBytes("apple"), AsBytes("1")).has_value());
-    ASSERT_TRUE(builder.Add(AsBytes("applesauce"), AsBytes("2")).has_value());
-    ASSERT_TRUE(builder.Add(AsBytes("banana"), AsBytes("3")).has_value());
+    builder.Add(AsBytes("apple"), AsBytes("1"));
+    builder.Add(AsBytes("applesauce"), AsBytes("2"));
+    builder.Add(AsBytes("banana"), AsBytes("3"));
     EXPECT_EQ(Materialize(builder.Finish()), WithRestarts(GoldenEntries(), {0, 18}));
 }
 
@@ -378,7 +378,7 @@ TEST(BlockIteratorTest, HandlesGrowingAndShrinkingKeysAcrossRestarts) {
         SCOPED_TRACE(restart_interval);
         BlockBuilder builder(restart_interval);
         for (const auto& key : keys) {
-            ASSERT_TRUE(builder.Add(AsBytes(key), AsBytes("value")).has_value());
+            builder.Add(AsBytes(key), AsBytes("value"));
         }
         const Block block = MakeBlock(Materialize(builder.Finish()));
         Block::Iterator iterator(block, BytewiseComparator());
@@ -408,8 +408,8 @@ TEST(BlockIteratorTest, ReconstructsBinaryRestartKeys) {
     short_key[2] = long_key[2] = '\xff';
     constexpr std::string_view BinaryValue("v\0\xff", 3);
     BlockBuilder builder(1);
-    ASSERT_TRUE(builder.Add(AsBytes(short_key), AsBytes(BinaryValue)).has_value());
-    ASSERT_TRUE(builder.Add(AsBytes(long_key), AsBytes("last")).has_value());
+    builder.Add(AsBytes(short_key), AsBytes(BinaryValue));
+    builder.Add(AsBytes(long_key), AsBytes("last"));
     const Block block = MakeBlock(Materialize(builder.Finish()));
     Block::Iterator iterator(block, BytewiseComparator());
     ExpectOk(iterator.SeekToLast());
@@ -637,9 +637,9 @@ TEST(BlockIteratorTest, InternalKeySeekRejectsAShortRestartKey) {
 TEST(BlockIteratorTest, UsesTheBlockComparator) {
     const ReverseComparator reverse;
     BlockBuilder builder(1);
-    ASSERT_TRUE(builder.Add(AsBytes("c"), AsBytes("3")).has_value());
-    ASSERT_TRUE(builder.Add(AsBytes("b"), AsBytes("2")).has_value());
-    ASSERT_TRUE(builder.Add(AsBytes("a"), AsBytes("1")).has_value());
+    builder.Add(AsBytes("c"), AsBytes("3"));
+    builder.Add(AsBytes("b"), AsBytes("2"));
+    builder.Add(AsBytes("a"), AsBytes("1"));
     const Block block = MakeBlock(Materialize(builder.Finish()));
     Block::Iterator iterator(block, reverse);
 
@@ -722,7 +722,7 @@ protected:
         const std::vector<ModelEntry> entries = RandomEntries(comparator);
         BlockBuilder builder(restart_interval);
         for (const ModelEntry& entry : entries) {
-            ASSERT_TRUE(builder.Add(entry.key, entry.value).has_value());
+            builder.Add(entry.key, entry.value);
         }
         const std::size_t estimate = builder.CurrentSizeEstimate();
         const std::vector<std::byte> contents = Materialize(builder.Finish());
