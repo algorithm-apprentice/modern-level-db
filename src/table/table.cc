@@ -222,6 +222,11 @@ Status ReadFilter(const RandomAccessFile& file, std::uint64_t blocks_end, BlockH
     return {};
 }
 
+void CopyLookupValue(ByteView source, std::vector<std::byte>& value) {
+    value.resize(source.size());
+    std::ranges::copy(source, value.begin());
+}
+
 }  // namespace
 
 Result<std::unique_ptr<Table>> Table::Open(std::unique_ptr<RandomAccessFile> file,
@@ -304,7 +309,12 @@ Result<TableLookupKind> Table::Get(const LookupKey& key, std::vector<std::byte>&
     if (!block.has_value()) {
         return std::unexpected(block.error());
     }
-    Block::Iterator entry(block->block(), *block_comparator_, block_key_format_);
+    return LookupDataBlock(block->block(), key, value);
+}
+
+Result<TableLookupKind> Table::LookupDataBlock(const Block& block, const LookupKey& key,
+                                               std::vector<std::byte>& value) const {
+    Block::Iterator entry(block, *block_comparator_, block_key_format_);
     const Status data_sought = entry.Seek(key.internal_key());
     if (!data_sought.has_value()) {
         return std::unexpected(data_sought.error());
@@ -322,8 +332,7 @@ Result<TableLookupKind> Table::Get(const LookupKey& key, std::vector<std::byte>&
     if (parsed->kind == ValueKind::Deletion) {
         return TableLookupKind::Deletion;
     }
-    value.resize(entry.value().size());
-    std::ranges::copy(entry.value(), value.begin());
+    CopyLookupValue(entry.value(), value);
     return TableLookupKind::Value;
 }
 
