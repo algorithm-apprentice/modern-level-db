@@ -2,9 +2,10 @@
 
 ## Status and scope
 
-Design proposal for C01/C02/C03/C04 from the
+Accepted design for C01/C02/C03/C04 from the
 [production composition plan](production-function-composition-plan.md).
-Design first; this proposal includes no production changes.
+Design-only #193 passed independent review and all 20 exact-head checks before
+merge. The separate implementation record below follows that accepted design.
 Scope is `src/engine/compaction.cc` and its direct characterization.
 Compaction selection/expansion, iterators, native filesystem policy, MANIFEST
 installation and benchmarks remain outside this batch.
@@ -174,3 +175,42 @@ Independent design review found no significant issue. Its error-propagation
 watchpoint is explicit above: FinishBuilder moves into its new envelope while
 Finish and its caller each retain the original Error copy. The reviewer
 inspected source/tests without executing builds or tests.
+
+## Implementation record
+
+Five characterization cases were added and committed on unchanged production:
+tracked deeper-coverage short circuits for shadowed/snapshot-invisible deletions,
+metadata bounds after all sources are released, hook-before-invalid-key priority,
+overlap-boundary Finish-before-parse priority, and final input-error suppression
+of completion. Existing hook/input/filesystem failures now check exact codes
+as well as existing messages. A failed boundary Sync still closes via original
+Finish, while an unfinished output destroyed after input failure does not call
+the fixture's explicit Close; the initial incorrect test expectation was fixed
+before the passing original-code run and characterization commit.
+
+Three production topic commits implement monotonic overlap/coverage children,
+output transactions, and history/entry/final edit composition.
+All fifteen definitions in the recursive ledger above are implemented.
+Outputs::Finish retains its cache handle through owned metadata decode and
+finished_.push_back. FinishBuilder moves its error, Finish copies it once, and
+the existing caller copy now resides in ProcessEntry/FinishCompaction.
+New ProcessEntry-to-parent propagation moves. Output-open failure passes through
+the nonconst local Status by implicit move; append keeps its existing local
+copy, and trusted append is directly returned by the new child.
+
+The named VisibleHistory owns the original key/sequence optionals and is
+destroyed before Outputs, preserving owned byte-key cleanup order relative
+to output owners. Input Next remains in RunCompaction; finalization runs only
+after successful movement. NewCompactionIterator and deeper table/cache,
+metadata/CompactionEdit and iterator primitives remain recursive frontiers.
+
+All 50 selected compaction/picker/reverse-picker/table-builder cases pass
+before/after with exact unique JUnit case-set equality, all five added names
+present, and no failures/errors/skips. The cursor slice passes 18 compaction
+cases; output transaction slice passes 37 compaction/table-builder cases.
+Each source slice rebuilt actual modern_leveldb_unit_tests in Windows Debug.
+This is not allocation injection or direct native-handle destruction evidence.
+Independent combined implementation review found no significant correctness,
+design or test gap across the four scoped files and independently inspected
+the 50-case and intermediate 18/37-case XML sets without executing tests.
+Exact-head remote CI remains the delivery gate.

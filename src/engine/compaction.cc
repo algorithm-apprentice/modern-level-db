@@ -36,14 +36,7 @@ public:
     // Returns whether the output must end before the entry with this key. The
     // grandparents passed before the first entry do not count.
     bool ShouldStopBefore(ByteView key) noexcept {
-        while (next_ < grandparents_.size() &&
-               comparator_.Compare(key, grandparents_[next_]->largest.encoded()) > 0) {
-            if (seen_key_) {
-                overlapped_ += grandparents_[next_]->file_size;
-            }
-            ++next_;
-        }
-        seen_key_ = true;
+        AdvancePast(key);
         if (overlapped_ > limit_) {
             overlapped_ = 0;
             return true;
@@ -52,6 +45,17 @@ public:
     }
 
 private:
+    void AdvancePast(ByteView key) noexcept {
+        while (next_ < grandparents_.size() &&
+               comparator_.Compare(key, grandparents_[next_]->largest.encoded()) > 0) {
+            if (seen_key_) {
+                overlapped_ += grandparents_[next_]->file_size;
+            }
+            ++next_;
+        }
+        seen_key_ = true;
+    }
+
     const InternalKeyComparator& comparator_;
     std::span<const Version::File> grandparents_;
     std::uint64_t limit_;
@@ -71,23 +75,27 @@ public:
     // Returns whether no file in the levels below the next one holds the key.
     bool IsBaseLevelForKey(ByteView user_key) noexcept {
         for (std::uint32_t level = first_level_; level < NumLevels; ++level) {
-            const std::span<const Version::File> files = version_.files(level);
-            std::size_t& next = next_[level];
-            while (next < files.size()) {
-                const FileMetadata& file = *files[next];
-                if (user_comparator_.Compare(user_key, file.largest.user_key()) <= 0) {
-                    if (user_comparator_.Compare(user_key, file.smallest.user_key()) >= 0) {
-                        return false;
-                    }
-                    break;
-                }
-                ++next;
+            if (LevelContains(level, user_key)) {
+                return false;
             }
         }
         return true;
     }
 
 private:
+    bool LevelContains(std::uint32_t level, ByteView user_key) noexcept {
+        const std::span<const Version::File> files = version_.files(level);
+        std::size_t& next = next_[level];
+        while (next < files.size()) {
+            const FileMetadata& file = *files[next];
+            if (user_comparator_.Compare(user_key, file.largest.user_key()) <= 0) {
+                return user_comparator_.Compare(user_key, file.smallest.user_key()) >= 0;
+            }
+            ++next;
+        }
+        return false;
+    }
+
     const Version& version_;
     std::uint32_t first_level_;
     const Comparator& user_comparator_;
@@ -114,17 +122,12 @@ public:
     // finishes the output once it reaches the target file size.
     [[nodiscard]] Status Add(ByteView key, ByteView value) {
         if (!builder_.has_value()) {
-            number_ = hooks_.new_file_number();
-            const std::filesystem::path path = TableFileName(directory_, number_);
-            Result<std::unique_ptr<WritableFile>> file = file_system_.OpenWritable(path);
-            if (!file.has_value()) {
-                return std::unexpected(std::move(file).error());
+            Status opened = Open(key);
+            if (!opened.has_value()) {
+                return opened;
             }
-            builder_.emplace(std::move(*file), comparator_, options_.table_options);
-            smallest_.assign(key.begin(), key.end());
         }
-        largest_.assign(key.begin(), key.end());
-        const Status added = builder_->AddTrusted(key, value);
+        const Status added = Append(key, value);
         if (!added.has_value()) {
             return added;
         }
@@ -136,27 +139,58 @@ public:
 
     // Finishes the open output and checks that its table opens.
     [[nodiscard]] Status Finish() {
-        const Status finished = builder_->Finish();
-        const std::uint64_t size = builder_->file_size();
-        builder_.reset();
+        const Result<std::uint64_t> finished = FinishBuilder();
         if (!finished.has_value()) {
-            return finished;
+            return std::unexpected(finished.error());
         }
+        const std::uint64_t size = *finished;
         const Result<TableCache::Handle> table = table_cache_.Find(number_, size);
         if (!table.has_value()) {
             return std::unexpected(table.error());
         }
+        FileMetadata output = MakeMetadata(size);
+        finished_.push_back(std::move(output));
+        return {};
+    }
+
+private:
+    [[nodiscard]] Status Open(ByteView key) {
+        number_ = hooks_.new_file_number();
+        const std::filesystem::path path = TableFileName(directory_, number_);
+        Result<std::unique_ptr<WritableFile>> file = file_system_.OpenWritable(path);
+        if (!file.has_value()) {
+            return std::unexpected(std::move(file).error());
+        }
+        builder_.emplace(std::move(*file), comparator_, options_.table_options);
+        smallest_.assign(key.begin(), key.end());
+        return {};
+    }
+
+    [[nodiscard]] Status Append(ByteView key, ByteView value) {
+        largest_.assign(key.begin(), key.end());
+        return builder_->AddTrusted(key, value);
+    }
+
+    [[nodiscard]] Result<std::uint64_t> FinishBuilder() {
+        Status finished = builder_->Finish();
+        const std::uint64_t size = builder_->file_size();
+        builder_.reset();
+        if (!finished.has_value()) {
+            return std::unexpected(std::move(finished).error());
+        }
+        return size;
+    }
+
+    [[nodiscard]] FileMetadata MakeMetadata(std::uint64_t size) const {
         InternalKey smallest = TakeTrusted(InternalKey::Decode(smallest_));
         InternalKey largest = TakeTrusted(InternalKey::Decode(largest_));
         FileMetadata output{.number = number_,
                             .file_size = size,
                             .smallest = std::move(smallest),
                             .largest = std::move(largest)};
-        finished_.push_back(std::move(output));
-        return {};
+        return output;
     }
 
-private:
     FileSystem& file_system_;
     const std::filesystem::path& directory_;
     const InternalKeyComparator& comparator_;
@@ -169,6 +203,87 @@ private:
     std::vector<std::byte> largest_;
     std::vector<FileMetadata> finished_;
 };
+
+class VisibleHistory {
+public:
+    explicit VisibleHistory(const Comparator& comparator) noexcept : comparator_(comparator) {}
+
+    bool ShouldDrop(const InternalKeyView& entry, SequenceNumber smallest_snapshot,
+                    BaseLevel& base_level) {
+        StartUserKey(entry.user_key);
+        // A visible preceding entry shadows either kind. An unshadowed deletion
+        // needs its own snapshot visibility and no deeper value to hide.
+        const bool drop =
+            (last_sequence_.has_value() && *last_sequence_ <= smallest_snapshot) ||
+            (entry.kind == ValueKind::Deletion && entry.sequence <= smallest_snapshot &&
+             base_level.IsBaseLevelForKey(entry.user_key));
+        last_sequence_ = entry.sequence;
+        return drop;
+    }
+
+private:
+    void StartUserKey(ByteView key) {
+        if (!user_key_.has_value() || comparator_.Compare(key, *user_key_) != 0) {
+            user_key_.emplace(key.begin(), key.end());
+            last_sequence_.reset();
+        }
+    }
+
+    const Comparator& comparator_;
+    std::optional<std::vector<std::byte>> user_key_;
+    std::optional<SequenceNumber> last_sequence_;
+};
+
+Status ProcessEntry(InternalIterator& input, SequenceNumber smallest_snapshot,
+                    const CompactionHooks& hooks, GrandparentOverlap& grandparents,
+                    BaseLevel& base_level, VisibleHistory& history, Outputs& outputs) {
+    const Status before = hooks.before_entry();
+    if (!before.has_value()) {
+        return std::unexpected(before.error());
+    }
+    const ByteView key = input.key();
+    // Overlap advances for every entry, including records history drops.
+    if (grandparents.ShouldStopBefore(key) && outputs.open()) {
+        const Status finished = outputs.Finish();
+        if (!finished.has_value()) {
+            return std::unexpected(finished.error());
+        }
+    }
+    const Result<InternalKeyView> parsed = ParseInternalKey(key);
+    if (!parsed.has_value()) {
+        return std::unexpected(parsed.error());
+    }
+    if (!history.ShouldDrop(*parsed, smallest_snapshot, base_level)) {
+        const Status added = outputs.Add(key, input.value());
+        if (!added.has_value()) {
+            return std::unexpected(added.error());
+        }
+    }
+    return {};
+}
+
+Result<VersionEdit> FinishCompaction(FileSystem& file_system,
+                                     const std::filesystem::path& directory,
+                                     const Compaction& compaction, Outputs& outputs) {
+    if (outputs.open()) {
+        const Status finished = outputs.Finish();
+        if (!finished.has_value()) {
+            return std::unexpected(finished.error());
+        }
+    }
+    VersionEdit edit = CompactionEdit(compaction);
+    if (outputs.finished().empty()) {
+        return edit;
+    }
+    const Status synced = file_system.SyncDirectory(directory);
+    if (!synced.has_value()) {
+        return std::unexpected(synced.error());
+    }
+    for (const FileMetadata& output : outputs.finished()) {
+        static_cast<void>(edit.AddFile(compaction.level + 1, output));
+    }
+    return edit;
+}
 
 }  // namespace
 
@@ -195,70 +310,21 @@ Result<VersionEdit> RunCompaction(FileSystem& file_system, const std::filesystem
                                     GrandparentOverlapFactor * options.target_file_size);
     BaseLevel base_level(*compaction.version, compaction.level, user_comparator);
     Outputs outputs(file_system, directory, comparator, options, table_cache, hooks);
-    std::optional<std::vector<std::byte>> user_key;
-    std::optional<SequenceNumber> last_sequence;
+    VisibleHistory history(user_comparator);
 
     Status moved = input.SeekToFirst();
     while (moved.has_value() && input.valid()) {
-        const Status before = hooks.before_entry();
-        if (!before.has_value()) {
-            return std::unexpected(before.error());
-        }
-        const ByteView key = input.key();
-        // The grandparents pass for every entry, whether it is kept or dropped.
-        if (grandparents.ShouldStopBefore(key) && outputs.open()) {
-            const Status finished = outputs.Finish();
-            if (!finished.has_value()) {
-                return std::unexpected(finished.error());
-            }
-        }
-        const Result<InternalKeyView> parsed = ParseInternalKey(key);
-        if (!parsed.has_value()) {
-            return std::unexpected(parsed.error());
-        }
-        if (!user_key.has_value() || user_comparator.Compare(parsed->user_key, *user_key) != 0) {
-            user_key.emplace(parsed->user_key.begin(), parsed->user_key.end());
-            last_sequence.reset();
-        }
-        // Descending history makes the preceding sequence newer. Once that
-        // sequence is visible to the oldest snapshot, this older entry is hidden
-        // for everyone, including when it is a tombstone. Otherwise, dropping a
-        // tombstone requires its visibility to the oldest snapshot and no deeper value.
-        const bool drop =
-            (last_sequence.has_value() && *last_sequence <= smallest_snapshot) ||
-            (parsed->kind == ValueKind::Deletion && parsed->sequence <= smallest_snapshot &&
-             base_level.IsBaseLevelForKey(parsed->user_key));
-        last_sequence = parsed->sequence;
-        if (!drop) {
-            const Status added = outputs.Add(key, input.value());
-            if (!added.has_value()) {
-                return std::unexpected(added.error());
-            }
+        Status processed = ProcessEntry(input, smallest_snapshot, hooks, grandparents, base_level,
+                                        history, outputs);
+        if (!processed.has_value()) {
+            return std::unexpected(std::move(processed).error());
         }
         moved = input.Next();
     }
     if (!moved.has_value()) {
         return std::unexpected(moved.error());
     }
-    if (outputs.open()) {
-        const Status finished = outputs.Finish();
-        if (!finished.has_value()) {
-            return std::unexpected(finished.error());
-        }
-    }
-
-    VersionEdit edit = CompactionEdit(compaction);
-    if (outputs.finished().empty()) {
-        return edit;
-    }
-    const Status synced = file_system.SyncDirectory(directory);
-    if (!synced.has_value()) {
-        return std::unexpected(synced.error());
-    }
-    for (const FileMetadata& output : outputs.finished()) {
-        static_cast<void>(edit.AddFile(compaction.level + 1, output));
-    }
-    return edit;
+    return FinishCompaction(file_system, directory, compaction, outputs);
 }
 
 }  // namespace modern_leveldb

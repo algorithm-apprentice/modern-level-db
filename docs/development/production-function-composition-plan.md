@@ -432,7 +432,8 @@ frontiers are not certified by this batch.
 ### Q01/Q02/Q03 implementation record
 
 The [lookup source design](lookup-source-composition-design.md) was independently
-reviewed and accepted in #189. Separate topic commits compose ordered L0/lazy
+reviewed and accepted in #189; implementation was delivered in #190 after all
+20 exact-head checks passed. Separate topic commits compose ordered L0/lazy
 deeper candidates, memory decisions and the relocated private shared owned copy.
 The detailed ledger includes cursor methods, parent compositions, the new
 private header definition and existing lambda frontiers.
@@ -444,8 +445,38 @@ same 18 lookup/sampling cases. Original-slot charge identity, untouched
 non-value output, memory ownership after release and lazy stop/error selection
 are directly characterized. Independent implementation review found no
 significant issue and independently inspected the XML without running tests.
-Exact-head remote CI remains the delivery gate; remaining recursive frontiers
-are not certified.
+Remaining recursive frontiers are not certified.
+
+### R01/R02 implementation record
+
+The [recovery input/install design](recovery-input-install-composition-design.md)
+was independently reviewed and accepted in #191. Implementation was delivered
+in #192 after all 20 exact-head checks passed. Owned number inventory,
+selected-log/final-flush orchestration and new-WAL checked installation compose
+existing recovery primitives without changing caller-owned replay/eviction
+guards or lock-last lifetime.
+
+All 46 recovery/version/insertion/commit cases passed before/after with exact
+JUnit parity; the inventory slice passed 17 recovery cases. Review's reservation
+oracle gap was corrected with selected log 20 and outputs 21/22, recharacterized
+against original and final source, and independently confirmed. Deeper
+LogReplay/version/WAL/native operations remain recursive frontiers.
+
+### C01/C02/C03/C04 implementation record
+
+The [compaction composition design](compaction-output-history-composition-design.md)
+was independently reviewed and accepted in #193. Separate monotonic cursor,
+output transaction and visible-history/entry/finalization topic commits
+implement its fifteen-definition recursive ledger.
+
+Five added characterization cases passed on original production before
+extraction. All 50 compaction/picker/table-builder cases pass before/after with
+exact JUnit parity, and intermediate slices pass 18 and 37 cases.
+Snapshot/coverage short circuits, mixed error priority, metadata ownership and
+input-failure suppression of completion are directly characterized.
+Independent implementation review found no significant issue and independently
+inspected the XML without executing tests. Exact-head CI remains the delivery
+gate. Deeper primitives and whole-production recursive completion are not certified.
 
 ### MANIFEST recovery
 
