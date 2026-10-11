@@ -152,7 +152,7 @@ TEST(MemTableTest, EmptyTableMissesAndHasInvalidIterator) {
     EXPECT_FALSE(iterator.valid());
 
     const InternalKey target = MakeInternalKey("missing", MaxSequenceNumber, ValueKind::Value);
-    ASSERT_TRUE(iterator.Seek(target.encoded()).has_value());
+    iterator.Seek(target.encoded());
     EXPECT_FALSE(iterator.valid());
 }
 
@@ -201,6 +201,27 @@ TEST(MemTableTest, InsertionEncodesAndResolvesEntries) {
     const MemTableLookup oldest = table.Lookup(MakeLookup("key", 89));
     ASSERT_EQ(oldest.kind, MemTableLookupKind::Value);
     EXPECT_EQ(AsStringView(oldest.value), "old");
+}
+
+TEST(MemTableTest, PackedEntryCodecFeedsLookupAndIteration) {
+    const std::array key{std::byte{0x00}, std::byte{'k'}, std::byte{0xff}, std::byte{0x7f}};
+    const std::array value{std::byte{0xff}, std::byte{0x00}, std::byte{'v'}};
+    MemTable table{BytewiseComparator()};
+    table.Add(7, ValueKind::Value, key, value);
+
+    const MemTableLookup found = table.Lookup(MakeLookup(key, 7));
+    ASSERT_EQ(found.kind, MemTableLookupKind::Value);
+    EXPECT_TRUE(std::ranges::equal(found.value, value));
+
+    MemTable::Iterator iterator(table);
+    iterator.SeekToFirst();
+    ASSERT_TRUE(iterator.valid());
+    const Result<InternalKeyView> decoded = ParseInternalKey(iterator.key());
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_TRUE(std::ranges::equal(decoded->user_key, key));
+    EXPECT_EQ(decoded->sequence, 7U);
+    EXPECT_EQ(decoded->kind, ValueKind::Value);
+    EXPECT_TRUE(std::ranges::equal(iterator.value(), value));
 }
 
 #ifndef NDEBUG
@@ -299,59 +320,24 @@ TEST(MemTableTest, IteratorUsesInternalKeyOrderAndPreservesStoredDeletionBytes) 
     EXPECT_FALSE(iterator.valid());
 
     const InternalKey exact = MakeInternalKey("a", 4, ValueKind::Value);
-    ASSERT_TRUE(iterator.Seek(exact.encoded()).has_value());
+    iterator.Seek(exact.encoded());
     ASSERT_TRUE(iterator.valid());
     EXPECT_EQ(AsStringView(ParseInternalKey(iterator.key())->user_key), "a");
     EXPECT_EQ(ParseInternalKey(iterator.key())->sequence, 4U);
 
     const InternalKey before_newest = MakeInternalKey("a", 6, ValueKind::Value);
-    ASSERT_TRUE(iterator.Seek(before_newest.encoded()).has_value());
+    iterator.Seek(before_newest.encoded());
     ASSERT_TRUE(iterator.valid());
     EXPECT_EQ(ParseInternalKey(iterator.key())->sequence, 5U);
 
     const InternalKey after_oldest = MakeInternalKey("a", 2, ValueKind::Value);
-    ASSERT_TRUE(iterator.Seek(after_oldest.encoded()).has_value());
+    iterator.Seek(after_oldest.encoded());
     ASSERT_TRUE(iterator.valid());
     EXPECT_EQ(AsStringView(ParseInternalKey(iterator.key())->user_key), "b");
 
     const MemTableLookup deletion = table.Lookup(MakeLookup("a", 5));
     EXPECT_EQ(deletion.kind, MemTableLookupKind::Deletion);
     EXPECT_TRUE(deletion.value.empty());
-}
-
-TEST(MemTableTest, CheckedAndTrustedIteratorSeekAgreeForValidInternalKeys) {
-    MemTable table{BytewiseComparator()};
-    table.Add(5, ValueKind::Value, AsBytes("a"), AsBytes("a5"));
-    table.Add(3, ValueKind::Value, AsBytes("b"), AsBytes("b3"));
-    const InternalKey target = MakeInternalKey("a", 4, ValueKind::Value);
-
-    MemTable::Iterator checked(table);
-    ASSERT_TRUE(checked.Seek(target.encoded()).has_value());
-    MemTable::Iterator trusted(table);
-    trusted.SeekTrusted(target.encoded());
-
-    ASSERT_TRUE(checked.valid());
-    ASSERT_TRUE(trusted.valid());
-    EXPECT_TRUE(std::ranges::equal(checked.key(), trusted.key()));
-    EXPECT_TRUE(std::ranges::equal(checked.value(), trusted.value()));
-}
-
-TEST(MemTableTest, CheckedIteratorSeekRejectsMalformedInternalKeys) {
-    MemTable table{BytewiseComparator()};
-    MemTable::Iterator iterator(table);
-    const std::array<std::byte, InternalKeyTrailerSize - 1U> short_key{};
-
-    const Status short_status = iterator.Seek(short_key);
-    ASSERT_FALSE(short_status.has_value());
-    EXPECT_EQ(short_status.error().code(), ErrorCode::Corruption);
-
-    const InternalKey valid = MakeInternalKey("key", 1, ValueKind::Value);
-    std::vector<std::byte> unknown_kind(valid.encoded().begin(), valid.encoded().end());
-    unknown_kind[unknown_kind.size() - InternalKeyTrailerSize] = std::byte{0x02};
-
-    const Status kind_status = iterator.Seek(unknown_kind);
-    ASSERT_FALSE(kind_status.has_value());
-    EXPECT_EQ(kind_status.error().code(), ErrorCode::Corruption);
 }
 
 TEST(MemTableTest, ReportsArenaReservedMemoryGrowth) {
