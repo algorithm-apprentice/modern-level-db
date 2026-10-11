@@ -64,6 +64,8 @@ public:
     mutable unsigned live_views = 0;
     mutable unsigned open_calls = 0;
     mutable unsigned inspect_calls = 0;
+    mutable unsigned drive_calls = 0;
+    mutable unsigned volume_calls = 0;
     mutable DWORD opened_access = 0;
     mutable DWORD opened_share = 0;
     mutable DWORD opened_disposition = 0;
@@ -227,12 +229,14 @@ public:
         return closed;
     }
     UINT DriveType(const wchar_t* volume) const noexcept override {
+        ++drive_calls;
         return forced_drive_type == std::numeric_limits<UINT>::max()
                    ? WindowsFileOperations::DriveType(volume)
                    : forced_drive_type;
     }
     BOOL VolumeInformation(const wchar_t* volume, wchar_t* file_system,
                            DWORD size) const noexcept override {
+        ++volume_calls;
         if (fail_volume) {
             ::SetLastError(ERROR_ACCESS_DENIED);
             return FALSE;
@@ -1369,6 +1373,132 @@ TEST(WindowsFileSystemTest, PreflightDistinguishesUnsupportedStorageFromQueryErr
     EXPECT_EQ(file_system.PrepareDatabaseDirectory(path).error().code(), ErrorCode::NotSupported);
     EXPECT_EQ(operations->live_handles, 0U);
     EXPECT_FALSE(std::filesystem::exists(path));
+}
+
+TEST(WindowsFileSystemTest, DirectoryAdmissionRejectsEarlierGuardsBeforeNativeAcquisition) {
+    TemporaryDirectory directory;
+    const auto file = directory.path() / "file";
+    WriteFixture(file, "content");
+    struct GuardCase {
+        std::filesystem::path path;
+        bool consent;
+        ErrorCode code;
+        std::string_view message;
+    };
+    const std::vector<GuardCase> cases{
+        {{}, false, ErrorCode::InvalidArgument, "filesystem path is empty or contains a null"},
+        {L"\\\\?\\UNC\\server\\share\\db", false, ErrorCode::NotSupported,
+         "Windows requires explicit consent to weak namespace durability"},
+        {L"\\\\?\\UNC\\server\\share\\db", true, ErrorCode::NotSupported,
+         "Windows databases require local fixed NTFS"},
+        {file, true, ErrorCode::InvalidArgument, "database path is not a directory"},
+    };
+    for (const auto& test_case : cases) {
+        const auto operations = std::make_shared<FaultOperations>();
+        operations->fail_open = true;
+        operations->fail_volume = true;
+        WindowsFileSystem file_system(test_case.consent, operations, nullptr);
+        const auto result = file_system.PrepareDatabaseDirectory(test_case.path);
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error().code(), test_case.code);
+        EXPECT_EQ(result.error().message(), test_case.message);
+        EXPECT_EQ(operations->open_calls, 0U);
+        EXPECT_EQ(operations->inspect_calls, 0U);
+        EXPECT_EQ(operations->drive_calls, 0U);
+        EXPECT_EQ(operations->volume_calls, 0U);
+        EXPECT_EQ(operations->close_calls, 0U);
+    }
+}
+
+TEST(WindowsFileSystemTest, DirectoryAdmissionResolvesExistingAndSingleMissingAliasPaths) {
+    TemporaryDirectory directory;
+    const auto target = directory.path() / "target";
+    const auto alias = directory.path() / "alias";
+    ASSERT_TRUE(std::filesystem::create_directory(target));
+    ASSERT_TRUE(CreateJunction(alias, target).has_value());
+    const std::filesystem::path resolved_root{L"\\\\?\\" +
+                                              std::filesystem::canonical(target).native()};
+    for (const auto& source : {target, alias}) {
+        for (const bool missing : {false, true}) {
+            const auto path = missing ? source / "new" : source;
+            const auto operations = std::make_shared<FaultOperations>();
+            operations->forced_drive_type = DRIVE_FIXED;
+            WindowsFileSystem file_system(true, operations, nullptr);
+            const auto result =
+                file_system.PrepareDatabaseDirectory(std::filesystem::path(path.native() + L"\\"));
+            ASSERT_TRUE(result.has_value()) << result.error().ToString();
+            EXPECT_EQ(*result, missing ? resolved_root / "new" : resolved_root);
+            EXPECT_EQ(operations->opened_access, FILE_READ_ATTRIBUTES);
+            EXPECT_EQ(operations->opened_share,
+                      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+            EXPECT_EQ(operations->opened_disposition, OPEN_EXISTING);
+            EXPECT_EQ(operations->opened_flags, FILE_FLAG_BACKUP_SEMANTICS);
+            EXPECT_EQ(operations->open_calls, 1U);
+            EXPECT_EQ(operations->inspect_calls, 1U);
+            EXPECT_EQ(operations->drive_calls, 1U);
+            EXPECT_EQ(operations->volume_calls, 1U);
+            EXPECT_EQ(operations->close_calls, 1U);
+            EXPECT_EQ(operations->live_handles, 0U);
+            EXPECT_FALSE(std::filesystem::exists(target / "new"));
+        }
+    }
+    const auto operations = std::make_shared<FaultOperations>();
+    WindowsFileSystem file_system(true, operations, nullptr);
+    const auto absent_parent = target / "absent";
+    const auto result = file_system.PrepareDatabaseDirectory(absent_parent / "new");
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code(), ErrorCode::NotFound);
+    EXPECT_EQ(operations->open_calls, 1U);
+    EXPECT_EQ(operations->inspect_calls, 0U);
+    EXPECT_EQ(operations->drive_calls, 0U);
+    EXPECT_EQ(operations->volume_calls, 0U);
+    EXPECT_EQ(operations->close_calls, 0U);
+    EXPECT_FALSE(std::filesystem::exists(absent_parent));
+    ASSERT_TRUE(file_system.RemoveDirectory(alias).has_value());
+}
+
+TEST(WindowsFileSystemTest, DirectoryAdmissionRetainsFirstFailureAndReleasesItsHandleOnce) {
+    TemporaryDirectory directory;
+    const auto path = directory.path() / "new";
+    const std::array<std::pair<ErrorCode, std::string>, 8> failures{{
+        {ErrorCode::Io, "open '"},
+        {ErrorCode::Io, "file information '"},
+        {ErrorCode::Io, "could not determine the database volume type"},
+        {ErrorCode::Io, "could not determine the database volume type"},
+        {ErrorCode::NotSupported, "Windows databases require a fixed volume"},
+        {ErrorCode::Io, "database filesystem '" + PathUtf8(path).value() + "' (Win32 5)"},
+        {ErrorCode::NotSupported, "Windows databases require NTFS"},
+        {ErrorCode::Io, "close '" + PathUtf8(path).value() + "' (Win32 29)"},
+    }};
+    for (std::size_t stage = 0; stage < failures.size(); ++stage) {
+        SCOPED_TRACE(stage);
+        const auto operations = std::make_shared<FaultOperations>();
+        operations->fail_open = stage == 0;
+        operations->fail_inspect = stage <= 1;
+        operations->forced_drive_type = stage == 2   ? DRIVE_UNKNOWN
+                                        : stage == 3 ? DRIVE_NO_ROOT_DIR
+                                        : stage == 4 ? DRIVE_REMOTE
+                                                     : DRIVE_FIXED;
+        operations->fail_volume = stage <= 5;
+        operations->report_refs = true;
+        if (stage == 7) {
+            operations->report_refs = false;
+        }
+        operations->fail_close = true;
+        WindowsFileSystem file_system(true, operations, nullptr);
+        const auto result = file_system.PrepareDatabaseDirectory(path);
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error().code(), failures[stage].first);
+        EXPECT_TRUE(result.error().message().starts_with(failures[stage].second))
+            << result.error().ToString();
+        EXPECT_EQ(operations->open_calls, 1U);
+        EXPECT_EQ(operations->inspect_calls, stage == 0 ? 0U : 1U);
+        EXPECT_EQ(operations->drive_calls, stage < 2 ? 0U : 1U);
+        EXPECT_EQ(operations->volume_calls, stage < 5 ? 0U : 1U);
+        EXPECT_EQ(operations->close_calls, stage == 0 ? 0U : 1U);
+        EXPECT_EQ(operations->live_handles, 0U);
+        EXPECT_FALSE(std::filesystem::exists(path));
+    }
 }
 
 }  // namespace
