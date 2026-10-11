@@ -2,6 +2,7 @@
 #define MODERN_LEVELDB_BASE_RESULT_INTERNAL_H_
 
 #include <cassert>
+#include <optional>
 #include <utility>
 
 #include "modern_leveldb/base/result.h"
@@ -21,6 +22,10 @@ inline void AssertSuccess(Status status) noexcept {
     assert(status.has_value());  // GCOVR_EXCL_BR_WITHOUT_HIT: trusted-status invariant
     static_cast<void>(status);
 }
+
+// Retains the first failure of a multi-step resource operation. Later
+// successes do not clear it, and later failures do not replace its context.
+[[nodiscard]] Status RememberFirstError(std::optional<Error>& first_error, Status status);
 
 }  // namespace modern_leveldb
 

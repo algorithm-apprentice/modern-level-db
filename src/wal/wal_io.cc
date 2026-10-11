@@ -11,6 +11,7 @@
 #include <variant>
 #include <vector>
 
+#include "base/result_internal.h"
 #include "format/wal_format.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
@@ -78,7 +79,7 @@ Status WalWriter::AddRecord(ByteView logical_record) {
         }
     }
 
-    return RememberError(file_->Flush());
+    return RememberFirstError(first_error_, file_->Flush());
 }
 
 Status WalWriter::Sync() {
@@ -86,7 +87,7 @@ Status WalWriter::Sync() {
     if (!usable.has_value()) {
         return usable;
     }
-    return RememberError(file_->Sync());
+    return RememberFirstError(first_error_, file_->Sync());
 }
 
 Status WalWriter::Close() {
@@ -99,13 +100,7 @@ Status WalWriter::Close() {
     if (file_ != nullptr) {
         close_status = file_->Close();
     }
-    if (!close_status.has_value() && !first_error_.has_value()) {
-        first_error_ = close_status.error();
-    }
-    if (first_error_.has_value()) {
-        return std::unexpected(*first_error_);
-    }
-    return {};
+    return RememberFirstError(first_error_, std::move(close_status));
 }
 
 Status WalWriter::CheckUsable(std::string_view operation) const {
@@ -118,14 +113,9 @@ Status WalWriter::CheckUsable(std::string_view operation) const {
     return {};
 }
 
-Status WalWriter::RememberError(Status status) {
-    if (!status.has_value()) {
-        first_error_ = status.error();
-    }
-    return status;
+Status WalWriter::Append(ByteView data) {
+    return RememberFirstError(first_error_, file_->Append(data));
 }
-
-Status WalWriter::Append(ByteView data) { return RememberError(file_->Append(data)); }
 
 WalReader::WalReader(std::unique_ptr<SequentialFile> file) : file_(std::move(file)) {
     if (file_ == nullptr) {
