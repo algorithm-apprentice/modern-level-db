@@ -26,8 +26,8 @@ Status DatabaseEngine::MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool
     bool allow_delay = !force;
     while (true) {
         const std::size_t level0_files = versions_->current_raw()->files(0).size();
-        if (background_error_.has_value()) {
-            return BackgroundError();
+        if (sticky_error_.has_value()) {
+            return StickyError();
         }
         if (allow_delay && level0_files >= WriteDelayLevel0FileCountThreshold) {
             // Near the stop, each write waits a little once rather than a few
@@ -76,11 +76,11 @@ Status DatabaseEngine::SwitchMemTable() {
     try {
         closed = log_->Close();
     } catch (...) {
-        RecordBackgroundError(Error::Aborted("old WAL close threw during rotation"));
+        RecordStickyError(Error::Aborted("old WAL close threw during rotation"));
         throw;
     }
     if (!closed.has_value()) {
-        RecordBackgroundError(closed.error());
+        RecordStickyError(closed.error());
     }
     log_ = std::move(new_log);
     log_number_ = number;
@@ -106,13 +106,12 @@ Status DatabaseEngine::CommitWrite(std::unique_lock<std::mutex>& lock, EncodedWr
         committed = CommitGroup(group, sync, log, memtable);
     } catch (...) {
         lock.lock();
-        RecordBackgroundError(
-            Error::Aborted("a write stopped with an exception while it committed"));
+        RecordStickyError(Error::Aborted("a write stopped with an exception while it committed"));
         throw;
     }
     lock.lock();
     if (!committed.has_value()) {
-        RecordBackgroundError(committed.error());
+        RecordStickyError(committed.error());
         return committed;
     }
     published_mutable_memtable_bytes_ = memtable.memory_usage();
@@ -134,10 +133,10 @@ Status DatabaseEngine::FlushMemTable() {
     }
     // The forced switch made the immutable memtable, and the lock stayed held.
     const std::shared_ptr<const MemTable> flushing = immutable_;
-    background_finished_.wait(
-        lock, [&] { return immutable_ != flushing || background_error_.has_value(); });
-    if (background_error_.has_value()) {
-        return BackgroundError();
+    background_finished_.wait(lock,
+                              [&] { return immutable_ != flushing || sticky_error_.has_value(); });
+    if (sticky_error_.has_value()) {
+        return StickyError();
     }
     return {};
 }

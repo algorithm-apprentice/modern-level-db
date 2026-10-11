@@ -148,11 +148,11 @@ public:
     [[nodiscard]] Result<DatabaseEngineState> GetState();
 
     // Switches to a new memtable, even an empty one, and waits until the old one
-    // is flushed. Returns the background error if there is one.
+    // is flushed. Returns the sticky error if there is one.
     [[nodiscard]] Status FlushMemTable();
 
-    // Waits until no background task is scheduled, and returns the background
-    // error if there is one.
+    // Waits until no background task is scheduled, and returns the sticky error
+    // if there is one.
     [[nodiscard]] Status WaitForBackgroundWork();
 
 private:
@@ -199,8 +199,8 @@ private:
     void ClearImmutable();
     void ReleaseReadPinnedMemtables();
     void RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock);
-    void RecordBackgroundError(Error error);
-    [[nodiscard]] std::unexpected<Error> BackgroundError() const;
+    void RecordStickyError(Error error);
+    [[nodiscard]] std::unexpected<Error> StickyError() const;
 
     // Owned resources, destroyed after everything that uses them.
     std::unique_ptr<FileSystem> owned_file_system_;
@@ -235,7 +235,7 @@ private:
     SeekStatistics seek_statistics_;
     // The last seed of an iterator's read sampling.
     std::uint32_t seed_ = 0;
-    std::optional<Error> background_error_;
+    std::optional<Error> sticky_error_;
     bool background_scheduled_ = false;
     // Mirror state that a compaction checks without the mutex.
     std::atomic<bool> closing_ = false;

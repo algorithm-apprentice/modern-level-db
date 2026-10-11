@@ -222,7 +222,7 @@ Then read [ADR-0011](../adr/0011-filesystem-contracts.md),
 2. Its installing MANIFEST edit may never have become durable.
 3. Durability can precede acknowledgement. Recovery may include the complete
    in-flight batch, but must not manufacture a partially applied batch.
-4. No. It records a sticky background error and leaves the installed state
+4. No. It records a sticky error and leaves the installed state
    unchanged; otherwise the rotation would publish a partially completed
    transition.
 
