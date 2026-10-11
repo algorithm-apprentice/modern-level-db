@@ -19,8 +19,8 @@ The algorithms behind those responsibilities are already separated:
   `engine/compaction`;
 - seek charging lives in `engine/seek_statistics`.
 
-The remaining engine implementation is nevertheless difficult to read as a
-bounded unit:
+At the time of this decision, the remaining engine implementation was
+difficult to read as a bounded unit:
 
 - `src/engine/database.h` has 251 lines;
 - `src/engine/database.cc` has 712 lines;
@@ -460,4 +460,8 @@ gate is review and acceptance of this ADR.
 - [Document-First Development](../development/document-first-development.md)
 - [`src/engine/database.h`](../../src/engine/database.h)
 - [`src/engine/database.cc`](../../src/engine/database.cc)
-- [`tests/unit/engine/database_test.cc`](../../tests/unit/engine/database_test.cc)
+- [`tests/unit/engine/database_test_support.h`](../../tests/unit/engine/database_test_support.h)
+- [`tests/unit/engine/database_lifecycle_test.cc`](../../tests/unit/engine/database_lifecycle_test.cc)
+- [`tests/unit/engine/database_read_test.cc`](../../tests/unit/engine/database_read_test.cc)
+- [`tests/unit/engine/database_write_test.cc`](../../tests/unit/engine/database_write_test.cc)
+- [`tests/unit/engine/database_background_test.cc`](../../tests/unit/engine/database_background_test.cc)
