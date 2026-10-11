@@ -31,8 +31,9 @@ class EncodedWriteBatch;
 class WriteBatchReader final {
 public:
     // Validates the complete external representation before iteration: tags,
-    // lengths, count, sequence range, and no trailing bytes. The reader and its
-    // entries borrow the input, which must stay alive and unchanged.
+    // lengths, record count, and no trailing bytes. Like LevelDB, the batch
+    // codec does not add a sequence-range policy. The reader and its entries
+    // borrow the input, which must stay alive and unchanged.
     [[nodiscard]] static Result<WriteBatchReader> Open(ByteView encoded);
     // CommitGroup uses the owned batch's private encoding invariant instead of
     // rescanning disk bytes. The batch must remain alive and unchanged while read.
@@ -60,7 +61,7 @@ private:
 
 // Owns bytes whose mutators preserve the record encoding and fixed32 count for
 // practical caller-provided lengths. The write queue assigns a valid hidden
-// sequence at the commit boundary and restores it before returning.
+// starting sequence at the commit boundary and restores it before returning.
 class EncodedWriteBatch final {
 public:
     EncodedWriteBatch();
@@ -75,7 +76,7 @@ public:
     void Put(ByteView key, ByteView value);
     void Delete(ByteView key);
     void Append(const EncodedWriteBatch& source);
-    // Requires the complete batch sequence interval to fit the internal-key trailer.
+    // Stores the caller-reserved starting sequence without an exhaustion policy.
     void SetSequence(SequenceNumber sequence) noexcept;
     void Clear() noexcept;
 
