@@ -88,6 +88,11 @@ private:
     using PhysicalRead = std::variant<PhysicalFragment, WalCorruption>;
 
     [[nodiscard]] Result<std::optional<PhysicalRead>> ReadPhysical();
+    [[nodiscard]] std::optional<PhysicalRead> DecodePhysical(std::size_t position,
+                                                             std::size_t remaining);
+    [[nodiscard]] std::optional<PhysicalRead> RecoverPhysicalFailure(WalDecodeError& failure,
+                                                                     std::uint64_t offset,
+                                                                     std::size_t remaining);
     [[nodiscard]] Result<bool> FillBlock();
     [[nodiscard]] bool HasPartialPayload() const noexcept {
         return in_fragmented_record_ && !scratch_.empty();

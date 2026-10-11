@@ -174,39 +174,51 @@ Result<std::optional<WalReader::PhysicalRead>> WalReader::ReadPhysical() {
             continue;
         }
 
-        const std::uint64_t offset = block_start_offset_ + position;
-        WalDecodeResult decoded = DecodeWalFragment(ByteView(block_).subspan(position, remaining));
-        if (!decoded.has_value()) {
-            WalDecodeError& failure = decoded.error();
-            const std::size_t discarded = failure.recovery == WalRecoveryAction::SkipPhysicalRecord
-                                              ? failure.encoded_size
-                                              : remaining;
-            block_position_ += discarded;
-            // A payload extending past the final partial block is a crash-truncated tail.
-            const bool truncated_tail =
-                eof_seen_ && (failure.failure == WalDecodeFailure::TruncatedPayload ||
-                              failure.failure == WalDecodeFailure::PayloadTooLarge);
-            if (truncated_tail) {
-                continue;
-            }
-            return PhysicalRead(WalCorruption{
-                .error = std::move(failure.error),
-                .dropped_bytes = discarded,
-                .offset = offset,
-            });
+        std::optional<PhysicalRead> decoded = DecodePhysical(position, remaining);
+        if (decoded.has_value()) {
+            return decoded;
         }
-
-        // A zero marker discards the rest of its block.
-        block_position_ = decoded->kind == WalDecodeKind::EndOfBlock
-                              ? block_size_
-                              : position + decoded->encoded_size;
-        return PhysicalRead(PhysicalFragment{
-            .type = decoded->type,
-            .payload = decoded->payload,
-            .offset = offset,
-            .block_position = position,
-        });
     }
+}
+
+std::optional<WalReader::PhysicalRead> WalReader::DecodePhysical(std::size_t position,
+                                                                 std::size_t remaining) {
+    const std::uint64_t offset = block_start_offset_ + position;
+    WalDecodeResult decoded = DecodeWalFragment(ByteView(block_).subspan(position, remaining));
+    if (!decoded.has_value()) {
+        return RecoverPhysicalFailure(decoded.error(), offset, remaining);
+    }
+
+    // A zero marker discards the rest of its block.
+    block_position_ =
+        decoded->kind == WalDecodeKind::EndOfBlock ? block_size_ : position + decoded->encoded_size;
+    return PhysicalRead(PhysicalFragment{
+        .type = decoded->type,
+        .payload = decoded->payload,
+        .offset = offset,
+        .block_position = position,
+    });
+}
+
+std::optional<WalReader::PhysicalRead> WalReader::RecoverPhysicalFailure(WalDecodeError& failure,
+                                                                         std::uint64_t offset,
+                                                                         std::size_t remaining) {
+    const std::size_t discarded = failure.recovery == WalRecoveryAction::SkipPhysicalRecord
+                                      ? failure.encoded_size
+                                      : remaining;
+    block_position_ += discarded;
+    // A payload extending past the final partial block is a crash-truncated tail.
+    const bool truncated_tail =
+        eof_seen_ && (failure.failure == WalDecodeFailure::TruncatedPayload ||
+                      failure.failure == WalDecodeFailure::PayloadTooLarge);
+    if (truncated_tail) {
+        return std::nullopt;
+    }
+    return PhysicalRead(WalCorruption{
+        .error = std::move(failure.error),
+        .dropped_bytes = discarded,
+        .offset = offset,
+    });
 }
 
 Result<bool> WalReader::FillBlock() {
