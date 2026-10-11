@@ -380,6 +380,38 @@ Exact published-head CI remains the delivery gate.
 Entry/data/raw-block writing, existing WriteTable, and remaining recursive
 frontiers are not certified by this batch.
 
+### F03 implementation record
+
+The [block codec composition design](block-compression-composition-design.md)
+was reviewed and accepted in #183 before implementation; its extraction was
+delivered in #184. Four private native-codec adapters compose existing codec
+primitives and storage operations, while public callers retain selection,
+scratch admission and common savings policy. Its ledger names all new/changed
+functions and remaining frontiers.
+
+Three new characterization cases and strengthened existing cases passed on
+unchanged production. All 77 selected codec/stored-block/writer/reader cases
+passed before/after with exact JUnit parity; the compression slice passed
+14 real/mock codec cases. Independent implementation review found no significant
+issues. All 20 applicable exact-head CI checks passed before merge.
+This does not certify broader codec/table internals or whole-production
+recursive completion.
+
+### F01/F02 implementation record
+
+The [checked record design](record-validation-composition-design.md)
+was independently reviewed and accepted in #185 before implementation.
+Per-record/complete batch proof and WAL bounds/checksum composition use separate
+topic commits. The detailed ledger names all seven new/changed functions.
+
+Four new cases and strengthened existing errors/recovery tuples passed before
+production edits. All 58 selected batch/fragmenter/decoder/reader/writer cases
+pass before/after with exact JUnit parity; the batch slice passes 17 cases.
+Independent combined implementation review found no significant issues without
+executing tests. Exact published-head CI remains the delivery gate.
+Trusted iteration, fragmentation, WAL I/O recovery and remaining recursive
+frontiers are not certified by this batch.
+
 ### MANIFEST recovery
 
 `VersionSet::Recover` composes acquisition, record replay, and finalization.
