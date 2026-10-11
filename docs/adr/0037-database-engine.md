@@ -11,6 +11,11 @@ writes into caller-owned reusable output.
 opening with explicit weak-namespace consent and pre-mutation volume/path
 checks. The POSIX-only default described below is the original platform scope.
 
+[ADR-0074](0074-database-engine-coordination-structure.md) reorganizes the
+implemented engine by lifecycle/read/write/background flow and encapsulates
+snapshot registration and WAL/MemTable generation state without changing this
+ADR's behavior or single-mutex coordination model.
+
 ## Context
 
 Every part of a database now exists on its own: recovery

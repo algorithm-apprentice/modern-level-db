@@ -305,6 +305,39 @@ engine, platform, or decoder dependency. The ordinary library compiles those
 hooks out. It is not the layer-seven storage-file `diagnostics` module; see
 [ADR-0063](adr/0063-audit-contract-and-validation-repairs.md).
 
+## Current engine coordination
+
+`DatabaseEngine` remains the single coordination root and the sole owner of the
+database mutex. Algorithms continue to live in explicit recovery, lookup,
+write-path, flush, compaction, and seek-statistics modules. The engine source is
+partitioned by the consumer flow being followed:
+
+| Source | Coordination responsibility |
+|---|---|
+| `engine/database.cc` | options, owned resources, open/close, and recovery installation |
+| `engine/database_read.cc` | pinned point reads, iterators, snapshots, read sampling, and state inspection |
+| `engine/database_write.cc` | writer entry, backpressure, WAL/MemTable rotation, commit, and forced flush entry |
+| `engine/database_background.cc` | task scheduling, flush/compaction installation, reclamation, shutdown, and sticky failure |
+
+Two internal state owners make cross-field invariants explicit:
+
+- `SnapshotRegistry` privately owns an intrusive registration list. Public
+  snapshot handles retain an opaque node identity; registration, release, and
+  oldest lookup are constant time under the database mutex.
+- `WriteBufferState` owns the active WAL/mutable MemTable generation, immutable
+  generation, published memory accounting, read-pin retention, and the atomic
+  immutable-presence mirror. File creation, WAL close policy, scheduling, and
+  VersionEdit installation remain DatabaseEngine responsibilities.
+
+`EnginePolicy` groups the immutable write-buffer, target-file, WAL-creation, and
+table-building settings retained after option sanitization. Resource
+owner/borrower fields remain explicit. For fallback resources owned by the
+database, reverse declaration order stops the owned executor first and destroys
+users before their owned filesystem/cache/clock. Injected services remain
+externally owned, are not stopped by DatabaseEngine, and must outlive it; the
+engine only waits for its accepted background task to finish. Operational state
+is released before the directory lock.
+
 ## Current source layout
 
 ```text
