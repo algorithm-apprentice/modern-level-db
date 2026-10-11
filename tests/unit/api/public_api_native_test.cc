@@ -391,6 +391,57 @@ TEST(PublicDatabaseTest, RejectsForeignAndMovedFromHandles) {
     EXPECT_TRUE(assigned.WriteExclusive(moved_batch).has_value());
 }
 
+TEST(PublicDatabaseTest, PreparesSnapshotsConsistentlyForGetsAndIterators) {
+    TemporaryDatabaseDirectory first_directory;
+    TemporaryDatabaseDirectory second_directory;
+    Result<Database> first = Database::Open(CreatingOptions(), first_directory.path());
+    Result<Database> second = Database::Open(CreatingOptions(), second_directory.path());
+    ASSERT_TRUE(first.has_value()) << first.error().ToString();
+    ASSERT_TRUE(second.has_value()) << second.error().ToString();
+    ASSERT_TRUE(first->Put(AsBytes("a"), AsBytes("old")).has_value());
+    Result<Snapshot> original = first->GetSnapshot();
+    Result<Snapshot> foreign = second->GetSnapshot();
+    ASSERT_TRUE(original.has_value());
+    ASSERT_TRUE(foreign.has_value());
+    Snapshot retained = std::move(*original);
+    ASSERT_TRUE(first->Put(AsBytes("a"), AsBytes("new")).has_value());
+    const Snapshot* snapshots[] = {nullptr, &retained, &*original, &*foreign};
+    const ByteView unchanged = AsBytes("unchanged");
+
+    for (const bool fill_cache : {false, true}) {
+        SCOPED_TRACE(fill_cache);
+        for (const Snapshot* snapshot : snapshots) {
+            const ReadOptions options{.snapshot = snapshot, .fill_cache = fill_cache};
+            std::vector<std::byte> value(unchanged.begin(), unchanged.end());
+            const Result<bool> found = first->Get(AsBytes("a"), value, options);
+            const auto owning = first->Get(AsBytes("a"), options);
+            auto iterator = first->NewIterator(options);
+            if (snapshot == &*original || snapshot == &*foreign) {
+                ASSERT_FALSE(found.has_value());
+                ASSERT_FALSE(owning.has_value());
+                ASSERT_FALSE(iterator.has_value());
+                EXPECT_EQ(found.error().code(), ErrorCode::InvalidArgument);
+                EXPECT_EQ(owning.error().code(), found.error().code());
+                EXPECT_EQ(iterator.error().code(), found.error().code());
+                EXPECT_EQ(owning.error().message(), found.error().message());
+                EXPECT_EQ(iterator.error().message(), found.error().message());
+                EXPECT_EQ(Text(value), "unchanged");
+                continue;
+            }
+            const std::string_view expected = snapshot == nullptr ? "new" : "old";
+            ASSERT_TRUE(found.has_value() && *found);
+            ASSERT_TRUE(owning.has_value() && owning->has_value());
+            ASSERT_TRUE(iterator.has_value()) << iterator.error().ToString();
+            EXPECT_EQ(Text(value), expected);
+            EXPECT_EQ(Text(**owning), expected);
+            ASSERT_TRUE(iterator->SeekToFirst().has_value());
+            ASSERT_TRUE(iterator->valid());
+            EXPECT_EQ(Text(iterator->key()), "a");
+            EXPECT_EQ(Text(iterator->value()), expected);
+        }
+    }
+}
+
 TEST(PublicDatabaseTest, ChildHandlesKeepTheEngineAlive) {
     TemporaryDatabaseDirectory iterator_directory;
     std::optional<Iterator> iterator;
