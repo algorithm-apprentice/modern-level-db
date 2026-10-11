@@ -1,6 +1,7 @@
 #include "metadata/version.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -26,6 +27,57 @@ bool FileBefore(const InternalKeyComparator& comparator, const Version::File& le
                 const Version::File& right) noexcept {
     const int order = comparator.Compare(left->smallest.encoded(), right->smallest.encoded());
     return order != 0 ? order < 0 : left->number < right->number;
+}
+
+Version::File MakeVersionFile(const FileMetadata& metadata) {
+    FileMetadata file = metadata;
+    file.allowed_seeks = InitialAllowedSeeks(file.file_size);
+    return std::make_shared<const FileMetadata>(std::move(file));
+}
+
+using LevelCounts = std::array<std::size_t, NumLevels>;
+
+struct PreparedChanges {
+    std::array<std::vector<std::uint64_t>, NumLevels> deletions;
+    std::array<std::vector<Version::File>, NumLevels> additions;
+};
+
+template <typename Records>
+LevelCounts CountByLevel(const Records& records) {
+    LevelCounts counts{};
+    for (const auto& record : records) {
+        ++counts[record.level];
+    }
+    return counts;
+}
+
+void ReserveChanges(PreparedChanges& changes, const VersionEdit& edit) {
+    const LevelCounts deletion_counts = CountByLevel(edit.deleted_files());
+    const LevelCounts addition_counts = CountByLevel(edit.new_files());
+    for (std::uint32_t level = 0; level < NumLevels; ++level) {
+        changes.deletions[level].reserve(deletion_counts[level]);
+        changes.additions[level].reserve(addition_counts[level]);
+    }
+}
+
+void CollectDeletions(PreparedChanges& changes, const VersionEdit& edit) {
+    for (const DeletedFile& deleted : edit.deleted_files()) {
+        changes.deletions[deleted.level].push_back(deleted.number);
+    }
+}
+
+void InitializeAdditions(PreparedChanges& changes, const VersionEdit& edit) {
+    for (const NewFile& added : edit.new_files()) {
+        changes.additions[added.level].push_back(MakeVersionFile(added.file));
+    }
+}
+
+PreparedChanges PrepareChanges(const VersionEdit& edit) {
+    PreparedChanges changes;
+    ReserveChanges(changes, edit);
+    CollectDeletions(changes, edit);
+    InitializeAdditions(changes, edit);
+    return changes;
 }
 
 }  // namespace
@@ -61,10 +113,8 @@ Status VersionBuilder::Apply(const VersionEdit& edit) {
                 Error::InvalidArgument("file " + std::to_string(added.file.number) +
                                        " has its smallest key after its largest"));
         }
-        FileMetadata file = added.file;
-        file.allowed_seeks = InitialAllowedSeeks(file.file_size);
-        levels_[added.level].emplace(file.number,
-                                     std::make_shared<const FileMetadata>(std::move(file)));
+        Version::File file = MakeVersionFile(added.file);
+        levels_[added.level].emplace(added.file.number, std::move(file));
     }
     return {};
 }
@@ -95,34 +145,10 @@ Result<Version> VersionBuilder::Build() const {
 
 Version VersionBuilder::BuildTrusted(const InternalKeyComparator& comparator, const Version& base,
                                      const VersionEdit& edit) {
-    std::array<std::size_t, NumLevels> deletion_counts{};
-    std::array<std::size_t, NumLevels> addition_counts{};
-    for (const DeletedFile& deleted : edit.deleted_files()) {
-        ++deletion_counts[deleted.level];
-    }
-    for (const NewFile& added : edit.new_files()) {
-        ++addition_counts[added.level];
-    }
-
-    std::array<std::vector<std::uint64_t>, NumLevels> deletions;
-    std::array<std::vector<Version::File>, NumLevels> additions;
-    for (std::uint32_t level = 0; level < NumLevels; ++level) {
-        deletions[level].reserve(deletion_counts[level]);
-        additions[level].reserve(addition_counts[level]);
-    }
-    for (const DeletedFile& deleted : edit.deleted_files()) {
-        deletions[deleted.level].push_back(deleted.number);
-    }
-
-    for (const NewFile& added : edit.new_files()) {
-        FileMetadata file = added.file;
-        file.allowed_seeks = InitialAllowedSeeks(file.file_size);
-        additions[added.level].push_back(std::make_shared<const FileMetadata>(std::move(file)));
-    }
-
+    PreparedChanges changes = PrepareChanges(edit);
     Version version;
     for (std::uint32_t level = 0; level < NumLevels; ++level) {
-        std::vector<Version::File>& added = additions[level];
+        std::vector<Version::File>& added = changes.additions[level];
         std::ranges::sort(added, [&](const Version::File& left, const Version::File& right) {
             return FileBefore(comparator, left, right);
         });
@@ -131,7 +157,7 @@ Version VersionBuilder::BuildTrusted(const InternalKeyComparator& comparator, co
         files.reserve(existing.size() + added.size());
 
         const auto deleted = [&](std::uint64_t number) {
-            return std::ranges::binary_search(deletions[level], number);
+            return std::ranges::binary_search(changes.deletions[level], number);
         };
         const auto append = [&](const Version::File& file, bool existing_file) {
             if (existing_file && deleted(file->number)) {
