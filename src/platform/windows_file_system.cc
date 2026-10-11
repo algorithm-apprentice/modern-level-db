@@ -97,6 +97,52 @@ bool ReservedDosComponent(std::wstring component) {
              component[3] == L'\u00b2' || component[3] == L'\u00b3'));
 }
 
+Status ValidateOrdinaryComponents(const std::filesystem::path& path) {
+    for (const auto& component_path : path) {
+        const std::wstring& component = component_path.native();
+        if (component.empty() || component == L"." || component == L".." || component == L"\\" ||
+            component == L"/") {
+            continue;
+        }
+        if (component.back() == L'.' || component.back() == L' ') {
+            return std::unexpected(Error::InvalidArgument(
+                "ordinary DOS path components must not end in a dot or space"));
+        }
+        if (ReservedDosComponent(component)) {
+            return std::unexpected(
+                Error::NotSupported("DOS device names require an explicit file path"));
+        }
+    }
+    return {};
+}
+
+Result<std::wstring> ResolveAbsolutePath(const std::filesystem::path& path) {
+    const std::wstring& native = path.native();
+    DWORD required = ::GetFullPathNameW(native.c_str(), 0, nullptr, nullptr);
+    if (required == 0) {
+        return std::unexpected(FileError("resolve path", path, ::GetLastError()));
+    }
+    std::vector<wchar_t> full(required);
+    while (true) {
+        const DWORD size = ::GetFullPathNameW(native.c_str(), static_cast<DWORD>(full.size()),
+                                              full.data(), nullptr);
+        if (size == 0) {
+            return std::unexpected(FileError("resolve path", path, ::GetLastError()));
+        }
+        if (size < full.size()) {
+            return std::wstring(full.data(), size);
+        }
+        full.resize(size);
+    }
+}
+
+std::filesystem::path EncodeExtendedPath(std::wstring absolute) {
+    if (absolute.starts_with(L"\\\\")) {
+        return std::filesystem::path(L"\\\\?\\UNC\\" + absolute.substr(2));
+    }
+    return std::filesystem::path(L"\\\\?\\" + absolute);
+}
+
 Result<std::filesystem::path> NativePath(const std::filesystem::path& path) {
     const std::wstring& native = path.native();
     if (native.empty() || native.find(L'\0') != std::wstring::npos) {
@@ -113,41 +159,15 @@ Result<std::filesystem::path> NativePath(const std::filesystem::path& path) {
         }
         return path;
     }
-    for (const auto& component_path : path) {
-        const std::wstring& component = component_path.native();
-        if (component.empty() || component == L"." || component == L".." || component == L"\\" ||
-            component == L"/") {
-            continue;
-        }
-        if (component.back() == L'.' || component.back() == L' ') {
-            return std::unexpected(Error::InvalidArgument(
-                "ordinary DOS path components must not end in a dot or space"));
-        }
-        if (ReservedDosComponent(component)) {
-            return std::unexpected(
-                Error::NotSupported("DOS device names require an explicit file path"));
-        }
+    Status valid = ValidateOrdinaryComponents(path);
+    if (!valid.has_value()) {
+        return std::unexpected(std::move(valid).error());
     }
-    DWORD required = ::GetFullPathNameW(native.c_str(), 0, nullptr, nullptr);
-    if (required == 0) {
-        return std::unexpected(FileError("resolve path", path, ::GetLastError()));
+    auto absolute = ResolveAbsolutePath(path);
+    if (!absolute.has_value()) {
+        return std::unexpected(std::move(absolute).error());
     }
-    std::vector<wchar_t> full(required);
-    while (true) {
-        const DWORD size = ::GetFullPathNameW(native.c_str(), static_cast<DWORD>(full.size()),
-                                              full.data(), nullptr);
-        if (size == 0) {
-            return std::unexpected(FileError("resolve path", path, ::GetLastError()));
-        }
-        if (size < full.size()) {
-            std::wstring result(full.data(), size);
-            if (result.starts_with(L"\\\\")) {
-                return std::filesystem::path(L"\\\\?\\UNC\\" + result.substr(2));
-            }
-            return std::filesystem::path(L"\\\\?\\" + result);
-        }
-        full.resize(size);
-    }
+    return EncodeExtendedPath(std::move(*absolute));
 }
 
 class ScopedHandle final {
@@ -510,21 +530,33 @@ private:
     ScopedHandle handle_;
 };
 
-Result<std::unique_ptr<WritableFile>> OpenWriter(
-    const std::filesystem::path& path, bool append,
-    const std::shared_ptr<WindowsFileOperations>& operations) {
+Result<ScopedHandle> OpenRegularFile(const std::filesystem::path& path, DWORD access, DWORD share,
+                                     DWORD disposition, DWORD flags,
+                                     const std::shared_ptr<WindowsFileOperations>& operations,
+                                     bool lock_contention = false) {
     auto native = NativePath(path);
     if (!native.has_value()) {
         return std::unexpected(native.error());
     }
-    auto handle = OpenHandle(*native, GENERIC_WRITE, 0, append ? OPEN_ALWAYS : CREATE_ALWAYS,
-                             FILE_ATTRIBUTE_NORMAL, operations);
+    auto handle =
+        OpenHandle(*native, access, share, disposition, flags, operations, lock_contention);
     if (!handle.has_value()) {
         return std::unexpected(handle.error());
     }
     const Status valid = CheckKind(handle->get(), path, false, *operations);
     if (!valid.has_value()) {
         return std::unexpected(valid.error());
+    }
+    return handle;
+}
+
+Result<std::unique_ptr<WritableFile>> OpenWriter(
+    const std::filesystem::path& path, bool append,
+    const std::shared_ptr<WindowsFileOperations>& operations) {
+    auto handle = OpenRegularFile(path, GENERIC_WRITE, 0, append ? OPEN_ALWAYS : CREATE_ALWAYS,
+                                  FILE_ATTRIBUTE_NORMAL, operations);
+    if (!handle.has_value()) {
+        return std::unexpected(std::move(handle).error());
     }
     if (append) {
         LARGE_INTEGER zero{};
@@ -628,36 +660,20 @@ Result<std::filesystem::path> WindowsFileSystem::PrepareDatabaseDirectory(
 
 Result<std::unique_ptr<SequentialFile>> WindowsFileSystem::OpenSequential(
     const std::filesystem::path& path) {
-    auto native = NativePath(path);
-    if (!native.has_value()) {
-        return std::unexpected(native.error());
-    }
-    auto file = OpenHandle(*native, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
-                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, operations_);
+    auto file = OpenRegularFile(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, operations_);
     if (!file.has_value()) {
-        return std::unexpected(file.error());
-    }
-    const Status valid = CheckKind(file->get(), path, false, *operations_);
-    if (!valid.has_value()) {
-        return std::unexpected(valid.error());
+        return std::unexpected(std::move(file).error());
     }
     return std::make_unique<WindowsSequentialFile>(std::move(*file), path, operations_);
 }
 
 Result<std::unique_ptr<RandomAccessFile>> WindowsFileSystem::OpenRandomAccess(
     const std::filesystem::path& path, std::optional<std::uint64_t> expected_size) {
-    auto native = NativePath(path);
-    if (!native.has_value()) {
-        return std::unexpected(native.error());
-    }
-    auto file = OpenHandle(*native, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
-                           OPEN_EXISTING, FILE_FLAG_OVERLAPPED, operations_);
+    auto file = OpenRegularFile(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
+                                OPEN_EXISTING, FILE_FLAG_OVERLAPPED, operations_);
     if (!file.has_value()) {
-        return std::unexpected(file.error());
-    }
-    const Status valid = CheckKind(file->get(), path, false, *operations_);
-    if (!valid.has_value()) {
-        return std::unexpected(valid.error());
+        return std::unexpected(std::move(file).error());
     }
     const auto copied = [&]() -> Result<std::unique_ptr<RandomAccessFile>> {
         return std::make_unique<WindowsRandomAccessFile>(std::move(*file), path, operations_);
@@ -884,19 +900,11 @@ Status WindowsFileSystem::SyncDirectory(const std::filesystem::path& path) {
 }
 
 Result<std::unique_ptr<FileLock>> WindowsFileSystem::LockFile(const std::filesystem::path& path) {
-    auto native = NativePath(path);
-    if (!native.has_value()) {
-        return std::unexpected(native.error());
-    }
     auto file =
-        OpenHandle(*native, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                   OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, operations_, true);
+        OpenRegularFile(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, operations_, true);
     if (!file.has_value()) {
-        return std::unexpected(file.error());
-    }
-    const Status valid = CheckKind(file->get(), path, false, *operations_);
-    if (!valid.has_value()) {
-        return std::unexpected(valid.error());
+        return std::unexpected(std::move(file).error());
     }
     OVERLAPPED overlapped{};
     if (!::LockFileEx(file->get(), LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, MAXDWORD,
