@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Design proposal for K01 from the
+Design accepted in #199 for K01 from the
 [production composition plan](production-function-composition-plan.md).
 Scope is ShardedLruCacheCore::Insert's admission/commit children and private
 declarations. Public typed cache validation, handle table growth/rehash,
@@ -111,3 +111,20 @@ Independent design review found no significant issue. Its oracle cautions about
 saturating aggregate totals and successful-only allocation counts are included
 above. The reviewer inspected source/tests/target declarations without executing
 builds or tests.
+
+## Implementation evidence
+
+Three added characterization cases passed before production extraction on the
+integrated source baseline `3f7802a260581f40f6d4d88e13fddfec2213db81`:
+`ReplacementSubtractsOldChargeBeforeOverflowAdmission`,
+`ReplacementReclamationCanEraseTheNewMappingBeforePinReturn`, and
+`OverflowRejectionDoesNotAllocatePreparedBucketGrowth`.
+The original and extracted implementations each passed the same 31 unique
+ShardedLruCacheTest, CacheAllocationTest and TableCacheTest cases, rebuilding
+both actual test executables. Exact JUnit sets and absence of failures/errors/
+skips were checked, not inferred from a successful empty selection.
+
+The extraction follows the accepted private signatures/order directly. The
+two children add no allocation, owner, lock, value reclamation or exception
+translation. Parent PendingEntry, lock block, DeleteRetired and pin transfer
+remain in their original order. Existing retention/table primitives are reused.
