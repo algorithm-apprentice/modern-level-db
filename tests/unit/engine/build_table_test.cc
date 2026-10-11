@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "engine/table_cache.h"
@@ -152,6 +153,31 @@ TEST_F(BuildTableTest, WritesNothingForAnEmptyMemtable) {
     ASSERT_TRUE(built.has_value());
     EXPECT_FALSE(built->has_value());
     EXPECT_TRUE(file_system.operations().empty());
+}
+
+TEST_F(BuildTableTest, MetadataOwnsKeyBoundsBeyondSourceAndCacheLifetime) {
+    std::optional<FileMetadata> metadata;
+    {
+        MemoryFileSystem file_system;
+        InternalKeyComparator comparator(BytewiseComparator());
+        TableCache cache(file_system, directory_, comparator, {}, 0);
+        MemTable source(BytewiseComparator());
+        source.Add(5, ValueKind::Deletion, AsBytes("a"), {});
+        source.Add(4, ValueKind::Value, AsBytes("c"), AsBytes("gamma"));
+
+        auto built = BuildTable(file_system, directory_, comparator, options_, cache, source, 7);
+        ASSERT_TRUE(built.has_value());
+        ASSERT_TRUE(built->has_value());
+        metadata = std::move(*built);
+    }
+
+    ASSERT_TRUE(metadata.has_value());
+    EXPECT_EQ(metadata->number, 7U);
+    EXPECT_GT(metadata->file_size, 0U);
+    EXPECT_EQ(AsStringView(metadata->smallest.encoded()),
+              AsStringView(Key("a", 5, ValueKind::Deletion)));
+    EXPECT_EQ(AsStringView(metadata->largest.encoded()),
+              AsStringView(Key("c", 4, ValueKind::Value)));
 }
 
 TEST_F(BuildTableTest, RemovesTheTableAfterAFailure) {

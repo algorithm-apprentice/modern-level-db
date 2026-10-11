@@ -2,9 +2,10 @@
 
 ## Status and scope
 
-Design proposal for T04/T05/T06 in the
+Design accepted in #181 for T04/T05/T06 in the
 [production composition plan](production-function-composition-plan.md).
-No production implementation is included in the design PR.
+No production implementation was included in the design PR. The subsequent
+implementation is tracked below.
 
 The batch covers `TableBuilder::WriteTail` in `src/table/table_builder.cc`
 and verification/metadata construction in `src/engine/build_table.cc`.
@@ -197,3 +198,57 @@ The separate oracles above address that finding. The remaining contracts and
 proposed extraction boundaries had no reported issues in the bounded static
 review. This is not execution evidence, implementation review, GitHub approval,
 or whole-file certification.
+
+## Implementation record
+
+Implementation follows accepted #181 and uses separate characterization,
+terminal-block, footer, and verification/metadata commits. The unpublished
+branch was rebased onto merged #180 without conflicts; characterization passed
+again on unchanged writer production with that integrated baseline before
+rechecking the combined extraction.
+
+### Responsibility ledger
+
+| Function | Composition or stopping boundary |
+|---|---|
+| `WriteTail` | Composes optional pending data-block writing, metaindex writing, index writing, the original first-error gate, and footer persistence. |
+| `AddFilterIndexEntry` | Composes optional filter finish/raw write with original handle encoding and policy-key metaindex insertion, including the original evaluations after a sticky error. |
+| `WriteMetaindex` | Owns the local metaindex and composes filter-entry construction with finish/write; returns the initialized handle, not a success flag. |
+| `AddFinalIndexEntry` | One terminal separator operation: pending check, shortest successor, and existing handle publication. |
+| `WriteIndex` | Composes terminal-entry completion and original index finish/write. |
+| `WriteFooter` | Composes footer encoding, checked append/size accounting, and conditional Sync; parent admission and Finish-owned Close remain separate. |
+| `VerifyWrittenTable` | One completed-table verification boundary: acquire the cache handle, translate a failed Find using the original Error copy, and release the pin before returning Status. |
+| `MakeTableMetadata` | Composes original trusted smallest/largest decoding in order with the original local aggregate and owning return. |
+| `BuildTable` | Composes nonempty source/file admission, existing WriteTable, completed-table verification, the unchanged shared failure cleanup, and optional owned metadata return. |
+
+WriteMetaindex's local builder is released after synchronous block writing;
+no borrowed byte span escapes that stage. Persistent data/index/filter builders,
+file/comparator ownership, error storage and compression buffers stay unchanged.
+No coverage exclusions, public API, compression choices or cleanup policies
+were changed. Existing writer/filter/cache/parser internals remain the recursive
+frontiers named above; no whole-file certification is implied.
+
+### Characterization and local evidence
+
+The two new public-operation cases pass on original production before extraction
+and again on the integrated merged-table baseline. A four-mode matrix covers
+filtered/unfiltered and empty/pending-data tails, every tail Append failure,
+exact stored prefix and complete-block size, failed Append versus failed Close,
+no Sync/Flush after append failure, operation order, and terminal call rejection.
+Owned metadata remains valid after source, cache and filesystem release.
+The existing combined Sync/Close failure case now checks full appended bytes
+and size, exact counts, and Sync-before-Close.
+
+Both terminal-block and footer slices pass all 19 TableBuilderTest cases.
+The combined TableBuilderTest/BuildTableTest/TableCacheTest selection preserves
+all 31 before/after cases with exact JUnit case-set parity and no failures,
+errors, or skips. The warnings-as-errors MSVC Debug build, formatting,
+documentation, and whitespace checks pass.
+This evidence does not inject allocation failures or replace authoritative
+remote branch coverage.
+
+Independent combined implementation review found no significant issues across
+the source/header/tests and this implementation record. The reviewer separately
+confirmed the existing exact 31-case JUnit parity without executing tests.
+Applicable exact published-head CI remains required before merge; static review
+is not GitHub approval or whole-file certification.

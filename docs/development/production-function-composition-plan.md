@@ -363,6 +363,23 @@ Exact published-head CI remains the delivery gate.
 Table writer/finalization, index-validation visitor, cache/iterator internals,
 and all other recursive-review frontiers remain open.
 
+### T04/T05/T06 implementation record
+
+The [table writer composition design](table-writer-composition-design.md)
+was independently reviewed and accepted in #181 before implementation.
+Terminal filter/metaindex/index composition, footer persistence, and completed
+table verification/owned metadata construction use separate topic commits for
+one implementation PR. Its detailed ledger covers every new/changed function.
+
+New characterization separates stored append prefixes from complete-block
+reported size and proves metadata ownership after source/cache release.
+All 31 focused cases pass before/after with exact JUnit parity; both builder
+slices pass 19 cases. Independent implementation review found no significant
+issues and confirmed existing JUnit evidence without executing tests.
+Exact published-head CI remains the delivery gate.
+Entry/data/raw-block writing, existing WriteTable, and remaining recursive
+frontiers are not certified by this batch.
+
 ### MANIFEST recovery
 
 `VersionSet::Recover` composes acquisition, record replay, and finalization.
