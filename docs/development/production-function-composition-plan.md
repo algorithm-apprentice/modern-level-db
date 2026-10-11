@@ -492,9 +492,37 @@ reruns on the integrated #194 baseline. Returned-close-error generation
 installation, thrown-close noninstallation, preparation retry and trivial
 move/no-cleanup distinctions are directly asserted.
 Independent combined implementation review found no actionable issue and
-independently inspected the XML without running tests. Exact-head CI remains
-the delivery gate; rewrite setup, write-buffer internals and remaining recursive
+independently inspected the XML without running tests. Delivery completed in
+#198 after all 20 exact-head checks succeeded; rewrite setup, write-buffer internals and remaining recursive
 frontiers stay open.
+
+### C05 implementation record
+
+The [bounded input expansion design](compaction-input-expansion-composition-design.md)
+was accepted in #195 and delivered in #196 after independent implementation
+review and all 20 exact-head checks succeeded. Original/final 29-case parity
+includes exact budget boundary, expanded-next boundary chain, lazy rejection,
+original file identities, source compact pointer and final grandparent range.
+Integrated picker/compaction regression includes all 34 cases after #194.
+Expansion's private owned replacement result leaves range widening after parent
+owner replacement; deeper overlap/boundary primitives remain recursive frontiers.
+
+### M01/M02/M03/M04/M05 implementation record
+
+The [MANIFEST transaction design](manifest-transaction-composition-design.md)
+was independently reviewed and accepted in #201 before implementation.
+Selected-descriptor acquisition, private replay state, ordered record updates,
+final checked publication, explicit prepared write/relock and staged snapshot
+writer acquisition follow its fourteen-definition responsibility ledger.
+
+Six new original-source characterization cases and the same 115 metadata,
+recovery and database cases pass before/after with exact JUnit parity; the
+recovery topic passes 61 cases. They preserve multi-fault/error-envelope
+priority, sparse counters/pointers, historical maxima, no later-block recovery
+read, pre-append thrown failure/retry, candidate ownership and concurrent
+allocation/sequence changes. Independent combined review found no significant
+issue and directly verified both 115-case artifacts without running tests.
+Exact-head CI remains required before delivery; unmodified helper leaves remain open.
 
 ### MANIFEST recovery
 

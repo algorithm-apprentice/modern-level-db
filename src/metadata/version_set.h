@@ -116,6 +116,8 @@ public:
     [[nodiscard]] Status LogAndApply(VersionEdit edit, std::unique_lock<std::mutex>& lock);
 
 private:
+    struct ManifestRecovery;
+
     // Leaves the version set without a current version until one is installed.
     VersionSet(FileSystem& file_system, std::filesystem::path directory,
                const InternalKeyComparator& comparator) noexcept;
@@ -123,6 +125,10 @@ private:
     [[nodiscard]] Status Validate(const VersionEdit& edit) const;
     [[nodiscard]] Status ApplyPrepared(VersionEdit edit, Version version,
                                        std::unique_lock<std::mutex>* lock);
+    [[nodiscard]] Status WritePrepared(
+        const VersionEdit& edit, const std::optional<std::vector<std::byte>>& new_manifest_snapshot,
+        std::unique_lock<std::mutex>* lock);
+    [[nodiscard]] Result<std::unique_ptr<WalWriter>> CreateManifest(ByteView snapshot);
     [[nodiscard]] Status Write(const VersionEdit& edit,
                                const std::optional<std::vector<std::byte>>& new_manifest_snapshot);
     [[nodiscard]] Status InstallCurrent() const;

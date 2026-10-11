@@ -16,6 +16,7 @@
 #include <optional>
 #include <random>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -535,6 +536,43 @@ TEST_F(VersionSetTest, RuntimeApplyUnlocksRequiredCurrentInstallation) {
     EXPECT_EQ(Text(file_system_.Contents(directory_ / "CURRENT")), "MANIFEST-000003\n");
 }
 
+TEST_F(VersionSetTest, PreAppendExceptionPreservesPreparedStateAndAllowsRetry) {
+    auto set = Create();
+    ASSERT_NE(set, nullptr);
+    VersionEdit edit;
+    ASSERT_TRUE(edit.AddFile(0, File(set->NewFileNumber(), "a", "b")).has_value());
+    ASSERT_TRUE(edit.AddCompactPointer(2, Key("c", 7)).has_value());
+    edit.SetLogNumber(2);
+    edit.SetPrevLogNumber(1);
+    const State before = StateOf(*set);
+    const auto manifest_before = file_system_.Contents(directory_ / "MANIFEST-000001");
+    const std::size_t operations_before = file_system_.operations().size();
+    file_system_.SetOperationHook([](std::string_view operation) -> Status {
+        if (operation.starts_with("append MANIFEST-")) {
+            throw std::runtime_error("pre-append");
+        }
+        return {};
+    });
+    std::mutex mutex;
+    std::unique_lock lock(mutex);
+
+    EXPECT_THROW(static_cast<void>(set->LogAndApply(edit, lock)), std::runtime_error);
+
+    EXPECT_TRUE(lock.owns_lock());
+    EXPECT_EQ(StateOf(*set), before);
+    EXPECT_EQ(file_system_.Contents(directory_ / "MANIFEST-000001"), manifest_before);
+    EXPECT_EQ(file_system_.operations().size(), operations_before);
+    file_system_.SetOperationHook({});
+    ASSERT_TRUE(set->LogAndApply(edit, lock).has_value());
+    EXPECT_TRUE(lock.owns_lock());
+    State after = before;
+    after.files[0].push_back(Summarize(File(2, "a", "b")));
+    after.compact_pointers[2] = Materialize(Key("c", 7).encoded());
+    after.log_number = 2;
+    after.prev_log_number = 1;
+    EXPECT_EQ(StateOf(*set), after);
+}
+
 TEST_F(VersionSetTest, RuntimeApplyStagesTheNewManifestSnapshotBeforeUnlocking) {
     Populate(file_system_);
     auto set = Recover();
@@ -889,6 +927,138 @@ TEST_F(VersionSetTest, RequiresConsistentCounters) {
 
     WriteDatabase({Counters(5, 4)});
     EXPECT_NE(Recover(), nullptr);
+}
+
+TEST_F(VersionSetTest, RecoveryRejectsRecordFaultsInOriginalPriorityWithoutReadingLaterBlocks) {
+    const auto first = Counters(9, 5).Encode();
+    VersionEdit invalid;
+    invalid.SetLogNumber(4);
+    ASSERT_TRUE(invalid.RemoveFile(1, 55).has_value());
+    VersionEdit incompatible = invalid;
+    incompatible.SetComparatorName("other");
+    auto malformed = incompatible.Encode();
+    malformed.push_back(std::byte{0xff});
+    const std::string envelope =
+        "MANIFEST record at offset " + std::to_string(WalHeaderSize + first.size()) + ": ";
+    struct Case {
+        std::vector<std::byte> encoded;
+        ErrorCode code;
+        std::string message;
+    };
+    const std::vector<Case> cases{
+        {malformed, ErrorCode::Corruption, envelope + "malformed version edit tag"},
+        {incompatible.Encode(), ErrorCode::InvalidArgument,
+         "MANIFEST comparator other does not match leveldb.BytewiseComparator"},
+        {invalid.Encode(), ErrorCode::Corruption,
+         envelope + "edit deletes file 55, which is not live in level 1"},
+    };
+    for (const Case& fault : cases) {
+        SCOPED_TRACE(fault.message);
+        auto data = Frame({first, fault.encoded});
+        data.resize(2 * WalBlockSize, std::byte{0});
+        file_system_.Write(DescriptorFileName(directory_, 1), std::move(data));
+        PointCurrentAt(1);
+        const std::size_t start = file_system_.operations().size();
+
+        const auto recovered = TryRecover(file_system_);
+
+        ASSERT_FALSE(recovered.has_value());
+        EXPECT_EQ(recovered.error().code(), fault.code);
+        EXPECT_EQ(recovered.error().message(), fault.message);
+        const auto operations = std::span(file_system_.operations()).subspan(start);
+        EXPECT_EQ(std::ranges::count(operations, "read MANIFEST-000001"), 1);
+        for (const auto& operation : operations) {
+            EXPECT_TRUE(operation.starts_with("open_sequential ") ||
+                        operation.starts_with("read "));
+        }
+    }
+}
+
+TEST_F(VersionSetTest, RequiredCountersAreCheckedBeforeFinalOverlappingTopology) {
+    VersionEdit overlap;
+    overlap.SetLogNumber(0);
+    ASSERT_TRUE(overlap.SetLastSequence(0).has_value());
+    ASSERT_TRUE(overlap.AddFile(1, File(2, "a", "m")).has_value());
+    ASSERT_TRUE(overlap.AddFile(1, File(3, "k", "z")).has_value());
+    WriteDatabase({overlap});
+
+    auto recovered = TryRecover(file_system_);
+
+    ASSERT_FALSE(recovered.has_value());
+    EXPECT_EQ(recovered.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(recovered.error().message(), "MANIFEST has no next file number");
+    ASSERT_TRUE(overlap.SetNextFileNumber(9).has_value());
+    WriteDatabase({overlap});
+    recovered = TryRecover(file_system_);
+    ASSERT_FALSE(recovered.has_value());
+    EXPECT_EQ(recovered.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(recovered.error().message(), "MANIFEST: files 2 and 3 overlap in level 1");
+}
+
+TEST_F(VersionSetTest, SparseRecordsCarryCountersAndKeepLastPresentPointerValues) {
+    VersionEdit first = Counters(20, 8, 42);
+    first.SetPrevLogNumber(7);
+    ASSERT_TRUE(first.AddCompactPointer(3, Key("k", 7)).has_value());
+    ASSERT_TRUE(first.AddFile(1, File(2, "a", "c")).has_value());
+    VersionEdit second;
+    ASSERT_TRUE(second.SetNextFileNumber(15).has_value());
+    ASSERT_TRUE(second.SetLastSequence(10).has_value());
+    ASSERT_TRUE(second.AddCompactPointer(3, Key("m", 5)).has_value());
+    VersionEdit third;
+    ASSERT_TRUE(third.AddCompactPointer(2, Key("x", 4)).has_value());
+    WriteDatabase({first, second, third});
+    const std::size_t start = file_system_.operations().size();
+
+    const auto recovered = Recover();
+
+    ASSERT_NE(recovered, nullptr);
+    State expected;
+    expected.files[1].push_back(Summarize(File(2, "a", "c")));
+    expected.compact_pointers[3] = Materialize(Key("m", 5).encoded());
+    expected.compact_pointers[2] = Materialize(Key("x", 4).encoded());
+    expected.log_number = 8;
+    expected.prev_log_number = 7;
+    expected.last_sequence = 10;
+    EXPECT_EQ(StateOf(*recovered), expected);
+    EXPECT_EQ(recovered->manifest_file_number(), 15U);
+    EXPECT_EQ(recovered->NewFileNumber(), 16U);
+    for (const auto& operation : std::span(file_system_.operations()).subspan(start)) {
+        EXPECT_TRUE(operation.starts_with("open_sequential ") || operation.starts_with("read "));
+    }
+}
+
+TEST_F(VersionSetTest, DeletedHistoricalFileStillConstrainsRecoveredNextNumber) {
+    VersionEdit first = Counters(9);
+    ASSERT_TRUE(first.AddFile(0, File(7, "a", "b")).has_value());
+    VersionEdit second;
+    ASSERT_TRUE(second.RemoveFile(0, 7).has_value());
+    ASSERT_TRUE(second.SetNextFileNumber(5).has_value());
+    WriteDatabase({first, second});
+
+    const auto recovered = TryRecover(file_system_);
+
+    ASSERT_FALSE(recovered.has_value());
+    EXPECT_EQ(recovered.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(recovered.error().message(),
+              "MANIFEST names file or log number 7, which is not below its next file number");
+}
+
+TEST_F(VersionSetTest, SelectedManifestLimitAndMissingTranslationPrecedeReplay) {
+    PointCurrentAt(FileNumberLimit);
+    auto recovered = TryRecover(file_system_);
+    ASSERT_FALSE(recovered.has_value());
+    EXPECT_EQ(recovered.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(recovered.error().message(), "CURRENT names a MANIFEST beyond the file number limit");
+    EXPECT_EQ(std::ranges::count(file_system_.operations(),
+                                 "open_sequential MANIFEST-" + std::to_string(FileNumberLimit)),
+              0);
+
+    PointCurrentAt(9);
+    recovered = TryRecover(file_system_);
+    ASSERT_FALSE(recovered.has_value());
+    EXPECT_EQ(recovered.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(recovered.error().message(),
+              "CURRENT names a missing MANIFEST: " + DescriptorFileName(directory_, 9).string());
 }
 
 TEST_F(VersionSetTest, IgnoresALastRecordThatACrashCutShort) {

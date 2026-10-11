@@ -46,6 +46,38 @@ Result<std::string> ReadCurrent(FileSystem& file_system, const std::filesystem::
     }
 }
 
+struct SelectedManifest {
+    std::uint64_t number;
+    std::unique_ptr<SequentialFile> file;
+};
+
+Result<SelectedManifest> OpenSelectedManifest(FileSystem& file_system,
+                                              const std::filesystem::path& directory) {
+    const Result<std::string> current = ReadCurrent(file_system, directory);
+    if (!current.has_value()) {
+        return std::unexpected(current.error());
+    }
+    const Result<std::uint64_t> number = ParseCurrentFileContents(*current);
+    if (!number.has_value()) {
+        return std::unexpected(number.error());
+    }
+    if (*number >= FileNumberLimit) {
+        return std::unexpected(
+            Error::Corruption("CURRENT names a MANIFEST beyond the file number limit"));
+    }
+    Result<std::unique_ptr<SequentialFile>> file =
+        file_system.OpenSequential(DescriptorFileName(directory, *number));
+    if (!file.has_value()) {
+        if (file.error().code() == ErrorCode::NotFound) {
+            return std::unexpected(Error::Corruption("CURRENT names a missing MANIFEST: " +
+                                                     std::string(file.error().message())));
+        }
+        return std::unexpected(std::move(file).error());
+    }
+    SelectedManifest selected{.number = *number, .file = std::move(*file)};
+    return selected;
+}
+
 Error InManifest(std::uint64_t offset, const Error& error) {
     return Error::Corruption("MANIFEST record at offset " + std::to_string(offset) + ": " +
                              std::string(error.message()));
@@ -109,120 +141,153 @@ Result<std::unique_ptr<VersionSet>> VersionSet::Create(FileSystem& file_system,
     return set;
 }
 
-Result<std::unique_ptr<VersionSet>> VersionSet::Recover(FileSystem& file_system,
-                                                        std::filesystem::path directory,
-                                                        const InternalKeyComparator& comparator) {
-    const Result<std::string> current = ReadCurrent(file_system, directory);
-    if (!current.has_value()) {
-        return std::unexpected(current.error());
-    }
-    const Result<std::uint64_t> manifest_number = ParseCurrentFileContents(*current);
-    if (!manifest_number.has_value()) {
-        return std::unexpected(manifest_number.error());
-    }
-    if (*manifest_number >= FileNumberLimit) {
-        return std::unexpected(
-            Error::Corruption("CURRENT names a MANIFEST beyond the file number limit"));
-    }
-    Result<std::unique_ptr<SequentialFile>> file =
-        file_system.OpenSequential(DescriptorFileName(directory, *manifest_number));
-    if (!file.has_value()) {
-        if (file.error().code() == ErrorCode::NotFound) {
-            return std::unexpected(Error::Corruption("CURRENT names a missing MANIFEST: " +
-                                                     std::string(file.error().message())));
+struct VersionSet::ManifestRecovery {
+    explicit ManifestRecovery(const InternalKeyComparator& comparator)
+        : builder(comparator, Version()) {}
+
+    Status Replay(WalReader& reader, VersionSet& set) {
+        while (true) {
+            const WalReadResult event = reader.ReadNext();
+            if (!event.has_value()) {
+                return std::unexpected(event.error());
+            }
+            if (!event->has_value()) {
+                return {};
+            }
+            if (const auto* corruption = std::get_if<WalCorruption>(&**event)) {
+                return std::unexpected(InManifest(corruption->offset, corruption->error));
+            }
+            Status applied = ApplyRecord(std::get<WalLogicalRecord>(**event), set);
+            if (!applied.has_value()) {
+                return applied;
+            }
         }
-        return std::unexpected(std::move(file).error());
     }
 
-    std::unique_ptr<VersionSet> set(new VersionSet(file_system, std::move(directory), comparator));
-    VersionBuilder builder(comparator, Version());
+    Status ApplyRecord(const WalLogicalRecord& record, VersionSet& set) {
+        const Result<VersionEdit> edit = VersionEdit::Decode(record.data);
+        if (!edit.has_value()) {
+            return std::unexpected(InManifest(record.offset, edit.error()));
+        }
+        Status compatible = CheckComparator(*edit, set.comparator_->user_comparator());
+        if (!compatible.has_value()) {
+            return compatible;
+        }
+        const Status applied = builder.Apply(*edit);
+        if (!applied.has_value()) {
+            return std::unexpected(InManifest(record.offset, applied.error()));
+        }
+        UpdateCompactPointers(*edit, set);
+        return AccumulateCounters(*edit, record.offset);
+    }
+
+    static Status CheckComparator(const VersionEdit& edit, const Comparator& comparator) {
+        const std::optional<std::string>& name = edit.comparator_name();
+        if (name.has_value() && *name != comparator.Name()) {
+            return std::unexpected(Error::InvalidArgument("MANIFEST comparator " + *name +
+                                                          " does not match " +
+                                                          std::string(comparator.Name())));
+        }
+        return {};
+    }
+
+    static void UpdateCompactPointers(const VersionEdit& edit, VersionSet& set) {
+        for (const CompactPointer& pointer : edit.compact_pointers()) {
+            set.compact_pointers_[pointer.level] = pointer.key;
+        }
+    }
+
+    Status AccumulateCounters(const VersionEdit& edit, std::uint64_t offset) {
+        for (const NewFile& added : edit.new_files()) {
+            largest_number = std::max(largest_number, added.file.number);
+        }
+        if (edit.log_number().has_value()) {
+            if (log_number.has_value() && *edit.log_number() < *log_number) {
+                return std::unexpected(
+                    InManifest(offset, Error::Corruption("log number decreases")));
+            }
+            log_number = edit.log_number();
+        }
+        if (edit.next_file_number().has_value()) {
+            next_file = edit.next_file_number();
+        }
+        if (edit.last_sequence().has_value()) {
+            last_sequence = edit.last_sequence();
+        }
+        prev_log_number = edit.prev_log_number().value_or(prev_log_number);
+        largest_number = std::max({largest_number, log_number.value_or(0), prev_log_number});
+        return {};
+    }
+
+    Status ValidateCounters() const {
+        if (!next_file.has_value()) {
+            return std::unexpected(Error::Corruption("MANIFEST has no next file number"));
+        }
+        if (!log_number.has_value()) {
+            return std::unexpected(Error::Corruption("MANIFEST has no log number"));
+        }
+        if (!last_sequence.has_value()) {
+            return std::unexpected(Error::Corruption("MANIFEST has no last sequence"));
+        }
+        const std::uint64_t next = next_file.value();
+        if (next > FileNumberLimit) {
+            return std::unexpected(
+                Error::Corruption("MANIFEST's next file number is beyond the file number limit"));
+        }
+        if (largest_number >= next) {
+            return std::unexpected(Error::Corruption("MANIFEST names file or log number " +
+                                                     std::to_string(largest_number) +
+                                                     ", which is not below its next file number"));
+        }
+        return {};
+    }
+
+    Status Finish(VersionSet& set, std::uint64_t selected_number) {
+        Status valid = ValidateCounters();
+        if (!valid.has_value()) {
+            return valid;
+        }
+        Result<Version> version = builder.Build();
+        if (!version.has_value()) {
+            return std::unexpected(
+                Error::Corruption("MANIFEST: " + std::string(version.error().message())));
+        }
+        set.manifest_file_number_ = std::max(next_file.value(), selected_number + 1);
+        set.next_file_number_ = set.manifest_file_number_ + 1;
+        set.last_sequence_ = last_sequence.value();
+        set.log_number_ = log_number.value();
+        set.prev_log_number_ = prev_log_number;
+        set.Install(std::make_shared<const Version>(std::move(*version)));
+        return {};
+    }
+
+    VersionBuilder builder;
     std::optional<std::uint64_t> next_file;
     std::optional<std::uint64_t> log_number;
     std::optional<SequenceNumber> last_sequence;
     std::uint64_t prev_log_number = 0;
     // The largest log, previous log, or file number that any record names.
     std::uint64_t largest_number = 0;
-    WalReader reader(std::move(*file));
-    while (true) {
-        const WalReadResult event = reader.ReadNext();
-        if (!event.has_value()) {
-            return std::unexpected(event.error());
-        }
-        if (!event->has_value()) {
-            break;
-        }
-        if (const auto* corruption = std::get_if<WalCorruption>(&**event)) {
-            return std::unexpected(InManifest(corruption->offset, corruption->error));
-        }
-        const WalLogicalRecord& record = std::get<WalLogicalRecord>(**event);
-        const Result<VersionEdit> edit = VersionEdit::Decode(record.data);
-        if (!edit.has_value()) {
-            return std::unexpected(InManifest(record.offset, edit.error()));
-        }
-        const std::optional<std::string>& name = edit->comparator_name();
-        if (name.has_value() && *name != comparator.user_comparator().Name()) {
-            return std::unexpected(
-                Error::InvalidArgument("MANIFEST comparator " + *name + " does not match " +
-                                       std::string(comparator.user_comparator().Name())));
-        }
-        const Status applied = builder.Apply(*edit);
-        if (!applied.has_value()) {
-            return std::unexpected(InManifest(record.offset, applied.error()));
-        }
-        for (const CompactPointer& pointer : edit->compact_pointers()) {
-            set->compact_pointers_[pointer.level] = pointer.key;
-        }
-        for (const NewFile& added : edit->new_files()) {
-            largest_number = std::max(largest_number, added.file.number);
-        }
-        if (edit->log_number().has_value()) {
-            if (log_number.has_value() && *edit->log_number() < *log_number) {
-                return std::unexpected(
-                    InManifest(record.offset, Error::Corruption("log number decreases")));
-            }
-            log_number = edit->log_number();
-        }
-        if (edit->next_file_number().has_value()) {
-            next_file = edit->next_file_number();
-        }
-        if (edit->last_sequence().has_value()) {
-            last_sequence = edit->last_sequence();
-        }
-        prev_log_number = edit->prev_log_number().value_or(prev_log_number);
-        largest_number = std::max({largest_number, log_number.value_or(0), prev_log_number});
-    }
+};
 
-    if (!next_file.has_value()) {
-        return std::unexpected(Error::Corruption("MANIFEST has no next file number"));
+Result<std::unique_ptr<VersionSet>> VersionSet::Recover(FileSystem& file_system,
+                                                        std::filesystem::path directory,
+                                                        const InternalKeyComparator& comparator) {
+    Result<SelectedManifest> selected = OpenSelectedManifest(file_system, directory);
+    if (!selected.has_value()) {
+        return std::unexpected(std::move(selected).error());
     }
-    if (!log_number.has_value()) {
-        return std::unexpected(Error::Corruption("MANIFEST has no log number"));
+    std::unique_ptr<VersionSet> set(new VersionSet(file_system, std::move(directory), comparator));
+    ManifestRecovery recovery(comparator);
+    WalReader reader(std::move(selected->file));
+    Status replayed = recovery.Replay(reader, *set);
+    if (!replayed.has_value()) {
+        return std::unexpected(std::move(replayed).error());
     }
-    if (!last_sequence.has_value()) {
-        return std::unexpected(Error::Corruption("MANIFEST has no last sequence"));
+    Status finished = recovery.Finish(*set, selected->number);
+    if (!finished.has_value()) {
+        return std::unexpected(std::move(finished).error());
     }
-    const std::uint64_t next = next_file.value();
-    if (next > FileNumberLimit) {
-        return std::unexpected(
-            Error::Corruption("MANIFEST's next file number is beyond the file number limit"));
-    }
-    if (largest_number >= next) {
-        return std::unexpected(Error::Corruption("MANIFEST names file or log number " +
-                                                 std::to_string(largest_number) +
-                                                 ", which is not below its next file number"));
-    }
-    Result<Version> version = builder.Build();
-    if (!version.has_value()) {
-        return std::unexpected(
-            Error::Corruption("MANIFEST: " + std::string(version.error().message())));
-    }
-
-    set->manifest_file_number_ = std::max(next, manifest_number.value() + 1);
-    set->next_file_number_ = set->manifest_file_number_ + 1;
-    set->last_sequence_ = last_sequence.value();
-    set->log_number_ = log_number.value();
-    set->prev_log_number_ = prev_log_number;
-    set->Install(std::make_shared<const Version>(std::move(*version)));
     return set;
 }
 
@@ -307,6 +372,23 @@ Status VersionSet::ApplyPrepared(VersionEdit edit, Version version,
     auto candidate = std::make_shared<const Version>(std::move(version));
     ReserveInstall();
 
+    Status written = WritePrepared(edit, new_manifest_snapshot, lock);
+    if (!written.has_value()) {
+        failure_ = written.error();
+        return written;
+    }
+    // Persist first, publish second. Readers keep the old Version during I/O;
+    // an uncertain write failure must not authorize cleanup using the candidate.
+    compact_pointers_ = std::move(compact_pointers);
+    log_number_ = log_number;
+    prev_log_number_ = prev_log_number;
+    InstallPrepared(std::move(candidate));
+    return {};
+}
+
+Status VersionSet::WritePrepared(const VersionEdit& edit,
+                                 const std::optional<std::vector<std::byte>>& new_manifest_snapshot,
+                                 std::unique_lock<std::mutex>* lock) {
     Status written;
     if (lock == nullptr) {
         written = Write(edit, new_manifest_snapshot);
@@ -320,17 +402,7 @@ Status VersionSet::ApplyPrepared(VersionEdit edit, Version version,
         }
         lock->lock();
     }
-    if (!written.has_value()) {
-        failure_ = written.error();
-        return written;
-    }
-    // Persist first, publish second. Readers keep the old Version during I/O;
-    // an uncertain write failure must not authorize cleanup using the candidate.
-    compact_pointers_ = std::move(compact_pointers);
-    log_number_ = log_number;
-    prev_log_number_ = prev_log_number;
-    InstallPrepared(std::move(candidate));
-    return {};
+    return written;
 }
 
 Status VersionSet::Validate(const VersionEdit& edit) const {
@@ -365,16 +437,11 @@ Status VersionSet::Write(const VersionEdit& edit,
                          const std::optional<std::vector<std::byte>>& new_manifest_snapshot) {
     std::unique_ptr<WalWriter> created;
     if (manifest_ == nullptr) {
-        Result<std::unique_ptr<WritableFile>> file =
-            file_system_->OpenWritable(DescriptorFileName(directory_, manifest_file_number_));
-        if (!file.has_value()) {
-            return std::unexpected(std::move(file).error());
+        Result<std::unique_ptr<WalWriter>> writer = CreateManifest(*new_manifest_snapshot);
+        if (!writer.has_value()) {
+            return std::unexpected(std::move(writer).error());
         }
-        created = std::make_unique<WalWriter>(std::move(*file));
-        const Status snapshot = created->AddRecord(*new_manifest_snapshot);
-        if (!snapshot.has_value()) {
-            return snapshot;
-        }
+        created = std::move(*writer);
     }
     WalWriter& manifest = created != nullptr ? *created : *manifest_;
     const Status appended = manifest.AddRecord(edit.Encode());
@@ -400,6 +467,20 @@ Status VersionSet::Write(const VersionEdit& edit,
     }
     manifest_ = std::move(created);
     return {};
+}
+
+Result<std::unique_ptr<WalWriter>> VersionSet::CreateManifest(ByteView snapshot) {
+    Result<std::unique_ptr<WritableFile>> file =
+        file_system_->OpenWritable(DescriptorFileName(directory_, manifest_file_number_));
+    if (!file.has_value()) {
+        return std::unexpected(std::move(file).error());
+    }
+    auto created = std::make_unique<WalWriter>(std::move(*file));
+    const Status appended = created->AddRecord(snapshot);
+    if (!appended.has_value()) {
+        return std::unexpected(appended.error());
+    }
+    return created;
 }
 
 // Selects metadata through a synced temporary file, rename, then namespace barrier.
