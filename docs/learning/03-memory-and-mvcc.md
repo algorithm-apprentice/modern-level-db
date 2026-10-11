@@ -154,7 +154,7 @@ Both can increase resource use without copying the entire database.
 |---|---|
 | [`arena.cc`](../../src/memory/arena.cc) | Fallback allocation, alignment, and reserved-byte accounting |
 | [`skiplist.h`](../../src/memory/skiplist.h) | Search, node construction, and link publication |
-| [`memtable.cc`](../../src/memory/memtable.cc) | Packed entries, lookup, and checked/trusted insertion |
+| [`memtable.cc`](../../src/memory/memtable.cc) | Packed entries, lookup, and trusted insertion |
 | [`database.cc`](../../src/engine/database.cc) | `CommitWrite`, `GetSnapshot`, and `ReleaseSnapshot` |
 | [`memtable_test.cc`](../../tests/unit/memory/memtable_test.cc) | Visibility and deletion examples |
 | [`public_api_native_test.cc`](../../tests/unit/api/public_api_native_test.cc) | Snapshot and child-handle lifetimes |

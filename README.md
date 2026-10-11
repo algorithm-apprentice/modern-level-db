@@ -86,6 +86,8 @@ The full operational contract is in the
 | Build tests, understand CI, benchmark, profile, and follow style | [Development guide](docs/development/README.md) |
 | Understand modules, dependency direction, and runtime flows | [Architecture](docs/architecture.md) |
 | Learn the engine through concepts, source tours, and runnable labs | [Learning path](docs/learning/README.md) |
+| Find implementation and tests from a storage concept | [Concept-to-code index](docs/learning/concept-index.md) |
+| Plan and review changes from maintained contracts | [Document-first development](docs/development/document-first-development.md) |
 | Review decisions, outcomes, amendments, and supersession | [ADR index](docs/adr/README.md) |
 | Follow delivery dependencies and completed roadmap nodes | [Delivery DAG](docs/dependency-dag.md) |
 
