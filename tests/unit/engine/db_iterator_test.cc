@@ -123,6 +123,73 @@ std::vector<ScriptedEntry> Versions() {
             Delete("e", 5),    Put("e", 4, "e4"), Put("f", 5, "f5")};
 }
 
+class BufferedIterator final : public InternalIterator {
+public:
+    BufferedIterator(const Comparator& comparator, std::vector<ScriptedEntry> entries)
+        : child_(comparator, std::move(entries)) {}
+
+    bool valid() const noexcept override { return child_.valid(); }
+    ByteView key() const noexcept override { return key_; }
+    ByteView value() const noexcept override { return value_; }
+    Status SeekToFirst() override { return Refresh(child_.SeekToFirst()); }
+    Status SeekToLast() override { return Refresh(child_.SeekToLast()); }
+    Status Seek(ByteView target) override { return Refresh(child_.Seek(target)); }
+    Status Next() override { return Refresh(child_.Next()); }
+    Status Prev() override { return Refresh(child_.Prev()); }
+
+private:
+    Status Refresh(Status moved) {
+        if (child_.valid()) {
+            const ByteView key = child_.key();
+            const ByteView value = child_.value();
+            key_.assign(key.begin(), key.end());
+            value_.assign(value.begin(), value.end());
+        } else {
+            key_.clear();
+            value_.clear();
+        }
+        return moved;
+    }
+
+    ScriptedIterator child_;
+    std::vector<std::byte> key_;
+    std::vector<std::byte> value_;
+};
+
+TEST_F(DbIteratorTest, ReverseOutputsOwnBinaryAndEmptyKeysAcrossReusedChildBuffers) {
+    const std::string binary("\0x", 2);
+    auto internal = std::make_unique<BufferedIterator>(
+        comparator_,
+        std::vector<ScriptedEntry>{Put("", 3, "empty3"), Put("", 1, "empty1"),
+                                   Put(binary, 5, "binary"), Delete("b", 4), Put("b", 2, "hidden"),
+                                   Put("c", 20, "future"), Put("c", 3, "visible")});
+    DbIterator iterator(std::move(internal), BytewiseComparator(), 5);
+
+    EXPECT_EQ(After(iterator.SeekToLast(), iterator), "c=visible");
+    EXPECT_EQ(After(iterator.Prev(), iterator), binary + "=binary");
+    EXPECT_EQ(After(iterator.Prev(), iterator), "=empty3");
+    EXPECT_EQ(After(iterator.Next(), iterator), binary + "=binary");
+    EXPECT_EQ(After(iterator.Prev(), iterator), "=empty3");
+    EXPECT_EQ(After(iterator.Next(), iterator), binary + "=binary");
+    EXPECT_EQ(After(iterator.Next(), iterator), "c=visible");
+    EXPECT_EQ(After(iterator.Prev(), iterator), binary + "=binary");
+}
+
+TEST_F(DbIteratorTest, BeginningExhaustionStopsPositioningAndExplicitSeekRestoresIt) {
+    auto script = std::make_shared<MoveScript>();
+    auto iterator = Open({Put("", 3, "new"), Put("", 1, "old"), Put("b", 2, "next")}, 5, script);
+    EXPECT_EQ(After(iterator->SeekToFirst(), *iterator), "=new");
+    const int before = script->moves;
+
+    EXPECT_EQ(After(iterator->Prev(), *iterator), "<end>");
+
+    EXPECT_EQ(script->moves, before + 1);
+    EXPECT_EQ(After(iterator->SeekToFirst(), *iterator), "=new");
+    EXPECT_EQ(After(iterator->SeekToLast(), *iterator), "b=next");
+    EXPECT_EQ(After(iterator->Prev(), *iterator), "=new");
+    EXPECT_EQ(After(iterator->Next(), *iterator), "b=next");
+}
+
 TEST_F(DbIteratorTest, YieldsTheNewestVisibleValues) {
     const auto iterator = Open(Versions(), 5);
     const std::vector<std::string> expected{"a=a5", "c=c1", "f=f5"};
@@ -379,9 +446,11 @@ TEST(DbIteratorSamplingTest, SamplesTheEntriesThatItReadsBackward) {
 
     EXPECT_EQ(After(iterator->SeekToLast(), *iterator), "c=");
     EXPECT_EQ(sampler.samples(), (Samples{"b@1"}));
+    EXPECT_EQ(sampler.periods(), 2);
     EXPECT_EQ(After(iterator->Prev(), *iterator), "b=");
     EXPECT_EQ(After(iterator->Prev(), *iterator), "a=");
     EXPECT_EQ(sampler.samples(), (Samples{"b@1", "b@1", "a@1", "a@1"}));
+    EXPECT_EQ(sampler.periods(), 5);
 }
 
 TEST(DbIteratorSamplingTest, DoesNotCountTheWalkThatChangesDirection) {
