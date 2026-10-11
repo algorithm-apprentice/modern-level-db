@@ -16,6 +16,7 @@
 #include "engine/db_iterator.h"
 #include "engine/seek_statistics.h"
 #include "engine/table_cache.h"
+#include "engine/write_buffer_state.h"
 #include "engine/write_path.h"
 #include "format/internal_key.h"
 #include "format/write_batch.h"
@@ -109,6 +110,13 @@ class DatabaseEngine final {
         explicit PrivateTag() = default;
     };
 
+    struct EnginePolicy {
+        std::size_t write_buffer_size;
+        std::uint64_t max_file_size;
+        bool sync_wal_creation;
+        TableBuilderOptions table_options;
+    };
+
 public:
     // Opens or creates the database in the directory, which it keeps locked.
     [[nodiscard]] static Result<std::unique_ptr<DatabaseEngine>> Open(
@@ -196,8 +204,6 @@ private:
     // A compaction's check before each entry, which takes the mutex itself.
     [[nodiscard]] Status BeforeCompactionEntry();
     void RecordReadSample(ByteView internal_key);
-    void ClearImmutable();
-    void ReleaseReadPinnedMemtables();
     void RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock);
     void RecordBackgroundError(Error error);
     [[nodiscard]] std::unexpected<Error> BackgroundError() const;
@@ -208,10 +214,7 @@ private:
     std::unique_ptr<Clock> owned_clock_;
     std::unique_ptr<FileLock> lock_;
 
-    std::size_t write_buffer_size_;
-    std::uint64_t max_file_size_;
-    bool sync_wal_creation_;
-    TableBuilderOptions table_options_;
+    const EnginePolicy policy_;
     std::filesystem::path directory_;
     FileSystem* file_system_;
     Clock* clock_;
@@ -221,14 +224,7 @@ private:
     std::mutex mutex_;
     std::condition_variable background_finished_;
     std::unique_ptr<VersionSet> versions_;
-    std::unique_ptr<WalWriter> log_;
-    std::uint64_t log_number_ = 0;
-    std::shared_ptr<MemTable> memtable_;
-    // Published only at recovery, rotation, and completed successful commit
-    // boundaries. Commit insertion mutates the live arena without the mutex.
-    std::size_t published_mutable_memtable_bytes_ = 0;
-    std::shared_ptr<const MemTable> immutable_;
-    std::vector<std::shared_ptr<const MemTable>> read_pinned_memtables_;
+    WriteBufferState write_buffers_;
     WriteQueue write_queue_;
     std::multiset<SequenceNumber> snapshots_;
     std::set<std::uint64_t> pending_outputs_;
@@ -239,7 +235,6 @@ private:
     bool background_scheduled_ = false;
     // Mirror state that a compaction checks without the mutex.
     std::atomic<bool> closing_ = false;
-    std::atomic<bool> has_immutable_ = false;
 
     // Destroyed first, so that it stops before anything that its tasks use.
     std::unique_ptr<BackgroundExecutor> owned_executor_;

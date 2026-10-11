@@ -72,6 +72,7 @@ set(
     src/engine/recovery.cc
     src/engine/seek_statistics.cc
     src/engine/table_cache.cc
+    src/engine/write_buffer_state.cc
     src/engine/write_path.cc
     src/format/internal_key.cc
     src/format/wal_format.cc

@@ -203,6 +203,7 @@ single-background-work pipeline.
 |---|---|---|---|
 | [`write_path.h`](../../src/engine/write_path.h) | `WriteQueue::Write`, guards, completion | Which writer owns group preparation and who receives its result? | [`write_path_test.cc`](../../tests/unit/engine/write_path_test.cc) |
 | [`write_path.cc`](../../src/engine/write_path.cc) | `CommitGroup`, `BuildGroup` | Why must WAL append/sync precede trusted MemTable insertion? | [`write_path_test.cc`](../../tests/unit/engine/write_path_test.cc) |
+| [`write_buffer_state.h`](../../src/engine/write_buffer_state.h) | active generation, immutable retention, published bytes | Which WAL and MemTables move together during recovery, rotation, and flush? | [`write_buffer_state_test.cc`](../../tests/unit/engine/write_buffer_state_test.cc) |
 | [`database_write.cc`](../../src/engine/database_write.cc) | `MakeRoomForWrite`, rotation, commit | When do foreground writers delay, stop, or publish a completed group? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
 | [`database_background.cc`](../../src/engine/database_background.cc) | background call, flush installation, compaction | How is foreground maintenance debt discharged without holding the mutex through I/O? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
 | [`flush.cc`](../../src/engine/flush.cc) | `FlushMemTable`, output-level choice | Why can some flush outputs start below L0? | [`flush_test.cc`](../../tests/unit/engine/flush_test.cc) |

@@ -38,10 +38,10 @@ Status DatabaseEngine::MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool
             allow_delay = false;
             continue;
         }
-        if (!force && memtable_->memory_usage() <= write_buffer_size_) {
+        if (!force && write_buffers_.mutable_table().memory_usage() <= policy_.write_buffer_size) {
             return {};
         }
-        if (immutable_ != nullptr || level0_files >= WriteStallLevel0FileCountThreshold) {
+        if (write_buffers_.has_immutable() || level0_files >= WriteStallLevel0FileCountThreshold) {
             background_finished_.wait(lock);
             continue;
         }
@@ -64,7 +64,7 @@ Status DatabaseEngine::SwitchMemTable() {
     // The file number and on-disk name may already have been reserved/created.
     auto new_log = std::make_unique<WalWriter>(std::move(*file));
     auto new_memtable = std::make_shared<MemTable>(comparator_.user_comparator());
-    if (sync_wal_creation_) {
+    if (policy_.sync_wal_creation) {
         // The flush of the old memtable makes this the oldest log that recovery
         // replays, so its directory entry is durable before it takes writes.
         const Status synced = file_system_->SyncDirectory(directory_);
@@ -74,7 +74,7 @@ Status DatabaseEngine::SwitchMemTable() {
     }
     Status closed;
     try {
-        closed = log_->Close();
+        closed = write_buffers_.log().Close();
     } catch (...) {
         RecordBackgroundError(Error::Aborted("old WAL close threw during rotation"));
         throw;
@@ -82,12 +82,7 @@ Status DatabaseEngine::SwitchMemTable() {
     if (!closed.has_value()) {
         RecordBackgroundError(closed.error());
     }
-    log_ = std::move(new_log);
-    log_number_ = number;
-    immutable_ = std::move(memtable_);
-    has_immutable_.store(true, std::memory_order_release);
-    memtable_ = std::move(new_memtable);
-    published_mutable_memtable_bytes_ = memtable_->memory_usage();
+    write_buffers_.InstallRotation(std::move(new_log), number, std::move(new_memtable));
     MaybeScheduleBackgroundWork();
     return {};
 }
@@ -98,8 +93,8 @@ Status DatabaseEngine::CommitWrite(std::unique_lock<std::mutex>& lock, EncodedWr
     group.SetSequence(first);
     const std::uint32_t count = group.count();
     // Only the front writer switches the log and the memtable, so they stay.
-    WalWriter& log = *log_;
-    MemTable& memtable = *memtable_;
+    WalWriter& log = write_buffers_.log();
+    MemTable& memtable = write_buffers_.mutable_table();
     lock.unlock();
     Status committed;
     try {
@@ -115,7 +110,7 @@ Status DatabaseEngine::CommitWrite(std::unique_lock<std::mutex>& lock, EncodedWr
         RecordBackgroundError(committed.error());
         return committed;
     }
-    published_mutable_memtable_bytes_ = memtable.memory_usage();
+    write_buffers_.PublishMutableMemoryUsage();
     // Publish only after the complete group is in the memtable. Concurrent
     // readers use the previous sequence and therefore hide partially inserted
     // newer entries. An empty group leaves the sequence unchanged.
@@ -133,9 +128,10 @@ Status DatabaseEngine::FlushMemTable() {
         return forced;
     }
     // The forced switch made the immutable memtable, and the lock stayed held.
-    const std::shared_ptr<const MemTable> flushing = immutable_;
-    background_finished_.wait(
-        lock, [&] { return immutable_ != flushing || background_error_.has_value(); });
+    const std::shared_ptr<const MemTable> flushing = write_buffers_.immutable_owner();
+    background_finished_.wait(lock, [&] {
+        return write_buffers_.immutable_owner() != flushing || background_error_.has_value();
+    });
     if (background_error_.has_value()) {
         return BackgroundError();
     }
