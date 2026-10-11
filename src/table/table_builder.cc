@@ -196,6 +196,14 @@ BlockHandle TableBuilder::WriteIndex() {
     return handle;
 }
 
+void TableBuilder::WriteFooter(BlockHandle metaindex_handle, BlockHandle index_handle) {
+    const auto footer = EncodeFooter({.metaindex = metaindex_handle, .index = index_handle});
+    if (Record(file_->Append(footer))) {
+        file_size_ += footer.size();
+        Record(file_->Sync());
+    }
+}
+
 void TableBuilder::WriteTail() {
     if (!data_block_.empty()) {
         WriteDataBlock();
@@ -205,12 +213,7 @@ void TableBuilder::WriteTail() {
     if (first_error_.has_value()) {
         return;
     }
-
-    const auto footer = EncodeFooter({.metaindex = metaindex_handle, .index = index_handle});
-    if (Record(file_->Append(footer))) {
-        file_size_ += footer.size();
-        Record(file_->Sync());
-    }
+    WriteFooter(metaindex_handle, index_handle);
 }
 
 }  // namespace modern_leveldb

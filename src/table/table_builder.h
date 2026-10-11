@@ -83,6 +83,7 @@ private:
     void AddFinalIndexEntry();
     [[nodiscard]] BlockHandle WriteMetaindex();
     [[nodiscard]] BlockHandle WriteIndex();
+    void WriteFooter(BlockHandle metaindex_handle, BlockHandle index_handle);
     void WriteTail();
 
     std::unique_ptr<WritableFile> file_;
