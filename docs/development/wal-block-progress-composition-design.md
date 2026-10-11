@@ -118,3 +118,27 @@ Independent bounded design review found no significant issue in the eight
 responsibilities, cursor/I/O order, borrowed ownership, block coordinates,
 error-copy/latch preservation or characterization feasibility. It did not edit
 files, execute builds/tests or establish implementation parity/runtime behavior.
+
+## Implementation evidence
+
+Accepted design #210 merged after all 20 exact-head checks succeeded.
+Three new characterization cases and the stronger oversized-count message
+assertion passed on original production at
+903252654898ffdc512ce49788d45e4e76708966 before extraction.
+They verify all six append-failure prefixes plus success using independently
+encoded physical fragments, shrinking read capacities across complete/final
+blocks, empty final record offsets, repeated EOF without reads, and a failure
+after two accepted chunks without exposing partial bytes or rereading.
+
+Writer and reader progress were separate production topic commits following
+characterization. Exact original/final WAL/native/MANIFEST/recovery/database
+JUnit sets contain 148 unique cases, all passing without failures/errors/skips
+and with all three required new cases present. Writer/native intermediate
+selection passed 11 cases. The eight-definition ledger is implemented, with
+the old forwarding Append removed and no new public/codec/sticky/coverage policy.
+Formatting, documentation and whitespace gates apply before publication.
+
+Independent combined review found no significant issue in the four changed
+paths and independently parsed the 148-case original/final parity, three required
+cases and 11-case intermediate evidence. It did not edit files, execute
+builds/tests or independently establish artifact provenance or runtime behavior.

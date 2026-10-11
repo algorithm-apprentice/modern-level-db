@@ -35,33 +35,15 @@ WalWriter::WalWriter(std::unique_ptr<WritableFile> file, std::uint64_t initial_f
 
 Status WalWriter::AddRecord(ByteView logical_record) {
     auto fragments = fragmenter_.Fragment(logical_record);
-    static constexpr std::array<std::byte, WalBlockSize> Zeroes{};
-
-    if (reopen_padding_ != 0) {
-        Status padding = Append(ByteView(Zeroes).first(reopen_padding_));
-        if (!padding.has_value()) {
-            return padding;
-        }
-        reopen_padding_ = 0;
+    Status reopened = PadReopenedBlock();
+    if (!reopened.has_value()) {
+        return reopened;
     }
 
     while (const std::optional<WalFragment> fragment = fragments.Next()) {
-        if (fragment->padding_before != 0) {
-            Status padding = Append(ByteView(Zeroes).first(fragment->padding_before));
-            if (!padding.has_value()) {
-                return padding;
-            }
-        }
-
-        Status header = Append(fragment->header);
-        if (!header.has_value()) {
-            return header;
-        }
-        if (!fragment->payload.empty()) {
-            Status payload = Append(fragment->payload);
-            if (!payload.has_value()) {
-                return payload;
-            }
+        Status written = WriteFragment(*fragment);
+        if (!written.has_value()) {
+            return written;
         }
     }
 
@@ -72,7 +54,41 @@ Status WalWriter::Sync() { return file_->Sync(); }
 
 Status WalWriter::Close() { return file_->Close(); }
 
-Status WalWriter::Append(ByteView data) { return file_->Append(data); }
+Status WalWriter::AppendPadding(std::size_t size) {
+    static constexpr std::array<std::byte, WalBlockSize> Zeroes{};
+    return file_->Append(ByteView(Zeroes).first(size));
+}
+
+Status WalWriter::PadReopenedBlock() {
+    if (reopen_padding_ != 0) {
+        Status padding = AppendPadding(reopen_padding_);
+        if (!padding.has_value()) {
+            return padding;
+        }
+        reopen_padding_ = 0;
+    }
+    return {};
+}
+
+Status WalWriter::WriteFragment(const WalFragment& fragment) {
+    if (fragment.padding_before != 0) {
+        Status padding = AppendPadding(fragment.padding_before);
+        if (!padding.has_value()) {
+            return padding;
+        }
+    }
+    Status header = file_->Append(fragment.header);
+    if (!header.has_value()) {
+        return header;
+    }
+    if (!fragment.payload.empty()) {
+        Status payload = file_->Append(fragment.payload);
+        if (!payload.has_value()) {
+            return payload;
+        }
+    }
+    return {};
+}
 
 WalReader::WalReader(std::unique_ptr<SequentialFile> file) : file_(std::move(file)) {
     if (file_ == nullptr) {
@@ -250,27 +266,45 @@ Result<bool> WalReader::FillBlock() {
         return false;
     }
 
-    block_start_offset_ += block_size_;
-    block_size_ = 0;
-    block_position_ = 0;
-
+    BeginBlock();
     while (block_size_ < WalBlockSize) {
-        MutableByteView output = MutableByteView(block_).subspan(block_size_);
-        Result<std::size_t> read = file_->Read(output);
+        Result<std::size_t> read = ReadBlockChunk();
         if (!read.has_value()) {
-            return std::unexpected(read.error());
+            return std::unexpected(std::move(read).error());
         }
-        if (*read > output.size()) {
-            return std::unexpected(Error::Io("sequential file returned an oversized WAL read"));
-        }
+        AcceptBlockChunk(*read);
         if (*read == 0) {
-            eof_seen_ = true;
             break;
         }
-        block_size_ += *read;
     }
 
     return block_size_ != 0;
+}
+
+void WalReader::BeginBlock() noexcept {
+    block_start_offset_ += block_size_;
+    block_size_ = 0;
+    block_position_ = 0;
+}
+
+Result<std::size_t> WalReader::ReadBlockChunk() {
+    MutableByteView output = MutableByteView(block_).subspan(block_size_);
+    Result<std::size_t> read = file_->Read(output);
+    if (!read.has_value()) {
+        return std::unexpected(read.error());
+    }
+    if (*read > output.size()) {
+        return std::unexpected(Error::Io("sequential file returned an oversized WAL read"));
+    }
+    return read;
+}
+
+void WalReader::AcceptBlockChunk(std::size_t count) noexcept {
+    if (count == 0) {
+        eof_seen_ = true;
+    } else {
+        block_size_ += count;
+    }
 }
 
 WalReadEvent WalReader::AbandonPartial(std::string_view reason) {

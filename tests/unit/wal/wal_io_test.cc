@@ -100,6 +100,7 @@ struct SequentialState {
     std::size_t position = 0;
     std::size_t maximum_chunk = std::numeric_limits<std::size_t>::max();
     int read_calls = 0;
+    std::vector<std::size_t> read_requests;
     std::optional<int> fail_read_call;
     bool return_oversized_count = false;
 };
@@ -111,6 +112,7 @@ public:
 
     Result<std::size_t> Read(MutableByteView output) override {
         ++state_->read_calls;
+        state_->read_requests.push_back(output.size());
         if (state_->fail_read_call == state_->read_calls) {
             return std::unexpected(Error::Io("injected read failure"));
         }
@@ -363,6 +365,49 @@ TEST(WalWriterTest, ReportsFailureInEveryAppendStep) {
         EXPECT_EQ(failed.error().message(), "injected append failure");
         EXPECT_EQ(state->append_sizes.back(), test_case.failing_append_size);
         EXPECT_EQ(state->flush_calls, flush_calls);
+    }
+}
+
+TEST(WalWriterTest, MultiBlockAppendFailuresPreserveOnlyTheSuccessfulPhysicalPrefix) {
+    const std::size_t capacity = WalBlockSize - WalHeaderSize;
+    const auto logical = Pattern(2 * capacity + 5);
+    const std::vector<std::vector<std::byte>> encoded{
+        PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::First),
+                       ByteView(logical).first(capacity)),
+        PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Middle),
+                       ByteView(logical).subspan(capacity, capacity)),
+        PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Last), ByteView(logical).last(5)),
+    };
+    std::vector<std::vector<std::byte>> appends;
+    for (const auto& fragment : encoded) {
+        appends.emplace_back(fragment.begin(), fragment.begin() + WalHeaderSize);
+        appends.emplace_back(fragment.begin() + WalHeaderSize, fragment.end());
+    }
+    for (int failing = 1; failing <= 7; ++failing) {
+        SCOPED_TRACE(failing);
+        const auto state = std::make_shared<WritableState>();
+        state->fail_append_call = failing;
+        WalWriter writer(Writable(state));
+        const Status result = writer.AddRecord(logical);
+        EXPECT_EQ(result.has_value(), failing == 7);
+        if (!result.has_value()) {
+            EXPECT_EQ(result.error().code(), ErrorCode::Io);
+            EXPECT_EQ(result.error().message(), "injected append failure");
+        }
+        std::vector<std::size_t> sizes;
+        std::vector<std::byte> prefix;
+        for (int index = 0; index < std::min(failing, 6); ++index) {
+            const auto& append = appends[static_cast<std::size_t>(index)];
+            sizes.push_back(append.size());
+            if (index + 1 < failing) {
+                prefix.insert(prefix.end(), append.begin(), append.end());
+            }
+        }
+        EXPECT_EQ(state->append_sizes, sizes);
+        EXPECT_EQ(state->data, prefix);
+        EXPECT_EQ(state->append_calls, std::min(failing, 6));
+        EXPECT_EQ(state->flush_calls, failing == 7 ? 1 : 0);
+        EXPECT_EQ(state->sync_calls, 0);
     }
 }
 
@@ -835,11 +880,59 @@ TEST(WalReaderTest, InvalidFileAndReadCountViolationsAreTerminal) {
     const WalReadResult first = oversized_reader.ReadNext();
     ASSERT_FALSE(first.has_value());
     EXPECT_EQ(first.error().code(), ErrorCode::Io);
+    EXPECT_EQ(first.error().message(), "sequential file returned an oversized WAL read");
     const int read_calls = oversized_state->read_calls;
     const WalReadResult second = oversized_reader.ReadNext();
     ASSERT_FALSE(second.has_value());
     EXPECT_EQ(second.error().message(), first.error().message());
     EXPECT_EQ(oversized_state->read_calls, read_calls);
+}
+
+TEST(WalReaderTest, BlockFillShrinksRequestsWithoutPrefetchingPastCompleteBlocks) {
+    const auto source = std::make_shared<SequentialState>();
+    const auto payload = Pattern(WalBlockSize - WalHeaderSize);
+    source->data = PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full), payload);
+    const auto empty = PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full), {});
+    source->data.insert(source->data.end(), empty.begin(), empty.end());
+    source->maximum_chunk = WalBlockSize / 2;
+    WalReader reader(Sequential(source));
+
+    const auto first = NextRecord(reader);
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(first->data, payload);
+    EXPECT_EQ(first->offset, 0U);
+    EXPECT_EQ(source->read_requests, (std::vector<std::size_t>{WalBlockSize, WalBlockSize / 2}));
+
+    const auto last = NextRecord(reader);
+    ASSERT_TRUE(last.has_value());
+    EXPECT_TRUE(last->data.empty());
+    EXPECT_EQ(last->offset, WalBlockSize);
+    EXPECT_EQ(source->read_requests,
+              (std::vector<std::size_t>{WalBlockSize, WalBlockSize / 2, WalBlockSize,
+                                        WalBlockSize - WalHeaderSize}));
+    ExpectEof(reader);
+    ExpectEof(reader);
+    EXPECT_EQ(source->read_calls, 4);
+}
+
+TEST(WalReaderTest, FailedChunkDoesNotPublishPartialBytesOrReadAfterTerminalFailure) {
+    const auto source = std::make_shared<SequentialState>();
+    source->data = PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full),
+                                  AsBytes("unpublished record"));
+    source->maximum_chunk = 5;
+    source->fail_read_call = 3;
+    WalReader reader(Sequential(source));
+
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        const auto result = reader.ReadNext();
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error().code(), ErrorCode::Io);
+        EXPECT_EQ(result.error().message(), "injected read failure");
+        EXPECT_EQ(source->read_calls, 3);
+        EXPECT_EQ(source->position, 10U);
+        EXPECT_EQ(source->read_requests,
+                  (std::vector<std::size_t>{WalBlockSize, WalBlockSize - 5, WalBlockSize - 10}));
+    }
 }
 
 }  // namespace
