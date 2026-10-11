@@ -87,6 +87,9 @@ public:
 
 private:
     [[nodiscard]] Status DecodeField(std::uint32_t tag, ByteView& input);
+    [[nodiscard]] Status DecodeCompactPointer(ByteView& input);
+    [[nodiscard]] Status DecodeDeletedFile(ByteView& input);
+    [[nodiscard]] Status DecodeNewFile(ByteView& input);
 
     std::optional<std::string> comparator_name_;
     std::optional<std::uint64_t> log_number_;
