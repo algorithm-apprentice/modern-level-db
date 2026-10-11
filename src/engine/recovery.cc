@@ -110,6 +110,29 @@ Status MarkReplayLogNumbersUsed(VersionSet& versions, std::span<const std::uint6
     return {};
 }
 
+struct ReplayInputs {
+    std::set<std::uint64_t> tables;
+    std::vector<std::uint64_t> logs;
+};
+
+ReplayInputs CollectReplayInputs(std::span<const std::filesystem::path> names,
+                                 std::uint64_t current_log, std::uint64_t previous_log) {
+    ReplayInputs inputs;
+    for (const std::filesystem::path& name : names) {
+        const std::optional<ParsedFileName> parsed = ParseNativeFileName(name);
+        if (!parsed.has_value()) {
+            continue;
+        }
+        if (parsed->type == FileType::Table) {
+            inputs.tables.insert(parsed->number);
+        } else if (parsed->type == FileType::Log &&
+                   (parsed->number >= current_log || parsed->number == previous_log)) {
+            inputs.logs.push_back(parsed->number);
+        }
+    }
+    return inputs;
+}
+
 // Validates referenced tables and reserves the selected log numbers before replay.
 Result<std::vector<std::uint64_t>> PrepareLogsForReplay(FileSystem& file_system,
                                                         const std::filesystem::path& directory,
@@ -118,35 +141,22 @@ Result<std::vector<std::uint64_t>> PrepareLogsForReplay(FileSystem& file_system,
     if (!names.has_value()) {
         return std::unexpected(names.error());
     }
-    std::set<std::uint64_t> tables;
-    std::vector<std::uint64_t> logs;
-    for (const std::filesystem::path& name : *names) {
-        const std::optional<ParsedFileName> parsed = ParseNativeFileName(name);
-        if (!parsed.has_value()) {
-            continue;
-        }
-        if (parsed->type == FileType::Table) {
-            tables.insert(parsed->number);
-        } else if (parsed->type == FileType::Log &&
-                   (parsed->number >= versions.log_number() ||
-                    parsed->number == versions.prev_log_number())) {
-            logs.push_back(parsed->number);
-        }
-    }
-
-    const Status validated = ValidateReferencedTableFiles(*versions.current(), tables, directory);
+    ReplayInputs inputs =
+        CollectReplayInputs(*names, versions.log_number(), versions.prev_log_number());
+    const Status validated =
+        ValidateReferencedTableFiles(*versions.current(), inputs.tables, directory);
     if (!validated.has_value()) {
         return std::unexpected(validated.error());
     }
 
     // Replay oldest logs first so later sequences cannot be applied ahead of
     // their history. Reserve all discovered numbers before creating recovery outputs.
-    std::ranges::sort(logs);
-    const Status marked = MarkReplayLogNumbersUsed(versions, logs);
+    std::ranges::sort(inputs.logs);
+    const Status marked = MarkReplayLogNumbersUsed(versions, inputs.logs);
     if (!marked.has_value()) {
         return std::unexpected(marked.error());
     }
-    return logs;
+    return std::move(inputs.logs);
 }
 
 Result<std::unique_ptr<WalWriter>> CreateRecoveryLog(FileSystem& file_system,
