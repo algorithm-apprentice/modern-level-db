@@ -2,9 +2,10 @@
 
 ## Status and delivery boundary
 
-Reviewed design proposal for D01b, D02, and D03 from the
+Design accepted in #175 for D01b, D02, and D03 from the
 [production composition plan](production-function-composition-plan.md).
-No implementation of this batch is included.
+The implementation record below tracks the combined extraction; acceptance
+does not certify the remaining production functions.
 
 The design was prepared against frozen D01a implementation head
 `2b04c7b3f5983d07aa062f237a4dd51ee7970f67` while #174's CI ran. Its shared
@@ -138,3 +139,56 @@ green applicable CI on the exact published head before merge.
 Use small internal commits for shared fields/table rendering, MANIFEST
 composition, and command organization, but one combined implementation PR.
 Neither this batch nor D01 completes the production-wide composition goal.
+
+## Implementation record
+
+The three slices are implemented together after design #175 merged. Internal
+commits separately characterize the old behavior, extract table/shared fields,
+compose MANIFEST payloads, and organize command execution. Publication and merge
+remain gated on independent combined implementation review and exact-head CI.
+
+### Responsibility ledger
+
+| Function | Composition or leaf boundary |
+|---|---|
+| `AppendDiagnosticNumberField` | Leaf: one named unquoted decimal field; spacing, delimiter, and decimal conversion belong to that representation. |
+| `AppendDiagnosticKindField` | Leaf: one kind field using existing `KindText`; WAL put/delete spelling is intentionally not shared. |
+| `WriteBatchEntryPrefix` | Composes the trusted operation spelling with the shared sequence-field renderer. |
+| `FormatTableEntry` | Composes quoted user key, decimal sequence, kind, and quoted stored value in physical-history order. |
+| `FormatBadTableEntry` | Composes quoted encoded key and stored value; it neither parses nor remembers corruption. |
+| `DumpTable` | Delegates entry rendering; acquisition, traversal, checked parsing, corruption retention, and terminal-error policy remain explicit, with further recursive review pending. |
+| `FormatManifestComparator` | Composes the comparator record tag and existing quoted-byte field primitive. |
+| `FormatCompactPointer` | Composes level rendering and existing structured internal-key rendering. |
+| `FormatDeletedFile` | Composes level and file-number fields with the shared number primitive. |
+| `FormatNewFile` | Composes level/number/size fields and existing smallest/largest internal-key rendering. |
+| `AppendComparatorField` | Composes optional-field selection, owned comparator rendering, and one diagnostic append. |
+| `AppendScalarFields` | Composes the fixed log/previous/next/sequence ordering with existing optional-number appends and immediate error propagation. |
+| `AppendCompactPointers` | Composes container-order iteration, complete pointer rendering, and append/error propagation. |
+| `AppendDeletedFiles` | Composes container-order iteration, complete deleted-file rendering, and append/error propagation. |
+| `AppendNewFiles` | Composes container-order iteration, complete added-file rendering, and append/error propagation. |
+| `AppendVersionEditFields` | Composes the five ordered groups, returning before any later group after failure. |
+| `FormatVersionEdit` | Composes checked decoding, existing malformed-record reporting, header append, and payload-group rendering. Record/error/header internals remain later frontiers. |
+| `ContainsOptions` | Leaf: existential option detection across file arguments using existing `IsOption`; the scan stops at the first rejected argument. |
+| `ClassifyCommand` | Composes sole-help recognition, minimum-count/command checks, and option detection without I/O. |
+| `DumpCommandFile` | Composes one file dump and error reporting, then applies the original output-stop policy in its original order. Its private three-way outcome carries control flow, not copied error payloads. |
+| `DumpFiles` | Owns the borrowed-output tracker and composes native path construction, per-file processing, input-failure aggregation, and immediate output-failure termination. |
+| `RunCommand` | Composes classification, stream-specific help/usage dispatch, and file execution with unchanged exit codes. |
+
+Existing `AppendDiagnosticBytesField`, `AppendOptionalNumber`, `KindText`,
+`Matches`, `IsOption`, and `AppendDiagnosticLine` are reused rather than
+duplicated. Existing byte escaping, structured internal-key rendering,
+record acquisition, and remaining table/record orchestration are subsequent
+recursive-review frontiers. This ledger covers the changed responsibilities,
+not all functions in either source file.
+
+### Characterization and local evidence
+
+All three pre-extraction requirements above were added before production edits.
+The unchanged implementation passed all 30 selected dump/command cases.
+Table/shared-field and MANIFEST commits each passed the 19 `DumpFileTest`
+cases; the complete command extraction passed the combined 30-case selection.
+The before/after JUnit case sets match exactly, with no failures, errors, or
+skips. The warnings-as-errors Debug build also passed.
+
+Independent combined implementation review and remote delivery are pending.
+Local execution evidence is distinct from static review and GitHub approval.
