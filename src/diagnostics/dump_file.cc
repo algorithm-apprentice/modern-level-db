@@ -124,11 +124,17 @@ Status DumpWalFramed(FileSystem& file_system, const std::filesystem::path& path,
     }
 }
 
+void AppendDiagnosticNumberField(std::string& output, std::string_view name, std::uint64_t value) {
+    output.push_back(' ');
+    output.append(name);
+    output.push_back('=');
+    output += std::to_string(value);
+}
+
 std::string WriteBatchEntryPrefix(const WriteBatchEntry& entry) {
     std::string prefix = "  ";
     prefix += entry.kind == ValueKind::Value ? "put" : "delete";
-    prefix += " sequence=";
-    prefix += std::to_string(entry.sequence);
+    AppendDiagnosticNumberField(prefix, "sequence", entry.sequence);
     return prefix;
 }
 
@@ -138,6 +144,11 @@ void AppendDiagnosticBytesField(std::string& output, std::string_view name, Byte
     output += "='";
     output += EscapeDiagnosticBytes(value);
     output.push_back('\'');
+}
+
+void AppendDiagnosticKindField(std::string& output, ValueKind kind) {
+    output += " kind=";
+    output += KindText(kind);
 }
 
 std::string FormatWriteBatchEntry(const WriteBatchEntry& entry) {
@@ -188,6 +199,111 @@ Status AppendOptionalNumber(WritableFile& output, std::string_view name,
                                 "  " + std::string(name) + " value=" + std::to_string(*value));
 }
 
+std::string FormatManifestComparator(std::string_view name) {
+    std::string line = "  comparator";
+    AppendDiagnosticBytesField(line, "name", AsBytes(name));
+    return line;
+}
+
+std::string FormatCompactPointer(const CompactPointer& pointer) {
+    std::string line = "  compact_pointer";
+    AppendDiagnosticNumberField(line, "level", pointer.level);
+    line += " key=";
+    AppendInternalKey(line, pointer.key);
+    return line;
+}
+
+std::string FormatDeletedFile(const DeletedFile& file) {
+    std::string line = "  delete_file";
+    AppendDiagnosticNumberField(line, "level", file.level);
+    AppendDiagnosticNumberField(line, "number", file.number);
+    return line;
+}
+
+std::string FormatNewFile(const NewFile& added) {
+    std::string line = "  add_file";
+    AppendDiagnosticNumberField(line, "level", added.level);
+    AppendDiagnosticNumberField(line, "number", added.file.number);
+    AppendDiagnosticNumberField(line, "size", added.file.file_size);
+    line += " smallest=";
+    AppendInternalKey(line, added.file.smallest);
+    line += " largest=";
+    AppendInternalKey(line, added.file.largest);
+    return line;
+}
+
+Status AppendComparatorField(WritableFile& output, const VersionEdit& edit) {
+    if (!edit.comparator_name().has_value()) {
+        return {};
+    }
+    return AppendDiagnosticLine(output, FormatManifestComparator(*edit.comparator_name()));
+}
+
+Status AppendScalarFields(WritableFile& output, const VersionEdit& edit) {
+    for (const auto& [name, value] :
+         std::array<std::pair<std::string_view, std::optional<std::uint64_t>>, 4>{
+             {{"log_number", edit.log_number()},
+              {"previous_log_number", edit.prev_log_number()},
+              {"next_file_number", edit.next_file_number()},
+              {"last_sequence", edit.last_sequence()}}}) {
+        Status appended = AppendOptionalNumber(output, name, value);
+        if (!appended.has_value()) {
+            return appended;
+        }
+    }
+    return {};
+}
+
+Status AppendCompactPointers(WritableFile& output, const VersionEdit& edit) {
+    for (const CompactPointer& pointer : edit.compact_pointers()) {
+        Status appended = AppendDiagnosticLine(output, FormatCompactPointer(pointer));
+        if (!appended.has_value()) {
+            return appended;
+        }
+    }
+    return {};
+}
+
+Status AppendDeletedFiles(WritableFile& output, const VersionEdit& edit) {
+    for (const DeletedFile& file : edit.deleted_files()) {
+        Status appended = AppendDiagnosticLine(output, FormatDeletedFile(file));
+        if (!appended.has_value()) {
+            return appended;
+        }
+    }
+    return {};
+}
+
+Status AppendNewFiles(WritableFile& output, const VersionEdit& edit) {
+    for (const NewFile& added : edit.new_files()) {
+        Status appended = AppendDiagnosticLine(output, FormatNewFile(added));
+        if (!appended.has_value()) {
+            return appended;
+        }
+    }
+    return {};
+}
+
+Status AppendVersionEditFields(WritableFile& output, const VersionEdit& edit) {
+    Status appended = AppendComparatorField(output, edit);
+    if (!appended.has_value()) {
+        return appended;
+    }
+    appended = AppendScalarFields(output, edit);
+    if (!appended.has_value()) {
+        return appended;
+    }
+    appended = AppendCompactPointers(output, edit);
+    if (!appended.has_value()) {
+        return appended;
+    }
+    appended = AppendDeletedFiles(output, edit);
+    if (!appended.has_value()) {
+        return appended;
+    }
+    return AppendNewFiles(output, edit);
+}
+
 Status FormatVersionEdit(const WalLogicalRecord& record, WritableFile& output,
                          std::optional<Error>& first) {
     Result<VersionEdit> edit = VersionEdit::Decode(record.data);
@@ -200,60 +316,27 @@ Status FormatVersionEdit(const WalLogicalRecord& record, WritableFile& output,
         RememberFirst(first, error);
         return {};
     }
-    Status appended =
-        AppendDiagnosticLine(output, "record offset=" + std::to_string(record.offset));
-    if (!appended.has_value()) {
-        return appended;
+    Status header = AppendDiagnosticLine(output, "record offset=" + std::to_string(record.offset));
+    if (!header.has_value()) {
+        return header;
     }
-    if (edit->comparator_name().has_value()) {
-        std::string line = "  comparator name='";
-        line += EscapeDiagnosticBytes(AsBytes(*edit->comparator_name()));
-        line.push_back('\'');
-        appended = AppendDiagnosticLine(output, std::move(line));
-        if (!appended.has_value()) {
-            return appended;
-        }
-    }
-    for (const auto& [name, value] :
-         std::array<std::pair<std::string_view, std::optional<std::uint64_t>>, 4>{
-             {{"log_number", edit->log_number()},
-              {"previous_log_number", edit->prev_log_number()},
-              {"next_file_number", edit->next_file_number()},
-              {"last_sequence", edit->last_sequence()}}}) {
-        appended = AppendOptionalNumber(output, name, value);
-        if (!appended.has_value()) {
-            return appended;
-        }
-    }
-    for (const CompactPointer& pointer : edit->compact_pointers()) {
-        std::string line = "  compact_pointer level=" + std::to_string(pointer.level) + " key=";
-        AppendInternalKey(line, pointer.key);
-        appended = AppendDiagnosticLine(output, std::move(line));
-        if (!appended.has_value()) {
-            return appended;
-        }
-    }
-    for (const DeletedFile& file : edit->deleted_files()) {
-        appended =
-            AppendDiagnosticLine(output, "  delete_file level=" + std::to_string(file.level) +
-                                             " number=" + std::to_string(file.number));
-        if (!appended.has_value()) {
-            return appended;
-        }
-    }
-    for (const NewFile& added : edit->new_files()) {
-        std::string line = "  add_file level=" + std::to_string(added.level) +
-                           " number=" + std::to_string(added.file.number) +
-                           " size=" + std::to_string(added.file.file_size) + " smallest=";
-        AppendInternalKey(line, added.file.smallest);
-        line += " largest=";
-        AppendInternalKey(line, added.file.largest);
-        appended = AppendDiagnosticLine(output, std::move(line));
-        if (!appended.has_value()) {
-            return appended;
-        }
-    }
-    return {};
+    return AppendVersionEditFields(output, *edit);
+}
+
+std::string FormatTableEntry(const InternalKeyView& key, ByteView value) {
+    std::string line = "entry";
+    AppendDiagnosticBytesField(line, "user_key", key.user_key);
+    AppendDiagnosticNumberField(line, "sequence", key.sequence);
+    AppendDiagnosticKindField(line, key.kind);
+    AppendDiagnosticBytesField(line, "value", value);
+    return line;
+}
+
+std::string FormatBadTableEntry(ByteView encoded_key, ByteView value) {
+    std::string line = "bad_key";
+    AppendDiagnosticBytesField(line, "encoded", encoded_key);
+    AppendDiagnosticBytesField(line, "value", value);
+    return line;
 }
 
 Status DumpTable(FileSystem& file_system, const std::filesystem::path& path,
@@ -290,22 +373,10 @@ Status DumpTable(FileSystem& file_system, const std::filesystem::path& path,
         const Result<InternalKeyView> parsed = ParseInternalKey(iterator.key());
         std::string line;
         if (!parsed.has_value()) {
-            line = "bad_key encoded='";
-            line += EscapeDiagnosticBytes(iterator.key());
-            line += "' value='";
-            line += EscapeDiagnosticBytes(iterator.value());
-            line.push_back('\'');
+            line = FormatBadTableEntry(iterator.key(), iterator.value());
             RememberFirst(first, Error::Corruption("table entry has a malformed internal key"));
         } else {
-            line = "entry user_key='";
-            line += EscapeDiagnosticBytes(parsed->user_key);
-            line += "' sequence=";
-            line += std::to_string(parsed->sequence);
-            line += " kind=";
-            line += KindText(parsed->kind);
-            line += " value='";
-            line += EscapeDiagnosticBytes(iterator.value());
-            line.push_back('\'');
+            line = FormatTableEntry(*parsed, iterator.value());
         }
         const Status appended = AppendDiagnosticLine(output, std::move(line));
         if (!appended.has_value()) {

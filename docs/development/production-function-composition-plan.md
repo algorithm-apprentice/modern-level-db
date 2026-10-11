@@ -302,6 +302,27 @@ was static code review; the main agent separately verified the before/after
 JUnit case sets and results. Publication and merge still require green checks
 on the exact implementation PR head.
 
+### D01b/D02/D03 combined implementation record
+
+The [offline dump batch design](offline-dump-composition-design.md) was accepted
+in #175 before implementation. Table entry rendering/shared fields, MANIFEST
+payload groups, and command classification/per-file execution are implemented
+as separate topic commits for one coherent implementation PR. Its detailed
+ledger identifies every new function and the changed parent responsibilities.
+
+The three added characterization boundaries passed on unchanged production
+code. The same 30 focused cases passed after the combined extraction, with
+exact JUnit case-set parity and no failures, errors, or skips. Individual
+table and MANIFEST slices each passed the 19 dump-file cases.
+Independent combined implementation review found no actionable issues and
+independently confirmed both JUnit case sets; it did not execute builds/tests.
+Remote delivery still requires green exact-head CI.
+
+This completes the selected extraction work locally, not the recursive audit
+of either diagnostics file. Byte escaping, structured-key rendering, remaining
+record/table orchestration, and all other production worklist frontiers remain
+subject to the completion criterion below.
+
 ## Representative recursive designs
 
 ### MANIFEST recovery

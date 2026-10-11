@@ -149,10 +149,19 @@ TEST(DumpCommandTest, RejectsUnknownCommandsAndMissingDumpFiles) {
 
 TEST(DumpCommandTest, StopsWhenTheErrorStreamFails) {
     MemoryFileSystem file_system;
+    WriteLog(file_system, "000002.log");
     CommandOutput output;
     CommandOutput errors(0);
+    const std::size_t operations_before = file_system.operations().size();
 
-    EXPECT_EQ(RunCommand({"dump", "000001.log"}, file_system, output, errors), 1);
+    EXPECT_EQ(RunCommand({"dump", "000001.log", "000002.log"}, file_system, output, errors), 1);
+    EXPECT_TRUE(output.text().empty());
+    const std::vector<std::string> later_operations(
+        file_system.operations().begin() + static_cast<std::ptrdiff_t>(operations_before),
+        file_system.operations().end());
+    EXPECT_EQ(
+        std::count(later_operations.begin(), later_operations.end(), "open_sequential 000002.log"),
+        0);
 
     CommandOutput flag_output;
     CommandOutput flag_errors(0);
@@ -170,12 +179,23 @@ TEST(NativeCommandTest, PreservesHelpUsageAndValidatesOptionsBeforeReads) {
     const std::array<std::filesystem::path, 1> help{std::filesystem::path{"--help"}};
     EXPECT_EQ(RunNativeDiagnosticTool(help, file_system, output, errors), 0);
     EXPECT_EQ(output.text(), "Usage: modern_leveldb_tool dump FILE...\n");
+    CommandOutput failed_help(0);
+    CommandOutput unavailable_errors(0);
+    EXPECT_EQ(RunNativeDiagnosticTool(help, file_system, failed_help, unavailable_errors), 1);
+    EXPECT_TRUE(failed_help.text().empty());
+    EXPECT_TRUE(unavailable_errors.text().empty());
     for (const auto& arguments :
          {std::vector<std::filesystem::path>{}, std::vector<std::filesystem::path>{"dump"},
           std::vector<std::filesystem::path>{"unknown", "file"},
           std::vector<std::filesystem::path>{"dump", "000001.log", "-bad"}}) {
         const auto operations = file_system.operations().size();
         EXPECT_EQ(RunNativeDiagnosticTool(arguments, file_system, output, errors), 2);
+        EXPECT_EQ(file_system.operations().size(), operations);
+        CommandOutput unused_output;
+        CommandOutput failed_usage(0);
+        EXPECT_EQ(RunNativeDiagnosticTool(arguments, file_system, unused_output, failed_usage), 1);
+        EXPECT_TRUE(unused_output.text().empty());
+        EXPECT_TRUE(failed_usage.text().empty());
         EXPECT_EQ(file_system.operations().size(), operations);
     }
 }
@@ -195,6 +215,11 @@ TEST(NativeCommandTest, SharesInputErrorContinuationAndOutputFailurePrecedence) 
     CommandOutput unused_errors;
     const std::array<std::filesystem::path, 2> valid{std::filesystem::path{"dump"},
                                                      std::filesystem::path{"000001.log"}};
+    CommandOutput clean_output;
+    CommandOutput unavailable_errors(0);
+    EXPECT_EQ(RunNativeDiagnosticTool(valid, file_system, clean_output, unavailable_errors), 0);
+    EXPECT_NE(clean_output.text().find("key='a' value='1'"), std::string::npos);
+    EXPECT_TRUE(unavailable_errors.text().empty());
     EXPECT_EQ(RunNativeDiagnosticTool(valid, file_system, failed_output, unused_errors), 1);
     CommandOutput unused_output;
     CommandOutput failed_errors(0);
