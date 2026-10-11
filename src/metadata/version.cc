@@ -80,6 +80,50 @@ PreparedChanges PrepareChanges(const VersionEdit& edit) {
     return changes;
 }
 
+void AppendRetainedFile(std::vector<Version::File>& output, const Version::File& file,
+                        std::span<const std::uint64_t> deletions) {
+    if (!std::ranges::binary_search(deletions, file->number)) {
+        output.push_back(file);
+    }
+}
+
+using FileIterator = std::span<const Version::File>::iterator;
+
+void AppendBasePrefix(const InternalKeyComparator& comparator, FileIterator& current,
+                      FileIterator end, const Version::File& limit,
+                      std::span<const std::uint64_t> deletions,
+                      std::vector<Version::File>& output) {
+    while (current != end && FileBefore(comparator, *current, limit)) {
+        AppendRetainedFile(output, *current, deletions);
+        ++current;
+    }
+}
+
+void AppendRemainingBase(FileIterator current, FileIterator end,
+                         std::span<const std::uint64_t> deletions,
+                         std::vector<Version::File>& output) {
+    while (current != end) {
+        AppendRetainedFile(output, *current, deletions);
+        ++current;
+    }
+}
+
+void MergeLevelFiles(const InternalKeyComparator& comparator,
+                     std::span<const Version::File> existing,
+                     std::span<const std::uint64_t> deletions,
+                     std::vector<Version::File>& additions, std::vector<Version::File>& output) {
+    std::ranges::sort(additions, [&](const Version::File& left, const Version::File& right) {
+        return FileBefore(comparator, left, right);
+    });
+    output.reserve(existing.size() + additions.size());
+    auto current = existing.begin();
+    for (const Version::File& file : additions) {
+        AppendBasePrefix(comparator, current, existing.end(), file, deletions, output);
+        output.push_back(file);
+    }
+    AppendRemainingBase(current, existing.end(), deletions, output);
+}
+
 }  // namespace
 
 std::span<const Version::File> Version::files(std::uint32_t level) const noexcept {
@@ -128,8 +172,7 @@ Result<Version> VersionBuilder::Build() const {
             files.push_back(entry.second);
         }
         std::ranges::sort(files, [this](const Version::File& left, const Version::File& right) {
-            const int order = comparator_->Compare(left->smallest, right->smallest);
-            return order != 0 ? order < 0 : left->number < right->number;
+            return FileBefore(*comparator_, left, right);
         });
         for (std::size_t index = 1; level > 0 && index < files.size(); ++index) {
             if (comparator_->Compare(files[index - 1]->largest, files[index]->smallest) >= 0) {
@@ -148,36 +191,8 @@ Version VersionBuilder::BuildTrusted(const InternalKeyComparator& comparator, co
     PreparedChanges changes = PrepareChanges(edit);
     Version version;
     for (std::uint32_t level = 0; level < NumLevels; ++level) {
-        std::vector<Version::File>& added = changes.additions[level];
-        std::ranges::sort(added, [&](const Version::File& left, const Version::File& right) {
-            return FileBefore(comparator, left, right);
-        });
-        const std::span<const Version::File> existing = base.files(level);
-        std::vector<Version::File>& files = version.files_[level];
-        files.reserve(existing.size() + added.size());
-
-        const auto deleted = [&](std::uint64_t number) {
-            return std::ranges::binary_search(changes.deletions[level], number);
-        };
-        const auto append = [&](const Version::File& file, bool existing_file) {
-            if (existing_file && deleted(file->number)) {
-                return;
-            }
-            files.push_back(file);
-        };
-
-        auto current = existing.begin();
-        for (const Version::File& file : added) {
-            while (current != existing.end() && FileBefore(comparator, *current, file)) {
-                append(*current, true);
-                ++current;
-            }
-            append(file, false);
-        }
-        while (current != existing.end()) {
-            append(*current, true);
-            ++current;
-        }
+        MergeLevelFiles(comparator, base.files(level), changes.deletions[level],
+                        changes.additions[level], version.files_[level]);
     }
     return version;
 }
