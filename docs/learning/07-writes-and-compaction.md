@@ -174,9 +174,9 @@ old Versions, iterators, and pending outputs can still keep files live.
 `RemoveObsoleteFiles` constructs a protected live set before deleting
 unneeded files outside the database mutex.
 
-After an uncertain background error, further writes, scheduling, and
-obsolete-file cleanup are stopped. Reads are not automatically converted
-into writes or repair attempts.
+After an uncertain mutation or maintenance failure becomes sticky, further
+writes, scheduling, and obsolete-file cleanup are stopped. Reads are not
+automatically converted into writes or repair attempts.
 
 ## Backpressure is a correctness-of-progress feature
 

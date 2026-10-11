@@ -185,7 +185,7 @@ TEST_F(DatabaseTest, StopsWritesWhenTheOldLogCannotBeClosed) {
     ASSERT_FALSE(later.has_value());
     EXPECT_EQ(later.error().message(), "injected failure");
     EXPECT_EQ(Get(*database, "a"), Large());
-    // The background error keeps the immutable memtable from being flushed.
+    // The sticky error keeps the immutable memtable from being flushed.
     EXPECT_EQ(executor_.queued(), 0U);
     EXPECT_FALSE(database->WaitForBackgroundWork().has_value());
 }

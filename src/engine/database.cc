@@ -143,8 +143,8 @@ Status DatabaseEngine::Recover(const DatabaseEngineOptions& options) {
     RemoveObsoleteFiles(lock);
     // Only a task that cannot be scheduled records an error here.
     MaybeScheduleBackgroundWork();
-    if (background_error_.has_value()) {
-        return BackgroundError();
+    if (sticky_error_.has_value()) {
+        return StickyError();
     }
     return {};
 }
