@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-21
+- Amended by: [ADR-0073](0073-arena-pointer-allocation.md)
 
 ## Context
 

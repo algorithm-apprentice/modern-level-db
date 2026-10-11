@@ -231,7 +231,7 @@ TEST(SkipListTest, StoresArenaBackedBinaryViews) {
     SkipList<ByteView, ByteViewCompare> list(compare, arena);
 
     auto allocate_key = [&](std::string_view text) {
-        MutableByteView storage = arena.Allocate(text.size());
+        MutableByteView storage(arena.Allocate(text.size()), text.size());
         std::ranges::copy(AsBytes(text), storage.begin());
         return ByteView(storage);
     };

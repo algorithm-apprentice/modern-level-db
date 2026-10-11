@@ -186,12 +186,12 @@ private:
     }
 
     [[nodiscard]] Node* NewNode(Entry entry, int height) {
-        MutableByteView storage =
+        std::byte* storage =
             arena_.AllocateAligned(LinksOffset() + sizeof(Link) * static_cast<std::size_t>(height));
-        Node* node = std::construct_at(reinterpret_cast<Node*>(storage.data()), entry);
+        Node* node = std::construct_at(reinterpret_cast<Node*>(storage), entry);
         for (int level = 0; level < height; ++level) {
             std::byte* address =
-                storage.data() + LinksOffset() + static_cast<std::size_t>(level) * sizeof(Link);
+                storage + LinksOffset() + static_cast<std::size_t>(level) * sizeof(Link);
             (void)std::construct_at(reinterpret_cast<Link*>(address), nullptr);
         }
         return node;
