@@ -2,8 +2,14 @@
 
 #include <gtest/gtest.h>
 
+#include <type_traits>
+#include <utility>
+
 namespace modern_leveldb {
 namespace {
+
+static_assert(!std::is_copy_constructible_v<SnapshotRegistry::Registration>);
+static_assert(std::is_nothrow_move_constructible_v<SnapshotRegistry::Registration>);
 
 TEST(SnapshotRegistryTest, EmptyRegistryUsesTheFallback) {
     const SnapshotRegistry registry;
@@ -15,27 +21,40 @@ TEST(SnapshotRegistryTest, EmptyRegistryUsesTheFallback) {
 
 TEST(SnapshotRegistryTest, TracksDuplicatesAndTheOldestSequence) {
     SnapshotRegistry registry;
-    registry.Register(7);
-    registry.Register(3);
-    registry.Register(3);
+    auto first = registry.Register(3);
+    auto duplicate = registry.Register(3);
+    auto newest = registry.Register(7);
 
     ASSERT_TRUE(registry.oldest().has_value());
     EXPECT_EQ(*registry.oldest(), 3U);
+    EXPECT_EQ(first.sequence(), 3U);
+    EXPECT_EQ(duplicate.sequence(), 3U);
+    EXPECT_EQ(newest.sequence(), 7U);
     EXPECT_EQ(registry.OldestOr(99), 3U);
     EXPECT_EQ(registry.size(), 3U);
 
-    registry.Release(3);
+    registry.Release(first);
     ASSERT_TRUE(registry.oldest().has_value());
     EXPECT_EQ(*registry.oldest(), 3U);
     EXPECT_EQ(registry.size(), 2U);
 
-    registry.Release(3);
+    registry.Release(duplicate);
     ASSERT_TRUE(registry.oldest().has_value());
     EXPECT_EQ(*registry.oldest(), 7U);
 
-    registry.Release(7);
+    registry.Release(newest);
     EXPECT_FALSE(registry.oldest().has_value());
     EXPECT_EQ(registry.OldestOr(99), 99U);
+}
+
+TEST(SnapshotRegistryTest, ReleasedRegistrationsRemainSafelyMovableValues) {
+    SnapshotRegistry registry;
+    auto registration = registry.Register(11);
+    registry.Release(registration);
+
+    auto moved = std::move(registration);
+    EXPECT_EQ(moved.sequence(), 11U);
+    EXPECT_EQ(registry.size(), 0U);
 }
 
 }  // namespace

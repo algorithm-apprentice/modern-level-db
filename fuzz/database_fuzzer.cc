@@ -41,7 +41,7 @@ void FuzzDatabase(ByteView input) {
     auto opened = DatabaseEngine::Open(options, "db");
     Require(opened.has_value());
     std::unique_ptr<DatabaseEngine> database = std::move(*opened);
-    std::optional<SequenceNumber> snapshot;
+    std::optional<DatabaseEngine::SnapshotRegistration> snapshot;
     Model model;
     Model frozen;
     std::vector<std::byte> read_value;
@@ -49,7 +49,7 @@ void FuzzDatabase(ByteView input) {
     const auto verify_scan = [&](bool at_snapshot) {
         DatabaseEngineReadOptions read;
         if (at_snapshot && snapshot.has_value()) {
-            read.snapshot = snapshot;
+            read.snapshot = snapshot->sequence();
         }
         const Model& expected = read.snapshot.has_value() ? frozen : model;
         auto iterator = database->NewIterator(read);
@@ -103,7 +103,7 @@ void FuzzDatabase(ByteView input) {
             case 4: {
                 DatabaseEngineReadOptions read;
                 if ((command & 8U) != 0 && snapshot.has_value()) {
-                    read.snapshot = snapshot;
+                    read.snapshot = snapshot->sequence();
                 }
                 const std::vector<std::byte> previous = read_value;
                 const Result<bool> actual = database->Get(AsBytes(key), read_value, read);
@@ -121,8 +121,9 @@ void FuzzDatabase(ByteView input) {
             case 5:
                 if (snapshot.has_value()) {
                     database->ReleaseSnapshot(*snapshot);
+                    snapshot.reset();
                 }
-                snapshot = database->GetSnapshot();
+                snapshot.emplace(database->GetSnapshot());
                 frozen = model;
                 break;
             case 6:

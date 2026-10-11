@@ -62,8 +62,8 @@ TEST(DatabaseNativeTest, CompactionPreservesSnapshotsAndPinnedIteratorFiles) {
     ASSERT_TRUE(database.Write(batch, true).has_value());
     ASSERT_TRUE(database.FlushMemTable().has_value());
     ASSERT_TRUE(database.WaitForBackgroundWork().has_value());
-    const auto snapshot = database.GetSnapshot();
-    auto iterator = database.NewIterator({.snapshot = snapshot});
+    auto snapshot = database.GetSnapshot();
+    auto iterator = database.NewIterator({.snapshot = snapshot.sequence()});
     ASSERT_TRUE(iterator->SeekToFirst().has_value());
     ASSERT_TRUE(iterator->valid());
     std::string latest;
@@ -85,7 +85,7 @@ TEST(DatabaseNativeTest, CompactionPreservesSnapshotsAndPinnedIteratorFiles) {
     std::vector<std::byte> value;
     ASSERT_TRUE(database.Get(AsBytes("shared"), value).value());
     EXPECT_EQ(AsStringView(value), latest);
-    ASSERT_TRUE(database.Get(AsBytes("shared"), value, {.snapshot = snapshot}).value());
+    ASSERT_TRUE(database.Get(AsBytes("shared"), value, {.snapshot = snapshot.sequence()}).value());
     EXPECT_EQ(AsStringView(value), first);
     EXPECT_EQ(AsStringView(iterator->value()), first);
     database.ReleaseSnapshot(snapshot);

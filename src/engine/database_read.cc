@@ -118,14 +118,12 @@ void DatabaseEngine::RecordReadSample(ByteView internal_key) {
     }
 }
 
-SequenceNumber DatabaseEngine::GetSnapshot() {
+DatabaseEngine::SnapshotRegistration DatabaseEngine::GetSnapshot() {
     const std::lock_guard lock(mutex_);
-    const SequenceNumber sequence = versions_->last_sequence();
-    snapshots_.Register(sequence);
-    return sequence;
+    return snapshots_.Register(versions_->last_sequence());
 }
 
-void DatabaseEngine::ReleaseSnapshot(SequenceNumber snapshot) {
+void DatabaseEngine::ReleaseSnapshot(SnapshotRegistration& snapshot) {
     const std::lock_guard lock(mutex_);
     snapshots_.Release(snapshot);
 }

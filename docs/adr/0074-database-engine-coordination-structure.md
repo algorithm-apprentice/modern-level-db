@@ -179,28 +179,43 @@ database mutex but no engine back-pointer. Add an internal
 ```cpp
 class SnapshotRegistry final {
 public:
-    void Register(SequenceNumber sequence);
-    void Release(SequenceNumber sequence);
+    class Registration final {
+    public:
+        Registration(Registration&&) noexcept;
+        [[nodiscard]] SequenceNumber sequence() const noexcept;
+    };
+
+    [[nodiscard]] Registration Register(SequenceNumber sequence);
+    void Release(Registration& registration) noexcept;
 
     [[nodiscard]] std::size_t size() const noexcept;
     [[nodiscard]] std::optional<SequenceNumber> oldest() const noexcept;
     [[nodiscard]] SequenceNumber OldestOr(SequenceNumber fallback) const noexcept;
 
 private:
-    std::multiset<SequenceNumber> sequences_;
+    std::list<SequenceNumber> sequences_;
 };
 ```
 
 The registry is not internally synchronized. DatabaseEngine calls it with the
 database mutex held.
 
-- duplicate registrations of the same sequence remain valid;
-- `Release` keeps the current caller invariant that the registration exists;
+- each acquisition returns a move-only registration token identifying one list
+  node, so duplicate sequences remain independent;
+- the token also stores its immutable sequence value, so concurrent readers do
+  not touch a list iterator outside the database mutex;
+- sequences are appended in the nondecreasing order established by the
+  VersionSet's published last sequence;
+- only `Release` uses the node iterator, under the database mutex, and removes
+  the exact registration in constant time;
 - compaction asks for `OldestOr(last_sequence)`;
 - state inspection asks for `size()` and `oldest()`.
 
-This type owns the multiset invariant instead of exposing container operations
-throughout DatabaseEngine.
+The public RAII `SnapshotRegistration` owns this internal token and exposes its
+sequence to reads. This preserves one release per acquisition instead of
+reducing registration identity to a sequence lookup. It follows the same
+registration-list model as the pinned LevelDB `SnapshotList` while retaining
+Modern LevelDB's owning public handles.
 
 ### Model the WAL and memtables as write-buffer state
 
@@ -433,6 +448,9 @@ decisions.
   algorithms. The proposal retains that aggregate-root role.
 - ADR-0057 requires typed synchronous read pins and shared ownership for
   longer-lived consumers. The proposal keeps both models.
+- Pinned LevelDB gives each snapshot acquisition one linked-list node and
+  releases that exact node. SnapshotRegistry preserves that identity through a
+  move-only token rather than using sequence value as the release handle.
 - ADR-0004 requires shared ownership and performance abstractions to have
   explicit reasons. The proposal neither broadens shared ownership nor removes
   a measured hot-path mechanism by assumption.
@@ -458,6 +476,7 @@ gate is review and acceptance of this ADR.
 - [ADR-0057: Pinned LevelDB Version and Output Parity](0057-leveldb-version-output-parity.md)
 - [ADR-0061: Typed Database State Inspection](0061-typed-database-state-inspection.md)
 - [Document-First Development](../development/document-first-development.md)
+- [Pinned LevelDB SnapshotList](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/snapshot.h)
 - [`src/engine/database.h`](../../src/engine/database.h)
 - [`src/engine/database.cc`](../../src/engine/database.cc)
 - [`tests/unit/engine/database_test_support.h`](../../tests/unit/engine/database_test_support.h)

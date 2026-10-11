@@ -118,21 +118,21 @@ TEST_F(DatabaseTest, ReadsAtSnapshots) {
     const auto database = Open();
     ASSERT_TRUE(Put(*database, "a", "1").has_value());
     ASSERT_TRUE(Put(*database, "b", "1").has_value());
-    const SequenceNumber first = database->GetSnapshot();
-    const SequenceNumber again = database->GetSnapshot();
+    auto first = database->GetSnapshot();
+    auto again = database->GetSnapshot();
     ASSERT_TRUE(Put(*database, "a", "2").has_value());
     ASSERT_TRUE(Delete(*database, "b").has_value());
     ASSERT_TRUE(Flush(*database).has_value());
 
-    EXPECT_EQ(first, again);
-    EXPECT_EQ(Get(*database, "a", first), "1");
-    EXPECT_EQ(Get(*database, "b", first), "1");
-    EXPECT_EQ(Scan(*database, first), (std::vector<std::string>{"a=1", "b=1"}));
+    EXPECT_EQ(first.sequence(), again.sequence());
+    EXPECT_EQ(Get(*database, "a", first.sequence()), "1");
+    EXPECT_EQ(Get(*database, "b", first.sequence()), "1");
+    EXPECT_EQ(Scan(*database, first.sequence()), (std::vector<std::string>{"a=1", "b=1"}));
     EXPECT_EQ(Get(*database, "a"), "2");
     EXPECT_EQ(Scan(*database), (std::vector<std::string>{"a=2"}));
     // Each acquisition is released on its own.
     database->ReleaseSnapshot(first);
-    EXPECT_EQ(Get(*database, "a", again), "1");
+    EXPECT_EQ(Get(*database, "a", again.sequence()), "1");
     database->ReleaseSnapshot(again);
 }
 
@@ -185,17 +185,17 @@ TEST_F(DatabaseTest, ReportsPublishedStateAndExplicitSnapshots) {
     EXPECT_EQ(empty_written->last_sequence, small->last_sequence);
     EXPECT_EQ(empty_written->mutable_memtable_bytes, small->mutable_memtable_bytes);
 
-    const SequenceNumber oldest = database->GetSnapshot();
+    auto oldest = database->GetSnapshot();
     const std::string large(5000, 'v');
     ASSERT_TRUE(Put(*database, "large", large).has_value());
-    const SequenceNumber newest = database->GetSnapshot();
-    const SequenceNumber duplicate = database->GetSnapshot();
+    auto newest = database->GetSnapshot();
+    auto duplicate = database->GetSnapshot();
     Result<DatabaseEngineState> snapshotted = database->GetState();
     ASSERT_TRUE(snapshotted.has_value()) << snapshotted.error().ToString();
     EXPECT_EQ(snapshotted->last_sequence, 2U);
     EXPECT_GT(snapshotted->mutable_memtable_bytes, small->mutable_memtable_bytes);
     EXPECT_EQ(snapshotted->snapshot_count, 3U);
-    EXPECT_EQ(snapshotted->oldest_snapshot_sequence, oldest);
+    EXPECT_EQ(snapshotted->oldest_snapshot_sequence, oldest.sequence());
 
     database->ReleaseSnapshot(oldest);
     database->ReleaseSnapshot(newest);
@@ -429,18 +429,21 @@ TEST_F(DatabaseTest, KeepsWhatLiveSnapshotsReadThroughCompactions) {
     const auto database = Open();
     WarmUp(*database);
     ASSERT_TRUE(Put(*database, "k", "1").has_value());
-    const SequenceNumber first = database->GetSnapshot();
+    auto first = database->GetSnapshot();
+    const SequenceNumber first_sequence = first.sequence();
     ASSERT_TRUE(Put(*database, "k", "2").has_value());
-    const SequenceNumber second = database->GetSnapshot();
-    const SequenceNumber again = database->GetSnapshot();
+    auto second = database->GetSnapshot();
+    const SequenceNumber second_sequence = second.sequence();
+    auto again = database->GetSnapshot();
+    const SequenceNumber again_sequence = again.sequence();
     ASSERT_TRUE(Put(*database, "k", "3").has_value());
 
     // Every snapshot reads its value after a compaction.
     CompactLevel0(*database);
-    EXPECT_EQ(Get(*database, "k", first), "1");
-    EXPECT_EQ(Seek(*database, "k", first), "1");
-    EXPECT_EQ(Get(*database, "k", second), "2");
-    EXPECT_EQ(Seek(*database, "k", second), "2");
+    EXPECT_EQ(Get(*database, "k", first_sequence), "1");
+    EXPECT_EQ(Seek(*database, "k", first_sequence), "1");
+    EXPECT_EQ(Get(*database, "k", second_sequence), "2");
+    EXPECT_EQ(Seek(*database, "k", second_sequence), "2");
     EXPECT_EQ(Get(*database, "k"), "3");
     EXPECT_EQ(Seek(*database, "k"), "3");
 
@@ -448,20 +451,20 @@ TEST_F(DatabaseTest, KeepsWhatLiveSnapshotsReadThroughCompactions) {
     // as a read at its sequence shows.
     database->ReleaseSnapshot(first);
     CompactLevel0(*database);
-    EXPECT_EQ(Get(*database, "k", first), "<none>");
-    EXPECT_EQ(Get(*database, "k", second), "2");
-    EXPECT_EQ(Seek(*database, "k", second), "2");
+    EXPECT_EQ(Get(*database, "k", first_sequence), "<none>");
+    EXPECT_EQ(Get(*database, "k", second_sequence), "2");
+    EXPECT_EQ(Seek(*database, "k", second_sequence), "2");
 
     // Of two snapshots at one sequence, the one still held keeps its value.
     database->ReleaseSnapshot(second);
     CompactLevel0(*database);
-    EXPECT_EQ(Get(*database, "k", again), "2");
-    EXPECT_EQ(Seek(*database, "k", again), "2");
+    EXPECT_EQ(Get(*database, "k", again_sequence), "2");
+    EXPECT_EQ(Seek(*database, "k", again_sequence), "2");
 
     // Without snapshots, a compaction keeps only the newest value.
     database->ReleaseSnapshot(again);
     CompactLevel0(*database);
-    EXPECT_EQ(Get(*database, "k", again), "<none>");
+    EXPECT_EQ(Get(*database, "k", again_sequence), "<none>");
     EXPECT_EQ(Get(*database, "k"), "3");
     EXPECT_EQ(Seek(*database, "k"), "3");
 }
