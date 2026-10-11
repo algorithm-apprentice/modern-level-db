@@ -761,6 +761,41 @@ def validate_native_profile(profile, epochs, measurement, completion, expected_m
 # One fresh output directory binds the executable, workload/policies, validated
 # completion, and raw artifacts. Setup and measured work have separate contracts;
 # exact report shapes are defined by validators, not this execution map.
+def benchmark_arguments(case, output, repetitions, min_time, smoke,
+                        modern_file_access="default", reference_file_access="default",
+                        modern_result_ownership="reusable",
+                        modern_write_batch_ownership="copying", modern_wal_creation="durable"):
+    engine, workload, _ = case_parts(case)
+    mutation = mutation_specification(case, smoke)
+    # Mutable workloads use fixed work: adaptive iteration counts change their
+    # state and maintenance pressure, so they cannot share read-workload timing policy.
+    benchmark_time = f"{mutation['iterations']}x" if mutation else ("1x" if smoke else f"{min_time}s")
+    command = [
+        "--case", case, "--database", str(output / "work" / "db"),
+        "--completion-report", str(output / "completion.json"),
+        f"--benchmark_min_time={benchmark_time}",
+        f"--benchmark_repetitions={repetitions}", "--benchmark_min_warmup_time=0",
+        "--benchmark_enable_random_interleaving=false", "--benchmark_dry_run=false",
+        "--benchmark_list_tests=false",
+        "--benchmark_report_aggregates_only=false", "--benchmark_time_unit=ns",
+        f"--benchmark_out={output / 'benchmark.json'}", "--benchmark_out_format=json",
+        "--benchmark_color=false",
+    ]
+    if engine == "modern" and modern_file_access != "default":
+        command.extend(["--modern-file-access", modern_file_access])
+    if engine == "modern" and modern_result_ownership != "reusable":
+        command.extend(["--modern-result-ownership", modern_result_ownership])
+    if engine == "modern" and workload == "writebatch":
+        command.extend(["--modern-write-batch-ownership", modern_write_batch_ownership])
+    if engine == "modern" and mutation:
+        command.extend(["--modern-wal-creation", modern_wal_creation])
+    if engine == "leveldb":
+        command.extend(["--reference-file-access", reference_file_access])
+    if mutation and smoke:
+        command.append("--smoke")
+    return command
+
+
 def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=None,
              min_time=None, timeout=None, modern_file_access="default",
              reference_file_access="default", modern_result_ownership="reusable",
@@ -862,32 +897,11 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
     }
     manifest_path = output / "manifest.json"
     write_json(manifest_path, manifest)
-    # Mutable workloads use fixed work: adaptive iteration counts change their
-    # state and maintenance pressure, so they cannot share read-workload timing policy.
-    benchmark_time = f"{mutation['iterations']}x" if mutation else ("1x" if smoke else f"{min_time}s")
-    command = [
-        "--case", case, "--database", str(work / "db"),
-        "--completion-report", str(output / "completion.json"),
-        f"--benchmark_min_time={benchmark_time}",
-        f"--benchmark_repetitions={repetitions}", "--benchmark_min_warmup_time=0",
-        "--benchmark_enable_random_interleaving=false", "--benchmark_dry_run=false",
-        "--benchmark_list_tests=false",
-        "--benchmark_report_aggregates_only=false", "--benchmark_time_unit=ns",
-        f"--benchmark_out={output / 'benchmark.json'}", "--benchmark_out_format=json",
-        "--benchmark_color=false",
-    ]
-    if engine == "modern" and modern_file_access != "default":
-        command.extend(["--modern-file-access", modern_file_access])
-    if engine == "modern" and modern_result_ownership != "reusable":
-        command.extend(["--modern-result-ownership", modern_result_ownership])
-    if engine == "modern" and workload == "writebatch":
-        command.extend(["--modern-write-batch-ownership", modern_write_batch_ownership])
-    if engine == "modern" and mutation:
-        command.extend(["--modern-wal-creation", modern_wal_creation])
-    if engine == "leveldb":
-        command.extend(["--reference-file-access", reference_file_access])
-    if mutation and smoke:
-        command.append("--smoke")
+    command = benchmark_arguments(
+        case, output, repetitions, min_time, smoke, modern_file_access,
+        reference_file_access, modern_result_ownership,
+        modern_write_batch_ownership, modern_wal_creation,
+    )
     started = time.monotonic()
     try:
         if capture_cpu and sys.platform == "darwin":
