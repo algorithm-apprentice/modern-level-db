@@ -266,27 +266,45 @@ Result<bool> WalReader::FillBlock() {
         return false;
     }
 
-    block_start_offset_ += block_size_;
-    block_size_ = 0;
-    block_position_ = 0;
-
+    BeginBlock();
     while (block_size_ < WalBlockSize) {
-        MutableByteView output = MutableByteView(block_).subspan(block_size_);
-        Result<std::size_t> read = file_->Read(output);
+        Result<std::size_t> read = ReadBlockChunk();
         if (!read.has_value()) {
-            return std::unexpected(read.error());
+            return std::unexpected(std::move(read).error());
         }
-        if (*read > output.size()) {
-            return std::unexpected(Error::Io("sequential file returned an oversized WAL read"));
-        }
+        AcceptBlockChunk(*read);
         if (*read == 0) {
-            eof_seen_ = true;
             break;
         }
-        block_size_ += *read;
     }
 
     return block_size_ != 0;
+}
+
+void WalReader::BeginBlock() noexcept {
+    block_start_offset_ += block_size_;
+    block_size_ = 0;
+    block_position_ = 0;
+}
+
+Result<std::size_t> WalReader::ReadBlockChunk() {
+    MutableByteView output = MutableByteView(block_).subspan(block_size_);
+    Result<std::size_t> read = file_->Read(output);
+    if (!read.has_value()) {
+        return std::unexpected(read.error());
+    }
+    if (*read > output.size()) {
+        return std::unexpected(Error::Io("sequential file returned an oversized WAL read"));
+    }
+    return read;
+}
+
+void WalReader::AcceptBlockChunk(std::size_t count) noexcept {
+    if (count == 0) {
+        eof_seen_ = true;
+    } else {
+        block_size_ += count;
+    }
 }
 
 WalReadEvent WalReader::AbandonPartial(std::string_view reason) {

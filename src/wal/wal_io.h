@@ -102,6 +102,9 @@ private:
     [[nodiscard]] std::optional<WalReadEvent> ConsumeFirst(const PhysicalFragment& fragment);
     [[nodiscard]] std::optional<WalReadEvent> ConsumeContinuation(const PhysicalFragment& fragment);
     [[nodiscard]] Result<bool> FillBlock();
+    void BeginBlock() noexcept;
+    [[nodiscard]] Result<std::size_t> ReadBlockChunk();
+    void AcceptBlockChunk(std::size_t count) noexcept;
     [[nodiscard]] bool HasPartialPayload() const noexcept {
         return in_fragmented_record_ && !scratch_.empty();
     }
