@@ -34,7 +34,7 @@ void SnapshotRegistry::Release(Registration*& registration) noexcept {
     registration->registry_ = nullptr;
     Registration* const released = registration;
     registration = nullptr;
-    delete released;
+    delete released;  // GCOVR_EXCL_LINE: GCC attributes trivial private destruction elsewhere
     --size_;
 }
 
