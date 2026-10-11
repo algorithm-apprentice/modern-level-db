@@ -139,3 +139,21 @@ characterization. It did not edit files or execute builds/tests.
 Allocation/syscall failure paths retain their inspection-based limits, and
 repeated enumeration is only a leak regression exercise, not proof of leak
 freedom. Native unchanged-production execution remains mandatory before extraction.
+
+## Characterization stage
+
+Accepted design #215 merged after all 20 exact-head checks succeeded.
+Three characterization cases are authored against unchanged production at
+28847703ab4f8bb072b2242e27a5b50b7b1c2ac3: retained guard/exhaustion fallbacks,
+copied/mapped owners outliving the filesystem with unlink/replacement/slot reuse,
+and native-name ownership with exact dot omission and typed directory failures.
+The non-UTF-8 filename control is Linux-only; the same directory case executes
+its ordinary/dot-prefix/space/subdirectory/symlink controls on both native hosts.
+No production extraction has been performed and no local POSIX execution is
+claimed. Native characterization CI results and required case names must be
+verified before adding source commits to the implementation PR.
+
+Independent bounded characterization review found no high-confidence issue in
+the two-file diff, including byte counts, view lifetimes, slot reuse and native
+name ownership. It did not edit files or execute builds/tests; compilation and
+native execution remain unverified at this characterization-only stage.
