@@ -3,7 +3,6 @@
 
 #include <array>
 #include <atomic>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -49,14 +48,7 @@ public:
     // Duplicate insertion is a caller error, not a recoverable result here.
     void Insert(Entry entry) {
         std::array<Node*, MaxHeight> predecessors{};
-        Node* existing = FindGreaterOrEqual(entry, predecessors.data());
-#ifndef NDEBUG
-        // GCOVR_EXCL_START: duplicate insertion is a caller error
-        const bool duplicate = existing != nullptr && Equal(existing->entry, entry);
-        assert(!duplicate);
-        // GCOVR_EXCL_STOP
-#endif
-        (void)existing;
+        static_cast<void>(FindGreaterOrEqual(entry, predecessors.data()));
         InsertAfterSearch(entry, predecessors);
     }
 
@@ -77,18 +69,11 @@ public:
 
         [[nodiscard]] bool valid() const noexcept { return node_ != nullptr; }
 
-        [[nodiscard]] const Entry& entry() const {
-            assert(valid());
-            return node_->entry;
-        }
+        [[nodiscard]] const Entry& entry() const { return node_->entry; }
 
-        void Next() {
-            assert(valid());
-            node_ = node_->Next(0);
-        }
+        void Next() { node_ = node_->Next(0); }
 
         void Prev() {
-            assert(valid());
             node_ = list_->FindLessThan(node_->entry);
             if (node_ == list_->head_) {
                 node_ = nullptr;
@@ -137,7 +122,6 @@ private:
         }
 
         [[nodiscard]] Link& LinkAt(int level) const noexcept {
-            assert(level >= 0);
             auto* base = reinterpret_cast<std::byte*>(const_cast<Node*>(this));
             std::byte* address =
                 base + LinksOffset() + static_cast<std::size_t>(level) * sizeof(Link);

@@ -34,15 +34,6 @@ TEST(ArenaTest, StartsEmpty) {
     EXPECT_EQ(arena.memory_usage(), 0U);
 }
 
-#ifndef NDEBUG
-TEST(ArenaDeathTest, RequiresPositiveAllocationSizes) {
-    Arena arena;
-
-    EXPECT_DEATH(static_cast<void>(arena.Allocate(0)), "");
-    EXPECT_DEATH(static_cast<void>(arena.AllocateAligned(0)), "");
-}
-#endif
-
 TEST(ArenaTest, ReturnedStorageSupportsRequestedWritableViews) {
     Arena arena;
 

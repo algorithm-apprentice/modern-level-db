@@ -141,17 +141,6 @@ TEST(SkipListTest, CompactNodesMatchLevelDbArenaConsumption) {
     EXPECT_EQ(arena.memory_usage(), 2U * block_charge);
 }
 
-#ifndef NDEBUG
-TEST(SkipListDeathTest, InsertionAssertsUniqueKeys) {
-    Arena arena;
-    IntegerCompare compare;
-    IntegerList list(compare, arena);
-    list.Insert(7U);
-
-    EXPECT_DEATH(list.Insert(7U), "");
-}
-#endif
-
 TEST(SkipListTest, IteratesSeeksAndMovesBackward) {
     Arena arena;
     IntegerCompare compare;

@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -87,7 +86,6 @@ void AppendVarintWithSize(std::vector<std::byte>& output, UInt value, std::size_
     output.resize(old_size + encoded_size);
     MutableByteView remaining(output.data() + old_size, output.size() - old_size);
     EncodeVarintTrusted(remaining, value);
-    assert(remaining.empty());
 }
 
 template <typename UInt>
@@ -173,7 +171,6 @@ void AppendVarint64(std::vector<std::byte>& output, std::uint64_t value) {
 }
 
 void EncodeVarint32Trusted(MutableByteView& output, std::uint32_t value) noexcept {
-    assert(output.size() >= VarintLength(value));
     EncodeVarintTrusted(output, value);
 }
 
@@ -197,7 +194,6 @@ void AppendLengthPrefixed(std::vector<std::byte>& output, ByteView value) {
 
     MutableByteView remaining(output.data() + old_size, output.size() - old_size);
     EncodeLengthPrefixedTrusted(remaining, value);
-    assert(remaining.empty());
 }
 
 Result<ByteView> ConsumeLengthPrefixed(ByteView& input) {

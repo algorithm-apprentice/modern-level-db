@@ -43,7 +43,6 @@ private:
     std::unique_ptr<WritableFile> file_;
     WalFragmenter fragmenter_;
     std::size_t reopen_padding_ = 0;
-    bool closed_ = false;
 };
 
 // data borrows the reader's block/scratch buffer. Consume or copy before the next

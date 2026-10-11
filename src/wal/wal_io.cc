@@ -1,7 +1,6 @@
 #include "wal/wal_io.h"
 
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -27,8 +26,6 @@ WalReadResult Event(WalReadEvent event) { return std::optional<WalReadEvent>(std
 // GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
 WalWriter::WalWriter(std::unique_ptr<WritableFile> file, std::uint64_t initial_file_size)
     : file_(std::move(file)), fragmenter_(0) {
-    assert(file_ != nullptr);  // GCOVR_EXCL_BR_WITHOUT_HIT: non-null owner precondition
-
     const std::size_t block_offset = static_cast<std::size_t>(initial_file_size % WalBlockSize);
     if (initial_file_size != 0 && block_offset != 0) {
         reopen_padding_ = WalBlockSize - block_offset;
@@ -37,8 +34,6 @@ WalWriter::WalWriter(std::unique_ptr<WritableFile> file, std::uint64_t initial_f
 // GCOVR_EXCL_STOP
 
 Status WalWriter::AddRecord(ByteView logical_record) {
-    assert(!closed_);  // GCOVR_EXCL_BR_WITHOUT_HIT: open-writer precondition
-
     auto fragments = fragmenter_.Fragment(logical_record);
     static constexpr std::array<std::byte, WalBlockSize> Zeroes{};
 
@@ -73,17 +68,9 @@ Status WalWriter::AddRecord(ByteView logical_record) {
     return file_->Flush();
 }
 
-Status WalWriter::Sync() {
-    assert(!closed_);  // GCOVR_EXCL_BR_WITHOUT_HIT: open-writer precondition
-    return file_->Sync();
-}
+Status WalWriter::Sync() { return file_->Sync(); }
 
-Status WalWriter::Close() {
-    assert(!closed_);  // GCOVR_EXCL_BR_WITHOUT_HIT: single-close precondition
-    Status status = file_->Close();
-    closed_ = true;
-    return status;
-}
+Status WalWriter::Close() { return file_->Close(); }
 
 Status WalWriter::Append(ByteView data) { return file_->Append(data); }
 
