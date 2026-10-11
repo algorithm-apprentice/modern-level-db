@@ -54,10 +54,11 @@ std::vector<std::byte> EncodedBatch(SequenceNumber sequence, std::uint32_t count
     return encoded;
 }
 
-void ExpectCorruption(ByteView encoded) {
+void ExpectCorruption(ByteView encoded, std::string_view message) {
     const auto reader = WriteBatchReader::Open(encoded);
     ASSERT_FALSE(reader.has_value());
     EXPECT_EQ(reader.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(reader.error().message(), message);
 }
 
 TEST(WriteBatchTest, PersistentConstantsAndDefaultHeaderMatchLevelDb) {
@@ -282,30 +283,44 @@ TEST(WriteBatchTest, CopyAndMovePreserveOwningInvariants) {
 TEST(WriteBatchReaderTest, RejectsHeadersShorterThanTwelveBytes) {
     for (std::size_t size = 0; size < WriteBatchHeaderSize; ++size) {
         SCOPED_TRACE(size);
-        ExpectCorruption(std::vector<std::byte>(size));
+        ExpectCorruption(std::vector<std::byte>(size), "write batch is shorter than its header");
     }
 }
 
 TEST(WriteBatchReaderTest, RejectsUnknownAndTruncatedRecords) {
-    const std::vector<std::vector<std::byte>> malformed{
-        Bytes({0x02}),
-        Bytes({0x01, 0x80}),
-        Bytes({0x00, 0x03, 0x61, 0x62}),
-        Bytes({0x01, 0x00, 0x80}),
-        Bytes({0x01, 0x00, 0x03, 0x61, 0x62}),
+    const std::vector<std::pair<std::vector<std::byte>, std::string_view>> malformed{
+        {Bytes({0x02}), "write batch has an unknown value kind"},
+        {Bytes({0x01, 0x80}), "truncated varint"},
+        {Bytes({0x00, 0x03, 0x61, 0x62}), "truncated length-prefixed value"},
+        {Bytes({0x01, 0x00, 0x80}), "truncated varint"},
+        {Bytes({0x01, 0x00, 0x03, 0x61, 0x62}), "truncated length-prefixed value"},
     };
 
-    for (const auto& records : malformed) {
+    for (const auto& [records, message] : malformed) {
         SCOPED_TRACE(records.size());
-        ExpectCorruption(EncodedBatch(0, 1, records));
+        ExpectCorruption(EncodedBatch(0, 1, records), message);
     }
 }
 
 TEST(WriteBatchReaderTest, RejectsCountMismatchAndTrailingBytes) {
-    ExpectCorruption(EncodedBatch(0, 1));
-    ExpectCorruption(EncodedBatch(0, 0, Bytes({0x00, 0x00})));
-    ExpectCorruption(EncodedBatch(0, 1, Bytes({0x00, 0x00, 0x00, 0x00})));
-    ExpectCorruption(EncodedBatch(0, 0, Bytes({0xff})));
+    ExpectCorruption(EncodedBatch(0, 1), "write batch count exceeds encoded records");
+    ExpectCorruption(EncodedBatch(0, 0, Bytes({0x00, 0x00})), "write batch has trailing bytes");
+    ExpectCorruption(EncodedBatch(0, 1, Bytes({0x00, 0x00, 0x00, 0x00})),
+                     "write batch has trailing bytes");
+    ExpectCorruption(EncodedBatch(0, 0, Bytes({0xff})), "write batch has trailing bytes");
+}
+
+TEST(WriteBatchReaderTest, PreservesRecordAndFieldFailurePriority) {
+    ExpectCorruption(EncodedBatch(0, 2, Bytes({0x02, 0x80})),
+                     "write batch has an unknown value kind");
+    ExpectCorruption(EncodedBatch(0, 2, Bytes({0x01, 0x05, 'k', 0x80})),
+                     "truncated length-prefixed value");
+    ExpectCorruption(EncodedBatch(0, 2, Bytes({0x01, 0x00, 0x04, 0x02})),
+                     "truncated length-prefixed value");
+    ExpectCorruption(EncodedBatch(0, 1, Bytes({0x00, 0x00, 0x80})),
+                     "write batch has trailing bytes");
+    ExpectCorruption(EncodedBatch(0, 2, Bytes({0x00, 0x00})),
+                     "write batch count exceeds encoded records");
 }
 
 TEST(WriteBatchReaderTest, PreservesLevelDbCompatibleUncheckedSequenceHeaders) {
