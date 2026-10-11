@@ -128,3 +128,8 @@ The extraction follows the accepted private signatures/order directly. The
 two children add no allocation, owner, lock, value reclamation or exception
 translation. Parent PendingEntry, lock block, DeleteRetired and pin transfer
 remain in their original order. Existing retention/table primitives are reused.
+
+Independent combined review found no significant issue in the five changed
+paths. The reviewer directly inspected both JUnit artifacts and confirmed
+31-case exact parity with no failures/errors/skips, without running tests or
+independently verifying build provenance.
