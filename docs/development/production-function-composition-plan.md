@@ -520,8 +520,9 @@ recovery and database cases pass before/after with exact JUnit parity; the
 recovery topic passes 61 cases. They preserve multi-fault/error-envelope
 priority, sparse counters/pointers, historical maxima, no later-block recovery
 read, pre-append thrown failure/retry, candidate ownership and concurrent
-allocation/sequence changes. Independent combined review and exact-head CI
-remain required before delivery; unmodified helper leaves remain open.
+allocation/sequence changes. Independent combined review found no significant
+issue and directly verified both 115-case artifacts without running tests.
+Exact-head CI remains required before delivery; unmodified helper leaves remain open.
 
 ### MANIFEST recovery
 
