@@ -171,7 +171,7 @@ Both can increase resource use without copying the entire database.
 | [`arena.cc`](../../src/memory/arena.cc) | `Arena::Allocate`, aligned allocation | What lifetime and accounting does one allocation join? | [`arena_test.cc`](../../tests/unit/memory/arena_test.cc) |
 | [`skiplist.h`](../../src/memory/skiplist.h) | `Insert`, search, iterator | What does the single writer establish before release publication? | [`skiplist_test.cc`](../../tests/unit/memory/skiplist_test.cc) |
 | [`memtable.cc`](../../src/memory/memtable.cc) | `Add`, `Lookup`, `Iterator`, read pin | How does one packed entry support snapshots and deletions? | [`memtable_test.cc`](../../tests/unit/memory/memtable_test.cc) |
-| [`database_write.cc`](../../src/engine/database_write.cc) | `CommitWrite` | When does a completed MemTable mutation become visible? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
+| [`database_write.cc`](../../src/engine/database_write.cc) | `CommitWrite` | When does a completed MemTable mutation become visible? | [`database_write_test.cc`](../../tests/unit/engine/database_write_test.cc) |
 | [`snapshot_registry.h`](../../src/engine/snapshot_registry.h) | registration, release, oldest sequence | How do duplicate snapshots preserve the oldest visible sequence? | [`snapshot_registry_test.cc`](../../tests/unit/engine/snapshot_registry_test.cc) |
 | [`database_read.cc`](../../src/engine/database_read.cc) | `GetSnapshot`, `ReleaseSnapshot` | Which sequence keeps old state visible to a reader? | [`public_api_native_test.cc`](../../tests/unit/api/public_api_native_test.cc) |
 
