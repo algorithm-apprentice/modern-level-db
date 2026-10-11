@@ -140,8 +140,10 @@ remain part of the current completion goal.
 
 The shared-rule changes in ADR-0075 and the source-style policy were committed
 locally before sequential PR delivery began. The shared-rule design merged in
-#160; read-option preparation merged in #161. Remaining local commits are not
-evidence of remote delivery.
+#160; read-option preparation merged in #161, level-iterator assembly in #162,
+and background-installation decisions in #163. Each implementation received
+a separate code-persona review and passed its remote CI checks before merging.
+Remaining local commits are not evidence of remote delivery.
 
 A01 was committed locally as `c09c7e6`; its focused foundation run passed 187
 tests. It still needs separate code review, isolated-revision verification, and
