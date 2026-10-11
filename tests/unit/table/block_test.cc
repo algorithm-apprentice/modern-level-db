@@ -35,6 +35,19 @@ public:
     void FindShortSuccessor(std::vector<std::byte>&) const override {}
 };
 
+class RecordingComparator final : public Comparator {
+public:
+    int Compare(ByteView left, ByteView right) const noexcept override {
+        comparisons.emplace_back(AsStringView(left), AsStringView(right));
+        return BytewiseComparator().Compare(left, right);
+    }
+    std::string_view Name() const noexcept override { return "test.RecordingComparator"; }
+    void FindShortestSeparator(std::vector<std::byte>&, ByteView) const override {}
+    void FindShortSuccessor(std::vector<std::byte>&) const override {}
+
+    mutable std::vector<std::pair<std::string, std::string>> comparisons;
+};
+
 template <typename... Args>
 concept BlockCreatableWith =
     requires(Args&&... args) { Block::Create(std::forward<Args>(args)...); };
@@ -305,6 +318,42 @@ TEST(BlockTest, PhysicalValidationDoesNotCompareKeyOrder) {
     }
 }
 
+TEST(BlockTest, PhysicalValidationKeepsDecodeRestartAndVisitorFailurePriority) {
+    const auto first = EntryBytes(0, "a", "1");
+    const std::uint32_t second_offset = static_cast<std::uint32_t>(first.size());
+    for (const bool malformed : {true, false}) {
+        SCOPED_TRACE(malformed);
+        const auto second = malformed ? EntryBytes(2, "", "") : EntryBytes(1, "b", "2");
+        const Block block = MakeBlock(WithRestarts(Concat({first, second}), {0, second_offset}));
+        std::vector<std::string> visited;
+        const Status result = block.ValidateEntries([&](ByteView key, ByteView) -> Status {
+            visited.emplace_back(AsStringView(key));
+            return {};
+        });
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error().code(), ErrorCode::Corruption);
+        EXPECT_EQ(result.error().message(),
+                  malformed ? "block entry is malformed" : "block restart points are invalid");
+        EXPECT_EQ(visited, std::vector<std::string>{"a"});
+    }
+}
+
+TEST(BlockTest, VisitorFailureStopsBeforeLaterEntriesAndFinalRestartValidation) {
+    const auto first = EntryBytes(0, "b", "1");
+    for (const auto& later : {Bytes({0x80}), EntryBytes(0, "a", "2")}) {
+        const Block block = MakeBlock(WithRestarts(Concat({first, later}), {0, 0}));
+        std::vector<std::pair<std::string, std::string>> visited;
+        const Status result = block.ValidateEntries([&](ByteView key, ByteView value) -> Status {
+            visited.emplace_back(AsStringView(key), AsStringView(value));
+            return std::unexpected(Error::Io("visitor stopped"));
+        });
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error().code(), ErrorCode::Io);
+        EXPECT_EQ(result.error().message(), "visitor stopped");
+        EXPECT_EQ(visited, (std::vector<std::pair<std::string, std::string>>{{"b", "1"}}));
+    }
+}
+
 TEST(BlockIteratorTest, StartsUnpositioned) {
     const Block block = MakeBlock(BuildGoldenBlock());
 
@@ -352,6 +401,35 @@ TEST(BlockIteratorTest, SeeksToTheFirstKeyNotLessThanTheTarget) {
     ExpectAt(iterator, "banana", "3");
     ExpectOk(iterator.Seek(AsBytes("bananas")));
     EXPECT_FALSE(iterator.valid());
+}
+
+TEST(BlockIteratorTest, SeekReusesOnlyTheCurrentForwardCheckpoint) {
+    const Block block =
+        MakeBlock(WithRestarts(Concat({EntryBytes(0, "a", "1"), EntryBytes(0, "b", "2"),
+                                       EntryBytes(0, "c", "3"), EntryBytes(0, "d", "4")}),
+                               {0}));
+    const RecordingComparator comparator;
+    Block::Iterator iterator(block, comparator);
+    using Comparisons = std::vector<std::pair<std::string, std::string>>;
+
+    ExpectOk(iterator.Seek(AsBytes("b")));
+    ExpectAt(iterator, "b", "2");
+    EXPECT_EQ(comparator.comparisons, (Comparisons{{"a", "b"}, {"b", "b"}}));
+    comparator.comparisons.clear();
+
+    ExpectOk(iterator.Seek(AsBytes("d")));
+    ExpectAt(iterator, "d", "4");
+    EXPECT_EQ(comparator.comparisons, (Comparisons{{"b", "d"}, {"c", "d"}, {"d", "d"}}));
+    comparator.comparisons.clear();
+
+    ExpectOk(iterator.Seek(AsBytes("d")));
+    ExpectAt(iterator, "d", "4");
+    EXPECT_EQ(comparator.comparisons, (Comparisons{{"d", "d"}}));
+    comparator.comparisons.clear();
+
+    ExpectOk(iterator.Seek(AsBytes("b")));
+    ExpectAt(iterator, "b", "2");
+    EXPECT_EQ(comparator.comparisons, (Comparisons{{"d", "b"}, {"a", "b"}, {"b", "b"}}));
 }
 
 TEST(BlockIteratorTest, ChangesDirectionAcrossRestartPoints) {
@@ -608,6 +686,29 @@ TEST(BlockIteratorTest, ForwardDecodeRejectsALaterOutOfRangeRestart) {
     Block::Iterator iterator(block, BytewiseComparator());
 
     ExpectCorruption(iterator.SeekToFirst());
+}
+
+TEST(BlockIteratorTest, LateRestartFailureClearsPublishedEntryAndPositioningRecovers) {
+    const auto first = EntryBytes(0, "a", "1");
+    const auto entries = Concat({first, EntryBytes(0, "b", "2"), EntryBytes(0, "c", "3")});
+    const Block block =
+        MakeBlock(WithRestarts(entries, {0, static_cast<std::uint32_t>(first.size()),
+                                         static_cast<std::uint32_t>(entries.size() + 1)}));
+    Block::Iterator iterator(block, BytewiseComparator());
+
+    for (int recovery = 0; recovery < 2; ++recovery) {
+        ExpectOk(iterator.SeekToFirst());
+        ExpectAt(iterator, "a", "1");
+        ExpectOk(iterator.Next());
+        ExpectAt(iterator, "b", "2");
+        const Status result = iterator.Next();
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error().code(), ErrorCode::Corruption);
+        EXPECT_EQ(result.error().message(), "bad entry in block");
+        EXPECT_FALSE(iterator.valid());
+        EXPECT_TRUE(iterator.key().empty());
+        EXPECT_TRUE(iterator.value().empty());
+    }
 }
 
 TEST(BlockIteratorTest, InternalKeyModeRejectsShortTargetsAndEntries) {

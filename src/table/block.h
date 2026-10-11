@@ -2,6 +2,7 @@
 #define MODERN_LEVELDB_TABLE_BLOCK_H_
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -34,6 +35,13 @@ private:
         [[nodiscard]] std::size_t RestartPoint(std::size_t index) const noexcept;
     };
 
+    struct DecodedEntry {
+        std::uint32_t shared;
+        ByteView key_delta;
+        ByteView value;
+        std::size_t header_size;
+    };
+
 public:
     class Iterator;
     using EntryVisitor = std::function<Status(ByteView key, ByteView value)>;
@@ -59,6 +67,15 @@ public:
 
 private:
     Block(BlockContents contents, std::size_t entries_end, std::size_t restart_count) noexcept;
+    [[nodiscard]] static const std::byte* DecodeEntry(const std::byte* input,
+                                                      const std::byte* limit,
+                                                      DecodedEntry& entry) noexcept;
+    [[nodiscard]] static std::optional<DecodedEntry> ReadEntry(
+        const Layout& layout, std::size_t offset, std::size_t previous_key_size) noexcept;
+    static void ReconstructKey(std::string& key, const DecodedEntry& entry);
+    [[nodiscard]] static Status ValidateRestartEntry(const Layout& layout, std::size_t offset,
+                                                     std::uint32_t shared,
+                                                     std::size_t& restart_index);
 
     BlockContents contents_;
     Layout layout_;
@@ -99,10 +116,17 @@ public:
 
 private:
     void BeginPositioning() noexcept;
+    [[nodiscard]] Result<std::size_t> FindRestart(ByteView target, std::size_t left,
+                                                  std::size_t right);
+    [[nodiscard]] Status RestoreCheckpoint(std::size_t index, int current_key_compare);
+    [[nodiscard]] Status ScanToLowerBound(ByteView target);
     [[nodiscard]] bool RestartPoint(std::size_t index, std::size_t& offset) const noexcept;
     [[nodiscard]] Status RestartKey(std::size_t index, ByteView& key);
     [[nodiscard]] Status SeekToRestartPoint(std::size_t index);
     [[nodiscard]] Status ParseNextEntry();
+    [[nodiscard]] Status CommitEntry(const DecodedEntry& entry, std::size_t key_size,
+                                     std::size_t entry_end);
+    [[nodiscard]] Status AdvanceRestartIndex();
     [[nodiscard]] Status Corruption();
     [[nodiscard]] bool AcceptsKeySize(std::size_t size) const noexcept;
     [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept;

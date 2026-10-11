@@ -18,12 +18,6 @@ namespace {
 
 constexpr std::size_t Fixed32Size = sizeof(std::uint32_t);
 
-struct DecodedEntry {
-    std::uint32_t shared;
-    ByteView key_delta;
-    ByteView value;
-};
-
 const std::byte* DecodeVarint32(const std::byte* input, const std::byte* limit,
                                 std::uint32_t& value) noexcept {
     value = 0;
@@ -40,8 +34,15 @@ const std::byte* DecodeVarint32(const std::byte* input, const std::byte* limit,
     return nullptr;
 }
 
-const std::byte* DecodeEntry(const std::byte* input, const std::byte* limit,
-                             DecodedEntry& entry) noexcept {
+ByteView StringBytes(const std::string& value) noexcept {
+    return ByteView(reinterpret_cast<const std::byte*>(value.data()), value.size());
+}
+
+}  // namespace
+
+const std::byte* Block::DecodeEntry(const std::byte* input, const std::byte* limit,
+                                    DecodedEntry& entry) noexcept {
+    const std::byte* begin = input;
     if (static_cast<std::size_t>(limit - input) < 3) {
         return nullptr;
     }
@@ -67,15 +68,40 @@ const std::byte* DecodeEntry(const std::byte* input, const std::byte* limit,
         .shared = shared,
         .key_delta = ByteView(input, non_shared),
         .value = ByteView(input + non_shared, value_size),
+        .header_size = static_cast<std::size_t>(input - begin),
     };
     return input;
 }
 
-ByteView StringBytes(const std::string& value) noexcept {
-    return ByteView(reinterpret_cast<const std::byte*>(value.data()), value.size());
+std::optional<Block::DecodedEntry> Block::ReadEntry(const Layout& layout, std::size_t offset,
+                                                    std::size_t previous_key_size) noexcept {
+    DecodedEntry entry{};
+    const std::byte* begin = layout.contents.data() + offset;
+    const std::byte* limit = layout.contents.data() + layout.entries_end;
+    if (DecodeEntry(begin, limit, entry) == nullptr || entry.shared > previous_key_size) {
+        return std::nullopt;
+    }
+    return entry;
 }
 
-}  // namespace
+void Block::ReconstructKey(std::string& key, const DecodedEntry& entry) {
+    key.resize(entry.shared);
+    key.append(reinterpret_cast<const char*>(entry.key_delta.data()), entry.key_delta.size());
+}
+
+Status Block::ValidateRestartEntry(const Layout& layout, std::size_t offset, std::uint32_t shared,
+                                   std::size_t& restart_index) {
+    if (restart_index < layout.restart_count) {
+        const std::size_t restart = layout.RestartPoint(restart_index);
+        if (restart < offset || (restart == offset && shared != 0)) {
+            return std::unexpected(Error::Corruption("block restart points are invalid"));
+        }
+        if (restart == offset) {
+            ++restart_index;
+        }
+    }
+    return {};
+}
 
 std::size_t Block::Layout::RestartPoint(std::size_t index) const noexcept {
     return DecodeFixed32(contents.subspan(entries_end + Fixed32Size * index).first<Fixed32Size>());
@@ -122,29 +148,19 @@ Status Block::ValidateEntries(const EntryVisitor& visitor) const {
     std::string key;
     std::size_t restart_index = 0;
     for (std::size_t offset = 0; offset < layout.entries_end;) {
-        DecodedEntry entry{};
-        const std::byte* begin = layout.contents.data() + offset;
-        const std::byte* limit = layout.contents.data() + layout.entries_end;
-        const std::byte* key_delta = DecodeEntry(begin, limit, entry);
-        if (key_delta == nullptr || entry.shared > key.size()) {
+        const auto entry = ReadEntry(layout, offset, key.size());
+        if (!entry.has_value()) {
             return std::unexpected(Error::Corruption("block entry is malformed"));
         }
-        const std::size_t entry_end = offset + static_cast<std::size_t>(key_delta - begin) +
-                                      entry.key_delta.size() + entry.value.size();
-
-        if (restart_index < layout.restart_count) {
-            const std::size_t restart = layout.RestartPoint(restart_index);
-            if (restart < offset || (restart == offset && entry.shared != 0)) {
-                return std::unexpected(Error::Corruption("block restart points are invalid"));
-            }
-            if (restart == offset) {
-                ++restart_index;
-            }
+        const std::size_t entry_end =
+            offset + entry->header_size + entry->key_delta.size() + entry->value.size();
+        Status matched = ValidateRestartEntry(layout, offset, entry->shared, restart_index);
+        if (!matched.has_value()) {
+            return matched;
         }
 
-        key.resize(entry.shared);
-        key.append(reinterpret_cast<const char*>(entry.key_delta.data()), entry.key_delta.size());
-        const Status visited = visitor(StringBytes(key), entry.value);
+        ReconstructKey(key, *entry);
+        const Status visited = visitor(StringBytes(key), entry->value);
         if (!visited.has_value()) {
             return visited;
         }
@@ -229,14 +245,27 @@ Status Block::Iterator::Seek(ByteView target) {
         }
     }
 
-    // Find the last restart key strictly before the target, then reconstruct
-    // forward from that checkpoint. Prefix-compressed entries cannot be binary-searched directly.
+    auto restart = FindRestart(target, left, right);
+    if (!restart.has_value()) {
+        return std::unexpected(std::move(restart).error());
+    }
+    Status restored = RestoreCheckpoint(*restart, current_key_compare);
+    if (!restored.has_value()) {
+        return restored;
+    }
+    return ScanToLowerBound(target);
+}
+
+Result<std::size_t> Block::Iterator::FindRestart(ByteView target, std::size_t left,
+                                                 std::size_t right) {
+    // Prefix-compressed entries require reconstruction from the last restart
+    // strictly before the target, rather than a binary search over all entries.
     while (left < right) {
         const std::size_t middle = left + (right - left + 1) / 2;
         ByteView middle_key;
         const Status decoded = RestartKey(middle, middle_key);
         if (!decoded.has_value()) {
-            return decoded;
+            return std::unexpected(decoded.error());
         }
         if (Compare(middle_key, target) < 0) {
             left = middle;
@@ -244,15 +273,22 @@ Status Block::Iterator::Seek(ByteView target) {
             right = middle - 1;
         }
     }
+    return left;
+}
 
+Status Block::Iterator::RestoreCheckpoint(std::size_t index, int current_key_compare) {
     // Reuse a current forward position only when the checkpoint is unchanged;
     // otherwise rebuild the full key from its restart before applying suffixes.
-    if (!(left == restart_index_ && current_key_compare < 0)) {
-        const Status sought = SeekToRestartPoint(left);
+    if (!(index == restart_index_ && current_key_compare < 0)) {
+        const Status sought = SeekToRestartPoint(index);
         if (!sought.has_value()) {
             return sought;
         }
     }
+    return {};
+}
+
+Status Block::Iterator::ScanToLowerBound(ByteView target) {
     while (true) {
         const Status parsed = ParseNextEntry();
         if (!parsed.has_value() || !valid() || Compare(key(), target) >= 0) {
@@ -339,26 +375,30 @@ Status Block::Iterator::ParseNextEntry() {
         return {};
     }
 
-    DecodedEntry entry{};
-    const std::byte* begin = layout_.contents.data() + next_;
-    const std::byte* limit = layout_.contents.data() + layout_.entries_end;
-    const std::byte* key_delta = DecodeEntry(begin, limit, entry);
-    if (key_delta == nullptr || entry.shared > key_.size()) {
+    const auto entry = ReadEntry(layout_, next_, key_.size());
+    if (!entry.has_value()) {
         return Corruption();
     }
-    const std::size_t key_size = entry.shared + entry.key_delta.size();
+    const std::size_t key_size = entry->shared + entry->key_delta.size();
     if (!AcceptsKeySize(key_size)) {
         return Corruption();
     }
-    const std::size_t entry_end = next_ + static_cast<std::size_t>(key_delta - begin) +
-                                  entry.key_delta.size() + entry.value.size();
+    const std::size_t entry_end =
+        next_ + entry->header_size + entry->key_delta.size() + entry->value.size();
+    return CommitEntry(*entry, key_size, entry_end);
+}
 
+Status Block::Iterator::CommitEntry(const DecodedEntry& entry, std::size_t key_size,
+                                    std::size_t entry_end) {
     key_.reserve(key_size);
     current_ = next_;
-    key_.resize(entry.shared);
-    key_.append(reinterpret_cast<const char*>(entry.key_delta.data()), entry.key_delta.size());
+    ReconstructKey(key_, entry);
     value_ = entry.value;
     next_ = entry_end;
+    return AdvanceRestartIndex();
+}
+
+Status Block::Iterator::AdvanceRestartIndex() {
     while (restart_index_ + 1 < layout_.restart_count) {
         std::size_t restart = 0;
         if (!RestartPoint(restart_index_ + 1, restart)) {
