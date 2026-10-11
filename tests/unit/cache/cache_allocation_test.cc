@@ -309,6 +309,53 @@ TEST(CacheAllocationTest, FailedEntryAllocationDestroysTransferredValue) {
     EXPECT_FALSE(cache.Lookup(AsBytes("failed-entry")).has_value());
 }
 
+TEST(CacheAllocationTest, OverflowRejectionDoesNotAllocatePreparedBucketGrowth) {
+    constexpr std::size_t Maximum = std::numeric_limits<std::size_t>::max();
+    ShardedLruCache<int> cache(Maximum);
+    const auto keys = KeysForShard(0, 5);
+    std::vector<ShardedLruCache<int>::Handle> originals;
+    originals.reserve(4);
+    for (std::size_t index = 0; index < 4; ++index) {
+        auto inserted =
+            cache.Insert(AsBytes(keys[index]), std::make_unique<const int>(static_cast<int>(index)),
+                         index == 0 ? Maximum - 3 : 1);
+        ASSERT_TRUE(inserted.has_value());
+        originals.push_back(std::move(*inserted));
+    }
+    ASSERT_EQ(cache.total_charge(), Maximum);
+
+    bool allocation_failed = false;
+    std::optional<ShardedLruCache<int>::Handle> rejected;
+    AllocationSnapshot allocations;
+    {
+        auto value = std::make_unique<const int>(4);
+        AllocationSession session(allocations, 1);
+        try {
+            auto inserted = cache.Insert(AsBytes(keys[4]), std::move(value), 1);
+            if (inserted.has_value()) {
+                rejected.emplace(std::move(*inserted));
+            }
+        } catch (const std::bad_alloc&) {
+            allocation_failed = true;
+        }
+    }
+
+    EXPECT_FALSE(allocation_failed);
+    EXPECT_EQ(allocations.calls, 1U);
+    ASSERT_TRUE(rejected.has_value());
+    EXPECT_EQ(**rejected, 4);
+    EXPECT_FALSE(cache.Lookup(AsBytes(keys[4])).has_value());
+    EXPECT_EQ(cache.total_charge(), Maximum);
+    for (std::size_t index = 0; index < originals.size(); ++index) {
+        auto found = cache.Lookup(AsBytes(keys[index]));
+        ASSERT_TRUE(found.has_value());
+        EXPECT_EQ(**found, static_cast<int>(index));
+        EXPECT_EQ(*originals[index], static_cast<int>(index));
+    }
+    cache.Erase(AsBytes(keys[0]));
+    EXPECT_EQ(cache.total_charge(), 3U);
+}
+
 TEST(CacheAllocationTest, VariableSizeEntryUsesUnsizedDeallocation) {
     ShardedLruCache<int> cache(16);
     std::optional<ShardedLruCache<int>::Handle> inserted;
