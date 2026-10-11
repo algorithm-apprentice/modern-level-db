@@ -87,7 +87,7 @@ LookupKey MakeLookup(std::string_view user_key, SequenceNumber sequence) {
 
 TEST(MemTableTest, ReadPinSurvivesMovesAndReadsThePinnedTable) {
     MemTable table(BytewiseComparator());
-    ASSERT_TRUE(table.Add(1, ValueKind::Value, AsBytes("key"), AsBytes("value")).has_value());
+    table.Add(1, ValueKind::Value, AsBytes("key"), AsBytes("value"));
     MemTable::ReadPin source = table.PinRead();
     MemTable::ReadPin pin(std::move(source));
 
@@ -158,10 +158,10 @@ TEST(MemTableTest, EmptyTableMissesAndHasInvalidIterator) {
 
 TEST(MemTableTest, ResolvesValuesDeletionsAndSnapshotBoundaries) {
     MemTable table{BytewiseComparator()};
-    ASSERT_TRUE(table.Add(100, ValueKind::Value, AsBytes("key"), AsBytes("new")).has_value());
-    ASSERT_TRUE(table.Add(90, ValueKind::Deletion, AsBytes("key"), {}).has_value());
-    ASSERT_TRUE(table.Add(80, ValueKind::Value, AsBytes("key"), AsBytes("old")).has_value());
-    ASSERT_TRUE(table.Add(70, ValueKind::Value, AsBytes("empty"), {}).has_value());
+    table.Add(100, ValueKind::Value, AsBytes("key"), AsBytes("new"));
+    table.Add(90, ValueKind::Deletion, AsBytes("key"), {});
+    table.Add(80, ValueKind::Value, AsBytes("key"), AsBytes("old"));
+    table.Add(70, ValueKind::Value, AsBytes("empty"), {});
 
     const MemTableLookup newest = table.Lookup(MakeLookup("key", MaxSequenceNumber));
     EXPECT_EQ(newest.kind, MemTableLookupKind::Value);
@@ -188,12 +188,11 @@ TEST(MemTableTest, ResolvesValuesDeletionsAndSnapshotBoundaries) {
     EXPECT_TRUE(empty.value.empty());
 }
 
-TEST(MemTableTest, TrustedInsertionMatchesCheckedEncodingAndLookup) {
+TEST(MemTableTest, InsertionEncodesAndResolvesEntries) {
     MemTable table{BytewiseComparator()};
-
-    table.AddTrusted(100, ValueKind::Value, AsBytes("key"), AsBytes("new"));
-    table.AddTrusted(90, ValueKind::Deletion, AsBytes("key"), {});
-    table.AddTrusted(80, ValueKind::Value, AsBytes("key"), AsBytes("old"));
+    table.Add(100, ValueKind::Value, AsBytes("key"), AsBytes("new"));
+    table.Add(90, ValueKind::Deletion, AsBytes("key"), {});
+    table.Add(80, ValueKind::Value, AsBytes("key"), AsBytes("old"));
 
     const MemTableLookup newest = table.Lookup(MakeLookup("key", 100));
     ASSERT_EQ(newest.kind, MemTableLookupKind::Value);
@@ -205,25 +204,23 @@ TEST(MemTableTest, TrustedInsertionMatchesCheckedEncodingAndLookup) {
 }
 
 #ifndef NDEBUG
-TEST(MemTableDeathTest, TrustedInsertionAssertsUniqueInternalKeys) {
+TEST(MemTableDeathTest, InsertionAssertsUniqueInternalKeys) {
     MemTable table{BytewiseComparator()};
-    table.AddTrusted(1, ValueKind::Value, AsBytes("key"), AsBytes("first"));
+    table.Add(1, ValueKind::Value, AsBytes("key"), AsBytes("first"));
 
-    EXPECT_DEATH(table.AddTrusted(1, ValueKind::Value, AsBytes("key"), AsBytes("second")), "");
+    EXPECT_DEATH(table.Add(1, ValueKind::Value, AsBytes("key"), AsBytes("second")), "");
 }
 
-TEST(MemTableDeathTest, TrustedInsertionAssertsRepresentableSequenceAndKind) {
+TEST(MemTableDeathTest, InsertionAssertsValueKind) {
     MemTable table{BytewiseComparator()};
 
-    EXPECT_DEATH(table.AddTrusted(MaxSequenceNumber + 1U, ValueKind::Value, AsBytes("key"), {}),
-                 "");
-    EXPECT_DEATH(table.AddTrusted(1, static_cast<ValueKind>(2), AsBytes("key"), {}), "");
+    EXPECT_DEATH(table.Add(1, static_cast<ValueKind>(2), AsBytes("key"), {}), "");
 }
 #endif
 
 TEST(MemTableTest, MovedFromLookupKeyRemainsAValidCanonicalLookup) {
     MemTable table{BytewiseComparator()};
-    ASSERT_TRUE(table.Add(0, ValueKind::Value, {}, AsBytes("empty-key")).has_value());
+    table.Add(0, ValueKind::Value, {}, AsBytes("empty-key"));
     auto source = LookupKey::Create(AsBytes("other"), 99);
     ASSERT_TRUE(source.has_value());
 
@@ -239,7 +236,7 @@ TEST(MemTableTest, SupportsBinaryKeysValuesAndComparatorEquality) {
     const std::array binary_key{std::byte{0x00}, std::byte{0xff}, std::byte{0x10}};
     const std::array binary_value{std::byte{0x80}, std::byte{0x00}, std::byte{0x7f}};
     MemTable binary_table{BytewiseComparator()};
-    ASSERT_TRUE(binary_table.Add(4, ValueKind::Value, binary_key, binary_value).has_value());
+    binary_table.Add(4, ValueKind::Value, binary_key, binary_value);
 
     const MemTableLookup binary = binary_table.Lookup(MakeLookup(binary_key, 4));
     EXPECT_EQ(binary.kind, MemTableLookupKind::Value);
@@ -247,8 +244,7 @@ TEST(MemTableTest, SupportsBinaryKeysValuesAndComparatorEquality) {
 
     CaseInsensitiveComparator comparator;
     MemTable folded_table(comparator);
-    ASSERT_TRUE(
-        folded_table.Add(7, ValueKind::Value, AsBytes("Key"), AsBytes("value")).has_value());
+    folded_table.Add(7, ValueKind::Value, AsBytes("Key"), AsBytes("value"));
 
     const MemTableLookup folded = folded_table.Lookup(MakeLookup("kEy", 7));
     EXPECT_EQ(folded.kind, MemTableLookupKind::Value);
@@ -257,12 +253,11 @@ TEST(MemTableTest, SupportsBinaryKeysValuesAndComparatorEquality) {
 
 TEST(MemTableTest, IteratorUsesInternalKeyOrderAndPreservesStoredDeletionBytes) {
     MemTable table{BytewiseComparator()};
-    ASSERT_TRUE(table.Add(2, ValueKind::Value, AsBytes("b"), AsBytes("b2")).has_value());
-    ASSERT_TRUE(
-        table.Add(5, ValueKind::Deletion, AsBytes("a"), AsBytes("delete-metadata")).has_value());
-    ASSERT_TRUE(table.Add(4, ValueKind::Value, AsBytes("a"), AsBytes("a4")).has_value());
-    ASSERT_TRUE(table.Add(3, ValueKind::Value, AsBytes("a"), AsBytes("a3")).has_value());
-    ASSERT_TRUE(table.Add(1, ValueKind::Value, AsBytes("c"), AsBytes("c1")).has_value());
+    table.Add(2, ValueKind::Value, AsBytes("b"), AsBytes("b2"));
+    table.Add(5, ValueKind::Deletion, AsBytes("a"), AsBytes("delete-metadata"));
+    table.Add(4, ValueKind::Value, AsBytes("a"), AsBytes("a4"));
+    table.Add(3, ValueKind::Value, AsBytes("a"), AsBytes("a3"));
+    table.Add(1, ValueKind::Value, AsBytes("c"), AsBytes("c1"));
 
     struct Expected {
         std::string_view user_key;
@@ -326,8 +321,8 @@ TEST(MemTableTest, IteratorUsesInternalKeyOrderAndPreservesStoredDeletionBytes) 
 
 TEST(MemTableTest, CheckedAndTrustedIteratorSeekAgreeForValidInternalKeys) {
     MemTable table{BytewiseComparator()};
-    ASSERT_TRUE(table.Add(5, ValueKind::Value, AsBytes("a"), AsBytes("a5")).has_value());
-    ASSERT_TRUE(table.Add(3, ValueKind::Value, AsBytes("b"), AsBytes("b3")).has_value());
+    table.Add(5, ValueKind::Value, AsBytes("a"), AsBytes("a5"));
+    table.Add(3, ValueKind::Value, AsBytes("b"), AsBytes("b3"));
     const InternalKey target = MakeInternalKey("a", 4, ValueKind::Value);
 
     MemTable::Iterator checked(table);
@@ -359,41 +354,12 @@ TEST(MemTableTest, CheckedIteratorSeekRejectsMalformedInternalKeys) {
     EXPECT_EQ(kind_status.error().code(), ErrorCode::Corruption);
 }
 
-TEST(MemTableTest, RejectsInvalidAndDuplicateInternalKeys) {
-    MemTable table{BytewiseComparator()};
-    const std::size_t empty_usage = table.memory_usage();
-
-    const Status bad_sequence =
-        table.Add(MaxSequenceNumber + 1U, ValueKind::Value, AsBytes("key"), {});
-    ASSERT_FALSE(bad_sequence.has_value());
-    EXPECT_EQ(bad_sequence.error().code(), ErrorCode::InvalidArgument);
-    EXPECT_EQ(table.memory_usage(), empty_usage);
-
-    const Status bad_kind =
-        table.Add(1, static_cast<ValueKind>(2), AsBytes("key"), AsBytes("value"));
-    ASSERT_FALSE(bad_kind.has_value());
-    EXPECT_EQ(bad_kind.error().code(), ErrorCode::InvalidArgument);
-    EXPECT_EQ(table.memory_usage(), empty_usage);
-
-    ASSERT_TRUE(table.Add(1, ValueKind::Value, AsBytes("key"), AsBytes("value")).has_value());
-    const Status duplicate = table.Add(1, ValueKind::Value, AsBytes("key"), AsBytes("replacement"));
-    ASSERT_FALSE(duplicate.has_value());
-    EXPECT_EQ(duplicate.error().code(), ErrorCode::InvalidArgument);
-
-    MemTable::Iterator iterator(table);
-    iterator.SeekToFirst();
-    ASSERT_TRUE(iterator.valid());
-    EXPECT_EQ(AsStringView(iterator.value()), "value");
-    iterator.Next();
-    EXPECT_FALSE(iterator.valid());
-}
-
 TEST(MemTableTest, ReportsArenaReservedMemoryGrowth) {
     MemTable table{BytewiseComparator()};
     const std::size_t empty_usage = table.memory_usage();
     const std::vector<std::byte> large_value(5'000, std::byte{0x5a});
 
-    ASSERT_TRUE(table.Add(1, ValueKind::Value, AsBytes("large"), large_value).has_value());
+    table.Add(1, ValueKind::Value, AsBytes("large"), large_value);
 
     EXPECT_GT(table.memory_usage(), empty_usage);
 }
@@ -417,7 +383,7 @@ TEST(MemTableTest, MatchesRandomizedSnapshotModel) {
         const ValueKind kind = random % 5U == 0U ? ValueKind::Deletion : ValueKind::Value;
         const std::string value =
             kind == ValueKind::Value ? "value-" + std::to_string(sequence) : "";
-        ASSERT_TRUE(table.Add(sequence, kind, AsBytes(key), AsBytes(value)).has_value());
+        table.Add(sequence, kind, AsBytes(key), AsBytes(value));
         model[key].push_back({sequence, kind, value});
     }
 
@@ -536,7 +502,7 @@ TEST(MemTableTest, ConcurrentReadersObservePublishedEntries) {
     {
         const auto key = OrderedKey(0);
         const auto value = CheckedValue(0);
-        ASSERT_TRUE(table.Add(1, ValueKind::Value, key, value).has_value());
+        table.Add(1, ValueKind::Value, key, value);
     }
     readers_observed_first.wait();
 
@@ -544,7 +510,7 @@ TEST(MemTableTest, ConcurrentReadersObservePublishedEntries) {
         const int previous_iterations = read_iterations.load(std::memory_order_relaxed);
         const auto key = OrderedKey(index);
         const auto value = CheckedValue(index);
-        ASSERT_TRUE(table.Add(index + 1U, ValueKind::Value, key, value).has_value());
+        table.Add(index + 1U, ValueKind::Value, key, value);
         if (index % 64U == 0U) {
             while (read_iterations.load(std::memory_order_relaxed) == previous_iterations) {
                 std::this_thread::yield();

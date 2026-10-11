@@ -222,7 +222,7 @@ executor scheduling obligations; serial-executor cancellation/join behavior.
 
 Add the WAL header layout and cursor borrow/serialization requirements.
 At the stream API, describe the four reader outcomes, record-view
-invalidation, writer poisoning, explicit close, and reopen padding.
+invalidation, caller-owned failure poisoning, explicit close, and reopen padding.
 Explain the different WAL/MANIFEST corruption policies at their callers.
 
 Annotate the output-file, directory, MANIFEST, `CURRENT`, and in-memory
@@ -236,7 +236,7 @@ from name durability, benign truncated tails from corruption events,
 and corruption events from terminal I/O failures. A returned WAL record
 cannot be mistaken for independently owned storage.
 
-Evidence includes `FirstIoErrorPoisonsWriterButCloseStillRuns`,
+Evidence includes `AppendAndCloseReportTheirOwnErrors`,
 `TruncatedTailAndIncompleteFragmentAreBenignEof`, `ReadErrorsAreTerminal`,
 filesystem contract tests, executor teardown tests, recovery tests, and
 MANIFEST installation/failure tests.
@@ -455,7 +455,7 @@ dispositions, not claims of exhaustive behavioral verification.
 | `src/table` | C | `block.cc`, `block.h`, `block_builder.h`, `bloom_filter.cc`, `bloom_filter.h`, `filter_block.h`, `table.h`, `table_builder.h` | Explain restart reconstruction, lazy validation, owned/borrowed backing, probabilistic exclusion, index separators, and exception recovery limits. |
 | `src/table` | R | `block_builder.cc`, `block_format.h`, `compression.cc`, `compression.h`, `filter_block.cc`, `table.cc`, `table_builder.cc` | Keep existing format, compression, filter, and traversal reasoning; header maps cover the shared learning entry. |
 | `src/table` | N | `block_format.cc` | Trailer/checksum contracts and representation tests already explain the small codec implementation. |
-| `src/wal` | C | `wal_io.h` | Separate logical events, benign crash tails, terminal errors, poisoned writes, borrowed records, and reopen padding. |
+| `src/wal` | C | `wal_io.h` | Separate logical events, benign crash tails, terminal errors, caller-stopped writes, borrowed records, and reopen padding. |
 | `src/wal` | R | `wal_io.cc` | Preserve existing framing/reassembly and first-error implementation explanations. |
 | `tests` | R | `CMakeLists.txt` | Keep existing target/coverage and test-gate rationale. |
 | `tests/cmake/benchmark_declaration` | N | `CMakeLists.txt` | Fixture target and assertion names express the declaration contract. |

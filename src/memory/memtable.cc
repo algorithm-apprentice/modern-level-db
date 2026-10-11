@@ -90,28 +90,11 @@ MemTable::MemTable(const Comparator& user_comparator)
       entry_comparator_{internal_comparator_},
       table_(entry_comparator_, arena_) {}
 
-Status MemTable::Add(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value) {
-    if (sequence > MaxSequenceNumber) {
-        return std::unexpected(Error::InvalidArgument("memtable sequence exceeds 56 bits"));
-    }
-    if (!IsValidValueKind(kind)) {
-        return std::unexpected(Error::InvalidArgument("memtable value kind is unsupported"));
-    }
-
-    const std::byte* const entry =
-        EncodeEntry(arena_, sequence, kind, key, value, TrustedEncodedSize(key, value));
-    if (!table_.Insert(entry)) {
-        return std::unexpected(Error::InvalidArgument("memtable internal key already exists"));
-    }
-    return {};
-}
-
-void MemTable::AddTrusted(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value) {
-    assert(sequence <= MaxSequenceNumber);
+void MemTable::Add(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value) {
     assert(IsValidValueKind(kind));
     const std::byte* const entry =
         EncodeEntry(arena_, sequence, kind, key, value, TrustedEncodedSize(key, value));
-    table_.InsertTrusted(entry);
+    table_.Insert(entry);
 }
 
 MemTableLookup MemTable::Lookup(const LookupKey& key) const {

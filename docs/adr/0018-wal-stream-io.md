@@ -108,10 +108,10 @@ class WalWriter final {
 };
 ```
 
-The constructor takes sole ownership. A null handle creates a poisoned writer
-whose operations return `InvalidArgument`; it never dereferences null.
+The constructor takes sole ownership and requires a non-null handle.
 WalWriter is non-copyable and non-movable. `initial_file_size` must match the
-actual file length supplied by the caller.
+actual file length supplied by the caller, and `Close` must be called at most
+once.
 
 If a non-empty existing file ends inside a 32 KiB block, the first new record
 pads the entire remaining block with zeros and starts in the next block. It
@@ -133,16 +133,14 @@ This does not make the record crash-durable. The future write path calls
 `Sync()` delegates to `WritableFile::Sync`; `Close()` delegates to the terminal
 file close and does not imply sync.
 
-Any append, flush, or sync failure poisons the writer. Because the fragmenter
-has already advanced and the file may contain a partial logical record,
-subsequent `AddRecord` and `Sync` calls return the first error without further
-I/O. `Close` still attempts to release the file and returns the first observed
-error. Calling any operation after `Close`, including `Close` again, returns
-`InvalidArgument`.
+Any append, flush, or sync failure may leave a partial logical record, so the
+caller must stop using the writer and make that failure sticky at the database
+or version-set boundary. WalWriter returns the current operation's I/O error;
+it does not duplicate the owner's failure state. Debug builds assert non-null
+construction, single close, and no record or sync operation after close.
 
-Allocation failure while fragmenting occurs before I/O and does not poison the
-writer. The owned file's destructor remains the best-effort fallback when
-explicit `Close` is omitted.
+Allocation failure while fragmenting occurs before I/O. The owned file's
+destructor remains the best-effort fallback when explicit `Close` is omitted.
 
 ### Reader events
 

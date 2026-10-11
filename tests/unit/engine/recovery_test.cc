@@ -367,7 +367,6 @@ TEST_F(RecoveryTest, RejectsRecordsThatNoWriterProduces) {
         {{Batch(5, {Put{"a", "1"}, Put{"b", "2"}}), Batch(6, {Put{"c", "3"}})}, {}},
         {{Batch(5, {Put{"a", "1"}}), Batch(5, {})}, {}},
         {{Batch(5, {}), Batch(4, {Put{"a", "1"}})}, {}},
-        {{Batch(MaxSequenceNumber + 1, {Put{"a", "1"}})}, {}},
         // A duplicate entry in a later memtable than the first.
         {{Batch(5, {Put{"a", "1"}}), Batch(5, {Put{"a", "1"}})}, splitting},
     };

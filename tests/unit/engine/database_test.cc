@@ -295,8 +295,7 @@ protected:
         for (const auto& [level, keys] : tables) {
             MemTable memtable(BytewiseComparator());
             for (const std::string& key : keys) {
-                ASSERT_TRUE(memtable.Add(++sequence, ValueKind::Value, AsBytes(key), AsBytes(key))
-                                .has_value());
+                memtable.Add(++sequence, ValueKind::Value, AsBytes(key), AsBytes(key));
             }
             auto built = BuildTable(file_system_, directory_, comparator, TableBuilderOptions(),
                                     cache, memtable, (*versions)->NewFileNumber());

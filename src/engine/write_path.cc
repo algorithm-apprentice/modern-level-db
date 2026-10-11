@@ -20,19 +20,9 @@ constexpr std::size_t SmallBatchGrowth = std::size_t{128} << 10U;
 
 }  // namespace
 
-Status InsertBatch(WriteBatchReader& batch, MemTable& memtable) {
+void InsertBatch(WriteBatchReader& batch, MemTable& memtable) {
     while (const std::optional<WriteBatchEntry> entry = batch.Next()) {
-        const Status added = memtable.Add(entry->sequence, entry->kind, entry->key, entry->value);
-        if (!added.has_value()) {
-            return added;
-        }
-    }
-    return {};
-}
-
-void InsertBatchTrusted(WriteBatchReader& batch, MemTable& memtable) {
-    while (const std::optional<WriteBatchEntry> entry = batch.Next()) {
-        memtable.AddTrusted(entry->sequence, entry->kind, entry->key, entry->value);
+        memtable.Add(entry->sequence, entry->kind, entry->key, entry->value);
     }
 }
 
@@ -49,7 +39,7 @@ Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log, Me
     }
     // A prepared group's keys fit the memtable, and its sequences are unused.
     WriteBatchReader entries = WriteBatchReader::OpenTrusted(group);
-    InsertBatchTrusted(entries, memtable);
+    InsertBatch(entries, memtable);
     return {};
 }
 

@@ -45,22 +45,17 @@ public:
     SkipList& operator=(SkipList&&) = delete;
     ~SkipList() = default;
 
-    [[nodiscard]] bool Insert(Entry entry) {
-        std::array<Node*, MaxHeight> predecessors{};
-        Node* existing = FindGreaterOrEqual(entry, predecessors.data());
-        if (existing != nullptr && Equal(existing->entry, entry)) {
-            return false;
-        }
-        InsertAfterSearch(entry, predecessors);
-        return true;
-    }
-
     // Requires a unique entry, as established by reserved memtable write sequences.
     // Duplicate insertion is a caller error, not a recoverable result here.
-    void InsertTrusted(Entry entry) {
+    void Insert(Entry entry) {
         std::array<Node*, MaxHeight> predecessors{};
         Node* existing = FindGreaterOrEqual(entry, predecessors.data());
-        assert(existing == nullptr || !Equal(existing->entry, entry));
+#ifndef NDEBUG
+        // GCOVR_EXCL_START: duplicate insertion is a caller error
+        const bool duplicate = existing != nullptr && Equal(existing->entry, entry);
+        assert(!duplicate);
+        // GCOVR_EXCL_STOP
+#endif
         (void)existing;
         InsertAfterSearch(entry, predecessors);
     }

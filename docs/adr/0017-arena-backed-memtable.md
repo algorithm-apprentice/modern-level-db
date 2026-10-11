@@ -77,8 +77,8 @@ Pebble's arena skip list stores immutable versioned internal keys and values,
 uses tombstones rather than physical deletion, and reports duplicate internal
 keys as insertion errors. It also adds concurrent writers, backward links,
 splice caching, and offset-based arenas. Modern LevelDB retains only the
-immutable-entry and duplicate-rejection principles; its existing single-writer
-skip list remains sufficient.
+immutable-entry principle; its externally serialized writer and reserved
+sequences make duplicate internal keys a caller error.
 
 ## Decision
 
@@ -210,23 +210,14 @@ failure leaves the iterator position unchanged.
 
 ### Insertion
 
-`Add` validates before arena allocation:
+`Add` is a trusted internal mutation. Batch decoding establishes the kind and
+lengths; sequence reservation establishes a unique complete internal key.
+Debug builds assert the kind and SkipList uniqueness preconditions.
 
-- Sequence is at most `MaxSequenceNumber`.
-- Kind is `Value` or `Deletion`.
-- `key.size() + 8` and `value.size()` fit uint32.
-- The complete encoded entry size fits `size_t`.
-
-It then allocates the exact encoded size, fully writes immutable bytes, and
-publishes the entry through `SkipList::Insert`. Empty keys and values are
-valid. A deletion may carry bytes for original-LevelDB compatibility, although
-normal write-batch callers provide an empty value.
-
-Equal complete internal keys are rejected with `InvalidArgument`. Because the
-arena does not free individual allocations, a duplicate or a later skip-list
-allocation failure may consume reserved arena bytes while leaving logical
-contents unchanged. Normal DB sequence assignment makes duplicates invalid
-caller behavior.
+It allocates the exact encoded size, fully writes immutable bytes, and
+publishes the entry through trusted `SkipList::Insert`. Empty keys and values
+are valid. A deletion may carry bytes for original-LevelDB compatibility,
+although normal write-batch callers provide an empty value.
 
 ### Snapshot lookup
 
@@ -277,7 +268,7 @@ Unit tests cover:
 - Multiple versions of one user key and custom user-comparator equality.
 - Exact internal-key iterator order, seek, forward traversal, and reverse
   traversal.
-- Invalid sequence/kind rejection and duplicate internal-key behavior.
+- Debug assertion of unsupported kinds and duplicate internal-key misuse.
 - Randomized point reads against an ordered reference model.
 - Single-writer/concurrent-reader publication of immutable keys and values.
 

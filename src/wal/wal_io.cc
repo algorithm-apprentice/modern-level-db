@@ -1,6 +1,7 @@
 #include "wal/wal_io.h"
 
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -11,7 +12,6 @@
 #include <variant>
 #include <vector>
 
-#include "base/result_internal.h"
 #include "format/wal_format.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
@@ -20,10 +20,6 @@
 namespace modern_leveldb {
 namespace {
 
-Error ClosedError(std::string_view operation) {
-    return Error::InvalidArgument(std::string(operation) + " called after WAL writer close");
-}
-
 WalReadResult Event(WalReadEvent event) { return std::optional<WalReadEvent>(std::move(event)); }
 
 }  // namespace
@@ -31,9 +27,7 @@ WalReadResult Event(WalReadEvent event) { return std::optional<WalReadEvent>(std
 // GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
 WalWriter::WalWriter(std::unique_ptr<WritableFile> file, std::uint64_t initial_file_size)
     : file_(std::move(file)), fragmenter_(0) {
-    if (file_ == nullptr) {
-        first_error_ = Error::InvalidArgument("WAL writer requires a file");
-    }
+    assert(file_ != nullptr);  // GCOVR_EXCL_BR_WITHOUT_HIT: non-null owner precondition
 
     const std::size_t block_offset = static_cast<std::size_t>(initial_file_size % WalBlockSize);
     if (initial_file_size != 0 && block_offset != 0) {
@@ -43,10 +37,7 @@ WalWriter::WalWriter(std::unique_ptr<WritableFile> file, std::uint64_t initial_f
 // GCOVR_EXCL_STOP
 
 Status WalWriter::AddRecord(ByteView logical_record) {
-    Status usable = CheckUsable("add record");
-    if (!usable.has_value()) {
-        return usable;
-    }
+    assert(!closed_);  // GCOVR_EXCL_BR_WITHOUT_HIT: open-writer precondition
 
     auto fragments = fragmenter_.Fragment(logical_record);
     static constexpr std::array<std::byte, WalBlockSize> Zeroes{};
@@ -79,43 +70,21 @@ Status WalWriter::AddRecord(ByteView logical_record) {
         }
     }
 
-    return RememberFirstError(first_error_, file_->Flush());
+    return file_->Flush();
 }
 
 Status WalWriter::Sync() {
-    Status usable = CheckUsable("sync");
-    if (!usable.has_value()) {
-        return usable;
-    }
-    return RememberFirstError(first_error_, file_->Sync());
+    assert(!closed_);  // GCOVR_EXCL_BR_WITHOUT_HIT: open-writer precondition
+    return file_->Sync();
 }
 
 Status WalWriter::Close() {
-    if (closed_) {
-        return std::unexpected(ClosedError("close"));
-    }
+    assert(!closed_);  // GCOVR_EXCL_BR_WITHOUT_HIT: single-close precondition
     closed_ = true;
-
-    Status close_status;
-    if (file_ != nullptr) {
-        close_status = file_->Close();
-    }
-    return RememberFirstError(first_error_, std::move(close_status));
+    return file_->Close();
 }
 
-Status WalWriter::CheckUsable(std::string_view operation) const {
-    if (closed_) {
-        return std::unexpected(ClosedError(operation));
-    }
-    if (first_error_.has_value()) {
-        return std::unexpected(*first_error_);
-    }
-    return {};
-}
-
-Status WalWriter::Append(ByteView data) {
-    return RememberFirstError(first_error_, file_->Append(data));
-}
+Status WalWriter::Append(ByteView data) { return file_->Append(data); }
 
 WalReader::WalReader(std::unique_ptr<SequentialFile> file) : file_(std::move(file)) {
     if (file_ == nullptr) {

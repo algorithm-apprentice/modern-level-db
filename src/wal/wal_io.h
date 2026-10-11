@@ -18,12 +18,13 @@
 namespace modern_leveldb {
 
 // Owns a serialized WAL stream. AddRecord writes all fragments and Flushes;
-// only Sync requests durable contents. The first ordinary I/O error poisons
-// later record/sync calls, but Close still releases the file.
+// only Sync requests durable contents. Callers must stop after any failed I/O
+// operation; the database and version set retain their own first error.
 class WalWriter final {
 public:
     // Reopening a partial block pads to the next boundary before a new record,
-    // keeping a crash tail from being combined with later fragments.
+    // keeping a crash tail from being combined with later fragments. The file
+    // must be non-null, and Close must be called at most once.
     explicit WalWriter(std::unique_ptr<WritableFile> file, std::uint64_t initial_file_size = 0);
 
     WalWriter(const WalWriter&) = delete;
@@ -37,12 +38,10 @@ public:
     [[nodiscard]] Status Close();
 
 private:
-    [[nodiscard]] Status CheckUsable(std::string_view operation) const;
     [[nodiscard]] Status Append(ByteView data);
 
     std::unique_ptr<WritableFile> file_;
     WalFragmenter fragmenter_;
-    std::optional<Error> first_error_;
     std::size_t reopen_padding_ = 0;
     bool closed_ = false;
 };

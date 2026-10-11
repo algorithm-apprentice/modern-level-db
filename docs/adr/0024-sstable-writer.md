@@ -67,9 +67,10 @@ Change:
 - **Finishing is durable.** LevelDB's callers sync and close the file after
   `Finish`. Here `Finish` syncs and closes the file itself, so that no caller
   can reference an unsynced table.
-- **Owned file and first-error state.** Like `WalWriter` in
-  [ADR-0018](0018-wal-stream-io.md), the builder owns the file, and its first
-  error makes every later `Add` and `Finish` return that error.
+- **Owned file and first-error state.** The builder performs a multi-step
+  terminal `Finish`, so it owns and retains the first file/build error until
+  close. WalWriter instead reports its current I/O error to an owner that makes
+  commit failures sticky.
 - **No flush per block.** LevelDB flushes the file after every data block. The
   bytes and their durability do not depend on it, so the writer relies on the
   file's buffering and on the final `Sync`.

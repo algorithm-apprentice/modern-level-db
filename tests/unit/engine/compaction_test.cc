@@ -93,9 +93,7 @@ public:
     FileMetadata WriteTable(std::uint64_t number, std::initializer_list<Entry> entries) {
         MemTable memtable(BytewiseComparator());
         for (const Entry& entry : entries) {
-            EXPECT_TRUE(
-                memtable.Add(entry.sequence, entry.kind, AsBytes(entry.key), AsBytes(entry.value))
-                    .has_value());
+            memtable.Add(entry.sequence, entry.kind, AsBytes(entry.key), AsBytes(entry.value));
         }
         auto built = BuildTable(file_system, directory, comparator, options.table_options, cache,
                                 memtable, number);

@@ -247,7 +247,7 @@ and a compact variable-height node layout.
 
 The missing contract should identify one externally serialized writer,
 concurrent traversal of published nodes with immutable keys, borrowed comparator/
-arena lifetimes, and the unique-key precondition of `InsertTrusted`.
+arena lifetimes, and the unique-key precondition of `Insert`.
 It should explain why initializing the new link with relaxed ordering is
 different from publishing the node through the predecessor's release store,
 and why a relaxed height hint does not expose an uninitialized node.
@@ -307,9 +307,9 @@ different outcomes. A record's `ByteView` refers to the reader's block or
 scratch storage; callers should consume/copy it before the next read and
 before reader destruction.
 
-Also state that `AddRecord` flushes but does not imply `Sync`, and that
-ordinary writer I/O failure poisons later writes while close still releases
-the file. Explain the reopen-padding policy at the constructor.
+Also state that `AddRecord` flushes but does not imply `Sync`, and that callers
+must stop after an ordinary writer I/O failure while close still releases the
+file. Explain the reopen-padding policy at the constructor.
 
 Evidence: [wal_io.cc](../../src/wal/wal_io.cc), lines 31-105 and 136-209;
 [WAL tests](../../tests/unit/wal/wal_io_test.cc), lines 222-423 and
