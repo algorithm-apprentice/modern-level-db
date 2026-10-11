@@ -548,7 +548,8 @@ owned binary/empty reverse outputs over reused buffers, and beginning outcome;
 reverse sampling additionally measures exact period counts.
 The same 105 iterator/compaction/database cases pass before/after with exact
 JUnit parity; merge direction alone passes eight cases. Independent combined
-review and exact-head CI remain required before delivery. Other source,
+review found no significant issue and directly confirmed both artifacts without
+running tests. Exact-head CI remains required before delivery. Other source,
 sampling, bulk positioning and block iterator frontiers stay open.
 
 ### MANIFEST recovery
