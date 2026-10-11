@@ -117,6 +117,8 @@ concatenated L2 files ---/
 
 L0 needs separate merged children because its files overlap.
 Nonzero levels can concatenate their ordered files.
+`AppendLevelIterators` shares this composition rule between ordinary reads and
+compaction; each caller still selects its own sources and cache options.
 The implementation selects among children directly; do not assume every
 merging iterator uses a heap.
 

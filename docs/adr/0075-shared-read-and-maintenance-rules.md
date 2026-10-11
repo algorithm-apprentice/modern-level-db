@@ -236,3 +236,12 @@ The snapshot-validation matrix passed against the original implementation before
 the extraction. It covers both Get result shapes and NewIterator, both cache
 settings, absent/valid/moved-from/foreign snapshots, and unchanged caller output
 on API rejection. Synchronous reads still borrow; iterators still retain.
+
+### Iterator assembly outcome
+
+Slice 2 adds `AppendLevelIterators` and uses it from ordinary and compaction
+iterator construction. The new entry-point tests failed to compile before the
+helper existed. They exercise empty inputs, existing-child preservation, L0
+span order, one deeper-level run, no eager I/O, and Version retention while an
+external input list remains borrowed. Compaction coverage checks selected files
+only in both L0 and deeper runs, both traversal directions, and no cache filling.

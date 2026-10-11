@@ -303,6 +303,44 @@ TEST(CompactionTest, MergesOverlappingLevelZeroInputs) {
     EXPECT_EQ(alone.Contents(*merged), (Outputs{{"a@7=a7", "b@2=b2"}}));
 }
 
+TEST(CompactionTest, IteratorUsesOnlySelectedInputsWithoutEagerIoOrCacheFilling) {
+    for (const std::uint32_t level : {0U, 1U}) {
+        SCOPED_TRACE(level);
+        Harness harness;
+        const FileMetadata selected = harness.WriteTable(1, {{"a", 7, Put, "a7"}});
+        const FileMetadata excluded = harness.WriteTable(2, {{"b", 8, Put, "b8"}});
+        const FileMetadata next = harness.WriteTable(10, {{"c", 3, Put, "c3"}});
+        const FileMetadata excluded_next = harness.WriteTable(11, {{"d", 4, Put, "d4"}});
+        const Compaction compaction =
+            Harness::MakeCompaction(harness.MakeVersion({{level, selected},
+                                                         {level, excluded},
+                                                         {level + 1, next},
+                                                         {level + 1, excluded_next}}),
+                                    level, {1}, {10});
+        const std::size_t start = harness.file_system.operations().size();
+
+        const auto input = NewCompactionIterator(compaction, harness.cache, harness.comparator);
+
+        EXPECT_EQ(harness.file_system.operations().size(), start);
+        EXPECT_FALSE(input->valid());
+        std::vector<std::string> forward;
+        ASSERT_TRUE(input->SeekToFirst().has_value());
+        while (input->valid()) {
+            forward.push_back(Describe(input->key(), input->value(), true));
+            ASSERT_TRUE(input->Next().has_value());
+        }
+        EXPECT_EQ(forward, (std::vector<std::string>{"a@7=a7", "c@3=c3"}));
+        std::vector<std::string> backward;
+        ASSERT_TRUE(input->SeekToLast().has_value());
+        while (input->valid()) {
+            backward.push_back(Describe(input->key(), input->value(), true));
+            ASSERT_TRUE(input->Prev().has_value());
+        }
+        EXPECT_EQ(backward, (std::vector<std::string>{"c@3=c3", "a@7=a7"}));
+        EXPECT_EQ(harness.blocks.total_charge(), 0U);
+    }
+}
+
 TEST(CompactionTest, DropsOnlyEntriesThatNoSnapshotReads) {
     Harness harness;
     // Levels 3 and 4 hold "k4", "k7" to "k8", and "k9", so deletions of those

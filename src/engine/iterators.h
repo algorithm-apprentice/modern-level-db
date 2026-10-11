@@ -1,6 +1,7 @@
 #ifndef MODERN_LEVELDB_ENGINE_ITERATORS_H_
 #define MODERN_LEVELDB_ENGINE_ITERATORS_H_
 
+#include <cstdint>
 #include <memory>
 #include <span>
 #include <vector>
@@ -33,6 +34,18 @@ std::unique_ptr<InternalIterator> NewLevelIterator(std::shared_ptr<const Version
                                                    TableCache& table_cache,
                                                    const InternalKeyComparator&& comparator,
                                                    const TableReadOptions& options) = delete;
+
+// Appends each L0 file separately, or one ordered nonzero-level run, without I/O.
+// Children retain the Version, but borrow the supplied list storage, which must
+// remain unchanged and outlive them. Empty inputs leave existing children alone.
+void AppendLevelIterators(std::shared_ptr<const Version> version, std::uint32_t level,
+                          std::span<const Version::File> files, TableCache& table_cache,
+                          const InternalKeyComparator& comparator, const TableReadOptions& options,
+                          std::vector<std::unique_ptr<InternalIterator>>& children);
+void AppendLevelIterators(std::shared_ptr<const Version> version, std::uint32_t level,
+                          std::span<const Version::File> files, TableCache& table_cache,
+                          const InternalKeyComparator&& comparator, const TableReadOptions& options,
+                          std::vector<std::unique_ptr<InternalIterator>>& children) = delete;
 
 // Merges the children. Among equal keys, it yields the first child's entry
 // first when it moves forward and the last child's when it moves backward.
