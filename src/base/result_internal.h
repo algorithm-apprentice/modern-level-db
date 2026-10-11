@@ -16,8 +16,6 @@ template <typename T>
     return std::move(result).value();
 }
 
-inline void AssertSuccess(Status status) noexcept { static_cast<void>(status); }
-
 // Retains the first failure of a multi-step resource operation. Later
 // successes do not clear it, and later failures do not replace its context.
 [[nodiscard]] Status RememberFirstError(std::optional<Error>& first_error, Status status);

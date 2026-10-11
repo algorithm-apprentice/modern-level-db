@@ -272,7 +272,7 @@ std::optional<SeekCharge> SampleCharge(const Version& version,
     SelectionTimer selection;
     std::optional<Candidate> first;
     std::size_t matches = 0;
-    AssertSuccess(
+    static_cast<void>(
         ForEachOverlapping(version, comparator, parsed->user_key, internal_key, selection,
                            [&](const Candidate& candidate) {  // GCOVR_EXCL_LINE: GCC lambda clone
                                ++matches;

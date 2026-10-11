@@ -135,7 +135,7 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
     if (IsTrivialMove(*compaction, policy_.max_file_size)) {
         VersionEdit edit = CompactionEdit(*compaction);
         // The file is valid at the next level, which nothing there overlaps.
-        AssertSuccess(edit.AddFile(compaction->level + 1, *compaction->inputs[0].front()));
+        static_cast<void>(edit.AddFile(compaction->level + 1, *compaction->inputs[0].front()));
         FinishCompaction(versions_->LogAndApply(std::move(edit), lock));
         return false;
     }

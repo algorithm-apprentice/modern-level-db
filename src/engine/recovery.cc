@@ -267,7 +267,7 @@ private:
             return std::unexpected(std::move(table).error());
         }
         FileMetadata file = std::move(*table).value();
-        AssertSuccess(edit_->AddFile(0, std::move(file)));
+        static_cast<void>(edit_->AddFile(0, std::move(file)));
         memtable_ = std::make_unique<MemTable>(comparator_->user_comparator());
         has_entries_ = false;
         return {};

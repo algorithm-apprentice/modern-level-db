@@ -256,7 +256,7 @@ Result<VersionEdit> RunCompaction(FileSystem& file_system, const std::filesystem
         return std::unexpected(synced.error());
     }
     for (const FileMetadata& output : outputs.finished()) {
-        AssertSuccess(edit.AddFile(compaction.level + 1, output));
+        static_cast<void>(edit.AddFile(compaction.level + 1, output));
     }
     return edit;
 }

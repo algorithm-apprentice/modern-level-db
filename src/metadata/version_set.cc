@@ -59,10 +59,10 @@ VersionEdit Snapshot(const Comparator& user_comparator,
     snapshot.SetComparatorName(user_comparator.Name());
     for (std::uint32_t level = 0; level < NumLevels; ++level) {
         if (compact_pointers[level].has_value()) {
-            AssertSuccess(snapshot.AddCompactPointer(level, *compact_pointers[level]));
+            static_cast<void>(snapshot.AddCompactPointer(level, *compact_pointers[level]));
         }
         for (const Version::File& file : version.files(level)) {
-            AssertSuccess(snapshot.AddFile(level, *file));
+            static_cast<void>(snapshot.AddFile(level, *file));
         }
     }
     return snapshot;
@@ -291,8 +291,8 @@ Status VersionSet::ApplyPrepared(VersionEdit edit, Version version,
     const std::uint64_t prev_log_number = edit.prev_log_number().value_or(prev_log_number_);
     edit.SetLogNumber(log_number);
     edit.SetPrevLogNumber(prev_log_number);
-    AssertSuccess(edit.SetNextFileNumber(next_file_number_));
-    AssertSuccess(edit.SetLastSequence(last_sequence_));
+    static_cast<void>(edit.SetNextFileNumber(next_file_number_));
+    static_cast<void>(edit.SetLastSequence(last_sequence_));
     std::array<std::optional<InternalKey>, NumLevels> compact_pointers = compact_pointers_;
     for (const CompactPointer& pointer : edit.compact_pointers()) {
         compact_pointers[pointer.level] = pointer.key;

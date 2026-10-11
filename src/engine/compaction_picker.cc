@@ -224,10 +224,10 @@ bool IsTrivialMove(const Compaction& compaction, std::uint64_t target_file_size)
 
 VersionEdit CompactionEdit(const Compaction& compaction) {
     VersionEdit edit;
-    AssertSuccess(edit.AddCompactPointer(compaction.level, compaction.compact_pointer));
+    static_cast<void>(edit.AddCompactPointer(compaction.level, compaction.compact_pointer));
     for (std::uint32_t which = 0; which < compaction.inputs.size(); ++which) {
         for (const Version::File& file : compaction.inputs[which]) {
-            AssertSuccess(edit.RemoveFile(compaction.level + which, file->number));
+            static_cast<void>(edit.RemoveFile(compaction.level + which, file->number));
         }
     }
     return edit;

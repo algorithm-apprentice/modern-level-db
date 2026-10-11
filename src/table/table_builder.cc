@@ -34,7 +34,7 @@ TableBuilder::TableBuilder(std::unique_ptr<WritableFile> file,
     Record(ValidateCompressionOptions(compression_, zstd_compression_level_));
     if (options.filter_policy.has_value()) {
         filter_block_.emplace(*options.filter_policy);
-        AssertSuccess(filter_block_->StartBlock(0));
+        static_cast<void>(filter_block_->StartBlock(0));
         filter_key_.assign("filter.");
         filter_key_.append(options.filter_policy->Name());
     }
