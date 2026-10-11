@@ -385,6 +385,22 @@ std::unique_ptr<InternalIterator> NewLevelIterator(std::shared_ptr<const Version
                                            options);
 }
 
+void AppendLevelIterators(std::shared_ptr<const Version> version, std::uint32_t level,
+                          std::span<const Version::File> files, TableCache& table_cache,
+                          const InternalKeyComparator& comparator, const TableReadOptions& options,
+                          std::vector<std::unique_ptr<InternalIterator>>& children) {
+    assert(level < NumLevels);
+    if (level == 0) {
+        for (std::size_t index = 0; index < files.size(); ++index) {
+            children.push_back(NewLevelIterator(version, files.subspan(index, 1), table_cache,
+                                                comparator, options));
+        }
+    } else if (!files.empty()) {
+        children.push_back(
+            NewLevelIterator(std::move(version), files, table_cache, comparator, options));
+    }
+}
+
 std::unique_ptr<InternalIterator> NewMergingIterator(
     const InternalKeyComparator& comparator,
     std::vector<std::unique_ptr<InternalIterator>> children) {
@@ -403,16 +419,9 @@ std::unique_ptr<InternalIterator> NewInternalIterator(std::shared_ptr<const MemT
     if (immutable != nullptr) {
         children.push_back(NewMemTableIterator(std::move(immutable)));
     }
-    const std::span<const Version::File> level0 = version->files(0);
-    for (std::size_t index = 0; index < level0.size(); ++index) {
-        children.push_back(
-            NewLevelIterator(version, level0.subspan(index, 1), table_cache, comparator, options));
-    }
-    for (std::uint32_t level = 1; level < NumLevels; ++level) {
-        if (!version->files(level).empty()) {
-            children.push_back(
-                NewLevelIterator(version, version->files(level), table_cache, comparator, options));
-        }
+    for (std::uint32_t level = 0; level < NumLevels; ++level) {
+        AppendLevelIterators(version, level, version->files(level), table_cache, comparator,
+                             options, children);
     }
     return NewMergingIterator(comparator, std::move(children));
 }

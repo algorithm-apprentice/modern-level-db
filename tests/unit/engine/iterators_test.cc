@@ -62,6 +62,16 @@ static_assert(LevelWith<const InternalKeyComparator&>);
 static_assert(!LevelWith<InternalKeyComparator>);
 
 template <typename T>
+concept AppendableLevelWith =
+    requires(std::shared_ptr<const Version> version, TableCache& cache, T&& comparator,
+             std::vector<std::unique_ptr<InternalIterator>>& children) {
+        AppendLevelIterators(version, 1, version->files(1), cache, std::forward<T>(comparator),
+                             TableReadOptions{}, children);
+    };
+static_assert(AppendableLevelWith<const InternalKeyComparator&>);
+static_assert(!AppendableLevelWith<InternalKeyComparator>);
+
+template <typename T>
 concept InternalWith =
     requires(std::shared_ptr<const MemTable> memtable, std::shared_ptr<const Version> version,
              TableCache& cache, T&& comparator) {
@@ -650,6 +660,74 @@ TEST(MemTableIteratorTest, ReadsAndHoldsTheMemtable) {
 }
 
 using InternalIteratorTest = TablesTest;
+
+TEST_F(InternalIteratorTest, AppendingEmptyLevelsPreservesExistingChildren) {
+    const auto version = MakeVersion({});
+    auto memtable = std::make_shared<MemTable>(BytewiseComparator());
+    memtable->Add(1, ValueKind::Value, AsBytes("a"), AsBytes("a"));
+    std::vector<std::unique_ptr<InternalIterator>> children;
+    children.push_back(NewMemTableIterator(std::move(memtable)));
+    const InternalIterator* const first = children.front().get();
+    const std::size_t start = Now();
+
+    AppendLevelIterators(version, 0, version->files(0), cache_, comparator_, {}, children);
+    AppendLevelIterators(version, 1, version->files(1), cache_, comparator_, {}, children);
+
+    EXPECT_EQ(Now(), start);
+    ASSERT_EQ(children.size(), 1U);
+    EXPECT_EQ(children.front().get(), first);
+    EXPECT_EQ(ScanForward(*children.front()), (std::vector<std::string>{"a@1=a"}));
+}
+
+TEST_F(InternalIteratorTest, AppendsL0FilesIndividuallyAndDeeperFilesAsOneRun) {
+    const auto version = MakeVersion({{0, WriteTable(12, {{"b", 11}, {"z", 12}})},
+                                      {0, WriteTable(13, {{"c", 13}})},
+                                      {1, WriteTable(10, {{"a", 5}, {"c", 6}})},
+                                      {1, WriteTable(11, {{"d", 7}})}});
+    auto memtable = std::make_shared<MemTable>(BytewiseComparator());
+    memtable->Add(20, ValueKind::Value, AsBytes("m"), AsBytes("m"));
+    std::vector<std::unique_ptr<InternalIterator>> children;
+    children.push_back(NewMemTableIterator(std::move(memtable)));
+    const InternalIterator* const first = children.front().get();
+    const std::size_t start = Now();
+
+    AppendLevelIterators(version, 0, version->files(0), cache_, comparator_, {}, children);
+    ASSERT_EQ(children.size(), 3U);
+    AppendLevelIterators(version, 1, version->files(1), cache_, comparator_, {}, children);
+
+    EXPECT_EQ(Now(), start);
+    ASSERT_EQ(children.size(), 4U);
+    EXPECT_EQ(children.front().get(), first);
+    for (std::size_t index = 0; index < version->files(0).size(); ++index) {
+        ASSERT_TRUE(children[index + 1]->SeekToFirst().has_value());
+        ASSERT_TRUE(children[index + 1]->valid());
+        EXPECT_EQ(comparator_.Compare(children[index + 1]->key(),
+                                      version->files(0)[index]->smallest.encoded()),
+                  0);
+    }
+    EXPECT_EQ(ScanForward(*children.back()), (std::vector<std::string>{"a@5=a", "c@6=c", "d@7=d"}));
+    const auto merged = NewMergingIterator(comparator_, std::move(children));
+    const std::vector<std::string> expected{"a@5=a", "b@11=b", "c@13=c", "c@6=c",
+                                            "d@7=d", "m@20=m", "z@12=z"};
+    EXPECT_EQ(ScanForward(*merged), expected);
+    EXPECT_EQ(ScanBackward(*merged), expected);
+}
+
+TEST_F(InternalIteratorTest, AppendedRunRetainsItsVersionWithABorrowedInputList) {
+    auto version = MakeVersion({{1, WriteTable(10, {{"a", 5}})}, {1, WriteTable(11, {{"c", 6}})}});
+    const std::weak_ptr<const Version> held = version;
+    const std::vector<Version::File> selected{version->files(1).back()};
+    std::vector<std::unique_ptr<InternalIterator>> children;
+
+    AppendLevelIterators(version, 1, selected, cache_, comparator_, {}, children);
+    version.reset();
+
+    EXPECT_FALSE(held.expired());
+    ASSERT_EQ(children.size(), 1U);
+    EXPECT_EQ(ScanForward(*children.front()), (std::vector<std::string>{"c@6=c"}));
+    children.clear();
+    EXPECT_TRUE(held.expired());
+}
 
 TEST_F(InternalIteratorTest, MergesEverySource) {
     auto memtable = std::make_shared<MemTable>(BytewiseComparator());

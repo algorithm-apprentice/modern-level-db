@@ -179,17 +179,8 @@ std::unique_ptr<InternalIterator> NewCompactionIterator(const Compaction& compac
     options.fill_cache = false;
     std::vector<std::unique_ptr<InternalIterator>> children;
     for (std::uint32_t which = 0; which < compaction.inputs.size(); ++which) {
-        const std::vector<Version::File>& files = compaction.inputs[which];
-        if (compaction.level + which == 0) {
-            // Level-0 files may overlap, so each is merged on its own.
-            for (const Version::File& file : files) {
-                children.push_back(NewLevelIterator(compaction.version, std::span(&file, 1),
-                                                    table_cache, comparator, options));
-            }
-        } else if (!files.empty()) {
-            children.push_back(
-                NewLevelIterator(compaction.version, files, table_cache, comparator, options));
-        }
+        AppendLevelIterators(compaction.version, compaction.level + which, compaction.inputs[which],
+                             table_cache, comparator, options, children);
     }
     return NewMergingIterator(comparator, std::move(children));
 }
