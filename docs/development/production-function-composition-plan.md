@@ -314,7 +314,9 @@ The three added characterization boundaries passed on unchanged production
 code. The same 30 focused cases passed after the combined extraction, with
 exact JUnit case-set parity and no failures, errors, or skips. Individual
 table and MANIFEST slices each passed the 19 dump-file cases.
-Independent combined implementation review and exact-head CI remain pending.
+Independent combined implementation review found no actionable issues and
+independently confirmed both JUnit case sets; it did not execute builds/tests.
+Remote delivery still requires green exact-head CI.
 
 This completes the selected extraction work locally, not the recursive audit
 of either diagnostics file. Byte escaping, structured-key rendering, remaining
