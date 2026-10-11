@@ -310,6 +310,14 @@ partitioned by the consumer flow being followed:
 | `engine/database_write.cc` | writer entry, backpressure, WAL/MemTable rotation, commit, and forced flush entry |
 | `engine/database_background.cc` | task scheduling, flush/compaction installation, reclamation, shutdown, and sticky failure |
 
+Within those flows, obsolete-file reclamation separates retention (`KeepFile`),
+locked collection/cache eviction (`CollectObsoleteFiles`), and unlocked deletion
+(`RemoveObsoleteFiles`). Recovery separates fresh-WAL acquisition and its optional
+durability barriers (`CreateRecoveryLog`) from replay and MANIFEST publication
+(`RecoverDatabase`). These are responsibility boundaries, not new owners or
+generic orchestration layers; see
+[ADR-0077](adr/0077-bounded-orchestration-composition.md).
+
 Two internal state owners make cross-field invariants explicit:
 
 - `SnapshotRegistry` privately owns an intrusive registration list. Public

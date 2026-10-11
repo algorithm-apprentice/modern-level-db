@@ -6,8 +6,7 @@ Performance evidence is separated into:
 
 1. ordinary comparative regression/baseline runs;
 2. selected Google Benchmark workloads;
-3. read diagnostics;
-4. owned CPU capture.
+3. owned CPU capture.
 
 Do not compare timings across different workloads, operation counts, access
 policies, ownership modes, durability modes, binaries, or hosts.
