@@ -93,11 +93,17 @@ private:
     [[nodiscard]] std::optional<PhysicalRead> RecoverPhysicalFailure(WalDecodeError& failure,
                                                                      std::uint64_t offset,
                                                                      std::size_t remaining);
+    [[nodiscard]] WalReadEvent ConsumeCorruption(WalCorruption corruption);
+    [[nodiscard]] std::optional<WalReadEvent> ConsumeFragment(const PhysicalFragment& fragment);
+    [[nodiscard]] std::optional<WalReadEvent> ConsumeZero();
+    [[nodiscard]] std::optional<WalReadEvent> ConsumeFull(const PhysicalFragment& fragment);
+    [[nodiscard]] std::optional<WalReadEvent> ConsumeFirst(const PhysicalFragment& fragment);
+    [[nodiscard]] std::optional<WalReadEvent> ConsumeContinuation(const PhysicalFragment& fragment);
     [[nodiscard]] Result<bool> FillBlock();
     [[nodiscard]] bool HasPartialPayload() const noexcept {
         return in_fragmented_record_ && !scratch_.empty();
     }
-    [[nodiscard]] WalReadResult AbandonPartial(std::string_view reason);
+    [[nodiscard]] WalReadEvent AbandonPartial(std::string_view reason);
     void ClearPartial() noexcept;
 
     std::unique_ptr<SequentialFile> file_;
