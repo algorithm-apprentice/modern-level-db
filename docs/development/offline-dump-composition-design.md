@@ -197,3 +197,13 @@ and confirmed the identical 30-case sets without failures, errors, or skips.
 It did not build or execute tests; build and intermediate-slice results remain
 main-agent execution evidence. Remote delivery still requires green exact-head
 CI. Static review is not GitHub approval or a complete production audit.
+
+The first implementation CI exposed missing coverage of native-template help
+and invalid-usage output failures in `RunCommand`, not table/MANIFEST rendering
+failures. Existing portable native-command cases were strengthened to check
+both failures, no input reads for invalid usage, and a clean native dump with
+an unavailable error sink. This also covers the native batch's clean exit.
+The same 30 focused cases passed after this test-only follow-up; production
+code, coverage thresholds, and exclusion markers were not changed.
+Separate focused implementation review found no actionable follow-up issues;
+the new exact-head CI remains the coverage acceptance gate.
