@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bytes_internal.h"
 #include "base/result_internal.h"
 #include "metadata/version_edit.h"
 #include "modern_leveldb/base/bytes.h"
@@ -31,8 +32,7 @@ Decision SearchMemTable(const MemTable& source, const LookupKey& key,
                         std::vector<std::byte>& value) {
     const MemTableLookup found = source.Lookup(key);
     if (found.kind == MemTableLookupKind::Value) {
-        value.resize(found.value.size());
-        std::ranges::copy(found.value, value.begin());
+        CopyLookupValue(found.value, value);
         return Decision::Value;
     }
     if (found.kind == MemTableLookupKind::Deletion) {
