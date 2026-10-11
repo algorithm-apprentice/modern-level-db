@@ -140,3 +140,26 @@ priority, resolution, error/owner transfer, opening policy or characterization
 feasibility. It did not edit files or execute builds/tests. Characterization and
 extraction coverage remain unverified at this design-only stage, including the
 explicit resolution fault-injection limit above.
+
+## Implementation evidence
+
+Accepted design #209 merged after all 20 exact-head checks succeeded.
+Three new characterization cases passed on original production at
+903252654898ffdc512ce49788d45e4e76708966 before extraction:
+the five opening modes retain exact access/sharing/disposition/flags, one
+open/inspection and eventual close; path syntax/namespace priority precedes
+native acquisition; open/inspection failures retain primary errors and close
+an acquired handle once even when cleanup reports failure.
+Error attribution uses the existing PathUtf8 generic UTF-8 spelling rather than
+the platform-native path separator. Existing extended literal suffix, Unicode,
+sharing/kernel-lock, native mapping and owner-lifetime cases remain selected.
+
+Path preparation and shared acquisition were separate production topic commits
+after characterization. The nine-definition ledger is implemented without
+public interfaces, fault-seam expansion, mapping/volume policies, new catches,
+coverage exclusions or generic opening frameworks.
+Exact rebuilt original/final Windows native/death/table/recovery JUnit sets
+contain 121 unique passing cases, with all three required new cases and no
+failures/errors/skips. Path-only intermediate selection passed 46 cases.
+Formatting, documentation and whitespace gates apply before publication.
+Resolution query/resize faults still have no deterministic existing-seam oracle.
