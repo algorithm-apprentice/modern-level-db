@@ -152,3 +152,10 @@ coverage exclusions or other platform operations changed.
 Formatting, documentation and whitespace gates apply before publication.
 Uninjectable attribute/final-path/volume-root failures retain the stated
 inspection-based evidence limit.
+
+Independent combined review found no significant issue in the three changed
+paths and directly confirmed identical 120-case artifacts, all three required
+characterizations, 49-case intermediate evidence and characterization-before-
+extraction commit order. It did not edit files, execute builds/tests or
+independently establish artifact provenance; the stated native-query and
+allocation-exception inspection limits remain.
