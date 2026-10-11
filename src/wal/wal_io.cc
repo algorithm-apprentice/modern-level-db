@@ -35,33 +35,15 @@ WalWriter::WalWriter(std::unique_ptr<WritableFile> file, std::uint64_t initial_f
 
 Status WalWriter::AddRecord(ByteView logical_record) {
     auto fragments = fragmenter_.Fragment(logical_record);
-    static constexpr std::array<std::byte, WalBlockSize> Zeroes{};
-
-    if (reopen_padding_ != 0) {
-        Status padding = Append(ByteView(Zeroes).first(reopen_padding_));
-        if (!padding.has_value()) {
-            return padding;
-        }
-        reopen_padding_ = 0;
+    Status reopened = PadReopenedBlock();
+    if (!reopened.has_value()) {
+        return reopened;
     }
 
     while (const std::optional<WalFragment> fragment = fragments.Next()) {
-        if (fragment->padding_before != 0) {
-            Status padding = Append(ByteView(Zeroes).first(fragment->padding_before));
-            if (!padding.has_value()) {
-                return padding;
-            }
-        }
-
-        Status header = Append(fragment->header);
-        if (!header.has_value()) {
-            return header;
-        }
-        if (!fragment->payload.empty()) {
-            Status payload = Append(fragment->payload);
-            if (!payload.has_value()) {
-                return payload;
-            }
+        Status written = WriteFragment(*fragment);
+        if (!written.has_value()) {
+            return written;
         }
     }
 
@@ -72,7 +54,41 @@ Status WalWriter::Sync() { return file_->Sync(); }
 
 Status WalWriter::Close() { return file_->Close(); }
 
-Status WalWriter::Append(ByteView data) { return file_->Append(data); }
+Status WalWriter::AppendPadding(std::size_t size) {
+    static constexpr std::array<std::byte, WalBlockSize> Zeroes{};
+    return file_->Append(ByteView(Zeroes).first(size));
+}
+
+Status WalWriter::PadReopenedBlock() {
+    if (reopen_padding_ != 0) {
+        Status padding = AppendPadding(reopen_padding_);
+        if (!padding.has_value()) {
+            return padding;
+        }
+        reopen_padding_ = 0;
+    }
+    return {};
+}
+
+Status WalWriter::WriteFragment(const WalFragment& fragment) {
+    if (fragment.padding_before != 0) {
+        Status padding = AppendPadding(fragment.padding_before);
+        if (!padding.has_value()) {
+            return padding;
+        }
+    }
+    Status header = file_->Append(fragment.header);
+    if (!header.has_value()) {
+        return header;
+    }
+    if (!fragment.payload.empty()) {
+        Status payload = file_->Append(fragment.payload);
+        if (!payload.has_value()) {
+            return payload;
+        }
+    }
+    return {};
+}
 
 WalReader::WalReader(std::unique_ptr<SequentialFile> file) : file_(std::move(file)) {
     if (file_ == nullptr) {
