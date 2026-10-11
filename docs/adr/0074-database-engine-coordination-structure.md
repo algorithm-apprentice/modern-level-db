@@ -193,29 +193,35 @@ public:
     [[nodiscard]] SequenceNumber OldestOr(SequenceNumber fallback) const noexcept;
 
 private:
-    std::list<SequenceNumber> sequences_;
+    struct Node {
+        SequenceNumber sequence;
+        Node* previous;
+        std::unique_ptr<Node> next;
+    };
+
+    std::unique_ptr<Node> oldest_;
+    Node* newest_;
 };
 ```
 
 The registry is not internally synchronized. DatabaseEngine calls it with the
 database mutex held.
 
-- each acquisition returns a move-only registration token identifying one list
-  node, so duplicate sequences remain independent;
-- the token also stores its immutable sequence value, so concurrent readers do
-  not touch a list iterator outside the database mutex;
-- sequences are appended in the nondecreasing order established by the
-  VersionSet's published last sequence;
-- only `Release` uses the node iterator, under the database mutex, and removes
-  the exact registration in constant time;
+- each acquisition returns a move-only registration handle identifying one
+  linked node, so duplicate sequences remain independent;
+- nodes append in the nondecreasing order established by the VersionSet's last
+  sequence;
+- the forward `unique_ptr` chain owns every node; backward links and the newest
+  pointer are non-owning;
+- `Release` finds the owning forward link through the node's previous pointer,
+  unlinks the exact node, and reconnects its successor in constant time;
 - compaction asks for `OldestOr(last_sequence)`;
 - state inspection asks for `size()` and `oldest()`.
 
-The public RAII `SnapshotRegistration` owns this internal token and exposes its
-sequence to reads. This preserves one release per acquisition instead of
-reducing registration identity to a sequence lookup. It follows the same
-registration-list model as the pinned LevelDB `SnapshotList` while retaining
-Modern LevelDB's owning public handles.
+The public RAII `SnapshotRegistration` stores this internal handle and exposes
+its cached sequence to concurrent reads. This is an ownership-safe translation
+of pinned LevelDB's linked `SnapshotList`: the registration still identifies
+one exact node, while `unique_ptr` links replace owning raw pointers.
 
 ### Model the WAL and memtables as write-buffer state
 
@@ -448,12 +454,12 @@ decisions.
   algorithms. The proposal retains that aggregate-root role.
 - ADR-0057 requires typed synchronous read pins and shared ownership for
   longer-lived consumers. The proposal keeps both models.
-- Pinned LevelDB gives each snapshot acquisition one linked-list node and
-  releases that exact node. SnapshotRegistry preserves that identity through a
-  move-only token rather than using sequence value as the release handle.
 - ADR-0004 requires shared ownership and performance abstractions to have
   explicit reasons. The proposal neither broadens shared ownership nor removes
   a measured hot-path mechanism by assumption.
+- Pinned LevelDB's linked SnapshotList was reviewed directly. SnapshotRegistry
+  preserves its registration identity and constant-time operations while
+  replacing owning raw links with a forward `unique_ptr` chain.
 - The current destructor and declaration order require the executor to stop
   first and resource owners to outlive their borrowers. The proposal leaves
   those lifetimes explicit.

@@ -2,17 +2,17 @@
 #define MODERN_LEVELDB_ENGINE_SNAPSHOT_REGISTRY_H_
 
 #include <cstddef>
-#include <list>
+#include <memory>
 #include <optional>
 
 #include "format/internal_key.h"
 
 namespace modern_leveldb {
 
-// Tracks every active snapshot sequence, including duplicate registrations.
+// Tracks every active snapshot registration in nondecreasing sequence order.
 // It is not thread-safe; DatabaseEngine uses it with the database mutex held.
 class SnapshotRegistry final {
-    using Sequences = std::list<SequenceNumber>;
+    struct Node;
 
 public:
     SnapshotRegistry() = default;
@@ -20,7 +20,7 @@ public:
     SnapshotRegistry& operator=(const SnapshotRegistry&) = delete;
     SnapshotRegistry(SnapshotRegistry&&) = delete;
     SnapshotRegistry& operator=(SnapshotRegistry&&) = delete;
-    ~SnapshotRegistry() = default;
+    ~SnapshotRegistry();
 
     class Registration final {
     public:
@@ -28,19 +28,17 @@ public:
         Registration& operator=(const Registration&) = delete;
         Registration(Registration&& source) noexcept;
         Registration& operator=(Registration&&) = delete;
-        ~Registration() = default;
+        ~Registration();
 
-        [[nodiscard]] SequenceNumber sequence() const noexcept;
+        [[nodiscard]] SequenceNumber sequence() const noexcept { return sequence_; }
 
     private:
         friend class SnapshotRegistry;
 
-        Registration(SnapshotRegistry& owner, Sequences::iterator position) noexcept
-            : owner_(&owner), sequence_(*position), position_(position) {}
+        explicit Registration(Node& node) noexcept;
 
-        SnapshotRegistry* owner_;
+        Node* node_;
         SequenceNumber sequence_;
-        std::optional<Sequences::iterator> position_;
     };
 
     // Requires a sequence not below the newest active registration.
@@ -48,12 +46,24 @@ public:
     // Requires a live registration returned by this registry.
     void Release(Registration& registration) noexcept;
 
-    [[nodiscard]] std::size_t size() const noexcept { return sequences_.size(); }
+    [[nodiscard]] std::size_t size() const noexcept { return size_; }
     [[nodiscard]] std::optional<SequenceNumber> oldest() const noexcept;
     [[nodiscard]] SequenceNumber OldestOr(SequenceNumber fallback) const noexcept;
 
 private:
-    Sequences sequences_;
+    struct Node {
+        Node(SnapshotRegistry& owner, SequenceNumber value) noexcept
+            : registry(&owner), sequence(value) {}
+
+        SnapshotRegistry* registry;
+        SequenceNumber sequence;
+        Node* previous = nullptr;
+        std::unique_ptr<Node> next;
+    };
+
+    std::unique_ptr<Node> oldest_;
+    Node* newest_ = nullptr;
+    std::size_t size_ = 0;
 };
 
 }  // namespace modern_leveldb

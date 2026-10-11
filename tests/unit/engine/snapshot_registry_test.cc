@@ -57,5 +57,24 @@ TEST(SnapshotRegistryTest, ReleasedRegistrationsRemainSafelyMovableValues) {
     EXPECT_EQ(registry.size(), 0U);
 }
 
+TEST(SnapshotRegistryTest, UnlinksMiddleAndNewestRegistrations) {
+    SnapshotRegistry registry;
+    auto oldest = registry.Register(1);
+    auto middle = registry.Register(2);
+    auto newest = registry.Register(3);
+
+    auto moved_middle = std::move(middle);
+    registry.Release(moved_middle);
+    EXPECT_EQ(registry.size(), 2U);
+    EXPECT_EQ(registry.OldestOr(99), 1U);
+
+    registry.Release(newest);
+    EXPECT_EQ(registry.size(), 1U);
+    EXPECT_EQ(registry.OldestOr(99), 1U);
+
+    registry.Release(oldest);
+    EXPECT_EQ(registry.size(), 0U);
+}
+
 }  // namespace
 }  // namespace modern_leveldb
