@@ -97,6 +97,52 @@ bool ReservedDosComponent(std::wstring component) {
              component[3] == L'\u00b2' || component[3] == L'\u00b3'));
 }
 
+Status ValidateOrdinaryComponents(const std::filesystem::path& path) {
+    for (const auto& component_path : path) {
+        const std::wstring& component = component_path.native();
+        if (component.empty() || component == L"." || component == L".." || component == L"\\" ||
+            component == L"/") {
+            continue;
+        }
+        if (component.back() == L'.' || component.back() == L' ') {
+            return std::unexpected(Error::InvalidArgument(
+                "ordinary DOS path components must not end in a dot or space"));
+        }
+        if (ReservedDosComponent(component)) {
+            return std::unexpected(
+                Error::NotSupported("DOS device names require an explicit file path"));
+        }
+    }
+    return {};
+}
+
+Result<std::wstring> ResolveAbsolutePath(const std::filesystem::path& path) {
+    const std::wstring& native = path.native();
+    DWORD required = ::GetFullPathNameW(native.c_str(), 0, nullptr, nullptr);
+    if (required == 0) {
+        return std::unexpected(FileError("resolve path", path, ::GetLastError()));
+    }
+    std::vector<wchar_t> full(required);
+    while (true) {
+        const DWORD size = ::GetFullPathNameW(native.c_str(), static_cast<DWORD>(full.size()),
+                                              full.data(), nullptr);
+        if (size == 0) {
+            return std::unexpected(FileError("resolve path", path, ::GetLastError()));
+        }
+        if (size < full.size()) {
+            return std::wstring(full.data(), size);
+        }
+        full.resize(size);
+    }
+}
+
+std::filesystem::path EncodeExtendedPath(std::wstring absolute) {
+    if (absolute.starts_with(L"\\\\")) {
+        return std::filesystem::path(L"\\\\?\\UNC\\" + absolute.substr(2));
+    }
+    return std::filesystem::path(L"\\\\?\\" + absolute);
+}
+
 Result<std::filesystem::path> NativePath(const std::filesystem::path& path) {
     const std::wstring& native = path.native();
     if (native.empty() || native.find(L'\0') != std::wstring::npos) {
@@ -113,41 +159,15 @@ Result<std::filesystem::path> NativePath(const std::filesystem::path& path) {
         }
         return path;
     }
-    for (const auto& component_path : path) {
-        const std::wstring& component = component_path.native();
-        if (component.empty() || component == L"." || component == L".." || component == L"\\" ||
-            component == L"/") {
-            continue;
-        }
-        if (component.back() == L'.' || component.back() == L' ') {
-            return std::unexpected(Error::InvalidArgument(
-                "ordinary DOS path components must not end in a dot or space"));
-        }
-        if (ReservedDosComponent(component)) {
-            return std::unexpected(
-                Error::NotSupported("DOS device names require an explicit file path"));
-        }
+    Status valid = ValidateOrdinaryComponents(path);
+    if (!valid.has_value()) {
+        return std::unexpected(std::move(valid).error());
     }
-    DWORD required = ::GetFullPathNameW(native.c_str(), 0, nullptr, nullptr);
-    if (required == 0) {
-        return std::unexpected(FileError("resolve path", path, ::GetLastError()));
+    auto absolute = ResolveAbsolutePath(path);
+    if (!absolute.has_value()) {
+        return std::unexpected(std::move(absolute).error());
     }
-    std::vector<wchar_t> full(required);
-    while (true) {
-        const DWORD size = ::GetFullPathNameW(native.c_str(), static_cast<DWORD>(full.size()),
-                                              full.data(), nullptr);
-        if (size == 0) {
-            return std::unexpected(FileError("resolve path", path, ::GetLastError()));
-        }
-        if (size < full.size()) {
-            std::wstring result(full.data(), size);
-            if (result.starts_with(L"\\\\")) {
-                return std::filesystem::path(L"\\\\?\\UNC\\" + result.substr(2));
-            }
-            return std::filesystem::path(L"\\\\?\\" + result);
-        }
-        full.resize(size);
-    }
+    return EncodeExtendedPath(std::move(*absolute));
 }
 
 class ScopedHandle final {
