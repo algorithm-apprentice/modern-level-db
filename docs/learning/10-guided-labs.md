@@ -391,35 +391,34 @@ cmake --preset windows-profiling
 cmake --build --preset windows-profiling
 ```
 
-Collect a read diagnostic report, not a throughput score:
+Collect an ordinary read-workload report:
 Each run requires a new output directory.
 
 ```bash
 python3 tools/run_performance.py \
-  --binary build/profiling/benchmarks/modern_leveldb_read_diagnostics \
+  --binary build/profiling/benchmarks/modern_leveldb_performance \
   --case modern/readrandom/65536 \
-  --read-diagnostics \
-  --output build/learning/readrandom-diagnostics-01
+  --output build/learning/readrandom-report-01
 ```
 
 ```powershell
 python tools\run_performance.py `
-  --binary build\windows-profiling\benchmarks\modern_leveldb_read_diagnostics.exe `
+  --binary build\windows-profiling\benchmarks\modern_leveldb_performance.exe `
   --case modern/readrandom/65536 `
-  --read-diagnostics `
-  --output build\learning\windows-readrandom-diagnostics-01
+  --output build\learning\windows-readrandom-report-01
 ```
 
-Find table/block cache counters, mapped/copied block counters, decoded
-entries, and sampled stage timings.
+Inspect the completion report, ordinary measurements, and build provenance.
+Fine-grained counters and sampled stages are no longer collected; see
+[ADR-0076](../adr/0076-textbook-source-composition.md).
 For a second comparison, use a distinct output directory and add the copied
 control: `--modern-file-access pread` on POSIX or
 `--modern-file-access copied` on Windows.
-Do not combine diagnostic mode with smoke, repetition, or CPU-capture flags.
+CPU capture is a separate perturbed run, not a throughput comparison.
 
 **Completion:** explain why block-cache misses alone do not count physical
 device reads, why compressed mapped blocks still need owned output, and why
-inclusive sampled stage durations should not be summed.
+CPU samples do not establish exact I/O counts.
 Use the current
 [benchmarking and profiling guide](../development/benchmarking-and-profiling.md)
 before interpreting speed.

@@ -18,23 +18,13 @@ from run_performance import (
     MODERN_RESULT_OWNERSHIP_SEMANTICS,
     MODERN_WAL_CREATION_SEMANTICS,
     MODERN_WRITE_BATCH_OWNERSHIP_SEMANTICS,
-    READ_DIAGNOSTIC_COUNTERS,
-    READ_DIAGNOSTIC_OPERATIONS,
-    READ_DIAGNOSTIC_OPEN_REASONS,
-    READ_DIAGNOSTIC_SAMPLE_DENOMINATOR,
-    READ_DIAGNOSTIC_SAMPLE_SCHEDULE,
-    READ_DIAGNOSTIC_SAMPLE_SEED,
-    READ_DIAGNOSTIC_SAMPLES,
-    READ_DIAGNOSTIC_STAGES,
     read_json,
     record_diagnostics,
     run_case,
-    run_read_diagnostics,
     source_state,
     validate_benchmark,
     validate_completion,
     validate_native_profile,
-    validate_read_diagnostics,
     expected_modern_result_ownership,
 )
 
@@ -132,207 +122,24 @@ def completion(case="modern/readrandom/4096"):
     }
 
 
-def diagnostic_report(case="modern/readrandom/4096", modern_file_access="default"):
-    _, workload, records = case.split("/")
-    counters = {
-        name: {"total": 0, "per_get": 0.0}
-        for name in READ_DIAGNOSTIC_COUNTERS
-    }
-    counters["gets"] = {
-        "total": READ_DIAGNOSTIC_OPERATIONS,
-        "per_get": 1.0,
-    }
-    outcome = "sstable_hits" if workload == "readrandom" else "misses"
-    counters[outcome] = {
-        "total": READ_DIAGNOSTIC_OPERATIONS,
-        "per_get": 1.0,
-    }
-    for name, total in (
-        ("deeper_candidates", READ_DIAGNOSTIC_OPERATIONS),
-        ("files_searched", READ_DIAGNOSTIC_OPERATIONS),
-        ("table_cache_hits", READ_DIAGNOSTIC_OPERATIONS),
-        ("block_cache_hits", READ_DIAGNOSTIC_OPERATIONS),
-        ("index_entries_decoded", READ_DIAGNOSTIC_OPERATIONS * 2),
-        ("data_entries_decoded", READ_DIAGNOSTIC_OPERATIONS * 4),
-        ("restart_entries_decoded", READ_DIAGNOSTIC_OPERATIONS * 2),
-        ("internal_key_comparisons", READ_DIAGNOSTIC_OPERATIONS * 8),
-    ):
-        counters[name] = {
-            "total": total,
-            "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
-        }
-    if int(records) == 65536:
-        misses = 1024
-        counters["block_cache_hits"] = {
-            "total": READ_DIAGNOSTIC_OPERATIONS - misses,
-            "per_get": (READ_DIAGNOSTIC_OPERATIONS - misses) / READ_DIAGNOSTIC_OPERATIONS,
-        }
-        for name, total in (
-            ("block_cache_misses", misses),
-            ("stored_blocks", misses),
-            ("decoded_blocks", misses),
-            ("decompressed_blocks", misses),
-        ):
-            counters[name] = {
-                "total": total,
-                "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
-            }
-        for name in ("stored_block_bytes",):
-            total = misses * 1024
-            counters[name] = {
-                "total": total,
-                "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
-            }
-        if modern_file_access == "default":
-            for name in ("mapped_view_blocks",):
-                counters[name] = {
-                    "total": misses,
-                    "per_get": misses / READ_DIAGNOSTIC_OPERATIONS,
-                }
-            total = misses * 1024
-            counters["mapped_view_bytes"] = {
-                "total": total,
-                "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
-            }
-        else:
-            for name in ("random_read_calls", "copied_read_blocks"):
-                counters[name] = {
-                    "total": misses,
-                    "per_get": misses / READ_DIAGNOSTIC_OPERATIONS,
-                }
-            total = misses * 1024
-            for name in ("random_read_requested_bytes", "random_read_returned_bytes",
-                         "copied_read_bytes"):
-                counters[name] = {
-                    "total": total,
-                    "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
-                }
-        total = misses * 4096
-        counters["decoded_block_bytes"] = {
-            "total": total,
-            "per_get": total / READ_DIAGNOSTIC_OPERATIONS,
-        }
-    if workload == "readrandom":
-        total = READ_DIAGNOSTIC_OPERATIONS * 256
-        counters["result_bytes"] = {"total": total, "per_get": 256.0}
-    stages = {
-        name: {"events": 0, "total_ns": 0, "mean_ns": 0.0}
-        for name in READ_DIAGNOSTIC_STAGES
-    }
-    stages["get"] = {
-        "events": READ_DIAGNOSTIC_SAMPLES,
-        "total_ns": READ_DIAGNOSTIC_SAMPLES * 100,
-        "mean_ns": 100.0,
-    }
-    for name in ("candidate_selection", "table_cache_lookup", "block_cache_lookup",
-                 "index_seek", "data_seek"):
-        stages[name] = {
-            "events": READ_DIAGNOSTIC_SAMPLES,
-            "total_ns": READ_DIAGNOSTIC_SAMPLES * 10,
-            "mean_ns": 10.0,
-        }
-    if workload == "readrandom":
-        stages["result_copy"] = {
-            "events": READ_DIAGNOSTIC_SAMPLES,
-            "total_ns": READ_DIAGNOSTIC_SAMPLES * 10,
-            "mean_ns": 10.0,
-        }
-    if int(records) == 65536:
-        for name in ("stored_block_decode", "block_construction"):
-            stages[name] = {"events": 1, "total_ns": 10, "mean_ns": 10.0}
-        if modern_file_access == COPIED_FILE_ACCESS:
-            stages["random_read"] = {"events": 1, "total_ns": 10, "mean_ns": 10.0}
-    build = {
-        "source_directory": str((ROOT / "fixture-source").resolve()),
-        "build_directory": str((ROOT / "fixture-build").resolve()),
-        "configure_revision": "revision",
-        "configure_dirty": "false",
-        "build_type": "Release",
-        "compiler": "compiler",
-        "c_flags": "-O3",
-        "cxx_flags": "-O3",
-        "exe_linker_flags": "",
-        "static_linker_flags": "",
-        "cmake_generator": "Ninja",
-        "target_architecture": "arm64",
-        "benchmark_requested_revision": "192ef10025eb2c4cdd392bc502f0c852196baa48",
-        "benchmark_source_override": "",
-        "reference_requested_revision": "7ee830d02b623e8ffe0b95d59a74db1e58da04c5",
-        "reference_source_override": "",
-        "reference_hardware_crc": "disabled",
-        "reference_source": str((ROOT / "fixture-reference-source").resolve()),
-        "reference_binary_directory": str((ROOT / "fixture-reference-build").resolve()),
-        "reference_have_crc32c": "false",
-        "reference_crc32c_linked": "false",
-        "reference_hardware_patch_sha256": "not_applicable",
-        "modern_file_access": modern_file_access,
-        "modern_result_ownership": "reusable",
-        "modern_result_ownership_semantics": MODERN_RESULT_OWNERSHIP_SEMANTICS,
-        "modern_write_batch_ownership": "not_applicable",
-        "modern_write_batch_ownership_semantics": "not_applicable",
-        "modern_wal_creation": "not_applicable",
-        "modern_wal_creation_semantics": "not_applicable",
-        "reference_file_access": "not_applicable",
-        "reference_pread_control_available": "true",
-        "reference_control_patch_sha256": "a" * 64,
-        "snappy_target": "snappy",
-        "snappy_requested_revision": "9c28114a38866f6deeaa826db918293bc28ae410",
-        "snappy_source": str((ROOT / "fixture-snappy").resolve()),
-        "snappy_source_override": "",
-        "zstd_target": "zstd",
-        "zstd_requested_revision": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
-        "zstd_source": str((ROOT / "fixture-zstd").resolve()),
-        "zstd_source_override": "",
-        "crc32c_target": "crc32c",
-        "crc32c_provider": "pinned-source",
-        "crc32c_source": str((ROOT / "fixture-crc32c").resolve()),
-        "crc32c_source_override": "",
-        "crc32c_requested_revision": "2bbb3be42e20a0e6c0f7b39dc07dc863d9ffbc07",
-        "crc32c_compiled_arm64": "true",
-        "crc32c_compiled_sse42": "false",
-        "profile_capture_supported": "false",
-        "read_diagnostics_compiled": "true",
-    }
-    result = {
-        "schema_version": 5,
-        "case": case,
-        "operations": READ_DIAGNOSTIC_OPERATIONS,
-        "sample_schedule": READ_DIAGNOSTIC_SAMPLE_SCHEDULE,
-        "sample_seed": READ_DIAGNOSTIC_SAMPLE_SEED,
-        "sample_denominator": READ_DIAGNOSTIC_SAMPLE_DENOMINATOR,
-        "sampled_gets": READ_DIAGNOSTIC_SAMPLES,
-        "foreground_thread_only": True,
-        "stage_durations_are_inclusive": True,
-        "setup_warmup_and_verification_excluded": True,
-        "preparations": 1,
-        "verifications": 2,
-        "cursor_resets": 1,
-        "warmup_operations": int(records) - (workload == "readmissing"),
-        "record_crc32c": FINGERPRINTS[int(records)][0],
-        "insertion_crc32c": FINGERPRINTS[int(records)][1],
-        "present_crc32c": FINGERPRINTS[int(records)][2],
-        "missing_crc32c": FINGERPRINTS[int(records)][3],
-        "setup_file_opens": {
-            name: {
-                "files": 8 if name == ("mapped" if modern_file_access == "default" else "disabled")
-                         else 0,
-                "bytes": 371673
-                         if name == ("mapped" if modern_file_access == "default" else "disabled")
-                         else 0,
-            }
-            for name in READ_DIAGNOSTIC_OPEN_REASONS
-        },
-        "counters": counters,
-        "stages": stages,
-        "build": build,
-    }
-    if sys.platform == "win32":
-        result["build"]["reference_copied_control_available"] = "true"
-        result["build"]["modern_namespace_policy"] = "explicit_weak"
-    return result
 
 
 class PerformanceReportTest(unittest.TestCase):
+    def test_runner_rejects_retired_read_diagnostics_before_creating_output(self):
+        with tempfile.TemporaryDirectory(prefix="modern-retired-mode-") as temporary:
+            output = Path(temporary) / "output"
+            rejected = subprocess.run(
+                [
+                    sys.executable, str(ROOT / "tools" / "run_performance.py"),
+                    "--binary", sys.executable, "--case", "modern/readrandom/4096",
+                    "--output", str(output), "--read-diagnostics",
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(rejected.returncode, 2, rejected.stderr)
+            self.assertIn("unrecognized arguments: --read-diagnostics", rejected.stderr)
+            self.assertFalse(output.exists())
+
     @unittest.skipUnless(sys.platform == "win32", "native ASCII boundary is Windows-specific")
     def test_native_runner_rejects_non_ascii_work_roots_before_creation(self):
         with tempfile.TemporaryDirectory(prefix="modern-ascii-boundary-") as root:
@@ -676,102 +483,6 @@ class PerformanceReportTest(unittest.TestCase):
                 record_diagnostics(manifest, root)
 
 
-class ReadDiagnosticsReportTest(unittest.TestCase):
-    def test_accepts_fixed_present_and_missing_reports(self):
-        validate_read_diagnostics(
-            diagnostic_report("modern/readrandom/4096"), "modern/readrandom/4096"
-        )
-        validate_read_diagnostics(
-            diagnostic_report("modern/readmissing/65536"), "modern/readmissing/65536"
-        )
-        validate_read_diagnostics(
-            diagnostic_report("modern/readmissing/65536", COPIED_FILE_ACCESS),
-            "modern/readmissing/65536",
-            modern_file_access=COPIED_FILE_ACCESS,
-        )
-
-    def test_rejects_changed_epoch_outcomes_and_normalization(self):
-        for field, value in (
-            ("operations", 1),
-            ("sample_seed", 1),
-            ("sample_denominator", 1),
-            ("sampled_gets", 0),
-            ("foreground_thread_only", False),
-            ("verifications", 1),
-            ("cursor_resets", 2),
-        ):
-            changed = diagnostic_report()
-            changed[field] = value
-            with self.subTest(field=field), self.assertRaises(ValueError):
-                validate_read_diagnostics(changed, "modern/readrandom/4096")
-
-        changed = diagnostic_report()
-        changed["counters"]["gets"]["per_get"] = 2.0
-        with self.assertRaises(ValueError):
-            validate_read_diagnostics(changed, "modern/readrandom/4096")
-
-        changed = diagnostic_report()
-        changed["counters"]["misses"]["total"] = 1
-        changed["counters"]["misses"]["per_get"] = 1 / READ_DIAGNOSTIC_OPERATIONS
-        with self.assertRaises(ValueError):
-            validate_read_diagnostics(changed, "modern/readrandom/4096")
-
-        changed = diagnostic_report()
-        changed["stages"]["get"]["events"] = 1023
-        with self.assertRaises(ValueError):
-            validate_read_diagnostics(changed, "modern/readrandom/4096")
-
-        changed = diagnostic_report()
-        changed["counters"]["validation_entries"] = {
-            "total": 1,
-            "per_get": 1 / READ_DIAGNOSTIC_OPERATIONS,
-        }
-        with self.assertRaises(ValueError):
-            validate_read_diagnostics(changed, "modern/readrandom/4096")
-
-    def test_rejects_incomplete_counter_stage_and_build_provenance(self):
-        for section, key in (
-            ("counters", "files_searched"),
-            ("stages", "data_seek"),
-            ("build", "read_diagnostics_compiled"),
-        ):
-            changed = diagnostic_report()
-            del changed[section][key]
-            with self.subTest(section=section, key=key), self.assertRaises(ValueError):
-                validate_read_diagnostics(changed, "modern/readrandom/4096")
-
-    def test_rejects_changed_compression_work(self):
-        changed = diagnostic_report("modern/readmissing/65536")
-        changed["counters"]["decompressed_blocks"] = {"total": 0, "per_get": 0.0}
-        with self.assertRaises(ValueError):
-            validate_read_diagnostics(changed, "modern/readmissing/65536")
-
-    def test_accepts_completed_short_random_reads(self):
-        changed = diagnostic_report("modern/readmissing/65536", COPIED_FILE_ACCESS)
-        requested = changed["counters"]["random_read_requested_bytes"]["total"] * 2
-        changed["counters"]["random_read_requested_bytes"] = {
-            "total": requested,
-            "per_get": requested / READ_DIAGNOSTIC_OPERATIONS,
-        }
-        validate_read_diagnostics(
-            changed, "modern/readmissing/65536", modern_file_access=COPIED_FILE_ACCESS
-        )
-
-    def test_runner_preserves_failure_artifacts_and_rejects_existing_output(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "failed"
-            with self.assertRaises(subprocess.CalledProcessError):
-                run_read_diagnostics(
-                    BINARY, "modern/readrandom/4096", output
-                )
-            self.assertFalse((output / "work").exists())
-            manifest = read_json(output / "manifest.json")
-            self.assertEqual(manifest["status"], "failed")
-            self.assertEqual(manifest["artifacts"]["command_logs"], ["diagnostics.log"])
-            with self.assertRaises(FileExistsError):
-                run_read_diagnostics(
-                    FAILING_BINARY, "modern/readrandom/4096", output
-                )
 
 
 class MutationReportTest(unittest.TestCase):
@@ -1230,6 +941,15 @@ class PerformanceExecutableTest(unittest.TestCase):
         )
         self.assertNotEqual(rejected.returncode, 0)
         self.assertFalse((self.root / "normal-report.json").exists())
+
+    def test_retired_diagnostic_option_cannot_bypass_validation_with_help_or_list(self):
+        for option in ("--help", "--list-cases"):
+            with self.subTest(option=option):
+                path = self.root / "retired-report.json"
+                rejected = self.invoke(option, "--diagnostic-report", str(path))
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn("retired", rejected.stderr)
+                self.assertFalse(path.exists())
 
 
 if __name__ == "__main__":
