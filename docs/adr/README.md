@@ -116,6 +116,12 @@ decision context and evidence available when each change was made.
 | [ADR-0072: Consumer-Oriented Learning Documentation](0072-consumer-oriented-learning.md) | Learning design | Accepted | Organizes lessons around purpose, consumers, interfaces, implementation, and evidence | [Learning path](../learning/README.md); [document-first development](../development/document-first-development.md) |
 | [ADR-0073: Arena Pointer Allocation Interface](0073-arena-pointer-allocation.md) | Memory allocation | Accepted | Makes Arena return raw storage pointers while callers retain requested lengths | [Memory and MVCC](../learning/03-memory-and-mvcc.md) |
 
+## Current structural proposals
+
+| ADR | Topic | Lifecycle | Implementation / outcome | Supersession / current reference |
+|---|---|---|---|---|
+| [ADR-0074: Database Engine Coordination Structure](0074-database-engine-coordination-structure.md) | Engine coordination structure | Accepted | Partitions DatabaseEngine by consumer flow and adopts behavior-owning snapshot and write-buffer state | [ADR-0037](0037-database-engine.md); [ADR-0057](0057-leveldb-version-output-parity.md) |
+
 ## Historical upstream-link provenance
 
 Twenty-five ADRs originally contained 33 mutable upstream links without
