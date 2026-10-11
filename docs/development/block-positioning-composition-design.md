@@ -133,5 +133,31 @@ Formatting/docs/whitespace gates and existing coverage thresholds apply.
 
 Independent bounded design review found no significant issue in checkpoint
 reuse, checked representation sharing, error priority or ownership. It inspected
-source/tests without edits or executing builds/tests. Planned characterization
-remains unimplemented at this design-only stage.
+source/tests without edits or executing builds/tests. Accepted design #206
+merged after all 20 exact-head checks succeeded.
+
+## Implementation evidence
+
+The four planned characterization cases passed on original production at
+94cd0ed45ff78f0c03f7010ca6605523811a3fc8 before any extraction:
+exact fresh/forward-reused/equal/backward comparison traces; decode-before-
+restart-before-visitor fault priority; visitor failure suppressing later malformed
+entry or final duplicate-restart checks; and a late out-of-range restart clearing
+partially published key/value before explicit positioning restores earlier entries.
+Existing unordered physical traversal and accepted extended encoding cases remain
+in the same selection.
+
+Checkpoint selection/restore/scan and shared checked-entry/validation/publication
+were separate production topic commits after characterization. No public API,
+builder, encoded bytes, comparator, backing ownership or coverage exclusions changed.
+The iterator still validates internal-key length before entry-end calculation
+and reserves before publishing current_; physical validation does not add reserve.
+Original const Status copies remain in checkpoint decode/restore/scan and visitor
+failure paths; new parent envelopes move or directly return children.
+
+Rebuilt original/final block/builder/model/table/compaction selections contain
+identical 129 unique JUnit cases, with no failures/errors/skips and all four required
+new names present. The intermediate checkpoint/model selection passed 25 cases.
+clang-format, documentation validation and whitespace gates apply before publication.
+The 12-definition ledger above describes only this batch; the explicitly listed
+remaining recursive frontiers are not certified by these results.
