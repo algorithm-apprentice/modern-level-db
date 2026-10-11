@@ -9,9 +9,6 @@
 #include <utility>
 #include <vector>
 
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-#include "instrumentation/read_diagnostics.h"
-#endif
 #include "base/coding_internal.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
@@ -174,9 +171,6 @@ ValueKind InternalKey::kind() const noexcept { return DecodeInternalKeyValueKind
 std::uint64_t InternalKey::trailer() const noexcept { return DecodeInternalKeyTrailer(encoded_); }
 
 int InternalKeyComparator::Compare(ByteView left, ByteView right) const noexcept {
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    read_diagnostics::Add(read_diagnostics::Counter::InternalKeyComparisons);
-#endif
     const ByteView left_user_key = left.first(left.size() - InternalKeyTrailerSize);
     const ByteView right_user_key = right.first(right.size() - InternalKeyTrailerSize);
     const int user_order = user_comparator_.Compare(left_user_key, right_user_key);
