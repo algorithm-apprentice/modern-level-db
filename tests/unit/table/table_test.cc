@@ -425,6 +425,67 @@ TEST_F(TableTest, FindsTheVersionVisibleAtTheLookupSequence) {
     EXPECT_FALSE(Get(*table, "z", MaxSequenceNumber).has_value());
 }
 
+TEST_F(TableTest, PreservesNonValueOutputAndCopiesValuesBeyondAllBackingOwners) {
+    for (const bool views : {false, true}) {
+        SCOPED_TRACE(views);
+        auto cache = std::make_unique<BlockCache>(0);
+        TableOptions options;
+        options.block_cache = cache.get();
+        state_ = std::make_shared<ReadableState>();
+        state_->data = VersionedTable();
+        state_->return_views = views;
+        auto opened = Table::Open(std::make_unique<MemoryRandomAccessFile>(state_),
+                                  state_->data.size(), comparator_, options);
+        ASSERT_TRUE(opened.has_value());
+        auto table = std::move(*opened);
+        const std::vector<std::byte> sentinel = Materialize(AsBytes("sentinel"));
+        std::vector<std::byte> value = sentinel;
+        for (const auto& [user_key, sequence, expected] :
+             std::vector<std::tuple<std::string_view, SequenceNumber, TableLookupKind>>{
+                 {"z", MaxSequenceNumber, TableLookupKind::Missing},
+                 {"k", 9, TableLookupKind::Missing},
+                 {"l", MaxSequenceNumber, TableLookupKind::Missing},
+                 {"m", 4, TableLookupKind::Missing},
+                 {"k", 29, TableLookupKind::Deletion}}) {
+            SCOPED_TRACE(user_key);
+            value = sentinel;
+            auto key = LookupKey::Create(AsBytes(user_key), sequence);
+            ASSERT_TRUE(key.has_value());
+            const auto found = table->Get(*key, value);
+            ASSERT_TRUE(found.has_value());
+            EXPECT_EQ(*found, expected);
+            EXPECT_EQ(value, sentinel);
+        }
+        auto key = LookupKey::Create(AsBytes("k"), 40);
+        ASSERT_TRUE(key.has_value());
+        const auto found = table->Get(*key, value);
+        ASSERT_TRUE(found.has_value());
+        EXPECT_EQ(*found, TableLookupKind::Value);
+        table.reset();
+        cache.reset();
+        state_.reset();
+        EXPECT_EQ(AsStringView(value), "v30");
+    }
+}
+
+TEST_F(TableTest, LookupDoesNotReadTheNextBlockAfterASelectedBlockMiss) {
+    const auto table = Open(FromHex(ThreeBlockTable));
+    ASSERT_NE(table, nullptr);
+    const int before = state_->read_calls;
+    state_->fail_read_call = before + 2;
+    const std::vector<std::byte> sentinel = Materialize(AsBytes("sentinel"));
+    std::vector<std::byte> value = sentinel;
+    auto key = LookupKey::Create(AsBytes("apq"), MaxSequenceNumber);
+    ASSERT_TRUE(key.has_value());
+
+    const auto found = table->Get(*key, value);
+
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(*found, TableLookupKind::Missing);
+    EXPECT_EQ(value, sentinel);
+    EXPECT_EQ(state_->read_calls.load(), before + 1);
+}
+
 TEST_F(TableTest, ComparesUserKeysWithTheUserComparator) {
     const CaseInsensitiveComparator user_comparator;
     const InternalKeyComparator comparator(user_comparator);
@@ -835,6 +896,7 @@ TEST_F(TableTest, RejectsDamagedMetaindexAndFilterBlocksWhenFiltering) {
     corrupt_meta[120] ^= std::byte{0x01};
     ExpectError(TryOpen(corrupt_meta, WithFilter()), ErrorCode::Corruption);
     EXPECT_TRUE(TryOpen(corrupt_meta).has_value());
+    EXPECT_EQ(state_->read_calls.load(), 2);
 
     const auto assemble = [&](ByteView filter_contents, bool trailing_byte) {
         TableAssembler table;
@@ -950,6 +1012,54 @@ TEST_F(TableTest, IgnoresFiltersOfOtherPolicies) {
     ExpectValue(Get(*table, "a", 1), "x");
 }
 
+TEST_F(TableTest, DistinguishesAbsentFiltersFromSelectedMalformedHandlesAndPayloads) {
+    for (const int scenario : {0, 1, 2, 3}) {
+        SCOPED_TRACE(scenario);
+        TableAssembler assembler;
+        const std::vector<std::byte> invalid_filter{std::byte{0}, std::byte{0}, std::byte{0},
+                                                    std::byte{0}, std::byte{10}};
+        const BlockHandle filter = assembler.AddBlock(invalid_filter);
+        std::vector<std::byte> handle = HandleOf(filter);
+        if (scenario == 2) {
+            handle.push_back(std::byte{0});
+        }
+        const auto meta_bytes =
+            scenario == 0 ? BlockOf({})
+                          : BlockOf({{AsBytes(scenario == 1 ? "filter.other"
+                                                            : "filter.leveldb.BuiltinBloomFilter2"),
+                                      handle}});
+        const BlockHandle meta = assembler.AddBlock(meta_bytes);
+        const BlockHandle index = assembler.AddBlock(BlockOf({}));
+        const auto opened = TryOpen(assembler.Finish(meta, index), WithFilter());
+        if (scenario < 2) {
+            ASSERT_TRUE(opened.has_value());
+        } else {
+            ASSERT_FALSE(opened.has_value());
+            EXPECT_EQ(opened.error().code(), ErrorCode::Corruption);
+            EXPECT_EQ(opened.error().message(), scenario == 2
+                                                    ? "table filter handle is malformed"
+                                                    : "filter block has an unsupported range size");
+        }
+        EXPECT_EQ(state_->read_calls.load(), scenario == 3 ? 4 : 3);
+    }
+}
+
+TEST_F(TableTest, RejectsIndexCorruptionBeforeAnyLaterFilterReadFailure) {
+    state_ = std::make_shared<ReadableState>();
+    state_->data = FromHex(ThreeBlockTable);
+    const auto footer = DecodeFooter(ByteView(state_->data).last<FooterSize>());
+    ASSERT_TRUE(footer.has_value());
+    state_->data[static_cast<std::size_t>(footer->index.offset)] ^= std::byte{1};
+    state_->fail_read_call = 3;
+
+    const auto opened = Table::Open(std::make_unique<MemoryRandomAccessFile>(state_),
+                                    state_->data.size(), comparator_, WithFilter());
+
+    ASSERT_FALSE(opened.has_value());
+    EXPECT_EQ(opened.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(state_->read_calls.load(), 2);
+}
+
 TEST_F(TableTest, CompletesShortReadsAndReportsTruncatedFiles) {
     const std::vector<std::byte> data = FromHex(ThreeBlockTable);
     state_ = std::make_shared<ReadableState>();
@@ -999,9 +1109,12 @@ TEST_F(TableTest, ReportsReadFailuresWhileOpening) {
         state_ = std::make_shared<ReadableState>();
         state_->data = FromHex(ThreeBlockTable);
         state_->fail_read_call = failing_read;
-        ExpectError(Table::Open(std::make_unique<MemoryRandomAccessFile>(state_),
-                                state_->data.size(), comparator_, WithFilter()),
-                    ErrorCode::Io);
+        const auto opened = Table::Open(std::make_unique<MemoryRandomAccessFile>(state_),
+                                        state_->data.size(), comparator_, WithFilter());
+        ASSERT_FALSE(opened.has_value());
+        EXPECT_EQ(opened.error().code(), ErrorCode::Io);
+        EXPECT_EQ(opened.error().message(), "injected read failure");
+        EXPECT_EQ(state_->read_calls.load(), failing_read);
     }
 
     state_ = std::make_shared<ReadableState>();
@@ -1095,6 +1208,12 @@ TEST_F(TableTest, InternalKeyReadsRejectInvalidDataKeysAndIterationDefersUnknown
     const auto short_table = Open(assemble(AsBytes("short")));
     ASSERT_NE(short_table, nullptr);
     ExpectError(TryGet(*short_table, "short", MaxSequenceNumber), ErrorCode::Corruption);
+    const std::vector<std::byte> sentinel = Materialize(AsBytes("sentinel"));
+    std::vector<std::byte> value = sentinel;
+    auto short_key = LookupKey::Create(AsBytes("short"), MaxSequenceNumber);
+    ASSERT_TRUE(short_key.has_value());
+    ExpectError(short_table->Get(*short_key, value), ErrorCode::Corruption);
+    EXPECT_EQ(value, sentinel);
     Table::Iterator short_iterator(*short_table);
     ExpectError(short_iterator.SeekToFirst(), ErrorCode::Corruption);
     EXPECT_FALSE(short_iterator.valid());
@@ -1104,6 +1223,10 @@ TEST_F(TableTest, InternalKeyReadsRejectInvalidDataKeysAndIterationDefersUnknown
     const auto unknown_table = Open(assemble(unknown));
     ASSERT_NE(unknown_table, nullptr);
     ExpectError(TryGet(*unknown_table, "a", MaxSequenceNumber), ErrorCode::Corruption);
+    auto unknown_key = LookupKey::Create(AsBytes("a"), MaxSequenceNumber);
+    ASSERT_TRUE(unknown_key.has_value());
+    ExpectError(unknown_table->Get(*unknown_key, value), ErrorCode::Corruption);
+    EXPECT_EQ(value, sentinel);
     Table::Iterator unknown_iterator(*unknown_table);
     ASSERT_TRUE(unknown_iterator.SeekToLast().has_value());
     ASSERT_TRUE(unknown_iterator.valid());
