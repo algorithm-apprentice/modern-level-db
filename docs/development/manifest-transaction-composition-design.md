@@ -2,7 +2,7 @@
 
 ## Scope
 
-Design proposal for M01-M05 in the
+Design accepted in #201 for M01-M05 in the
 [production composition plan](production-function-composition-plan.md).
 Change VersionSet recovery, prepared persistence and new-MANIFEST acquisition
 in version_set.cc, directly dependent private declarations and characterization
@@ -144,3 +144,22 @@ Independent source-grounded design review found no significant issue. The
 pre-append-only retry limit above incorporates its oracle caution. The reviewer
 inspected recovery, persistence, checked builder and existing tests without
 editing files or running builds/tests.
+
+## Implementation evidence
+
+Six new public-operation characterization cases passed on original production
+at `4c2cdd54f0c5da8211407a3e87115efee1a0893a` before extraction. They directly
+measure record-fault priority with one physical block read, required counters
+before final overlap build, sparse last-present/carry-forward state, deleted
+historical maxima, descriptor selection errors, and pre-append exception retry.
+The original and combined implementations pass the same 115 unique
+VersionSetTest, VersionTest, VersionBuilderTest, RecoveryTest and DatabaseTest
+cases with no failures/errors/skips. Recovery alone passes 61 selected cases.
+Both exact JUnit sets were checked; the actual unit executable was rebuilt.
+
+The fourteen-definition ledger above describes the implemented signatures and
+order directly. CURRENT contents do not escape acquisition; descriptor ownership
+does. ManifestRecovery remains before the parent WalReader and after the set.
+Prepared candidate, compact pointers and encoded snapshot remain in the parent
+across explicit write/relock and installation. New private helper-result errors
+move at call boundaries, while original Error copy sites remain in children.
