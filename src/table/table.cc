@@ -144,40 +144,77 @@ Result<Block> ReadValidatedIndex(const RandomAccessFile& file, std::uint64_t blo
     return index;
 }
 
-// Reads the filter block that the metaindex maps to the policy, if any.
-Status ReadFilter(const RandomAccessFile& file, std::uint64_t blocks_end, BlockHandle metaindex,
-                  BloomFilterPolicy policy, std::optional<FilterBlockReader>& filter) {
-    const Result<Block> meta = ReadBlock(file, blocks_end, metaindex);
+Result<Block> ReadValidatedMetaindex(const RandomAccessFile& file, std::uint64_t blocks_end,
+                                     BlockHandle handle) {
+    Result<Block> meta = ReadBlock(file, blocks_end, handle);
     if (!meta.has_value()) {
         return std::unexpected(meta.error());
     }
     const Status valid = meta->ValidateEntries([](ByteView, ByteView) -> Status { return {}; });
     if (!valid.has_value()) {
-        return valid;
+        return std::unexpected(valid.error());
     }
+    return meta;
+}
+
+std::string FilterMetaindexKey(BloomFilterPolicy policy) {
     std::string key = "filter.";
     key.append(policy.Name());
-    Block::Iterator entry(*meta, BytewiseComparator());
-    const Status sought = entry.Seek(AsBytes(key));
-    // GCOVR_EXCL_START: full physical validation makes metaindex seek infallible
-    if (!sought.has_value()) {
-        return sought;
-    }
-    // GCOVR_EXCL_STOP
-    if (!entry.valid() || AsStringView(entry.key()) != key) {
-        return {};
-    }
+    return key;
+}
 
-    ByteView value = entry.value();
+Result<BlockHandle> DecodeFilterHandle(ByteView value) {
     const Result<BlockHandle> handle = ConsumeBlockHandle(value);
     if (!handle.has_value() || !value.empty()) {
         return std::unexpected(Error::Corruption("table filter handle is malformed"));
     }
-    Result<BlockContents> contents = ReadStoredBlock(file, blocks_end, *handle);
+    return *handle;
+}
+
+Result<std::optional<BlockHandle>> FindFilterHandle(const Block& meta, BloomFilterPolicy policy) {
+    const std::string key = FilterMetaindexKey(policy);
+    Block::Iterator entry(meta, BytewiseComparator());
+    const Status sought = entry.Seek(AsBytes(key));
+    // GCOVR_EXCL_START: full physical validation makes metaindex seek infallible
+    if (!sought.has_value()) {
+        return std::unexpected(sought.error());
+    }
+    // GCOVR_EXCL_STOP
+    if (!entry.valid() || AsStringView(entry.key()) != key) {
+        return std::nullopt;
+    }
+
+    Result<BlockHandle> handle = DecodeFilterHandle(entry.value());
+    if (!handle.has_value()) {
+        return std::unexpected(std::move(handle).error());
+    }
+    return std::optional<BlockHandle>(*handle);
+}
+
+Result<FilterBlockReader> ReadFilterBlock(const RandomAccessFile& file, std::uint64_t blocks_end,
+                                          BlockHandle handle, BloomFilterPolicy policy) {
+    Result<BlockContents> contents = ReadStoredBlock(file, blocks_end, handle);
     if (!contents.has_value()) {
         return std::unexpected(std::move(contents).error());
     }
-    Result<FilterBlockReader> reader = FilterBlockReader::Create(std::move(*contents), policy);
+    return FilterBlockReader::Create(std::move(*contents), policy);
+}
+
+// Reads the filter block that the metaindex maps to the policy, if any.
+Status ReadFilter(const RandomAccessFile& file, std::uint64_t blocks_end, BlockHandle metaindex,
+                  BloomFilterPolicy policy, std::optional<FilterBlockReader>& filter) {
+    Result<Block> meta = ReadValidatedMetaindex(file, blocks_end, metaindex);
+    if (!meta.has_value()) {
+        return std::unexpected(std::move(meta).error());
+    }
+    Result<std::optional<BlockHandle>> handle = FindFilterHandle(*meta, policy);
+    if (!handle.has_value()) {
+        return std::unexpected(std::move(handle).error());
+    }
+    if (!handle->has_value()) {
+        return {};
+    }
+    Result<FilterBlockReader> reader = ReadFilterBlock(file, blocks_end, **handle, policy);
     if (!reader.has_value()) {
         return std::unexpected(std::move(reader).error());
     }
