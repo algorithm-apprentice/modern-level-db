@@ -335,6 +335,23 @@ TEST(DumpFileTest, DumpsEveryManifestFieldInCanonicalContainerOrder) {
               "kind=deletion} largest={user_key='z' sequence=1 kind=value}\n");
 }
 
+TEST(DumpFileTest, DumpsEmptyManifestRecordWithoutInventedFields) {
+    MemoryFileSystem file_system;
+    const std::filesystem::path path = "MANIFEST-000031";
+    const VersionEdit edit;
+    WriteRecords(file_system, path, {edit.Encode()});
+    StringOutput output;
+
+    const Status dumped = DumpFile(file_system, path, output);
+
+    ASSERT_TRUE(dumped.has_value()) << dumped.error().ToString();
+    const std::vector<std::string> expected{
+        "dump version=1 type=manifest file='MANIFEST-000031'\n",
+        "record offset=0\n",
+    };
+    EXPECT_EQ(output.appends(), expected);
+}
+
 TEST(DumpFileTest, PrintsMalformedManifestRecordContinuesAndReturnsCorruption) {
     MemoryFileSystem file_system;
     const std::filesystem::path path = "MANIFEST-000006";
@@ -460,6 +477,40 @@ TEST(DumpFileTest, ForwardTableDumpDoesNotNeedTheDatabaseComparator) {
     ASSERT_NE(b, std::string::npos);
     ASSERT_NE(a, std::string::npos);
     EXPECT_LT(b, a);
+}
+
+TEST(DumpFileTest, DumpsBadAndValidTableEntriesAndPrioritizesOutputFailures) {
+    MemoryFileSystem file_system;
+    const std::filesystem::path path = "000030.ldb";
+    TwoBlockTable table = BadKeyThenValidTable();
+    file_system.Write(path, std::move(table.contents));
+    StringOutput output;
+
+    const Status dumped = DumpFile(file_system, path, output);
+
+    ASSERT_FALSE(dumped.has_value());
+    EXPECT_EQ(dumped.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(dumped.error().message(), "table entry has a malformed internal key");
+    const std::vector<std::string> expected{
+        "dump version=1 type=table file='000030.ldb'\n",
+        "bad_key encoded='bad' value='first'\n",
+        "entry user_key='z' sequence=1 kind=value value='second'\n",
+    };
+    EXPECT_EQ(output.appends(), expected);
+
+    for (const std::size_t fail_at : {std::size_t{1}, std::size_t{2}}) {
+        SCOPED_TRACE(fail_at);
+        StringOutput failed(fail_at);
+
+        const Status status = DumpFile(file_system, path, failed);
+
+        ASSERT_FALSE(status.has_value());
+        EXPECT_EQ(status.error().code(), ErrorCode::Io);
+        EXPECT_EQ(status.error().message(), "injected output failure");
+        const std::vector<std::string> prefix(
+            expected.begin(), expected.begin() + static_cast<std::ptrdiff_t>(fail_at));
+        EXPECT_EQ(failed.appends(), prefix);
+    }
 }
 
 TEST(DumpFileTest, ReportsReachableBadInternalKeysButNotUnrequestedFilterDamage) {

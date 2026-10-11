@@ -149,10 +149,19 @@ TEST(DumpCommandTest, RejectsUnknownCommandsAndMissingDumpFiles) {
 
 TEST(DumpCommandTest, StopsWhenTheErrorStreamFails) {
     MemoryFileSystem file_system;
+    WriteLog(file_system, "000002.log");
     CommandOutput output;
     CommandOutput errors(0);
+    const std::size_t operations_before = file_system.operations().size();
 
-    EXPECT_EQ(RunCommand({"dump", "000001.log"}, file_system, output, errors), 1);
+    EXPECT_EQ(RunCommand({"dump", "000001.log", "000002.log"}, file_system, output, errors), 1);
+    EXPECT_TRUE(output.text().empty());
+    const std::vector<std::string> later_operations(
+        file_system.operations().begin() + static_cast<std::ptrdiff_t>(operations_before),
+        file_system.operations().end());
+    EXPECT_EQ(
+        std::count(later_operations.begin(), later_operations.end(), "open_sequential 000002.log"),
+        0);
 
     CommandOutput flag_output;
     CommandOutput flag_errors(0);
