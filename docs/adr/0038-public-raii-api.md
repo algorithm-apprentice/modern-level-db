@@ -10,6 +10,10 @@ Accepted
 removes synchronous per-call database-state/snapshot-registration shared
 copies. Returned iterators and snapshots retain the existing shared lifetime.
 
+[ADR-0075](0075-shared-read-and-maintenance-rules.md) shares the public read
+option preparation rule without merging synchronous borrowing and iterator
+snapshot retention.
+
 [ADR-0064](0064-windows-filesystem-and-delivery.md) appends the explicit
 Windows weak-namespace consent option and admits the native x64/MSVC backend.
 The option defaults to false; POSIX behavior and child-handle ownership remain

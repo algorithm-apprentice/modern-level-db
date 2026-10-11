@@ -18,11 +18,6 @@
 namespace modern_leveldb {
 namespace {
 
-struct PreparedRead {
-    DatabaseEngineReadOptions options;
-    std::shared_ptr<detail::SnapshotRegistration> snapshot;
-};
-
 DatabaseState PublicState(DatabaseEngineState state) {
     static_assert(DatabaseLevelCount == NumLevels);
     DatabaseState result;
@@ -48,10 +43,10 @@ Error MovedFromDatabase(std::string_view operation) {
     return Error::InvalidArgument(std::string(operation) + " used a moved-from database");
 }
 
-Result<DatabaseEngineReadOptions> PrepareSynchronousRead(detail::DatabaseState& state,
-                                                         bool has_snapshot,
-                                                         detail::SnapshotRegistration* snapshot,
-                                                         bool fill_cache) {
+Result<DatabaseEngineReadOptions> PrepareReadOptions(detail::DatabaseState& state,
+                                                     bool has_snapshot,
+                                                     detail::SnapshotRegistration* snapshot,
+                                                     bool fill_cache) {
     DatabaseEngineReadOptions prepared;
     prepared.fill_cache = fill_cache;
     if (!has_snapshot) {
@@ -62,24 +57,6 @@ Result<DatabaseEngineReadOptions> PrepareSynchronousRead(detail::DatabaseState& 
             "the read snapshot is moved from or belongs to another database"));
     }
     prepared.snapshot = snapshot->sequence();
-    return prepared;
-}
-
-Result<PreparedRead> PrepareRetainedRead(const std::shared_ptr<detail::DatabaseState>& state,
-                                         bool has_snapshot,
-                                         std::shared_ptr<detail::SnapshotRegistration> snapshot,
-                                         bool fill_cache) {
-    PreparedRead prepared;
-    prepared.options.fill_cache = fill_cache;
-    if (!has_snapshot) {
-        return prepared;
-    }
-    prepared.snapshot = std::move(snapshot);
-    if (prepared.snapshot == nullptr || prepared.snapshot->state().get() != state.get()) {
-        return std::unexpected(Error::InvalidArgument(
-            "the read snapshot is moved from or belongs to another database"));
-    }
-    prepared.options.snapshot = prepared.snapshot->sequence();
     return prepared;
 }
 
@@ -207,7 +184,7 @@ Result<bool> Database::Get(ByteView key, std::vector<std::byte>& value,
     detail::SnapshotRegistration* const snapshot =
         options.snapshot != nullptr ? options.snapshot->registration_.get() : nullptr;
     const Result<DatabaseEngineReadOptions> prepared =
-        PrepareSynchronousRead(*state, options.snapshot != nullptr, snapshot, options.fill_cache);
+        PrepareReadOptions(*state, options.snapshot != nullptr, snapshot, options.fill_cache);
     if (!prepared.has_value()) {
         return std::unexpected(prepared.error());
     }
@@ -234,14 +211,13 @@ Result<Iterator> Database::NewIterator(const ReadOptions& options) {
     }
     std::shared_ptr<detail::SnapshotRegistration> snapshot =
         options.snapshot != nullptr ? options.snapshot->registration_ : nullptr;
-    Result<PreparedRead> prepared = PrepareRetainedRead(state, options.snapshot != nullptr,
-                                                        std::move(snapshot), options.fill_cache);
+    const Result<DatabaseEngineReadOptions> prepared =
+        PrepareReadOptions(*state, options.snapshot != nullptr, snapshot.get(), options.fill_cache);
     if (!prepared.has_value()) {
-        return std::unexpected(std::move(prepared).error());
+        return std::unexpected(prepared.error());
     }
-    std::unique_ptr<DbIterator> iterator = state->engine().NewIterator(prepared->options);
-    auto impl =
-        std::make_unique<Iterator::Impl>(state, std::move(prepared->snapshot), std::move(iterator));
+    std::unique_ptr<DbIterator> iterator = state->engine().NewIterator(*prepared);
+    auto impl = std::make_unique<Iterator::Impl>(state, std::move(snapshot), std::move(iterator));
     return Iterator(std::move(impl));
 }
 

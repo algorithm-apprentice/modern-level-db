@@ -226,3 +226,13 @@ A bounded independent static review on 2026-10-11 examined the three proposed
 extractions against their current sources and failure/lifetime contracts.
 It identified no actionable design findings. Implementation remains gated by
 the test and review boundaries above.
+
+## Implementation outcomes
+
+### Read preparation outcome
+
+Slice 1 shares `PrepareReadOptions` and removes the owning PreparedRead wrapper.
+The snapshot-validation matrix passed against the original implementation before
+the extraction. It covers both Get result shapes and NewIterator, both cache
+settings, absent/valid/moved-from/foreign snapshots, and unchanged caller output
+on API rejection. Synchronous reads still borrow; iterators still retain.
