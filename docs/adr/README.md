@@ -122,6 +122,7 @@ decision context and evidence available when each change was made.
 |---|---|---|---|---|
 | [ADR-0074: Database Engine Coordination Structure](0074-database-engine-coordination-structure.md) | Engine coordination structure | Accepted | Partitions DatabaseEngine by consumer flow and adopts behavior-owning snapshot and write-buffer state | [ADR-0037](0037-database-engine.md); [ADR-0057](0057-leveldb-version-output-parity.md) |
 | [ADR-0075: Shared Read and Maintenance Rules](0075-shared-read-and-maintenance-rules.md) | Bounded rule sharing | Implemented | Shares read preparation, level-iterator assembly, and background-edit installation in independent slices | [ADR-0031](0031-iterators.md); [ADR-0037](0037-database-engine.md); [ADR-0038](0038-public-raii-api.md) |
+| [ADR-0076: Textbook Source Composition](0076-textbook-source-composition.md) | Learning-oriented source style | Accepted | Defines small-function composition and bounded removal of runtime assertions and fine-grained read diagnostics | [Code style](../development/code-style.md); [ADR-0075](0075-shared-read-and-maintenance-rules.md) |
 
 ## Historical upstream-link provenance
 
