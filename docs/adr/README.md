@@ -120,7 +120,7 @@ decision context and evidence available when each change was made.
 
 | ADR | Topic | Lifecycle | Implementation / outcome | Supersession / current reference |
 |---|---|---|---|---|
-| [ADR-0074: Database Engine Coordination Structure](0074-database-engine-coordination-structure.md) | Engine coordination structure | Proposed | Partitions DatabaseEngine by consumer flow and proposes behavior-owning snapshot and write-buffer state | [ADR-0037](0037-database-engine.md); [ADR-0057](0057-leveldb-version-output-parity.md) |
+| [ADR-0074: Database Engine Coordination Structure](0074-database-engine-coordination-structure.md) | Engine coordination structure | Accepted | Partitions DatabaseEngine by consumer flow and adopts behavior-owning snapshot and write-buffer state | [ADR-0037](0037-database-engine.md); [ADR-0057](0057-leveldb-version-output-parity.md) |
 
 ## Historical upstream-link provenance
 

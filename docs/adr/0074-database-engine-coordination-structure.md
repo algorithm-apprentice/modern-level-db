@@ -1,6 +1,6 @@
 # ADR-0074: Database Engine Coordination Structure
 
-- Status: Proposed
+- Status: Accepted
 
 ## Context
 
