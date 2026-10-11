@@ -4,6 +4,20 @@
 
 Prerequisite: a first pass through [lessons 01-08](README.md).
 
+> **Advanced engineering lesson:** use this after understanding the ordinary
+> engine paths. Its goal is to select evidence, not to teach storage semantics
+> for the first time.
+
+## Lesson map
+
+| Question | Answer |
+|---|---|
+| What problem is this lesson about? | Choosing evidence that can falsify correctness or performance claims at the right boundary |
+| Who consumes this evidence? | Contributors, reviewers, and maintainers deciding whether a change is safe and useful |
+| What interface matters first? | Test tiers, CI gates, benchmark workload contracts, reports, and retained artifacts |
+| What implementation will we open? | Golden/model/differential/crash tests, fuzzing, sanitizers, calibration, and profiling tools |
+| What should you be able to do afterward? | Match a claim to the evidence needed and reject measurements that compare different work |
+
 ## Different evidence answers different questions
 
 An engine can return the right value in a simple test and still lose it
@@ -201,15 +215,15 @@ not a performance SLA.
 
 ## Source tour
 
-| File or directory | Focus |
-|---|---|
-| [`tests/unit/`](../../tests/unit) | Small behavior and failure contracts |
-| [`database_model_test.cc`](../../tests/model/database_model_test.cc) | Independent logical oracle |
-| [`database_differential_test.cc`](../../tests/compatibility/database_differential_test.cc) | Cross-engine and cross-open verification |
-| [`power_loss_test.cc`](../../tests/crash/power_loss_test.cc) | Durable-state enumeration |
-| [`fuzz/`](../../fuzz) | Format and stateful targets |
-| [`run_performance.py`](../../tools/run_performance.py) | Lifecycle/report checks and retained measurements |
-| [`run_write_parity.py`](../../tools/run_write_parity.py) | Frozen multi-role write evaluation |
+| Entry point | Interface or symbol | Question to answer | Representative evidence |
+|---|---|---|---|
+| [`tests/unit/`](../../tests/unit) | focused contracts and fault seams | What is the smallest deterministic test for this behavior? | changed-code coverage and platform unit jobs |
+| [`database_model_test.cc`](../../tests/model/database_model_test.cc) | ordered-map oracle | Which logical histories agree independently of file layout? | model CI job |
+| [`database_differential_test.cc`](../../tests/compatibility/database_differential_test.cc) | cross-engine and cross-open checks | Can both implementations read each other's durable state? | compatibility CI job |
+| [`power_loss_test.cc`](../../tests/crash/power_loss_test.cc) | durable-state enumeration | Which states are legal at each mutation boundary? | crash CI job |
+| [`fuzz/`](../../fuzz) | generated formats and operation traces | Which invariants survive generated malformed inputs or histories? | fuzz and sanitizer jobs |
+| [`run_performance.py`](../../tools/run_performance.py) | workload/report lifecycle | Are compared trials doing the same work under the same contract? | performance jobs and retained reports |
+| [`run_write_parity.py`](../../tools/run_write_parity.py) | matched write evaluation | Which CPU and wall-time differences remain against pinned LevelDB? | benchmark/profiling artifacts |
 
 Read [ADR-0040](../adr/0040-compatibility-and-crash-harness.md),
 [ADR-0041](../adr/0041-engine-hardening-gates.md),
@@ -226,6 +240,8 @@ optimization is not automatically an accepted end-to-end improvement.
 3. Why cannot mutable calibration simply reuse the read benchmark's loop?
 4. Can the production `mixed50` regression in
    [ADR-0060](../adr/0060-leveldb-write-path-parity.md) be called a speedup?
+5. A helper microbenchmark improves while the end-to-end workload is
+   unchanged. What claim is justified?
 
 <details>
 <summary>Answers</summary>
@@ -238,5 +254,7 @@ optimization is not automatically an accepted end-to-end improvement.
    compared trials may no longer perform comparable work.
 4. No. The ADR preserves that observed regression separately from the
    matched-reference improvements and explains the measurement limits.
+5. Only that the isolated helper improved under its defined workload. The
+   evidence does not establish an end-to-end application improvement.
 
 </details>

@@ -4,6 +4,16 @@
 
 Prerequisite: [internal keys](02-bytes-and-formats.md).
 
+## Lesson map
+
+| Question | Answer |
+|---|---|
+| What problem is this lesson about? | Keeping recent versioned entries ordered and visible to concurrent readers before they become table files |
+| Who consumes this layer? | DatabaseEngine writes and reads, flush, snapshots, and internal iterators |
+| What interface matters first? | MemTable `Add`, `Lookup`, `Iterator`, and read pins; SkipList ordered insert/seek |
+| What implementation will we open? | Arena allocation, packed entries, SkipList publication, sequence visibility, and tombstones |
+| What should you be able to do afterward? | Explain which version a snapshot sees and why readers can traverse while one writer inserts |
+
 ## Why an arena fits a memtable
 
 Memtable entries are created together, remain at stable addresses, and are
@@ -150,14 +160,12 @@ Both can increase resource use without copying the entire database.
 
 ## Source tour
 
-| File | Focus |
-|---|---|
-| [`arena.cc`](../../src/memory/arena.cc) | Fallback allocation, alignment, and reserved-byte accounting |
-| [`skiplist.h`](../../src/memory/skiplist.h) | Search, node construction, and link publication |
-| [`memtable.cc`](../../src/memory/memtable.cc) | Packed entries, lookup, and trusted insertion |
-| [`database.cc`](../../src/engine/database.cc) | `CommitWrite`, `GetSnapshot`, and `ReleaseSnapshot` |
-| [`memtable_test.cc`](../../tests/unit/memory/memtable_test.cc) | Visibility and deletion examples |
-| [`public_api_native_test.cc`](../../tests/unit/api/public_api_native_test.cc) | Snapshot and child-handle lifetimes |
+| Entry point | Interface or symbol | Question to answer | Representative evidence |
+|---|---|---|---|
+| [`arena.cc`](../../src/memory/arena.cc) | `Arena::Allocate`, aligned allocation | What lifetime and accounting does one allocation join? | [`arena_test.cc`](../../tests/unit/memory/arena_test.cc) |
+| [`skiplist.h`](../../src/memory/skiplist.h) | `Insert`, search, iterator | What does the single writer establish before release publication? | [`skiplist_test.cc`](../../tests/unit/memory/skiplist_test.cc) |
+| [`memtable.cc`](../../src/memory/memtable.cc) | `Add`, `Lookup`, `Iterator`, read pin | How does one packed entry support snapshots and deletions? | [`memtable_test.cc`](../../tests/unit/memory/memtable_test.cc) |
+| [`database.cc`](../../src/engine/database.cc) | `CommitWrite`, `GetSnapshot`, `ReleaseSnapshot` | When does a sequence become visible, and what retains old state? | [`public_api_native_test.cc`](../../tests/unit/api/public_api_native_test.cc) |
 
 For design history, read [ADR-0015](../adr/0015-concurrent-skiplist.md),
 [ADR-0017](../adr/0017-arena-backed-memtable.md), and the memory invariants
@@ -168,6 +176,8 @@ in [ADR-0060](../adr/0060-leveldb-write-path-parity.md).
 1. Why can deleting `"color"` not simply remove its newest memtable entry?
 2. Why can a reader safely hold a pointer while another thread inserts?
 3. Does a 4 MiB write buffer imply a strict 4 MiB database memory limit?
+4. What must retain the arena if a lookup or iterator uses a packed-entry
+   pointer after the database mutex is released?
 
 <details>
 <summary>Answers</summary>
@@ -180,5 +190,7 @@ in [ADR-0060](../adr/0060-leveldb-write-path-parity.md).
 3. No. There can be mutable and immutable memtables, retained readers,
    caches, metadata, and allocation slack. Rotation also checks usage at
    write boundaries rather than enforcing an allocation cap.
+4. A MemTable owner or read pin must keep the MemTable, and therefore its
+   Arena, alive until the borrowed pointer is no longer used.
 
 </details>

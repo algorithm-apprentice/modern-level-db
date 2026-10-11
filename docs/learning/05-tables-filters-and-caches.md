@@ -5,6 +5,16 @@
 Prerequisites: [formats](02-bytes-and-formats.md) and
 [durable installation](04-wal-and-recovery.md).
 
+## Lesson map
+
+| Question | Answer |
+|---|---|
+| What problem is this lesson about? | Storing ordered immutable data so reads avoid scanning whole files |
+| Who consumes this layer? | Flush, compaction, TableCache, point reads, and iterators |
+| What interface matters first? | TableBuilder Add/Finish, Table Open/Get/Iterator, filter queries, and cache handles |
+| What implementation will we open? | Blocks, restart points, indexes, Bloom filters, compression, caching, and mapped files |
+| What should you be able to do afterward? | Trace a key from an index lookup to a decoded data block and explain each cache/lifetime involved |
+
 ## An SSTable is more than a sorted array
 
 An SSTable, or sorted string table, is an immutable file:
@@ -178,14 +188,14 @@ unsupported.
 
 ## Source tour
 
-| File | Focus |
-|---|---|
-| [`block_builder.cc`](../../src/table/block_builder.cc) | Prefix encoding and restart offsets |
-| [`block.cc`](../../src/table/block.cc) | Restart search, lazy decoding, and invalidation |
-| [`table_builder.cc`](../../src/table/table_builder.cc) | Pending index entries and final file layout |
-| [`bloom_filter.cc`](../../src/table/bloom_filter.cc) | Probe calculation and matching |
-| [`table.cc`](../../src/table/table.cc) | Index/filter lookup and block ownership |
-| [`sharded_lru_cache_core.cc`](../../src/cache/sharded_lru_cache_core.cc) | Pins, LRU membership, and eviction |
+| Entry point | Interface or symbol | Question to answer | Representative evidence |
+|---|---|---|---|
+| [`block_builder.cc`](../../src/table/block_builder.cc) | `BlockBuilder::Add`, `Finish` | How do prefix compression and restart offsets preserve seekability? | [`block_test.cc`](../../tests/unit/table/block_test.cc) |
+| [`block.cc`](../../src/table/block.cc) | `Block::Create`, iterator seek | Which checks establish safe lazy decoding? | [`block_test.cc`](../../tests/unit/table/block_test.cc) |
+| [`table_builder.cc`](../../src/table/table_builder.cc) | `Add`, `Finish`, pending index entry | How are data, filter, metaindex, index, and footer ordered? | [`table_builder_test.cc`](../../tests/unit/table/table_builder_test.cc) |
+| [`bloom_filter.cc`](../../src/table/bloom_filter.cc) | `CreateFilter`, `KeyMayMatch` | Why can a filter reject but not prove presence? | [`bloom_filter_test.cc`](../../tests/unit/table/bloom_filter_test.cc) |
+| [`table.cc`](../../src/table/table.cc) | `Open`, `Get`, data-block lookup | Which objects own or borrow index, filter, and block bytes? | [`table_test.cc`](../../tests/unit/table/table_test.cc) |
+| [`sharded_lru_cache_core.cc`](../../src/cache/sharded_lru_cache_core.cc) | insert, lookup, pin, eviction | How do membership and retained ownership differ? | [`sharded_lru_cache_test.cc`](../../tests/unit/cache/sharded_lru_cache_test.cc) |
 
 Follow with [ADR-0022](../adr/0022-sstable-block-format.md),
 [ADR-0023](../adr/0023-sstable-filter-blocks.md),
@@ -198,6 +208,8 @@ Follow with [ADR-0022](../adr/0022-sstable-block-format.md),
 2. Can a Bloom "possibly present" result prove that a key exists?
 3. Why can a pinned cache entry survive erasure?
 4. Does a mapped read necessarily come from RAM without a storage access?
+5. Why is an uncompressed block that borrows mapped file bytes not inserted
+   into an independently owning block cache?
 
 <details>
 <summary>Answers</summary>
@@ -207,5 +219,7 @@ Follow with [ADR-0022](../adr/0022-sstable-block-format.md),
 3. The handle retains ownership even after the entry is no longer found
    through the cache's key index.
 4. No. The kernel may need to fault in file pages from storage.
+5. Its bytes are owned by the table/file mapping. Caching it independently
+   would require copying or otherwise retaining that owner.
 
 </details>

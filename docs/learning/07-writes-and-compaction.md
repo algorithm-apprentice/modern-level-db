@@ -5,6 +5,16 @@
 Prerequisites: [durability](04-wal-and-recovery.md) and
 [source visibility](06-reads-and-iterators.md).
 
+## Lesson map
+
+| Question | Answer |
+|---|---|
+| What problem is this lesson about? | Serializing concurrent writes and preventing immutable history from growing without bound |
+| Who consumes this path? | Concurrent application writers, background flush, and background compaction |
+| What interface matters first? | Database Write, writer queue grouping, memtable rotation, flush, and compaction installation |
+| What implementation will we open? | Leader/follower grouping, WAL-before-MemTable commit, backpressure, overlap selection, and retention rules |
+| What should you be able to do afterward? | Predict a write group and decide which versions/tombstones a compaction must retain |
+
 ## One leader, many callers
 
 Multiple application threads can call Write, but one queue leader performs
@@ -189,15 +199,14 @@ single-background-work pipeline.
 
 ## Source tour
 
-| File | Focus |
-|---|---|
-| [`write_path.h`](../../src/engine/write_path.h) | Queue, leader guard, and completion |
-| [`write_path.cc`](../../src/engine/write_path.cc) | Group admission and WAL-before-insertion |
-| [`database.cc`](../../src/engine/database.cc) | `MakeRoomForWrite`, `FlushImmutable`, and `Compact` |
-| [`flush.cc`](../../src/engine/flush.cc) | Initial output-level choice |
-| [`compaction_picker.cc`](../../src/engine/compaction_picker.cc) | Scores, overlaps, and trivial moves |
-| [`compaction.cc`](../../src/engine/compaction.cc) | Retention rules, output splitting, and edits |
-| [`compaction_test.cc`](../../tests/unit/engine/compaction_test.cc) | Snapshot, tombstone, and failure cases |
+| Entry point | Interface or symbol | Question to answer | Representative evidence |
+|---|---|---|---|
+| [`write_path.h`](../../src/engine/write_path.h) | `WriteQueue::Write`, guards, completion | Which writer owns group preparation and who receives its result? | [`write_path_test.cc`](../../tests/unit/engine/write_path_test.cc) |
+| [`write_path.cc`](../../src/engine/write_path.cc) | `CommitGroup`, `BuildGroup` | Why must WAL append/sync precede trusted MemTable insertion? | [`write_path_test.cc`](../../tests/unit/engine/write_path_test.cc) |
+| [`database.cc`](../../src/engine/database.cc) | `MakeRoomForWrite`, rotation, background call | When do foreground writers delay, stop, or hand work to the background? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
+| [`flush.cc`](../../src/engine/flush.cc) | `FlushMemTable`, output-level choice | Why can some flush outputs start below L0? | [`flush_test.cc`](../../tests/unit/engine/flush_test.cc) |
+| [`compaction_picker.cc`](../../src/engine/compaction_picker.cc) | scores, overlaps, trivial moves | Which files must join one compaction input set? | [`compaction_picker_test.cc`](../../tests/unit/engine/compaction_picker_test.cc) |
+| [`compaction.cc`](../../src/engine/compaction.cc) | retention, tombstones, output splitting | Which history can be dropped without changing any retained view? | [`compaction_test.cc`](../../tests/unit/engine/compaction_test.cc) |
 
 Read [ADR-0032](../adr/0032-write-path.md),
 [ADR-0035](../adr/0035-running-compactions.md), and the completed write
@@ -210,6 +219,8 @@ pipeline audit in [ADR-0060](../adr/0060-leveldb-write-path-parity.md).
 3. Why can compaction finish without immediately reducing all disk usage?
 4. Are bytes reported as logical benchmark writes a measurement of write
    amplification?
+5. If WAL append returns an error after writing some bytes, may the next
+   writer continue using that WAL?
 
 <details>
 <summary>Answers</summary>
@@ -220,5 +231,7 @@ pipeline audit in [ADR-0060](../adr/0060-leveldb-write-path-parity.md).
    work may remain outstanding.
 4. No. Write amplification also requires physical bytes for the explicitly
    defined WAL/flush/compaction interval and accounting policy.
+5. No. The commit result is uncertain, so the database owner makes the error
+   sticky and rejects later writes.
 
 </details>

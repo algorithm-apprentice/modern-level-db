@@ -5,6 +5,16 @@
 Prerequisites: [formats](02-bytes-and-formats.md) and
 [sequence visibility](03-memory-and-mvcc.md).
 
+## Lesson map
+
+| Question | Answer |
+|---|---|
+| What problem is this lesson about? | Making acknowledged state recoverable while distinguishing visibility, process recovery, and power-loss durability |
+| Who consumes this layer? | DatabaseEngine, VersionSet, recovery, and offline diagnostics |
+| What interface matters first? | WritableFile Append/Flush/Sync/Close, WalWriter, WalReader events, and recovery results |
+| What implementation will we open? | WAL fragmentation/checksums, crash tails, MANIFEST installation, directory sync, and cleanup protection |
+| What should you be able to do afterward? | Classify a crash point and predict which data or metadata recovery may accept |
+
 ## Visibility is not durability
 
 A value can be readable in memory while its durable representation is
@@ -184,14 +194,13 @@ obsolete-file cleanup instead of guessing.
 
 ## Source tour
 
-| File | Focus |
-|---|---|
-| [`file_system.h`](../../src/platform/file_system.h) | Explicit durability primitives |
-| [`wal_format.cc`](../../src/format/wal_format.cc) | Fragment boundaries and checksums |
-| [`wal_io.cc`](../../src/wal/wal_io.cc) | Framing, reassembly, tail handling, and current I/O errors |
-| [`recovery.cc`](../../src/engine/recovery.cc) | Directory locking, WAL selection, and checked replay |
-| [`version_set.cc`](../../src/metadata/version_set.cc) | `Write`, `InstallCurrent`, and installation order |
-| [`power_loss_test.cc`](../../tests/crash/power_loss_test.cc) | Allowed recovered states at failure boundaries |
+| Entry point | Interface or symbol | Question to answer | Representative evidence |
+|---|---|---|---|
+| [`file_system.h`](../../src/platform/file_system.h) | `WritableFile`, `SyncDirectory` | Which operation provides visibility, content durability, or namespace durability? | [`file_system_test.cc`](../../tests/unit/platform/file_system_test.cc) |
+| [`wal_format.cc`](../../src/format/wal_format.cc) | `WalFragmenter`, `DecodeWalFragment` | How does a logical record cross block boundaries without a partial commit? | [`wal_format_test.cc`](../../tests/unit/format/wal_format_test.cc) |
+| [`wal_io.cc`](../../src/wal/wal_io.cc) | `WalWriter`, `WalReader::ReadNext` | Which outcomes are record, crash tail, corruption, and terminal I/O? | [`wal_io_test.cc`](../../tests/unit/wal/wal_io_test.cc) |
+| [`recovery.cc`](../../src/engine/recovery.cc) | `RecoverDatabase`, replay | Which logs and records become reconstructed state? | [`recovery_test.cc`](../../tests/unit/engine/recovery_test.cc) |
+| [`version_set.cc`](../../src/metadata/version_set.cc) | `Write`, `InstallCurrent` | What must be durable before a new Version is published? | [`power_loss_test.cc`](../../tests/crash/power_loss_test.cc) |
 
 Then read [ADR-0011](../adr/0011-filesystem-contracts.md),
 [ADR-0029](../adr/0029-database-recovery.md), and
@@ -203,6 +212,8 @@ Then read [ADR-0011](../adr/0011-filesystem-contracts.md),
 2. Why can a table exist on disk but not belong to the recovered database?
 3. Why is an in-flight sync batch allowed to appear after a crash even
    though its caller never received success?
+4. If closing the old WAL throws during rotation, should the engine install
+   the replacement log and memtable?
 
 <details>
 <summary>Answers</summary>
@@ -211,5 +222,8 @@ Then read [ADR-0011](../adr/0011-filesystem-contracts.md),
 2. Its installing MANIFEST edit may never have become durable.
 3. Durability can precede acknowledgement. Recovery may include the complete
    in-flight batch, but must not manufacture a partially applied batch.
+4. No. It records a sticky background error and leaves the installed state
+   unchanged; otherwise the rotation would publish a partially completed
+   transition.
 
 </details>

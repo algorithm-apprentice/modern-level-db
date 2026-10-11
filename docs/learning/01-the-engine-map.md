@@ -2,6 +2,16 @@
 
 [Learning path](README.md) | Next: [Bytes and formats](02-bytes-and-formats.md)
 
+## Lesson map
+
+| Question | Answer |
+|---|---|
+| What problem is this lesson about? | Keeping an ordered key/value map readable, durable, and maintainable without rewriting all data after every update |
+| Who consumes the engine? | Applications through the public `Database` API |
+| What interface matters first? | Put, Get, Delete, WriteBatch, Snapshot, Iterator, and database open/close behavior |
+| What implementation will we open? | WAL, memtables, SSTables, Version metadata, and background work |
+| What should you be able to do afterward? | Trace one key through write, read, flush/compaction, and recovery at a high level |
+
 ## The problem the engine solves
 
 The public abstraction is an ordered map from arbitrary byte keys to
@@ -137,23 +147,25 @@ No single knob makes every workload better.
 
 Read these entry points without following every helper yet:
 
-| File | Focus | Question |
-|---|---|---|
-| [`db.h`](../../include/modern_leveldb/db.h) | `Database` | What can an application actually do? |
-| [`database.h`](../../src/engine/database.h) | Engine members | Which objects are owned per database? |
-| [`database.cc`](../../src/engine/database.cc) | `Write`, `Get`, `BackgroundCall` | Where are foreground and background work connected? |
-| [`recovery.cc`](../../src/engine/recovery.cc) | `RecoverDatabase` | What is reconstructed before writes start? |
-| [`architecture.md`](../architecture.md) | Layer rules | Why is format code independent of filesystem I/O? |
+| Entry point | Interface or symbol | Question to answer | Representative evidence |
+|---|---|---|---|
+| [`db.h`](../../include/modern_leveldb/db.h) | `Database` | What can an application ask the engine to do? | [`public_api_test.cc`](../../tests/unit/api/public_api_test.cc) |
+| [`database.h`](../../src/engine/database.h) | `DatabaseEngine` members | Which owners and synchronization domains exist per database? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
+| [`database.cc`](../../src/engine/database.cc) | `Write`, `Get`, `BackgroundCall` | Where do foreground and background paths meet? | [`database_model_test.cc`](../../tests/model/database_model_test.cc) |
+| [`recovery.cc`](../../src/engine/recovery.cc) | `RecoverDatabase` | What must be reconstructed before writes start? | [`recovery_test.cc`](../../tests/unit/engine/recovery_test.cc) |
 
 The dependency direction is important: the public facade depends on the
 engine, not the other way around. Pure format code cannot schedule
-compaction or open a file.
+compaction or open a file. Use the current
+[architecture](../architecture.md) for the complete layer rules.
 
 ## Self-check
 
 1. Why are both a WAL and a memtable needed?
 2. Can a complete table left after a crash always be added to the database?
 3. Does moving an entry from L0 to L1 change its sequence number?
+4. What incorrect result could occur if a read searched old SSTables before
+   the mutable memtable?
 
 <details>
 <summary>Answers</summary>
@@ -163,5 +175,7 @@ compaction or open a file.
 2. No. It may be an uninstalled output. The recovered metadata determines
    which tables are live.
 3. No. Compaction preserves retained entries' logical sequence numbers.
+4. An older table value or deletion could win before the read reaches the
+   newer in-memory update.
 
 </details>

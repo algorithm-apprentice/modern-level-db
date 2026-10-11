@@ -9,6 +9,18 @@ The goal is to explain **why the engine works**, not to memorize class names.
 Each core lesson includes a worked example, a bounded source tour, and
 self-check questions with answers.
 
+Lessons are organized from the point of view of a component's consumer:
+
+```text
+purpose -> consumer -> interface/contract -> observable behavior
+        -> internal implementation -> tradeoffs -> source/tests
+```
+
+A consumer may be an application or another internal component. This lets a
+reader treat one layer as a black box before choosing to open the next layer.
+The curriculum structure is recorded in
+[ADR-0072](../adr/0072-consumer-oriented-learning.md).
+
 The project is pre-alpha. Use disposable databases for every experiment;
 never use important data or modify files belonging to an open database.
 Use the current [getting-started guide](../reference/getting-started.md) for
@@ -39,15 +51,15 @@ not a complete C++ or operating-systems textbook.
 | [05. Tables, filters, and caches](05-tables-filters-and-caches.md) | How are sorted bytes read efficiently? | Prefix compression, restart points, Bloom filters, block compression, caching, and mapped files |
 | [06. Reads and iterators](06-reads-and-iterators.md) | How does the engine find the visible value? | Read-source order, level selection, merging, seek semantics, and iterator lifetimes |
 | [07. Writes and compaction](07-writes-and-compaction.md) | How does the engine keep making progress? | Group commit, flushes, compaction selection, version retention, and backpressure |
-| [08. C++ and concurrency](08-cpp-ownership-errors-and-concurrency.md) | What makes the implementation safe? | Ownership, explicit errors, publication, locks, condition variables, and shutdown |
-| [09. Verification and performance](09-verification-and-performance.md) | What evidence supports correctness and speed? | Golden tests, models, differential tests, crash simulation, fuzzing, sanitizers, and fair measurement |
+| [08. C++ and concurrency](08-cpp-ownership-errors-and-concurrency.md) **(advanced)** | What makes the implementation safe? | Ownership, explicit errors, publication, locks, condition variables, and shutdown |
+| [09. Verification and performance](09-verification-and-performance.md) **(advanced)** | What evidence supports correctness and speed? | Golden tests, models, differential tests, crash simulation, fuzzing, sanitizers, and fair measurement |
 | [10. Guided labs](10-guided-labs.md) | Can I predict and inspect the engine's behavior? | A runnable API example, focused tests, state observation, and storage-file diagnostics |
 
 [The glossary](glossary.md) is a quick reference, not another prerequisite.
 [The concept-to-code index](concept-index.md) is the maintenance map from a
 storage concept to its current contract, implementation entry points, tests,
 and decision history.
-[The LevelDB comparison](11-leveldb-comparison.md) separates existing
+[The LevelDB comparison appendix](11-leveldb-comparison.md) separates existing
 capabilities, intentional differences, and possible learning-oriented
 extensions. It is a proposal list, not an approved implementation roadmap.
 
