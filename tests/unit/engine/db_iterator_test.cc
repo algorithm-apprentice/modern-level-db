@@ -335,6 +335,27 @@ TEST_F(DbIteratorTest, RejectsKeysThatAreNotInternalKeys) {
     expect_corruption(*unknown_iterator, unknown_iterator->SeekToLast());
 }
 
+TEST_F(DbIteratorTest, RejectsMalformedKeyReachedWhileChangingToReverseDirectionAndRecovers) {
+    auto malformed = Put("a", 1, "bad");
+    malformed.key[malformed.key.size() - InternalKeyTrailerSize] = std::byte{0x7f};
+    const auto expected = ParseInternalKey(malformed.key);
+    ASSERT_FALSE(expected.has_value());
+    const auto script = std::make_shared<MoveScript>();
+    const auto iterator = Open({malformed, Put("b", 1, "visible")}, 10, script);
+
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        ASSERT_EQ(After(iterator->Seek(AsBytes("b")), *iterator), "b=visible");
+        const int before = script->moves;
+        const Status result = iterator->Prev();
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error().code(), expected.error().code());
+        EXPECT_EQ(result.error().message(), expected.error().message());
+        EXPECT_FALSE(iterator->valid());
+        EXPECT_EQ(script->moves, before + 1);
+    }
+    EXPECT_EQ(After(iterator->Seek(AsBytes("b")), *iterator), "b=visible");
+}
+
 TEST_F(DbIteratorTest, FailsWithAnyInternalMove) {
     using Move = Status (*)(DbIterator&);
     const std::vector<std::pair<std::string, std::vector<Move>>> scripts{
