@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Design proposal for F03 from the
+Design accepted in #183 for F03 from the
 [production composition plan](production-function-composition-plan.md).
 Design publication/merge precedes production implementation.
 
@@ -152,3 +152,46 @@ evidence for both codec threshold paths. The characterization above now requires
 both paths, their corresponding call counts and independent scratch preseeding.
 No other design issues were reported in the bounded static review; no tests or
 builds were executed by the reviewer.
+
+## Implementation record
+
+Implementation starts from merged #183, with a characterization commit before
+separate compression and decompression extraction commits.
+
+### Responsibility ledger
+
+| Function | Composition or stopping boundary |
+|---|---|
+| `CompressSnappyBlock` | Composes native bound calculation, shared PrepareOutput, native raw compression, and output sizing; does not apply savings policy. |
+| `CompressZstdBlock` | Composes checked native bound, shared PrepareOutput, native compression/result rejection, and output sizing, retaining both original failure clears. |
+| `TryCompressBlock` | Composes scratch reset/empty admission, requested-codec dispatch, and the unchanged common strict savings test with rejected-output clear. |
+| `DecompressSnappyBlock` | Composes native length admission, shared bounded allocation, valid empty-output destination selection, native contents validation, and owning return. |
+| `DecompressZstdBlock` | Composes declared frame-size admission before allocation, native decode/error-and-length verification, and owning return. |
+| `DecompressBlock` | Composes codec dispatch and the original invalid-type error; returns child Results directly without another vector or Error copy. |
+
+The adapters use existing codec and storage primitives rather than new
+forwarding wrappers. No codec settings, limits, thresholds, API, exclusions,
+caller implementations, or exception policy changed. Existing option validation
+and broader recursive-review frontiers remain open.
+
+### Characterization and local evidence
+
+Three new isolated-codec cases and strengthened existing cases pass on original
+production before extraction. Mock results now record native call counts.
+Both codec threshold paths prove one matching bound/compression call, no other
+codec calls, equality rejection and one-byte-better acceptance, with individually
+preseeded scratch and representable admitted bounds. Size/length faults reject
+before native content decoding and retain exact Corruption text.
+Real-codec round trips, independent golden streams, empty-output semantics,
+capacity reuse, and table/block caller regressions remain unchanged.
+
+The compression slice passes all 14 real/mock codec cases. The combined codec,
+stored-block, table-writer and table-reader selection passes the same 77 cases
+before and after extraction, with exact JUnit case-set parity and no failures,
+errors or skips. The warnings-as-errors Debug build and formatting,
+documentation and whitespace checks pass. Independent combined implementation
+review found no significant issues in the source/test diff and this record.
+Review is static and does not execute tests or certify the whole production
+tree; the main agent separately verifies execution evidence.
+These checks do not inject allocation failures or replace authoritative
+published-head remote coverage.
