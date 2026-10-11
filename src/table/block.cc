@@ -229,14 +229,27 @@ Status Block::Iterator::Seek(ByteView target) {
         }
     }
 
-    // Find the last restart key strictly before the target, then reconstruct
-    // forward from that checkpoint. Prefix-compressed entries cannot be binary-searched directly.
+    auto restart = FindRestart(target, left, right);
+    if (!restart.has_value()) {
+        return std::unexpected(std::move(restart).error());
+    }
+    Status restored = RestoreCheckpoint(*restart, current_key_compare);
+    if (!restored.has_value()) {
+        return restored;
+    }
+    return ScanToLowerBound(target);
+}
+
+Result<std::size_t> Block::Iterator::FindRestart(ByteView target, std::size_t left,
+                                                 std::size_t right) {
+    // Prefix-compressed entries require reconstruction from the last restart
+    // strictly before the target, rather than a binary search over all entries.
     while (left < right) {
         const std::size_t middle = left + (right - left + 1) / 2;
         ByteView middle_key;
         const Status decoded = RestartKey(middle, middle_key);
         if (!decoded.has_value()) {
-            return decoded;
+            return std::unexpected(decoded.error());
         }
         if (Compare(middle_key, target) < 0) {
             left = middle;
@@ -244,15 +257,22 @@ Status Block::Iterator::Seek(ByteView target) {
             right = middle - 1;
         }
     }
+    return left;
+}
 
+Status Block::Iterator::RestoreCheckpoint(std::size_t index, int current_key_compare) {
     // Reuse a current forward position only when the checkpoint is unchanged;
     // otherwise rebuild the full key from its restart before applying suffixes.
-    if (!(left == restart_index_ && current_key_compare < 0)) {
-        const Status sought = SeekToRestartPoint(left);
+    if (!(index == restart_index_ && current_key_compare < 0)) {
+        const Status sought = SeekToRestartPoint(index);
         if (!sought.has_value()) {
             return sought;
         }
     }
+    return {};
+}
+
+Status Block::Iterator::ScanToLowerBound(ByteView target) {
     while (true) {
         const Status parsed = ParseNextEntry();
         if (!parsed.has_value() || !valid() || Compare(key(), target) >= 0) {
