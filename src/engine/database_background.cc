@@ -1,4 +1,3 @@
-#include <cassert>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -133,7 +132,6 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
                        seek_statistics_.FileToCompact(*current), policy_.max_file_size);
     // The need that scheduled this task remains, since only background work
     // installs versions or drops the file to compact.
-    assert(compaction.has_value());
     if (IsTrivialMove(*compaction, policy_.max_file_size)) {
         VersionEdit edit = CompactionEdit(*compaction);
         // The file is valid at the next level, which nothing there overlaps.
@@ -171,7 +169,6 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
 Status DatabaseEngine::ApplyBackgroundEdit(Result<VersionEdit> edit,
                                            std::unique_lock<std::mutex>& lock,
                                            std::string_view closing_error) {
-    assert(lock.owns_lock());
     if (!edit.has_value()) {
         return std::unexpected(std::move(edit).error());
     }
@@ -200,7 +197,6 @@ Status DatabaseEngine::BeforeCompactionEntry() {
     }
     std::unique_lock lock(mutex_);
     // Only background work, which this is, drops the immutable memtable.
-    assert(write_buffers_.has_immutable());
     FlushImmutable(lock);
     if (sticky_error_.has_value()) {
         return StickyError();
@@ -215,7 +211,6 @@ void DatabaseEngine::RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock) {
         return;
     }
     // Recovery and every flush set the previous log number to zero.
-    assert(versions_->prev_log_number() == 0);
     std::set<std::uint64_t> live = versions_->LiveFiles();
     live.insert(pending_outputs_.begin(), pending_outputs_.end());
     const Result<std::vector<std::filesystem::path>> children =

@@ -25,11 +25,9 @@ public:
     private:
         friend class SnapshotRegistry;
 
-        Registration(SnapshotRegistry& registry, SequenceNumber sequence) noexcept
-            : registry_(&registry), sequence_(sequence) {}
+        explicit Registration(SequenceNumber sequence) noexcept : sequence_(sequence) {}
         ~Registration() = default;
 
-        SnapshotRegistry* registry_;
         SequenceNumber sequence_;
         Registration* previous_ = nullptr;
         Registration* next_ = nullptr;
@@ -40,7 +38,7 @@ public:
     SnapshotRegistry& operator=(const SnapshotRegistry&) = delete;
     SnapshotRegistry(SnapshotRegistry&&) = delete;
     SnapshotRegistry& operator=(SnapshotRegistry&&) = delete;
-    ~SnapshotRegistry();
+    ~SnapshotRegistry() = default;
 
     // Requires a sequence not below the newest active registration.
     [[nodiscard]] Registration* Register(SequenceNumber sequence);

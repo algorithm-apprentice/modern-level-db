@@ -1,7 +1,6 @@
 #include "engine/recovery.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstdint>
 #include <expected>
 #include <filesystem>

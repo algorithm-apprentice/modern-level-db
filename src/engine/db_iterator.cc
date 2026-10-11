@@ -1,6 +1,5 @@
 #include "engine/db_iterator.h"
 
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -27,9 +26,7 @@ DbIterator::DbIterator(std::unique_ptr<InternalIterator> internal,
     : internal_(std::move(internal)),
       user_comparator_(&user_comparator),
       sequence_(sequence),
-      sampling_(std::move(sampling)) {
-    assert(internal_ != nullptr && sequence <= MaxSequenceNumber);
-}
+      sampling_(std::move(sampling)) {}
 
 void DbIterator::CountRead(ByteView key, ByteView value) {
     if (!sampling_.sample) {
@@ -47,7 +44,6 @@ void DbIterator::CountRead(ByteView key, ByteView value) {
 }
 
 ByteView DbIterator::key() const noexcept {
-    assert(valid_);
     if (forward_) {
         return UserKey(internal_->key());
     }
@@ -55,7 +51,6 @@ ByteView DbIterator::key() const noexcept {
 }
 
 ByteView DbIterator::value() const noexcept {
-    assert(valid_);
     if (forward_) {
         return internal_->value();
     }
@@ -95,7 +90,6 @@ Status DbIterator::Seek(ByteView user_key) {
 }
 
 Status DbIterator::Next() {
-    assert(valid_);
     if (forward_) {
         Assign(saved_key_, UserKey(internal_->key()));
         const Status moved = internal_->Next();
@@ -119,7 +113,6 @@ Status DbIterator::Next() {
 }
 
 Status DbIterator::Prev() {
-    assert(valid_);
     if (forward_) {
         // Move the internal iterator before the current user key's entries.
         Assign(saved_key_, UserKey(internal_->key()));

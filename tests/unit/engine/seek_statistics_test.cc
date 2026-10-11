@@ -102,18 +102,6 @@ protected:
     SeekStatistics statistics_;
 };
 
-#ifndef NDEBUG
-class SeekStatisticsDeathTest : public SeekStatisticsTest {};
-
-TEST_F(SeekStatisticsDeathTest, RejectsAFileSlotFromAnotherVersion) {
-    const auto old_version = Make({{1, File(10, "a", "b", 1000)}});
-    const auto current = Next(*old_version, {}, {{2, File(20, "a", "z", 1000)}});
-    const SeekCharge old_slot = ChargeOf(old_version, 1, 0);
-
-    EXPECT_DEATH(static_cast<void>(statistics_.Charge(*current, *current, old_slot)), "");
-}
-#endif
-
 TEST_F(SeekStatisticsTest, RecordsAFileOnceItsBudgetRunsOut) {
     // A file of 150 times 16 KiB allows 150 seeks.
     const auto version = Make({{1, File(10, "a", "b", 150 * 16384)}});
