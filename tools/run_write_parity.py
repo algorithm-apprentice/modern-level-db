@@ -486,7 +486,7 @@ def compile_command_tokens(entry):
     raise ValueError("compile command entry has no command or arguments")
 
 
-def selected_compile_command(role, source, required_token=None):
+def selected_compile_command(role, source):
     commands = read_json(
         Path(role["build"]["build_directory"]) / "compile_commands.json"
     )
@@ -498,8 +498,11 @@ def selected_compile_command(role, source, required_token=None):
         if not isinstance(entry, dict) or Path(entry.get("file", "")) != source:
             continue
         tokens = compile_command_tokens(entry)
-        if required_token is None or required_token in tokens:
-            matches.append(tokens)
+        # Frozen builds may contain both ordinary and retired diagnostic objects.
+        if ("-DMODERN_LEVELDB_READ_DIAGNOSTICS=1" in tokens
+                or "/DMODERN_LEVELDB_READ_DIAGNOSTICS=1" in tokens):
+            continue
+        matches.append(tokens)
     if len(matches) != 1:
         raise ValueError(f"expected exactly one compile command for {source}")
     return matches[0]
@@ -508,15 +511,16 @@ def selected_compile_command(role, source, required_token=None):
 def normalized_modern_compile_command(role):
     build = role["build"]
     source = Path(build["source_directory"]) / "src/engine/write_path.cc"
-    tokens = selected_compile_command(
-        role, source, "-DMODERN_LEVELDB_READ_DIAGNOSTICS=0"
-    )
+    tokens = selected_compile_command(role, source)
     replacements = (
         (build["build_directory"], "<BUILD>"),
         (build["source_directory"], "<SOURCE>"),
     )
     normalized = []
     for token in tokens:
+        if token in ("-DMODERN_LEVELDB_READ_DIAGNOSTICS=0",
+                     "/DMODERN_LEVELDB_READ_DIAGNOSTICS=0"):
+            continue
         for original, replacement in replacements:
             token = token.replace(original, replacement)
         normalized.append(token)

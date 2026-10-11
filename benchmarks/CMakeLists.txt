@@ -131,9 +131,6 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
   configure_file(profiling_build.h.in profiling_build.h @ONLY)
 
   add_executable(modern_leveldb_performance profiling_bench.cc)
-  target_compile_definitions(
-    modern_leveldb_performance PRIVATE MODERN_LEVELDB_READ_DIAGNOSTICS=0
-  )
   target_include_directories(
     modern_leveldb_performance
     PRIVATE

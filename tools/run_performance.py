@@ -1058,6 +1058,12 @@ def run_case(binary, case, output, capture_cpu=False, smoke=False, repetitions=N
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    for option in sys.argv[1:]:
+        if option.split("=", 1)[0] == "--read-diagnostics":
+            parser.error(
+                "unrecognized arguments: --read-diagnostics; "
+                "fine-grained read diagnostics have been retired"
+            )
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--case", choices=CASES, required=True)
     parser.add_argument("--output", type=Path, required=True)

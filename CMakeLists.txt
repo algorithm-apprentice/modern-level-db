@@ -78,7 +78,6 @@ set(
     src/format/internal_key.cc
     src/format/wal_format.cc
     src/format/write_batch.cc
-    src/instrumentation/read_diagnostics.cc
     src/memory/arena.cc
     src/memory/memtable.cc
     src/metadata/filenames.cc
@@ -137,7 +136,6 @@ function(modern_leveldb_add_library target)
 endfunction()
 
 modern_leveldb_add_library(modern_leveldb)
-target_compile_definitions(modern_leveldb PRIVATE MODERN_LEVELDB_READ_DIAGNOSTICS=0)
 add_library(modern_leveldb::modern_leveldb ALIAS modern_leveldb)
 
 if(MODERN_LEVELDB_BUILD_TESTS)

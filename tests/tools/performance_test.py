@@ -140,6 +140,23 @@ class PerformanceReportTest(unittest.TestCase):
             self.assertIn("unrecognized arguments: --read-diagnostics", rejected.stderr)
             self.assertFalse(output.exists())
 
+    def test_runner_rejects_retired_read_diagnostics_before_help(self):
+        for options in (
+            ["--read-diagnostics", "--help"],
+            ["--help", "--read-diagnostics"],
+            ["--read-diagnostics=true", "--help"],
+        ):
+            with self.subTest(options=options):
+                rejected = subprocess.run(
+                    [
+                        sys.executable, str(ROOT / "tools" / "run_performance.py"),
+                        *options,
+                    ],
+                    capture_output=True, text=True, timeout=30,
+                )
+                self.assertEqual(rejected.returncode, 2, rejected.stderr)
+                self.assertIn("read diagnostics have been retired", rejected.stderr)
+
     @unittest.skipUnless(sys.platform == "win32", "native ASCII boundary is Windows-specific")
     def test_native_runner_rejects_non_ascii_work_roots_before_creation(self):
         with tempfile.TemporaryDirectory(prefix="modern-ascii-boundary-") as root:
