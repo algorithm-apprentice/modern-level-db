@@ -2,7 +2,6 @@
 #define MODERN_LEVELDB_BASE_CODING_INTERNAL_H_
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 
@@ -15,7 +14,6 @@ void EncodeVarint32Trusted(MutableByteView& output, std::uint32_t value) noexcep
 // Requires enough output for the uint32 length and payload, then advances past both.
 inline void EncodeLengthPrefixedTrusted(MutableByteView& output, ByteView value) noexcept {
     EncodeVarint32Trusted(output, static_cast<std::uint32_t>(value.size()));
-    assert(output.size() >= value.size());
     std::ranges::copy(value, output.begin());
     output = output.subspan(value.size());
 }

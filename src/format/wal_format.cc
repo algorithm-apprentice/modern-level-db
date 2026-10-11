@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -26,7 +25,6 @@ constexpr bool IsFragmentType(WalRecordType type) noexcept {
 }
 
 constexpr std::size_t TypeIndex(WalRecordType type) noexcept {
-    assert(IsFragmentType(type));
     return static_cast<std::size_t>(type) - static_cast<std::size_t>(WalRecordType::Full);
 }
 

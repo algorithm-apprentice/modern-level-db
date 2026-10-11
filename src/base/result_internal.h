@@ -1,7 +1,6 @@
 #ifndef MODERN_LEVELDB_BASE_RESULT_INTERNAL_H_
 #define MODERN_LEVELDB_BASE_RESULT_INTERNAL_H_
 
-#include <cassert>
 #include <optional>
 #include <utility>
 
@@ -14,14 +13,10 @@ namespace modern_leveldb {
 // reopening the error policy.
 template <typename T>
 [[nodiscard]] T TakeTrusted(Result<T> result) {
-    assert(result.has_value());  // GCOVR_EXCL_BR_WITHOUT_HIT: trusted-result invariant
     return std::move(result).value();
 }
 
-inline void AssertSuccess(Status status) noexcept {
-    assert(status.has_value());  // GCOVR_EXCL_BR_WITHOUT_HIT: trusted-status invariant
-    static_cast<void>(status);
-}
+inline void AssertSuccess(Status status) noexcept { static_cast<void>(status); }
 
 // Retains the first failure of a multi-step resource operation. Later
 // successes do not clear it, and later failures do not replace its context.

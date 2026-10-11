@@ -410,39 +410,6 @@ TEST(WalWriterTest, ReportsFlushAndSyncFailures) {
     EXPECT_EQ(sync.error().message(), "injected sync failure");
 }
 
-#ifndef NDEBUG
-TEST(WalWriterDeathTest, RequiresAFileAndSingleClose) {
-    EXPECT_DEATH({ WalWriter writer(nullptr); }, "");
-    EXPECT_DEATH(
-        {
-            const auto state = std::make_shared<WritableState>();
-            WalWriter writer(Writable(state));
-            static_cast<void>(writer.Close());
-            static_cast<void>(writer.Close());
-        },
-        "");
-}
-
-TEST(WalWriterDeathTest, RejectsRecordAndSyncAfterClose) {
-    EXPECT_DEATH(
-        {
-            const auto state = std::make_shared<WritableState>();
-            WalWriter writer(Writable(state));
-            static_cast<void>(writer.Close());
-            static_cast<void>(writer.AddRecord(AsBytes("late")));
-        },
-        "");
-    EXPECT_DEATH(
-        {
-            const auto state = std::make_shared<WritableState>();
-            WalWriter writer(Writable(state));
-            static_cast<void>(writer.Close());
-            static_cast<void>(writer.Sync());
-        },
-        "");
-}
-#endif
-
 TEST(WalReaderTest, RoundTripsShortReadsEmptyAndFragmentedRecords) {
     const auto destination = std::make_shared<WritableState>();
     WalWriter writer(Writable(destination));

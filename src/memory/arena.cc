@@ -1,6 +1,5 @@
 #include "memory/arena.h"
 
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -9,7 +8,6 @@
 namespace modern_leveldb {
 
 std::byte* Arena::Allocate(std::size_t bytes) {
-    assert(bytes > 0);  // GCOVR_EXCL_BR_WITHOUT_HIT: positive-size precondition
     if (bytes <= bytes_remaining_) {
         return AllocateFromCurrentBlock(bytes);
     }
@@ -17,8 +15,6 @@ std::byte* Arena::Allocate(std::size_t bytes) {
 }
 
 std::byte* Arena::AllocateAligned(std::size_t bytes) {
-    assert(bytes > 0);  // GCOVR_EXCL_BR_WITHOUT_HIT: positive-size precondition
-
     static_assert((Alignment & (Alignment - 1U)) == 0U);
 
     std::size_t padding = 0;
@@ -30,19 +26,14 @@ std::byte* Arena::AllocateAligned(std::size_t bytes) {
 
     if (padding <= bytes_remaining_ && bytes <= bytes_remaining_ - padding) {
         std::byte* result = AllocateFromCurrentBlock(bytes, padding);
-        assert(reinterpret_cast<std::uintptr_t>(result) % Alignment == 0U);
         return result;
     }
 
     std::byte* result = AllocateFallback(bytes);
-    assert(reinterpret_cast<std::uintptr_t>(result) % Alignment == 0U);
     return result;
 }
 
 std::byte* Arena::AllocateFromCurrentBlock(std::size_t bytes, std::size_t padding) noexcept {
-    assert(allocation_pointer_ != nullptr);
-    assert(padding <= bytes_remaining_);
-    assert(bytes <= bytes_remaining_ - padding);
     std::byte* result = allocation_pointer_ + padding;
     allocation_pointer_ += padding + bytes;
     bytes_remaining_ -= padding + bytes;

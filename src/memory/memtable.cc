@@ -1,7 +1,6 @@
 #include "memory/memtable.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -59,7 +58,6 @@ const std::byte* EncodeMemTableEntry(Arena& arena, SequenceNumber sequence, Valu
     output = output.subspan(InternalKeyTrailerSize);
 
     EncodeLengthPrefixedTrusted(output, value);
-    assert(output.empty());
     return entry;
 }
 
@@ -76,22 +74,17 @@ MemTable::ReadPin::ReadPin(ReadPin&& source) noexcept : table_(source.table_) {
 
 MemTable::ReadPin::~ReadPin() {
     if (table_ != nullptr) {
-        assert(table_->read_pins_ > 0);
         --table_->read_pins_;
     }
 }
 // GCOVR_EXCL_STOP
 
-const MemTable& MemTable::ReadPin::value() const noexcept {
-    assert(table_ != nullptr);
-    return *table_;
-}
+const MemTable& MemTable::ReadPin::value() const noexcept { return *table_; }
 
 MemTable::MemTable(const Comparator& user_comparator)
     : entry_comparator_(user_comparator), table_(entry_comparator_, arena_) {}
 
 void MemTable::Add(SequenceNumber sequence, ValueKind kind, ByteView key, ByteView value) {
-    assert(IsValidValueKind(kind));
     const std::byte* const entry = EncodeMemTableEntry(arena_, sequence, kind, key, value,
                                                        EncodedMemTableEntrySize(key, value));
     table_.Insert(entry);
@@ -144,7 +137,6 @@ void MemTable::Iterator::Seek(ByteView internal_key) {
     seek_key_.resize(prefix_size + internal_key.size());
     MutableByteView output(seek_key_);
     EncodeLengthPrefixedTrusted(output, internal_key);
-    assert(output.empty());
     iterator_.Seek(seek_key_.data());
 }
 

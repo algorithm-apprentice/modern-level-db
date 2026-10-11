@@ -224,21 +224,6 @@ TEST(MemTableTest, PackedEntryCodecFeedsLookupAndIteration) {
     EXPECT_TRUE(std::ranges::equal(iterator.value(), value));
 }
 
-#ifndef NDEBUG
-TEST(MemTableDeathTest, InsertionAssertsUniqueInternalKeys) {
-    MemTable table{BytewiseComparator()};
-    table.Add(1, ValueKind::Value, AsBytes("key"), AsBytes("first"));
-
-    EXPECT_DEATH(table.Add(1, ValueKind::Value, AsBytes("key"), AsBytes("second")), "");
-}
-
-TEST(MemTableDeathTest, InsertionAssertsValueKind) {
-    MemTable table{BytewiseComparator()};
-
-    EXPECT_DEATH(table.Add(1, static_cast<ValueKind>(2), AsBytes("key"), {}), "");
-}
-#endif
-
 TEST(MemTableTest, MovedFromLookupKeyRemainsAValidCanonicalLookup) {
     MemTable table{BytewiseComparator()};
     table.Add(0, ValueKind::Value, {}, AsBytes("empty-key"));

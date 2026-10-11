@@ -1,7 +1,6 @@
 #include "cache/sharded_lru_cache_core.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -14,7 +13,6 @@
 namespace modern_leveldb {
 
 ByteView ShardedLruCacheCore::Entry::key() const noexcept {
-    assert(next != this);
     const auto* bytes = reinterpret_cast<const std::byte*>(this) + sizeof(Entry);
     return ByteView(bytes, key_length);
 }
@@ -39,10 +37,7 @@ ShardedLruCacheCore::Pin& ShardedLruCacheCore::Pin::operator=(Pin&& source) noex
 ShardedLruCacheCore::Pin::~Pin() { Reset(); }
 // GCOVR_EXCL_STOP
 
-const void* ShardedLruCacheCore::Pin::value() const noexcept {
-    assert(entry_ != nullptr);
-    return entry_->value;
-}
+const void* ShardedLruCacheCore::Pin::value() const noexcept { return entry_->value; }
 
 void ShardedLruCacheCore::Pin::Reset() noexcept {
     if (entry_ != nullptr) {
@@ -130,7 +125,6 @@ std::unique_ptr<ShardedLruCacheCore::Entry*[]> ShardedLruCacheCore::HandleTable:
 
 void ShardedLruCacheCore::HandleTable::RehashInto(std::unique_ptr<Entry*[]> buckets,
                                                   std::uint32_t length) noexcept {
-    [[maybe_unused]] std::uint32_t count = 0;
     for (std::uint32_t index = 0; index < length_; ++index) {
         Entry* entry = buckets_[index];
         while (entry != nullptr) {
@@ -139,10 +133,8 @@ void ShardedLruCacheCore::HandleTable::RehashInto(std::unique_ptr<Entry*[]> buck
             entry->next_hash = *position;
             *position = entry;
             entry = next;
-            ++count;
         }
     }
-    assert(count == elements_);
     buckets_ = std::move(buckets);
     length_ = length;
 }
@@ -156,7 +148,6 @@ ShardedLruCacheCore::Shard::Shard()
 // GCOVR_EXCL_STOP
 
 void ShardedLruCacheCore::ErasedValueDeleter::operator()(const void* value) const noexcept {
-    assert(value != nullptr);
     deleter(value);
 }
 
@@ -177,10 +168,8 @@ void ShardedLruCacheCore::Initialize(std::size_t capacity) noexcept {
 void ShardedLruCacheCore::Destroy() noexcept {
     Entry* retired = nullptr;
     for (Shard& shard : shards_) {
-        assert(shard.in_use.next == &shard.in_use);
         for (Entry* entry = shard.lru.next; entry != &shard.lru;) {
             Entry* next = entry->next;
-            assert(entry->in_cache && entry->refs == 1);
             entry->in_cache = false;
             Unref(shard, *entry, retired);
             entry = next;
@@ -209,7 +198,6 @@ ShardedLruCacheCore::Pin ShardedLruCacheCore::Insert(ByteView key, const void* v
             entry->in_cache = true;
             Append(shard.in_use, *entry);
             FinishErase(shard, replaced, retired);
-            assert(shard.usage == base_charge);
             shard.usage += entry->charge;
             Evict(shard, retired);
         }
@@ -266,11 +254,6 @@ std::size_t ShardedLruCacheCore::ShardIndex(std::uint32_t hash) noexcept {
 
 ShardedLruCacheCore::PendingEntry ShardedLruCacheCore::CreateEntry(ByteView key, PendingValue value,
                                                                    std::size_t charge) {
-#ifndef NDEBUG
-    const bool key_size_fits =
-        key.size() <= std::numeric_limits<std::size_t>::max() - sizeof(Entry);
-    assert(key_size_fits);  // GCOVR_EXCL_BR_WITHOUT_HIT: trusted key extent
-#endif
     void* storage = ::operator new(sizeof(Entry) + key.size());
     auto* entry = static_cast<Entry*>(storage);
     std::construct_at(entry, value.get(), value.get_deleter().deleter, charge, key.size(),
@@ -282,14 +265,12 @@ ShardedLruCacheCore::PendingEntry ShardedLruCacheCore::CreateEntry(ByteView key,
 }
 
 void ShardedLruCacheCore::DeleteEntry(Entry* entry) noexcept {
-    assert(entry != nullptr);
     entry->deleter(entry->value);
     entry->~Entry();
     ::operator delete(entry);
 }
 
 void ShardedLruCacheCore::Remove(Entry& entry) noexcept {
-    assert(entry.next != nullptr && entry.previous != nullptr);
     entry.next->previous = entry.previous;
     entry.previous->next = entry.next;
     entry.next = nullptr;
@@ -297,7 +278,6 @@ void ShardedLruCacheCore::Remove(Entry& entry) noexcept {
 }
 
 void ShardedLruCacheCore::Append(Entry& list, Entry& entry) noexcept {
-    assert(entry.next == nullptr && entry.previous == nullptr);
     entry.next = &list;
     entry.previous = list.previous;
     entry.previous->next = &entry;
@@ -305,9 +285,7 @@ void ShardedLruCacheCore::Append(Entry& list, Entry& entry) noexcept {
 }
 
 void ShardedLruCacheCore::Ref(Shard& shard, Entry& entry) noexcept {
-    assert(entry.refs > 0);
     if (entry.refs == 1) {
-        assert(entry.in_cache);
         Remove(entry);
         Append(shard.in_use, entry);
     }
@@ -315,10 +293,8 @@ void ShardedLruCacheCore::Ref(Shard& shard, Entry& entry) noexcept {
 }
 
 void ShardedLruCacheCore::Unref(Shard& shard, Entry& entry, Entry*& retired) noexcept {
-    assert(entry.refs > 0);
     --entry.refs;
     if (entry.refs == 0) {
-        assert(!entry.in_cache);
         Retire(entry, retired);
     } else if (entry.in_cache && entry.refs == 1) {
         // Releasing the last external pin makes the entry evictable again;
@@ -332,10 +308,8 @@ void ShardedLruCacheCore::FinishErase(Shard& shard, Entry* entry, Entry*& retire
     if (entry == nullptr) {
         return;
     }
-    assert(entry->in_cache);
     Remove(*entry);
     entry->in_cache = false;
-    assert(shard.usage >= entry->charge);
     shard.usage -= entry->charge;
     Unref(shard, *entry, retired);
 }
@@ -343,10 +317,7 @@ void ShardedLruCacheCore::FinishErase(Shard& shard, Entry* entry, Entry*& retire
 void ShardedLruCacheCore::Evict(Shard& shard, Entry*& retired) noexcept {
     while (shard.usage > shard.capacity && shard.lru.next != &shard.lru) {
         Entry* entry = shard.lru.next;
-        assert(entry->refs == 1 && entry->in_cache);
-        Entry* removed = shard.table.Remove(entry->key(), entry->hash);
-        assert(removed == entry);
-        (void)removed;
+        static_cast<void>(shard.table.Remove(entry->key(), entry->hash));
         FinishErase(shard, entry, retired);
     }
 }

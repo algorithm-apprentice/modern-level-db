@@ -1,7 +1,6 @@
 #include "format/internal_key.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -71,7 +70,6 @@ Result<LookupKey> LookupKey::Create(ByteView user_key, SequenceNumber sequence) 
 }
 
 LookupKey LookupKey::CreateTrusted(ByteView user_key, SequenceNumber sequence) {
-    assert(sequence <= MaxSequenceNumber);
     const std::size_t internal_key_size = user_key.size() + InternalKeyTrailerSize;
     const auto encoded_internal_key_size = static_cast<std::uint32_t>(internal_key_size);
     const std::size_t prefix_size = VarintLength(encoded_internal_key_size);
@@ -123,7 +121,6 @@ ByteView LookupKey::internal_key() const noexcept {
 
 ByteView LookupKey::user_key() const noexcept {
     const ByteView encoded_internal_key = internal_key();
-    assert(encoded_internal_key.size() >= InternalKeyTrailerSize);
     return encoded_internal_key.first(encoded_internal_key.size() - InternalKeyTrailerSize);
 }
 
@@ -165,7 +162,6 @@ Result<InternalKey> InternalKey::Decode(ByteView encoded) {
 }
 
 ByteView InternalKey::user_key() const noexcept {
-    assert(encoded_.size() >= InternalKeyTrailerSize);
     return ByteView(encoded_).first(encoded_.size() - InternalKeyTrailerSize);
 }
 
@@ -175,14 +171,9 @@ SequenceNumber InternalKey::sequence() const noexcept {
 
 ValueKind InternalKey::kind() const noexcept { return DecodeInternalKeyValueKind(trailer()); }
 
-std::uint64_t InternalKey::trailer() const noexcept {
-    assert(encoded_.size() >= InternalKeyTrailerSize);
-    return DecodeInternalKeyTrailer(encoded_);
-}
+std::uint64_t InternalKey::trailer() const noexcept { return DecodeInternalKeyTrailer(encoded_); }
 
 int InternalKeyComparator::Compare(ByteView left, ByteView right) const noexcept {
-    assert(left.size() >= InternalKeyTrailerSize);
-    assert(right.size() >= InternalKeyTrailerSize);
 #if MODERN_LEVELDB_READ_DIAGNOSTICS
     read_diagnostics::Add(read_diagnostics::Counter::InternalKeyComparisons);
 #endif

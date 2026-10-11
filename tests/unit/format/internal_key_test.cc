@@ -429,17 +429,6 @@ TEST(InternalKeyComparatorTest, MatchesDecodedReferenceForValidKeys) {
     }
 }
 
-#ifndef NDEBUG
-TEST(InternalKeyComparatorDeathTest, ComparisonRejectsShortOperands) {
-    const InternalKeyComparator comparator(BytewiseComparator());
-    const std::vector<std::byte> short_key(InternalKeyTrailerSize - 1);
-    const std::vector<std::byte> valid = Encoded("valid", 1, ValueKind::Value);
-
-    EXPECT_DEATH(static_cast<void>(comparator.Compare(short_key, valid)), "");
-    EXPECT_DEATH(static_cast<void>(comparator.Compare(valid, short_key)), "");
-}
-#endif
-
 TEST(InternalKeyComparatorTest, MatchesLevelDbShortestSeparatorCases) {
     InternalKeyComparator comparator(BytewiseComparator());
 

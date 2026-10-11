@@ -1,7 +1,6 @@
 #include "format/write_batch.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -62,7 +61,6 @@ Result<WriteBatchReader> WriteBatchReader::Open(ByteView encoded) {
 }
 
 WriteBatchReader WriteBatchReader::OpenTrusted(const EncodedWriteBatch& batch) noexcept {
-    assert(batch.encoded().size() >= WriteBatchHeaderSize);
     return WriteBatchReader(batch.encoded().subspan(WriteBatchHeaderSize), batch.sequence(),
                             batch.count());
 }
@@ -144,7 +142,6 @@ void EncodedWriteBatch::AppendRecord(ValueKind kind, ByteView key, ByteView valu
     if (kind == ValueKind::Value) {
         EncodeLengthPrefixedTrusted(output, value);
     }
-    assert(output.empty());
 }
 
 void EncodedWriteBatch::SetSequence(SequenceNumber sequence) noexcept {

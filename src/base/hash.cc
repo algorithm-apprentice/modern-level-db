@@ -1,6 +1,5 @@
 #include "modern_leveldb/base/hash.h"
 
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 
@@ -18,7 +17,6 @@ std::uint32_t Hash32(ByteView input, std::uint32_t seed) noexcept {
 
     while (input.size() >= sizeof(std::uint32_t)) {
         const auto word = ConsumeFixed32(input);
-        assert(word.has_value());
         hash = (hash + *word) * Multiplier;
         hash ^= hash >> 16U;
     }
