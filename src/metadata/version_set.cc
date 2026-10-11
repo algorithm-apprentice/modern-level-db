@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -60,10 +59,10 @@ VersionEdit Snapshot(const Comparator& user_comparator,
     snapshot.SetComparatorName(user_comparator.Name());
     for (std::uint32_t level = 0; level < NumLevels; ++level) {
         if (compact_pointers[level].has_value()) {
-            AssertSuccess(snapshot.AddCompactPointer(level, *compact_pointers[level]));
+            static_cast<void>(snapshot.AddCompactPointer(level, *compact_pointers[level]));
         }
         for (const Version::File& file : version.files(level)) {
-            AssertSuccess(snapshot.AddFile(level, *file));
+            static_cast<void>(snapshot.AddFile(level, *file));
         }
     }
     return snapshot;
@@ -94,15 +93,9 @@ VersionSet::ReadPin::~ReadPin() {
 }
 // GCOVR_EXCL_STOP
 
-const Version& VersionSet::ReadPin::value() const noexcept {
-    assert(version_ != nullptr);
-    return *version_;
-}
+const Version& VersionSet::ReadPin::value() const noexcept { return *version_; }
 
-VersionSet::ReadPin VersionSet::PinCurrent() noexcept {
-    assert(current_ != nullptr);
-    return ReadPin(*this, *current_);
-}
+VersionSet::ReadPin VersionSet::PinCurrent() noexcept { return ReadPin(*this, *current_); }
 
 Result<std::unique_ptr<VersionSet>> VersionSet::Create(FileSystem& file_system,
                                                        std::filesystem::path directory,
@@ -258,10 +251,7 @@ Status VersionSet::MarkFileNumberUsed(std::uint64_t number) {
     return {};
 }
 
-void VersionSet::SetLastSequence(SequenceNumber sequence) noexcept {
-    assert(sequence >= last_sequence_ && sequence <= MaxSequenceNumber);
-    last_sequence_ = sequence;
-}
+void VersionSet::SetLastSequence(SequenceNumber sequence) noexcept { last_sequence_ = sequence; }
 
 Status VersionSet::LogAndApply(VersionEdit edit) {
     if (failure_.has_value()) {
@@ -284,7 +274,6 @@ Status VersionSet::LogAndApply(VersionEdit edit) {
 }
 
 Status VersionSet::LogAndApply(VersionEdit edit, std::unique_lock<std::mutex>& lock) {
-    assert(lock.owns_lock());
     if (failure_.has_value()) {
         return std::unexpected(*failure_);
     }
@@ -302,8 +291,8 @@ Status VersionSet::ApplyPrepared(VersionEdit edit, Version version,
     const std::uint64_t prev_log_number = edit.prev_log_number().value_or(prev_log_number_);
     edit.SetLogNumber(log_number);
     edit.SetPrevLogNumber(prev_log_number);
-    AssertSuccess(edit.SetNextFileNumber(next_file_number_));
-    AssertSuccess(edit.SetLastSequence(last_sequence_));
+    static_cast<void>(edit.SetNextFileNumber(next_file_number_));
+    static_cast<void>(edit.SetLastSequence(last_sequence_));
     std::array<std::optional<InternalKey>, NumLevels> compact_pointers = compact_pointers_;
     for (const CompactPointer& pointer : edit.compact_pointers()) {
         compact_pointers[pointer.level] = pointer.key;
@@ -376,7 +365,6 @@ Status VersionSet::Write(const VersionEdit& edit,
                          const std::optional<std::vector<std::byte>>& new_manifest_snapshot) {
     std::unique_ptr<WalWriter> created;
     if (manifest_ == nullptr) {
-        assert(new_manifest_snapshot.has_value());
         Result<std::unique_ptr<WritableFile>> file =
             file_system_->OpenWritable(DescriptorFileName(directory_, manifest_file_number_));
         if (!file.has_value()) {
@@ -387,8 +375,6 @@ Status VersionSet::Write(const VersionEdit& edit,
         if (!snapshot.has_value()) {
             return snapshot;
         }
-    } else {
-        assert(!new_manifest_snapshot.has_value());
     }
     WalWriter& manifest = created != nullptr ? *created : *manifest_;
     const Status appended = manifest.AddRecord(edit.Encode());
@@ -450,8 +436,6 @@ void VersionSet::ReserveInstall() {
 }
 
 void VersionSet::InstallPrepared(std::shared_ptr<const Version> version) noexcept {
-    assert(read_pinned_versions_.capacity() > read_pinned_versions_.size());
-    assert(versions_.capacity() > versions_.size());
     if (current_ != nullptr && current_->read_pins_ != 0) {
         read_pinned_versions_.push_back(current_);
     }
@@ -467,7 +451,6 @@ void VersionSet::Install(std::shared_ptr<const Version> version) {
 }
 
 void VersionSet::ReleaseRead(const Version& version) noexcept {
-    assert(version.read_pins_ > 0);
     --version.read_pins_;
     if (version.read_pins_ != 0 || current_.get() == &version) {
         return;

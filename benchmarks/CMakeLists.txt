@@ -131,9 +131,6 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
   configure_file(profiling_build.h.in profiling_build.h @ONLY)
 
   add_executable(modern_leveldb_performance profiling_bench.cc)
-  target_compile_definitions(
-    modern_leveldb_performance PRIVATE MODERN_LEVELDB_READ_DIAGNOSTICS=0
-  )
   target_include_directories(
     modern_leveldb_performance
     PRIVATE
@@ -149,23 +146,7 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
     target_link_options(modern_leveldb_performance PRIVATE /DEBUG:FULL /INCREMENTAL:NO)
   endif()
 
-  add_executable(modern_leveldb_read_diagnostics profiling_bench.cc)
-  target_include_directories(
-    modern_leveldb_read_diagnostics
-    PRIVATE
-      "${CMAKE_CURRENT_BINARY_DIR}"
-      "${PROJECT_SOURCE_DIR}/src"
-      "${MODERN_LEVELDB_REFERENCE_SOURCE_DIR}"
-  )
-  target_link_libraries(
-    modern_leveldb_read_diagnostics
-    PRIVATE modern_leveldb_read_diagnostic leveldb benchmark::benchmark
-  )
-  modern_leveldb_set_project_warnings(modern_leveldb_read_diagnostics PRIVATE)
   if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
-    target_compile_options(modern_leveldb_read_diagnostics PRIVATE /Zi /Zo)
-    target_link_options(modern_leveldb_read_diagnostics PRIVATE /DEBUG:FULL /INCREMENTAL:NO)
-
     add_executable(modern_leveldb_windows_cpu_profile windows_cpu_profile.cc)
     target_compile_features(modern_leveldb_windows_cpu_profile PRIVATE cxx_std_23)
     target_include_directories(
@@ -235,12 +216,6 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
       --output "${CMAKE_CURRENT_BINARY_DIR}/performance-mutations"
       --full-mutations
   )
-  add_test(
-    NAME performance.read_diagnostics
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/read_diagnostics_smoke.py"
-      --binary "$<TARGET_FILE:modern_leveldb_read_diagnostics>"
-      --output "${CMAKE_CURRENT_BINARY_DIR}/performance-read-diagnostics"
-  )
   set_tests_properties(
     ${performance_contract_tests} performance.mutation_stream
     PROPERTIES LABELS performance TIMEOUT 120
@@ -261,7 +236,7 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
     )
   endif()
   set_tests_properties(
-    performance.smoke performance.mutations performance.read_diagnostics
+    performance.smoke performance.mutations
     PROPERTIES LABELS performance TIMEOUT 600
   )
   add_test(

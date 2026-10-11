@@ -8,9 +8,6 @@
 
 #include "api/api_internal.h"
 #include "format/write_batch.h"
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-#include "instrumentation/read_diagnostics.h"
-#endif
 #include "modern_leveldb/db.h"
 #include "table/bloom_filter.h"
 #include "table/compression.h"
@@ -174,9 +171,6 @@ Status Database::WriteExclusive(WriteBatch& batch, const WriteOptions& options) 
 
 Result<bool> Database::Get(ByteView key, std::vector<std::byte>& value,
                            const ReadOptions& options) {
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    read_diagnostics::GetScope diagnostic_get;
-#endif
     detail::DatabaseState* const state = state_.get();
     if (state == nullptr) {
         return std::unexpected(MovedFromDatabase("Get"));

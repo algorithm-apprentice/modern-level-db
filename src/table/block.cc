@@ -8,9 +8,6 @@
 #include <utility>
 #include <vector>
 
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-#include "instrumentation/read_diagnostics.h"
-#endif
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
@@ -125,9 +122,6 @@ Status Block::ValidateEntries(const EntryVisitor& visitor) const {
     std::string key;
     std::size_t restart_index = 0;
     for (std::size_t offset = 0; offset < layout.entries_end;) {
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-        read_diagnostics::Add(read_diagnostics::Counter::ValidationEntries);
-#endif
         DecodedEntry entry{};
         const std::byte* begin = layout.contents.data() + offset;
         const std::byte* limit = layout.contents.data() + layout.entries_end;
@@ -322,9 +316,6 @@ Status Block::Iterator::RestartKey(std::size_t index, ByteView& key) {
         !AcceptsKeySize(entry.key_delta.size())) {
         return Corruption();
     }
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    read_diagnostics::RecordDecodedEntry(true);
-#endif
     key = entry.key_delta;
     return {};
 }
@@ -368,9 +359,6 @@ Status Block::Iterator::ParseNextEntry() {
     key_.append(reinterpret_cast<const char*>(entry.key_delta.data()), entry.key_delta.size());
     value_ = entry.value;
     next_ = entry_end;
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    read_diagnostics::RecordDecodedEntry();
-#endif
     while (restart_index_ + 1 < layout_.restart_count) {
         std::size_t restart = 0;
         if (!RestartPoint(restart_index_ + 1, restart)) {

@@ -24,6 +24,7 @@ from run_write_parity import (
     aggregate_cells,
     enumerate_cells,
     main,
+    normalized_modern_compile_command,
     run_matrix,
     validate_cell_manifest,
     validate_plan,
@@ -62,7 +63,7 @@ def make_plan(root):
         archive.write_bytes(f"{name}-leveldb".encode())
         compile_commands = build_directory / "compile_commands.json"
         modern_command = (
-            f"/usr/bin/c++ -DMODERN_LEVELDB_READ_DIAGNOSTICS=0 "
+            f"/usr/bin/c++ "
             f"-I{source}/include -isystem {build_directory}/_deps/snappy "
             f"-O3 -arch arm64 -o {build_directory}/write_path.o "
             f"-c {source}/src/engine/write_path.cc"
@@ -433,6 +434,61 @@ class FrozenPlanTest(unittest.TestCase):
         for index, changed in enumerate(changes):
             with self.subTest(index=index), self.assertRaises(ValueError):
                 validate_plan(changed)
+
+    def test_aligns_flagless_builds_with_frozen_uninstrumented_commands(self):
+        for name, role in self.plan["roles"].items():
+            build = role["build"]
+            path = Path(build["build_directory"]) / "compile_commands.json"
+            commands = read_json(path)
+            arguments = [
+                "/usr/bin/c++", "-std=c++23", "-O3",
+                "-I" + str(Path(build["source_directory"]) / "include"),
+                "-o", str(Path(build["build_directory"]) / "write_path.o"),
+                "-c", commands[0]["file"],
+            ]
+            commands[0]["arguments"] = arguments
+            if name == "baseline":
+                arguments.insert(1, "-DMODERN_LEVELDB_READ_DIAGNOSTICS=0")
+                instrumented = copy.deepcopy(commands[0])
+                instrumented["arguments"][1] = "-DMODERN_LEVELDB_READ_DIAGNOSTICS=1"
+                commands.append(instrumented)
+            write_json(path, commands)
+        verify_compile_alignment(self.plan)
+
+    def test_rejects_instrumented_only_and_ambiguous_modern_commands(self):
+        role = self.plan["roles"]["final"]
+        path = Path(role["build"]["build_directory"]) / "compile_commands.json"
+        command = read_json(path)[0]
+        command["arguments"] = ["/usr/bin/c++", "-O3", "-c", command["file"]]
+        for define in ("-D", "/D"):
+            with self.subTest(define=define):
+                instrumented = copy.deepcopy(command)
+                instrumented["arguments"].insert(
+                    1, define + "MODERN_LEVELDB_READ_DIAGNOSTICS=1"
+                )
+                write_json(path, [instrumented])
+                with self.assertRaisesRegex(ValueError, "exactly one compile command"):
+                    normalized_modern_compile_command(role)
+        write_json(path, [command, copy.deepcopy(command)])
+        with self.assertRaisesRegex(ValueError, "exactly one compile command"):
+            normalized_modern_compile_command(role)
+
+    def test_normalizes_retired_disabled_definition_for_both_compilers(self):
+        role = self.plan["roles"]["final"]
+        path = Path(role["build"]["build_directory"]) / "compile_commands.json"
+        command = read_json(path)[0]
+        arguments = ["/usr/bin/c++", "-O3", "-c", command["file"]]
+        command["arguments"] = arguments
+        write_json(path, [command])
+        expected = normalized_modern_compile_command(role)
+        for define in ("-D", "/D"):
+            with self.subTest(define=define):
+                command["arguments"] = [
+                    arguments[0], define + "MODERN_LEVELDB_READ_DIAGNOSTICS=0",
+                    *arguments[1:],
+                ]
+                write_json(path, [command])
+                self.assertEqual(normalized_modern_compile_command(role), expected)
 
     def test_verifies_reference_compile_archive_and_runtime_profile_evidence(self):
         final = self.plan["roles"]["final"]

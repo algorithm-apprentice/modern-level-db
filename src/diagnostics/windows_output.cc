@@ -1,6 +1,5 @@
 #include "diagnostics/windows_output.h"
 
-#include <cassert>
 #include <string>
 #include <utility>
 
@@ -13,9 +12,7 @@ WindowsOutputFile::WindowsOutputFile(HANDLE handle,
     : WindowsOutputFile(handle, std::nullopt, std::move(operations)) {}
 WindowsOutputFile::WindowsOutputFile(HANDLE handle, std::optional<DWORD> acquisition_error,
                                      std::shared_ptr<WindowsFileOperations> operations)
-    : handle_(handle), acquisition_error_(acquisition_error), operations_(std::move(operations)) {
-    assert(operations_ != nullptr);
-}
+    : handle_(handle), acquisition_error_(acquisition_error), operations_(std::move(operations)) {}
 WindowsOutputFile WindowsOutputFile::Standard(DWORD stream) {
     const HANDLE handle = ::GetStdHandle(stream);
     const std::optional<DWORD> error =

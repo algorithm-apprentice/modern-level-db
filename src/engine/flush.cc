@@ -105,7 +105,7 @@ Result<VersionEdit> FlushMemTable(FileSystem& file_system, const std::filesystem
         PickLevelForMemTableOutput(base, comparator.user_comparator(), file.smallest.user_key(),
                                    file.largest.user_key(), options.target_file_size);
     // A built table has a fresh number and valid keys at a valid level.
-    AssertSuccess(edit.AddFile(level, std::move(file)));
+    static_cast<void>(edit.AddFile(level, std::move(file)));
     return edit;
 }
 

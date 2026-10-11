@@ -203,7 +203,7 @@ higher layer.
 
 | Layer | Modules | Responsibility |
 |---|---|---|
-| 0 | `base`, `instrumentation` | Byte views, errors, results, coding, comparators, checksums, hashing; optional standard-library-only profiling collection |
+| 0 | `base` | Byte views, errors, results, coding, comparators, checksums, hashing |
 | 1 | `cache`, `platform` | Generic sharded cache; filesystem, files, locking, clock, and executor |
 | 2 | `format` | Internal keys, write-batch encoding, and WAL physical-record encoding |
 | 3 | `wal`, `memory` | WAL stream I/O; arena, skip list, and memtable |
@@ -214,9 +214,7 @@ higher layer.
 
 ### Implemented module graph
 
-Arrows point from a dependent module to a direct prerequisite. Dashed
-instrumentation edges exist only in the separately compiled read-diagnostic
-library; the ordinary library compiles those hooks out.
+Arrows point from a dependent module to a direct prerequisite.
 
 ```mermaid
 flowchart TD
@@ -231,13 +229,11 @@ flowchart TD
   CACHE[cache]
   PLATFORM[platform]
   BASE[base]
-  INSTRUMENTATION[instrumentation]
 
   API --> ENGINE
   API --> TABLE
   API --> FORMAT
   API --> BASE
-  API -. read profiling .-> INSTRUMENTATION
 
   DIAGNOSTICS --> METADATA
   DIAGNOSTICS --> TABLE
@@ -254,7 +250,6 @@ flowchart TD
   ENGINE --> CACHE
   ENGINE --> PLATFORM
   ENGINE --> BASE
-  ENGINE -. read profiling .-> INSTRUMENTATION
 
   METADATA --> WAL
   METADATA --> FORMAT
@@ -265,7 +260,6 @@ flowchart TD
   TABLE --> FORMAT
   TABLE --> PLATFORM
   TABLE --> BASE
-  TABLE -. read profiling .-> INSTRUMENTATION
 
   WAL --> FORMAT
   WAL --> PLATFORM
@@ -273,10 +267,8 @@ flowchart TD
   MEMORY --> FORMAT
   MEMORY --> BASE
   FORMAT --> BASE
-  FORMAT -. read profiling .-> INSTRUMENTATION
   CACHE --> BASE
   PLATFORM --> BASE
-  PLATFORM -. read profiling .-> INSTRUMENTATION
 ```
 
 ### Required dependency rules
@@ -299,11 +291,10 @@ flowchart TD
 10. Diagnostics depend on existing decoders, never on the engine or public API,
    and never mutate database files.
 
-`instrumentation` is a leaf used only by compile-time-enabled read-profiling
-hooks. It owns passive counters and thread-local collection state, with no
-engine, platform, or decoder dependency. The ordinary library compiles those
-hooks out. It is not the layer-seven storage-file `diagnostics` module; see
-[ADR-0063](adr/0063-audit-contract-and-validation-repairs.md).
+Fine-grained read instrumentation, its build target, and its conditional hooks
+were retired under [ADR-0076](adr/0076-textbook-source-composition.md).
+Ordinary benchmarks and CPU capture remain outside the core module graph.
+The layer-seven storage-file `diagnostics` module remains supported.
 
 ## Current engine coordination
 
@@ -364,7 +355,6 @@ src/
   diagnostics/
   platform/
   format/
-  instrumentation/
   wal/
   memory/
   table/

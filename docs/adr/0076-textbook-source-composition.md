@@ -102,6 +102,12 @@ The project owner requested smaller tasks than the original component-wide
 slices. Complete one named responsibility at a time, with its evidence and
 commit boundary, before starting the next implementation task.
 
+The owner subsequently authorized combining the remaining mechanical assertion
+and diagnostic deletions into one cleanup PR, rather than a PR per component.
+The task IDs remain audit and verification boundaries, not mandatory PR counts.
+This delivery adjustment does not change the preserved contracts or authorize
+unrelated function-composition rewrites in the cleanup.
+
 First finish and separate the existing uncommitted assertion cleanup. Retire
 the diagnostic executable and runner coherently before deleting its unreachable
 hooks in smaller source-area tasks. Do not leave a runnable diagnostic program

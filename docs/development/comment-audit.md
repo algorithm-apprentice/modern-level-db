@@ -381,16 +381,16 @@ crash simulation from proof of arbitrary native power-loss behavior.
 
 ### C12: Explain measurement and diagnostic boundaries at entry points
 
-The 1,831-line selected-workload benchmark has no explanatory comments.
+The selected-workload benchmark has few explanatory comments.
 The major performance/parity scripts have only module docstrings. Their
 names and validators help, but do not give readers a local map of setup,
 warmup, fixed work, measured epochs, result ownership, provenance, and
 cleanup.
 
 Add entry-point maps and comments at the subtle boundaries, not a second
-schema specification in prose. Explain that inclusive diagnostic stages
-are not additive exclusive costs and that instrumentation timing is not
-ordinary throughput evidence. The Windows epoch protocol should explain
+schema specification in prose. Fine-grained read diagnostics were retired by
+ADR-0076; explain instead that CPU capture perturbs execution and is not ordinary
+throughput evidence. The Windows epoch protocol should explain
 the purpose of its before/after observation.
 
 The offline dump declaration warns about output aliasing but omits the

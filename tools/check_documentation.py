@@ -135,11 +135,6 @@ SCHEMA_CONTRACTS = (
         r' << selected_\.name\s+<< "\\",\\"preparations\\":1',
     ),
     SchemaContract(
-        "Fixed-count read diagnostics",
-        "benchmarks/profiling_bench.cc",
-        r'output << "\{\\"schema_version\\":(?P<version>\d+),\\"case\\":";',
-    ),
-    SchemaContract(
         "Mutable selected-workload completion",
         "benchmarks/profiling_bench.cc",
         r'\{\\"schema_version\\":(?P<version>\d+),\\"case\\":\\""'

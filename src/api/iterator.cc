@@ -1,6 +1,5 @@
 #include "modern_leveldb/iterator.h"
 
-#include <cassert>
 #include <memory>
 #include <utility>
 
@@ -25,15 +24,9 @@ Iterator::~Iterator() = default;
 
 bool Iterator::valid() const noexcept { return impl_ != nullptr && impl_->iterator().valid(); }
 
-ByteView Iterator::key() const noexcept {
-    assert(valid());
-    return impl_->iterator().key();
-}
+ByteView Iterator::key() const noexcept { return impl_->iterator().key(); }
 
-ByteView Iterator::value() const noexcept {
-    assert(valid());
-    return impl_->iterator().value();
-}
+ByteView Iterator::value() const noexcept { return impl_->iterator().value(); }
 
 Status Iterator::SeekToFirst() {
     if (impl_ == nullptr) {

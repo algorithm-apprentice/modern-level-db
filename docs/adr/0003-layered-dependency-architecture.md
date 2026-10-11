@@ -36,6 +36,10 @@ read-profiling collection in a separate layer-zero `instrumentation` leaf.
 It depends only on the standard library; compile-time-enabled hooks may
 depend downward on it without an engine-header exception.
 
+That optional leaf and its hooks were subsequently retired under
+[ADR-0076](0076-textbook-source-composition.md). The remaining dependency rules
+are unchanged.
+
 Lower layers must never include public API or engine headers. Persistent format
 encoding must not perform filesystem I/O. Platform services must not know about
 LSM concepts.

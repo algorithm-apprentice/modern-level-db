@@ -1,7 +1,6 @@
 #include "engine/iterators.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -66,10 +65,7 @@ public:
           comparator_(&comparator),
           options_(options) {}
 
-    [[nodiscard]] bool valid() const noexcept override {
-        assert(!entries_.has_value() || entries_->valid());
-        return entries_.has_value();
-    }
+    [[nodiscard]] bool valid() const noexcept override { return entries_.has_value(); }
     [[nodiscard]] ByteView key() const noexcept override { return entries_->key(); }
     [[nodiscard]] ByteView value() const noexcept override { return entries_->value(); }
 
@@ -122,7 +118,6 @@ public:
     }
 
     [[nodiscard]] Status Next() override {
-        assert(valid());
         const Status moved = entries_->Next();
         if (!moved.has_value()) {
             return Fail(moved.error());
@@ -134,7 +129,6 @@ public:
     }
 
     [[nodiscard]] Status Prev() override {
-        assert(valid());
         const Status moved = entries_->Prev();
         if (!moved.has_value()) {
             return Fail(moved.error());
@@ -272,7 +266,6 @@ public:
     }
 
     [[nodiscard]] Status Next() override {
-        assert(valid());
         if (!forward_) {
             // Direction changes must move other children strictly past the
             // current key, or an equal entry would be emitted again.
@@ -302,7 +295,6 @@ public:
     }
 
     [[nodiscard]] Status Prev() override {
-        assert(valid());
         if (forward_) {
             // Restore the reverse-merge invariant: every other child is strictly
             // before the current key, so equal entries are not replayed.
@@ -372,7 +364,6 @@ private:
 }  // namespace
 
 std::unique_ptr<InternalIterator> NewMemTableIterator(std::shared_ptr<const MemTable> memtable) {
-    assert(memtable != nullptr);
     return std::make_unique<MemTableIterator>(std::move(memtable));
 }
 
@@ -389,7 +380,6 @@ void AppendLevelIterators(std::shared_ptr<const Version> version, std::uint32_t 
                           std::span<const Version::File> files, TableCache& table_cache,
                           const InternalKeyComparator& comparator, const TableReadOptions& options,
                           std::vector<std::unique_ptr<InternalIterator>>& children) {
-    assert(level < NumLevels);
     if (level == 0) {
         for (std::size_t index = 0; index < files.size(); ++index) {
             children.push_back(NewLevelIterator(version, files.subspan(index, 1), table_cache,
@@ -413,7 +403,6 @@ std::unique_ptr<InternalIterator> NewInternalIterator(std::shared_ptr<const MemT
                                                       TableCache& table_cache,
                                                       const InternalKeyComparator& comparator,
                                                       const TableReadOptions& options) {
-    assert(version != nullptr);
     std::vector<std::unique_ptr<InternalIterator>> children;
     children.push_back(NewMemTableIterator(std::move(memtable)));
     if (immutable != nullptr) {

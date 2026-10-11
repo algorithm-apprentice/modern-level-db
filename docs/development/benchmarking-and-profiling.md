@@ -115,7 +115,6 @@ pinned reference's WAL-creation policy. The manifest records every policy.
 
 - Ordinary comparative samples: schema 1.
 - Read-family selected-workload completion: schema 1.
-- Fixed-count read diagnostics: schema 5.
 - Mutable selected-workload completion: schema 3.
 - Native Windows stack report: schema 2.
 - Native Windows epoch ledger: schema 1.
@@ -124,31 +123,14 @@ Executable validators define the exact accepted fields, types, counts, and
 cross-artifact identities. Historical schema descriptions remain in ADRs and
 handoff documents and are not the current consumer reference.
 
-## Read diagnostics
+## Retired read instrumentation
 
-Use the instrumented executable only for attribution:
-
-```bash
-python3 tools/run_performance.py \
-  --binary build/profiling/benchmarks/modern_leveldb_read_diagnostics \
-  --case modern/readrandom/65536 \
-  --read-diagnostics \
-  --output build/performance/readrandom-64k-diagnostics
-```
-
-Windows:
-
-```text
-python tools\run_performance.py ^
-  --binary build\windows-profiling\benchmarks\modern_leveldb_read_diagnostics.exe ^
-  --case modern/readrandom/65536 ^
-  --read-diagnostics ^
-  --output build\windows-performance\readrandom-64k-diagnostics
-```
-
-The fixed foreground epoch records source decisions, file-open reasons, cache
-outcomes, mapped/copied block bytes, decode/comparison counters, and sampled
-inclusive stages. Diagnostic timings are not throughput evidence.
+Fine-grained read diagnostics and their dedicated executable, report schema,
+and runner mode have been retired under
+[ADR-0076](../adr/0076-textbook-source-composition.md). Ordinary throughput
+workloads, access-mode controls, and CPU capture remain supported.
+The ordinary provenance field `read_diagnostics_compiled` remains the constant
+`false` for report compatibility.
 
 ## CPU capture
 
@@ -199,8 +181,6 @@ Every runner output directory contains a versioned manifest with:
 
 Never pair results from one run with a rebuilt binary or another policy file.
 Failed or partially covered captures remain explicit non-success evidence.
-Read-diagnostic manifests validate `read-diagnostics.json` but do not
-currently bind that report with a manifest digest.
 
 ## Historical design evidence
 

@@ -1,7 +1,6 @@
 #include "engine/compaction_picker.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -206,9 +205,6 @@ std::optional<Compaction> PickCompaction(
         inputs.push_back(after != files.end() ? *after : files.front());
     } else if (seek_compaction.has_value()) {
         level = seek_compaction->level;
-        assert(level + 1 < NumLevels);
-        assert(std::ranges::find(version->files(level), seek_compaction->file) !=
-               version->files(level).end());
         inputs.push_back(seek_compaction->file);
     } else {
         return std::nullopt;
@@ -228,10 +224,10 @@ bool IsTrivialMove(const Compaction& compaction, std::uint64_t target_file_size)
 
 VersionEdit CompactionEdit(const Compaction& compaction) {
     VersionEdit edit;
-    AssertSuccess(edit.AddCompactPointer(compaction.level, compaction.compact_pointer));
+    static_cast<void>(edit.AddCompactPointer(compaction.level, compaction.compact_pointer));
     for (std::uint32_t which = 0; which < compaction.inputs.size(); ++which) {
         for (const Version::File& file : compaction.inputs[which]) {
-            AssertSuccess(edit.RemoveFile(compaction.level + which, file->number));
+            static_cast<void>(edit.RemoveFile(compaction.level + which, file->number));
         }
     }
     return edit;

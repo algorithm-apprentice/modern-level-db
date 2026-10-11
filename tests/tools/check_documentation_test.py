@@ -199,12 +199,12 @@ class DocumentationCheckTest(unittest.TestCase):
         guide = repository / "docs" / "development" / "benchmarking-and-profiling.md"
         text = guide.read_text(encoding="utf-8")
         self.write(guide, text.replace(
-            "Fixed-count read diagnostics: schema 5.",
-            "Fixed-count read diagnostics: schema 4.",
+            "Read-family selected-workload completion: schema 1.",
+            "Read-family selected-workload completion: schema 4.",
         ))
         self.assert_has(
             self.messages(repository),
-            "Fixed-count read diagnostics documents schema 4, but source emits 5",
+            "Read-family selected-workload completion documents schema 4, but source emits 1",
         )
 
     def test_reports_missing_platform_smoke_mapping(self):

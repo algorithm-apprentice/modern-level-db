@@ -92,10 +92,10 @@ Those facts are more useful to a learner than many tuning knobs. The value is
 an owning on-demand snapshot, not a metrics stream, file inspector,
 background-progress estimate, or total process-memory report.
 
-The project already has a separate read-diagnostics executable and retained
-profiling reports. Start there for detailed read counters.
-The production state API does not add expensive read instrumentation merely
-to reproduce those diagnostics.
+Ordinary profiling reports and CPU capture remain available.
+Fine-grained read diagnostics were retired under
+[ADR-0076](../adr/0076-textbook-source-composition.md).
+The production state API does not add expensive read instrumentation.
 
 ### Read-only storage diagnostics are now implemented
 
@@ -167,5 +167,5 @@ before adding a capability.
 - [Modern database API](../../include/modern_leveldb/db.h)
 - [Modern options](../../include/modern_leveldb/options.h)
 - [Internal engine and existing flush barrier](../../src/engine/database.h)
-- [Existing read diagnostics](../../src/instrumentation/read_diagnostics.h)
+- [Read-diagnostic retirement](../adr/0076-textbook-source-composition.md)
 - [Platform support and durability](../reference/platform-support-and-durability.md)

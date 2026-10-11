@@ -508,7 +508,7 @@ transitions. It is a separate future feature.
 - [Modern database engine](../../src/engine/database.h)
 - [Modern write commit](../../src/engine/database_write.cc)
 - [Modern arena accounting](../../src/memory/arena.h)
-- [Modern read diagnostics](../../src/instrumentation/read_diagnostics.h)
+- [Read-diagnostic retirement](0076-textbook-source-composition.md)
 - [Need-driven simplicity](0010-need-driven-simplicity.md)
 - [Public RAII API](0038-public-raii-api.md)
 - [Completed read-path parity](0053-leveldb-read-path-parity.md)

@@ -12,7 +12,7 @@ repository.
 | Start a change from a concept, contract, source index, and evidence map | [Document-first development](document-first-development.md) |
 | Configure, build, and run the test tiers | [Building and testing](building-and-testing.md) |
 | Understand CI and quality gates | [CI and quality gates](ci-and-quality-gates.md) |
-| Run comparative benchmarks, selected workloads, diagnostics, and CPU capture | [Benchmarking and profiling](benchmarking-and-profiling.md) |
+| Run comparative benchmarks, selected workloads, and CPU capture | [Benchmarking and profiling](benchmarking-and-profiling.md) |
 | Follow code, comment, formatting, and review conventions | [Code style](code-style.md) |
 | Complete textbook-oriented refactoring through small verified tasks | [Textbook improvement plan](textbook-improvement-plan.md) |
 | Review source-comment accuracy, contracts, and learning gaps | [Comment audit](comment-audit.md) |

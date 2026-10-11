@@ -1,7 +1,6 @@
 #include "engine/seek_statistics.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -18,9 +17,6 @@ std::function<std::uint64_t()> ReadSamplingPeriods(std::uint32_t seed) {
 
 bool SeekStatistics::Charge(const Version& version, const Version& current,
                             const SeekCharge& charge) {
-    assert(charge.level < NumLevels);
-    assert(std::ranges::any_of(version.files(charge.level),
-                               [&](const Version::File& file) { return &file == charge.file; }));
     const FileMetadata& file = **charge.file;
     --file.allowed_seeks;
     if (file.allowed_seeks > 0 || &version != &current || IsRecordedFor(current)) {

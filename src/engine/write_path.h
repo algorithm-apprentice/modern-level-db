@@ -1,7 +1,6 @@
 #ifndef MODERN_LEVELDB_ENGINE_WRITE_PATH_H_
 #define MODERN_LEVELDB_ENGINE_WRITE_PATH_H_
 
-#include <cassert>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -108,8 +107,6 @@ private:
     private:
         EncodedWriteBatch& batch_;
         SequenceNumber sequence_;
-        std::uint32_t count_;
-        std::size_t size_;
     };
 
     template <typename Prepare, typename Commit>
@@ -140,7 +137,6 @@ template <typename Prepare>
 Status WriteQueue::Force(std::unique_lock<std::mutex>& lock, Prepare&& prepare) {
     auto unreachable_commit = [](std::unique_lock<std::mutex>&, EncodedWriteBatch&,
                                  bool) -> Status {
-        assert(false);
         return std::unexpected(Error::Aborted("a forced writer unexpectedly reached commit"));
     };
     return Run(lock, nullptr, false, prepare, unreachable_commit);
@@ -150,18 +146,15 @@ template <typename Prepare, typename Commit>
 Status WriteQueue::Run(std::unique_lock<std::mutex>& lock, EncodedWriteBatch* batch, bool sync,
                        Prepare& prepare, Commit& commit) {
     static_assert(std::is_nothrow_move_assignable_v<Status>);
-    assert(lock.owns_lock());
     Writer writer{.batch = batch, .sync = sync};
     writers_.push_back(&writer);
     writer.woken.wait(lock, [&] { return writer.done || writers_.front() == &writer; });
     if (writer.done) {
-        assert(writer.result != nullptr);
         return *writer.result;
     }
 
     LeaderGuard guard(*this, lock, writer);
     const Status prepared = prepare(lock, batch == nullptr);
-    assert(lock.owns_lock());
     // A forced writer only prepares.
     if (!prepared.has_value() || batch == nullptr) {
         guard.Dismiss();
@@ -177,7 +170,6 @@ Status WriteQueue::Run(std::unique_lock<std::mutex>& lock, EncodedWriteBatch* ba
             SequenceGuard restore(*group.batch);
             result = commit(lock, *group.batch, writer.sync);
         }
-        assert(lock.owns_lock());
         guard.Dismiss();
         Complete(writer, group.last, nullptr);
         return result;
@@ -191,7 +183,6 @@ Status WriteQueue::Run(std::unique_lock<std::mutex>& lock, EncodedWriteBatch* ba
         SequenceGuard restore(*group.batch);
         *result = commit(lock, *group.batch, writer.sync);
     }
-    assert(lock.owns_lock());
     guard.Dismiss();
     Complete(writer, group.last, result);
     return *result;

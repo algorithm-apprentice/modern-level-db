@@ -78,7 +78,6 @@ set(
     src/format/internal_key.cc
     src/format/wal_format.cc
     src/format/write_batch.cc
-    src/instrumentation/read_diagnostics.cc
     src/memory/arena.cc
     src/memory/memtable.cc
     src/metadata/filenames.cc
@@ -137,16 +136,7 @@ function(modern_leveldb_add_library target)
 endfunction()
 
 modern_leveldb_add_library(modern_leveldb)
-target_compile_definitions(modern_leveldb PRIVATE MODERN_LEVELDB_READ_DIAGNOSTICS=0)
 add_library(modern_leveldb::modern_leveldb ALIAS modern_leveldb)
-
-if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
-  # Keep the ordinary throughput binary free of read-path instrumentation.
-  modern_leveldb_add_library(modern_leveldb_read_diagnostic)
-  target_compile_definitions(
-    modern_leveldb_read_diagnostic PUBLIC MODERN_LEVELDB_READ_DIAGNOSTICS=1
-  )
-endif()
 
 if(MODERN_LEVELDB_BUILD_TESTS)
   include(CTest)
@@ -186,7 +176,6 @@ if(MODERN_LEVELDB_BUILD_EXTENDED_TESTS OR MODERN_LEVELDB_BUILD_BENCHMARKS OR
   modern_leveldb_add_reference()
   if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS AND MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
     target_compile_options(modern_leveldb PRIVATE /Zi /Zo)
-    target_compile_options(modern_leveldb_read_diagnostic PRIVATE /Zi /Zo)
     target_compile_options(leveldb PRIVATE /Zi /Zo)
   endif()
 endif()

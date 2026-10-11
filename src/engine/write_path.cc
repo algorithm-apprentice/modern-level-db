@@ -1,6 +1,5 @@
 #include "engine/write_path.h"
 
-#include <cassert>
 #include <cstddef>
 #include <expected>
 #include <iterator>
@@ -61,16 +60,9 @@ WriteQueue::LeaderGuard::~LeaderGuard() {
 
 // GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
 WriteQueue::SequenceGuard::SequenceGuard(EncodedWriteBatch& batch) noexcept
-    : batch_(batch),
-      sequence_(batch.sequence()),
-      count_(batch.count()),
-      size_(batch.encoded().size()) {}
+    : batch_(batch), sequence_(batch.sequence()) {}
 
-WriteQueue::SequenceGuard::~SequenceGuard() {
-    assert(batch_.count() == count_);
-    assert(batch_.encoded().size() == size_);
-    batch_.SetSequence(sequence_);
-}
+WriteQueue::SequenceGuard::~SequenceGuard() { batch_.SetSequence(sequence_); }
 // GCOVR_EXCL_STOP
 
 // GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
@@ -114,7 +106,6 @@ void WriteQueue::Complete(const Writer& leader, const Writer* last,
         Writer* ready = writers_.front();
         writers_.pop_front();
         if (ready != &leader) {
-            assert(result != nullptr);
             ready->result = result;
             ready->done = true;
             ready->woken.notify_one();
