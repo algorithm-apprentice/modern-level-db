@@ -1,6 +1,5 @@
 #include "table/filter_block.h"
 
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -30,9 +29,7 @@ std::unexpected<Error> BlockTooLarge() {
 }  // namespace
 
 Status FilterBlockBuilder::StartBlock(std::uint64_t block_offset) {
-    assert(!finished_);
     const std::uint64_t filter_index = block_offset >> FilterRangeShift;
-    assert(filter_index >= filter_offsets_.size());
     if (filter_index == filter_offsets_.size()) {
         return {};
     }
@@ -52,7 +49,6 @@ Status FilterBlockBuilder::StartBlock(std::uint64_t block_offset) {
 }
 
 Status FilterBlockBuilder::AddKey(ByteView key) {
-    assert(!finished_);
     const std::uint64_t finished_size =
         std::uint64_t{policy_.FilterSize(key_starts_.size() + 1)} + result_.size() +
         Fixed32Size * (filter_offsets_.size() + 1) + FilterTrailerSize;
@@ -65,7 +61,6 @@ Status FilterBlockBuilder::AddKey(ByteView key) {
 }
 
 ByteView FilterBlockBuilder::Finish() {
-    assert(!finished_);
     if (!key_starts_.empty()) {
         GenerateFilter();
     }
@@ -75,7 +70,6 @@ ByteView FilterBlockBuilder::Finish() {
     }
     AppendFixed32(result_, array_offset);
     result_.push_back(static_cast<std::byte>(FilterRangeShift));
-    finished_ = true;
     return result_;
 }
 

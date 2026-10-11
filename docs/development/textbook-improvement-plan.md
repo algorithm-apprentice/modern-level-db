@@ -77,7 +77,7 @@ dependency. Dependent source and test changes remain in the same small task.
 | ID | Small task | Acceptance boundary | Initial state |
 |---|---|---|---|
 | P01 | Persist policy and the bounded backlog | ADR and style guide agree with this plan | Done |
-| A01 | Remove foundation assertions | Foundation, cache, memory, format, and WAL operations retain their side effects | Locally committed; PR review and delivery pending |
+| A01 | Remove foundation assertions | Foundation, cache, memory, format, and WAL operations retain their side effects | Delivered in #165 |
 | A02 | Finish table assertion cleanup | Remove assertion-only builder state; retain corruption and terminal-state checks | Prepared, not complete |
 | A03 | Finish metadata assertion cleanup | Remove debug verification only; retain ordered merge and MANIFEST installation | Prepared, not complete |
 | A04 | Finish platform and API assertion cleanup | Retain mapping-slot restoration, explicit validation, and independent termination contracts | Prepared, not complete |
@@ -150,8 +150,8 @@ passed 187 tests. After design #164 merged, the isolated implementation was
 reapplied to that base. A separate C++ invariant/resource-lifecycle persona
 identified no actionable code findings. The rebased warnings-as-errors MSVC
 Debug build and 711 unit-labeled checks passed. Seven assertion-only death tests
-were removed; supported behavior tests and static assertions remain. Remote CI
-and implementation-PR merge are still required for delivery.
+were removed; supported behavior tests and static assertions remain. All 20 remote CI checks passed and the implementation merged in #165.
+Its local and remote topic branches were deleted.
 
 A02-A06 remain uncommitted preparation. Their current Debug build succeeded,
 but a combined CTest run reported 12 build-integration failures or not-run

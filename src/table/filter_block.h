@@ -47,7 +47,6 @@ private:
     // The generated filters, followed by the offset array once finished.
     std::vector<std::byte> result_;
     std::vector<std::uint32_t> filter_offsets_;
-    bool finished_ = false;
 };
 
 // Answers filter queries from validated owned or borrowed block contents.

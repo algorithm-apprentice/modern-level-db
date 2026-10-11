@@ -1,7 +1,6 @@
 #ifndef MODERN_LEVELDB_TABLE_TABLE_H_
 #define MODERN_LEVELDB_TABLE_TABLE_H_
 
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -131,10 +130,7 @@ public:
     ~Iterator() = default;
 
     // Every positioning call leaves a data block iterator only at a valid entry.
-    [[nodiscard]] bool valid() const noexcept {
-        assert(!data_.has_value() || data_->valid());
-        return data_.has_value();
-    }
+    [[nodiscard]] bool valid() const noexcept { return data_.has_value(); }
     [[nodiscard]] ByteView key() const noexcept;
     [[nodiscard]] ByteView value() const noexcept;
 

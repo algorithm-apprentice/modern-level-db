@@ -45,7 +45,6 @@ private:
     // Zero only before the first entry, because every Add increments it after
     // any restart.
     std::uint32_t entries_since_restart_ = 0;
-    bool finished_ = false;
     std::vector<std::byte> buffer_;
     // Restart points after the implicit first one at offset zero.
     std::vector<std::uint32_t> restarts_;
