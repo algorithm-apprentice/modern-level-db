@@ -343,6 +343,26 @@ confirmed before/after and per-slice JUnit evidence without executing tests.
 Exact-head CI remains the delivery gate; all other recursive-review frontiers
 remain open.
 
+### T01/T02/T03 implementation record
+
+The [table opening and lookup design](table-open-lookup-composition-design.md)
+was independently reviewed and accepted in #179 before implementation.
+Footer/validated-index acquisition, optional filter selection/loading, and
+pinned block lookup/owned value copy are implemented in separate topic commits.
+The detailed ledger covers every new and changed function and its stopping
+boundary, without certifying unchanged table internals.
+
+Four added public-operation cases and strengthened existing cases passed on
+unchanged production code. The combined extraction preserves all 64 focused
+TableTest/TableCacheTest/DumpFileTest cases with exact before/after JUnit parity;
+the opening and filter slices each preserve the same 38 TableTest cases.
+Independent implementation review found no significant issues and confirmed
+the existing before/after evidence without executing tests.
+Exact published-head CI remains the delivery gate.
+
+Table writer/finalization, index-validation visitor, cache/iterator internals,
+and all other recursive-review frontiers remain open.
+
 ### MANIFEST recovery
 
 `VersionSet::Recover` composes acquisition, record replay, and finalization.

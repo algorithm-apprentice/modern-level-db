@@ -85,6 +85,8 @@ private:
 
     [[nodiscard]] Result<BlockReference> ReadDataBlock(BlockHandle handle,
                                                        const TableReadOptions& options) const;
+    [[nodiscard]] Result<TableLookupKind> LookupDataBlock(const Block& block, const LookupKey& key,
+                                                          std::vector<std::byte>& value) const;
 
     std::unique_ptr<RandomAccessFile> file_;
     // Offset of the footer, which follows every block.

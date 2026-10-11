@@ -118,45 +118,113 @@ Status ValidateIndex(const Block& index, std::uint64_t blocks_end,
     return index.ValidateEntries(visitor);
 }
 
-// Reads the filter block that the metaindex maps to the policy, if any.
-Status ReadFilter(const RandomAccessFile& file, std::uint64_t blocks_end, BlockHandle metaindex,
-                  BloomFilterPolicy policy, std::optional<FilterBlockReader>& filter) {
-    const Result<Block> meta = ReadBlock(file, blocks_end, metaindex);
+Result<Footer> ReadFooter(const RandomAccessFile& file, std::uint64_t blocks_end) {
+    std::array<std::byte, FooterSize> bytes{};
+    const Status read = ReadExactly(file, blocks_end, bytes);
+    if (!read.has_value()) {
+        return std::unexpected(read.error());
+    }
+    Result<Footer> footer = DecodeFooter(bytes);
+    if (!footer.has_value()) {
+        return std::unexpected(footer.error());
+    }
+    return footer;
+}
+
+Result<Block> ReadValidatedIndex(const RandomAccessFile& file, std::uint64_t blocks_end,
+                                 BlockHandle handle, BlockKeyFormat key_format) {
+    Result<Block> index = ReadBlock(file, blocks_end, handle);
+    if (!index.has_value()) {
+        return index;
+    }
+    const Status valid = ValidateIndex(*index, blocks_end, key_format);
+    if (!valid.has_value()) {
+        return std::unexpected(valid.error());
+    }
+    return index;
+}
+
+Result<Block> ReadValidatedMetaindex(const RandomAccessFile& file, std::uint64_t blocks_end,
+                                     BlockHandle handle) {
+    Result<Block> meta = ReadBlock(file, blocks_end, handle);
     if (!meta.has_value()) {
         return std::unexpected(meta.error());
     }
     const Status valid = meta->ValidateEntries([](ByteView, ByteView) -> Status { return {}; });
     if (!valid.has_value()) {
-        return valid;
+        return std::unexpected(valid.error());
     }
+    return meta;
+}
+
+std::string FilterMetaindexKey(BloomFilterPolicy policy) {
     std::string key = "filter.";
     key.append(policy.Name());
-    Block::Iterator entry(*meta, BytewiseComparator());
-    const Status sought = entry.Seek(AsBytes(key));
-    // GCOVR_EXCL_START: full physical validation makes metaindex seek infallible
-    if (!sought.has_value()) {
-        return sought;
-    }
-    // GCOVR_EXCL_STOP
-    if (!entry.valid() || AsStringView(entry.key()) != key) {
-        return {};
-    }
+    return key;
+}
 
-    ByteView value = entry.value();
+Result<BlockHandle> DecodeFilterHandle(ByteView value) {
     const Result<BlockHandle> handle = ConsumeBlockHandle(value);
     if (!handle.has_value() || !value.empty()) {
         return std::unexpected(Error::Corruption("table filter handle is malformed"));
     }
-    Result<BlockContents> contents = ReadStoredBlock(file, blocks_end, *handle);
+    return *handle;
+}
+
+Result<std::optional<BlockHandle>> FindFilterHandle(const Block& meta, BloomFilterPolicy policy) {
+    const std::string key = FilterMetaindexKey(policy);
+    Block::Iterator entry(meta, BytewiseComparator());
+    const Status sought = entry.Seek(AsBytes(key));
+    // GCOVR_EXCL_START: full physical validation makes metaindex seek infallible
+    if (!sought.has_value()) {
+        return std::unexpected(sought.error());
+    }
+    // GCOVR_EXCL_STOP
+    if (!entry.valid() || AsStringView(entry.key()) != key) {
+        return std::nullopt;
+    }
+
+    Result<BlockHandle> handle = DecodeFilterHandle(entry.value());
+    if (!handle.has_value()) {
+        return std::unexpected(std::move(handle).error());
+    }
+    return std::optional<BlockHandle>(*handle);
+}
+
+Result<FilterBlockReader> ReadFilterBlock(const RandomAccessFile& file, std::uint64_t blocks_end,
+                                          BlockHandle handle, BloomFilterPolicy policy) {
+    Result<BlockContents> contents = ReadStoredBlock(file, blocks_end, handle);
     if (!contents.has_value()) {
         return std::unexpected(std::move(contents).error());
     }
-    Result<FilterBlockReader> reader = FilterBlockReader::Create(std::move(*contents), policy);
+    return FilterBlockReader::Create(std::move(*contents), policy);
+}
+
+// Reads the filter block that the metaindex maps to the policy, if any.
+Status ReadFilter(const RandomAccessFile& file, std::uint64_t blocks_end, BlockHandle metaindex,
+                  BloomFilterPolicy policy, std::optional<FilterBlockReader>& filter) {
+    Result<Block> meta = ReadValidatedMetaindex(file, blocks_end, metaindex);
+    if (!meta.has_value()) {
+        return std::unexpected(std::move(meta).error());
+    }
+    Result<std::optional<BlockHandle>> handle = FindFilterHandle(*meta, policy);
+    if (!handle.has_value()) {
+        return std::unexpected(std::move(handle).error());
+    }
+    if (!handle->has_value()) {
+        return {};
+    }
+    Result<FilterBlockReader> reader = ReadFilterBlock(file, blocks_end, **handle, policy);
     if (!reader.has_value()) {
         return std::unexpected(std::move(reader).error());
     }
     filter.emplace(std::move(*reader));
     return {};
+}
+
+void CopyLookupValue(ByteView source, std::vector<std::byte>& value) {
+    value.resize(source.size());
+    std::ranges::copy(source, value.begin());
 }
 
 }  // namespace
@@ -172,23 +240,15 @@ Result<std::unique_ptr<Table>> Table::Open(std::unique_ptr<RandomAccessFile> fil
         return std::unexpected(Error::Corruption("file is too short to be a table"));
     }
     const std::uint64_t blocks_end = file_size - FooterSize;
-    std::array<std::byte, FooterSize> footer_bytes{};
-    const Status read = ReadExactly(*file, blocks_end, footer_bytes);
-    if (!read.has_value()) {
-        return std::unexpected(read.error());
-    }
-    const Result<Footer> footer = DecodeFooter(footer_bytes);
+    Result<Footer> footer = ReadFooter(*file, blocks_end);
     if (!footer.has_value()) {
-        return std::unexpected(footer.error());
+        return std::unexpected(std::move(footer).error());
     }
 
-    Result<Block> index = ReadBlock(*file, blocks_end, footer->index);
+    Result<Block> index =
+        ReadValidatedIndex(*file, blocks_end, footer->index, options.block_key_format);
     if (!index.has_value()) {
         return std::unexpected(std::move(index).error());
-    }
-    const Status valid = ValidateIndex(*index, blocks_end, options.block_key_format);
-    if (!valid.has_value()) {
-        return std::unexpected(valid.error());
     }
 
     std::optional<FilterBlockReader> filter;
@@ -249,7 +309,12 @@ Result<TableLookupKind> Table::Get(const LookupKey& key, std::vector<std::byte>&
     if (!block.has_value()) {
         return std::unexpected(block.error());
     }
-    Block::Iterator entry(block->block(), *block_comparator_, block_key_format_);
+    return LookupDataBlock(block->block(), key, value);
+}
+
+Result<TableLookupKind> Table::LookupDataBlock(const Block& block, const LookupKey& key,
+                                               std::vector<std::byte>& value) const {
+    Block::Iterator entry(block, *block_comparator_, block_key_format_);
     const Status data_sought = entry.Seek(key.internal_key());
     if (!data_sought.has_value()) {
         return std::unexpected(data_sought.error());
@@ -267,8 +332,7 @@ Result<TableLookupKind> Table::Get(const LookupKey& key, std::vector<std::byte>&
     if (parsed->kind == ValueKind::Deletion) {
         return TableLookupKind::Deletion;
     }
-    value.resize(entry.value().size());
-    std::ranges::copy(entry.value(), value.begin());
+    CopyLookupValue(entry.value(), value);
     return TableLookupKind::Value;
 }
 

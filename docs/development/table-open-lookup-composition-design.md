@@ -2,12 +2,13 @@
 
 ## Scope and delivery
 
-Design proposal for T01/T02/T03 from the
+Design accepted in #179 for T01/T02/T03 from the
 [production composition plan](production-function-composition-plan.md).
 The source baseline is `5353f92c400291474ebce5f1d2711b8144c62ba8`.
 This batch changes private organization in `src/table/table.cc` and its directly
 dependent private declarations in `table.h`, characterization and this document.
-No production implementation is included in this design PR.
+No production implementation was included in the design PR. The implementation
+record below tracks the subsequent extraction.
 
 Independently review and merge this design before implementing. Use small
 topic commits for characterization, opening, filters, and lookup, but one
@@ -162,3 +163,57 @@ gap above; its explicit read-count/fault-injection requirement is included.
 It otherwise found the proposed boundaries and test suites consistent with
 source. This was static design review, not execution evidence, allocation or
 coverage verification, whole-file certification, or GitHub approval.
+
+## Implementation record
+
+Implementation starts from merged design baseline
+`d43b9ee8eab357ff5ed92828cd890d4dc926f201`, after characterization passed on
+unchanged production code. Separate commits cover the tests, footer/index
+acquisition, optional filtering, and pinned lookup.
+
+### Responsibility ledger
+
+| Function | Composition or leaf boundary |
+|---|---|
+| `ReadFooter` | Composes the original fixed copied read and footer decoding; original stage errors are copied once, then moved through the new caller layer. |
+| `ReadValidatedIndex` | Composes block acquisition and existing key-mode/index-handle validation without another physical decode stack. |
+| `Table::Open` | Composes pre-read admission, footer/index acquisition, optional filter loading, cache identity selection, and unchanged owning construction. |
+| `ReadValidatedMetaindex` | Composes block acquisition with original physical entry/restart validation. Its no-op visitor is the existing physical-validation callback, not index semantic validation. |
+| `FilterMetaindexKey` | Leaf: one fixed policy-key grammar, coupling prefix and policy-name string primitives. |
+| `DecodeFilterHandle` | Leaf: one exact encoded-handle field, coupling existing handle decoding with full-field consumption and its original malformed-field error. |
+| `FindFilterHandle` | Composes policy-key rendering, validated seek, exact name matching, and checked handle decoding; absence is distinct from malformed selection. |
+| `ReadFilterBlock` | Composes existing stored-block acquisition and complete filter-reader construction. |
+| `ReadFilter` | Composes physical metaindex acquisition, optional selection, filter reader loading, and final optional emplacement; no read follows absence. |
+| `Table::Get` | Owns the acquired BlockReference and composes existing index/filter routing with pinned data-block lookup. |
+| `LookupDataBlock` | Composes candidate seek, checked key parsing, configured user-key equality, deletion dispatch, and owned value copy, without next-block fallback. |
+| `CopyLookupValue` | Leaf: one owned byte-copy operation, coupling original vector resize and copy while the caller retains the source pin. |
+
+File, mapped backing, comparator/cache, and pin ownership stay at their original
+boundaries. Existing proven-seek coverage markers move with their original
+boundary only; no new exclusions or coverage-policy changes are added.
+Existing parser/checksum/codec, ValidateIndex visitor, cache admission, iterator
+internals and other production definitions remain subsequent recursive-review
+frontiers. This ledger is not whole-file or whole-production certification.
+
+### Characterization and local evidence
+
+Four new public-operation cases and strengthened existing cases pass before
+production edits. They establish non-value sentinel preservation, copied/mapped
+value ownership after table/file/cache release, no-next-block read count with
+fault injection, filter absence versus exact malformed handle/payload errors,
+index-corruption precedence, policy-disabled bypass, and exact stage I/O counts.
+The fixture's concurrent-reader contract is unchanged.
+
+Both opening and filtering slices pass the same 38 TableTest cases. The combined
+TableTest/TableCacheTest/DumpFileTest selection passes all 64 cases before and
+after extraction, with exact JUnit case-set parity and no failures/errors/skips.
+The MSVC Debug warnings-as-errors build passes. Formatting, documentation and
+whitespace checks are also required. This is focused execution evidence, not
+allocation-failure injection or authoritative remote coverage.
+
+Independent combined implementation review found no significant issues in the
+full source/header/test diff and this record. The reviewer independently read
+the before/after JUnit evidence and confirmed identical 64-case sets without
+failures, errors, or skips; it did not execute tests or builds. This is bounded
+static review, not GitHub approval or whole-production certification.
+All applicable exact published-head CI remains required before merge.
