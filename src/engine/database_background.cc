@@ -21,6 +21,28 @@
 #include "platform/file_system.h"
 
 namespace modern_leveldb {
+namespace {
+
+bool KeepFile(const ParsedFileName& file, const std::set<std::uint64_t>& live,
+              std::uint64_t log_number, std::uint64_t manifest_number) {
+    switch (file.type) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/5 default of an exhaustive switch
+        case FileType::Log:
+            return file.number >= log_number;
+        case FileType::Descriptor:
+            return file.number >= manifest_number;
+        case FileType::Table:
+        case FileType::Temp:
+            return live.contains(file.number);
+        case FileType::Lock:
+        case FileType::Current:
+            return true;
+    }
+    // GCOVR_EXCL_START: ParseNativeFileName returns an exhaustive FileType
+    return true;
+    // GCOVR_EXCL_STOP
+}
+
+}  // namespace
 
 Status DatabaseEngine::WaitForBackgroundWork() {
     std::unique_lock lock(mutex_);
@@ -210,13 +232,25 @@ void DatabaseEngine::RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock) {
     if (sticky_error_.has_value()) {
         return;
     }
+    const Result<std::vector<std::filesystem::path>> obsolete = CollectObsoleteFiles();
+    if (!obsolete.has_value()) {
+        return;
+    }
+    lock.unlock();
+    for (const std::filesystem::path& path : *obsolete) {
+        static_cast<void>(file_system_->RemoveFile(path));
+    }
+    lock.lock();
+}
+
+Result<std::vector<std::filesystem::path>> DatabaseEngine::CollectObsoleteFiles() {
     // Recovery and every flush set the previous log number to zero.
     std::set<std::uint64_t> live = versions_->LiveFiles();
     live.insert(pending_outputs_.begin(), pending_outputs_.end());
     const Result<std::vector<std::filesystem::path>> children =
         file_system_->ListDirectory(directory_);
     if (!children.has_value()) {
-        return;
+        return std::unexpected(children.error());
     }
     std::vector<std::filesystem::path> obsolete;
     for (const std::filesystem::path& child : *children) {
@@ -224,23 +258,7 @@ void DatabaseEngine::RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock) {
         if (!parsed.has_value()) {
             continue;
         }
-        bool keep = true;
-        switch (parsed->type) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/5 default of an exhaustive switch
-            case FileType::Log:
-                keep = parsed->number >= versions_->log_number();
-                break;
-            case FileType::Descriptor:
-                keep = parsed->number >= versions_->manifest_file_number();
-                break;
-            case FileType::Table:
-            case FileType::Temp:
-                keep = live.contains(parsed->number);
-                break;
-            case FileType::Lock:
-            case FileType::Current:
-                break;
-        }
-        if (keep) {
+        if (KeepFile(*parsed, live, versions_->log_number(), versions_->manifest_file_number())) {
             continue;
         }
         if (parsed->type == FileType::Table) {
@@ -248,11 +266,7 @@ void DatabaseEngine::RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock) {
         }
         obsolete.push_back(directory_ / child.filename());
     }
-    lock.unlock();
-    for (const std::filesystem::path& path : obsolete) {
-        static_cast<void>(file_system_->RemoveFile(path));
-    }
-    lock.lock();
+    return obsolete;
 }
 
 void DatabaseEngine::RecordStickyError(Error error) {

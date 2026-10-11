@@ -178,6 +178,14 @@ After an uncertain mutation or maintenance failure becomes sticky, further
 writes, scheduling, and obsolete-file cleanup are stopped. Reads are not
 automatically converted into writes or repair attempts.
 
+Follow cleanup in `database_background.cc` as three responsibilities:
+`KeepFile` expresses retention policy, `CollectObsoleteFiles` snapshots pinned
+Versions and pending outputs and evicts obsolete tables with the mutex held,
+and `RemoveObsoleteFiles` deletes the collected paths with the mutex released.
+A listing error returns without unlocking; a successful empty collection still
+passes through unlock/relock. Filesystem deletion remains best effort, not a
+new durability or error-recovery protocol.
+
 ## Backpressure is a correctness-of-progress feature
 
 If foreground writes outrun background work, L0 read amplification and

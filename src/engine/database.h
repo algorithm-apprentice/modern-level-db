@@ -213,6 +213,8 @@ private:
     [[nodiscard]] Status BeforeCompactionEntry();
     void RecordReadSample(ByteView internal_key);
     void RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock);
+    // Collects and evicts obsolete tables with mutex_ held; does not delete files.
+    [[nodiscard]] Result<std::vector<std::filesystem::path>> CollectObsoleteFiles();
     void RecordStickyError(Error error);
     [[nodiscard]] std::unexpected<Error> StickyError() const;
 
