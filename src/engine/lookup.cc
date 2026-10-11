@@ -27,6 +27,34 @@ enum class Decision {
     Deletion,
 };
 
+Decision SearchMemTable(const MemTable& source, const LookupKey& key,
+                        std::vector<std::byte>& value) {
+    const MemTableLookup found = source.Lookup(key);
+    if (found.kind == MemTableLookupKind::Value) {
+        value.resize(found.value.size());
+        std::ranges::copy(found.value, value.begin());
+        return Decision::Value;
+    }
+    if (found.kind == MemTableLookupKind::Deletion) {
+        return Decision::Deletion;
+    }
+    return Decision::Missing;
+}
+
+std::optional<bool> SearchMemory(const MemTable& memtable, const MemTable* immutable,
+                                 const LookupKey& key, std::vector<std::byte>& value) {
+    for (const MemTable* source : {&memtable, immutable}) {
+        if (source == nullptr) {
+            continue;
+        }
+        const Decision decision = SearchMemTable(*source, key, value);
+        if (decision != Decision::Missing) {
+            return decision == Decision::Value;
+        }
+    }
+    return std::nullopt;
+}
+
 Result<Decision> SearchFile(TableCache& table_cache, const FileMetadata& file, const LookupKey& key,
                             std::vector<std::byte>& value, const TableReadOptions& options) {
     const Result<TableCache::Handle> table = table_cache.Find(file.number, file.file_size);
@@ -176,19 +204,8 @@ Result<bool> LookupValue(const MemTable& memtable, const MemTable* immutable,
     seek.reset();
     // Newest source with a visible entry decides. A tombstone decides absence,
     // unlike Missing, which permits searching older sources.
-    for (const MemTable* source : {&memtable, immutable}) {
-        if (source == nullptr) {
-            continue;
-        }
-        const MemTableLookup found = source->Lookup(key);
-        if (found.kind == MemTableLookupKind::Value) {
-            value.resize(found.value.size());
-            std::ranges::copy(found.value, value.begin());
-            return true;
-        }
-        if (found.kind == MemTableLookupKind::Deletion) {
-            return false;
-        }
+    if (const auto decision = SearchMemory(memtable, immutable, key, value); decision.has_value()) {
+        return *decision;
     }
 
     std::optional<Candidate> previous;
