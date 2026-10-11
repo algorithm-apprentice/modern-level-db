@@ -172,14 +172,19 @@ public:
 
     // The tables that the last lookup searched, by number.
     std::set<std::uint64_t> SearchedTables() const {
-        std::set<std::uint64_t> numbers;
+        const std::vector<std::uint64_t> numbers = SearchedTableOrder();
+        return {numbers.begin(), numbers.end()};
+    }
+
+    std::vector<std::uint64_t> SearchedTableOrder() const {
+        std::vector<std::uint64_t> numbers;
         const std::vector<std::string>& operations = file_system_.operations();
         for (std::size_t index = read_start_; index < operations.size(); ++index) {
             constexpr std::string_view Opened = "open_random_access ";
             if (operations[index].starts_with(Opened)) {
                 const auto parsed = ParseFileName(operations[index].substr(Opened.size()));
                 EXPECT_TRUE(parsed.has_value() && parsed->type == FileType::Table);
-                numbers.insert(parsed.has_value() ? parsed->number : 0);
+                numbers.push_back(parsed.has_value() ? parsed->number : 0);
             }
         }
         return numbers;
@@ -187,6 +192,7 @@ public:
 
     const Comparator& user_comparator() const noexcept { return user_comparator_; }
     MemoryFileSystem& file_system() noexcept { return file_system_; }
+    TableCache& lookup_cache() noexcept { return lookup_cache_; }
     const std::filesystem::path& directory() const noexcept { return directory_; }
 
 private:
@@ -246,6 +252,91 @@ TEST(LookupTest, SeesOnlyEntriesAtOrBeforeTheSequence) {
     EXPECT_EQ(database.Lookup("key", 5, version, &memtable, &immutable), "<none>");
     EXPECT_EQ(database.Lookup("deleted", 40, version, &memtable, &immutable), "<none>");
     EXPECT_EQ(database.Lookup("deleted", 20, version, &memtable, &immutable), "table");
+}
+
+TEST(LookupTest, MemoryDecisionsResetSeekAndOwnValuesAfterSourceRelease) {
+    DatabaseEngine database(BytewiseComparator());
+    const Version version = database.MakeVersion({{0, database.WriteTable(5, {{"k", 1, "old"}})}});
+    const InternalKeyComparator comparator(database.user_comparator());
+    const auto key = LookupKey::Create(AsBytes("k"), 100);
+    ASSERT_TRUE(key.has_value());
+    const ByteView sentinel = AsBytes("sentinel");
+    for (const bool from_immutable : {false, true}) {
+        for (const Entry entry : {Entry{"k", 30, "owned"}, Entry{"k", 30, ""}, Deleted("k", 30)}) {
+            SCOPED_TRACE(from_immutable);
+            SCOPED_TRACE(entry.value);
+            SCOPED_TRACE(static_cast<int>(entry.kind));
+            std::vector<std::byte> value(sentinel.begin(), sentinel.end());
+            std::optional<SeekCharge> seek = SeekCharge{.level = 0, .file = &version.files(0)[0]};
+            const std::size_t before = database.file_system().operations().size();
+            {
+                MemTable mutable_source(database.user_comparator());
+                MemTable immutable_source(database.user_comparator());
+                Fill(immutable_source, {{"k", 20, "older immutable"}});
+                Fill(from_immutable ? immutable_source : mutable_source, {entry});
+                const auto read =
+                    LookupValue(mutable_source, &immutable_source, version, database.lookup_cache(),
+                                comparator, *key, value, seek);
+                ASSERT_TRUE(read.has_value());
+                EXPECT_EQ(*read, entry.kind == ValueKind::Value);
+                EXPECT_FALSE(seek.has_value());
+                EXPECT_EQ(database.file_system().operations().size(), before);
+            }
+            EXPECT_EQ(AsStringView(value),
+                      entry.kind == ValueKind::Value ? entry.value : "sentinel");
+        }
+    }
+}
+
+TEST(LookupTest, MemoryMissResetsSeekAndPreservesOutput) {
+    DatabaseEngine database(BytewiseComparator());
+    const Version version = database.MakeVersion({{0, database.WriteTable(5, {{"k", 1, "old"}})}});
+    const InternalKeyComparator comparator(database.user_comparator());
+    const MemTable empty(database.user_comparator());
+    const auto key = LookupKey::Create(AsBytes("zz"), 100);
+    ASSERT_TRUE(key.has_value());
+    const ByteView sentinel = AsBytes("sentinel");
+    for (const MemTable* immutable : {static_cast<const MemTable*>(nullptr), &empty}) {
+        std::vector<std::byte> value(sentinel.begin(), sentinel.end());
+        std::optional<SeekCharge> seek = SeekCharge{.level = 0, .file = &version.files(0)[0]};
+        const std::size_t before = database.file_system().operations().size();
+        const auto read = LookupValue(empty, immutable, version, database.lookup_cache(),
+                                      comparator, *key, value, seek);
+        ASSERT_TRUE(read.has_value());
+        EXPECT_FALSE(*read);
+        EXPECT_FALSE(seek.has_value());
+        EXPECT_EQ(AsStringView(value), "sentinel");
+        EXPECT_EQ(database.file_system().operations().size(), before);
+    }
+}
+
+TEST(LookupTest, VisitsMissingLevelZeroFilesInOrderBeforeADeeperDecision) {
+    DatabaseEngine database(BytewiseComparator());
+    const Version version = database.MakeVersion(
+        {{0, database.WriteTable(9, {{"a", 50, "a9"}, {"z", 50, "z9"}})},
+         {0, database.WriteTable(7, {{"b", 40, "b7"}, {"y", 40, "y7"}})},
+         {0, database.WriteTable(5, {{"c", 30, "c5"}, Deleted("k", 30), {"x", 30, "x5"}})},
+         {2, database.WriteTable(10, {{"k", 1, "deeper"}})}});
+    std::vector<std::byte> value;
+    std::optional<SeekCharge> seek;
+    const auto read = database.Read("k", 20, version, value, nullptr, nullptr, {}, &seek);
+    ASSERT_TRUE(read.has_value());
+    EXPECT_TRUE(*read);
+    EXPECT_EQ(AsStringView(value), "deeper");
+    EXPECT_EQ(database.SearchedTableOrder(), (std::vector<std::uint64_t>{9, 7, 5, 10}));
+    ASSERT_TRUE(seek.has_value());
+    EXPECT_EQ(seek->level, 0U);
+    EXPECT_EQ(seek->file, &version.files(0)[0]);
+
+    const ByteView sentinel = AsBytes("sentinel");
+    value.assign(sentinel.begin(), sentinel.end());
+    const auto deleted = database.Read("k", 100, version, value, nullptr, nullptr, {}, &seek);
+    ASSERT_TRUE(deleted.has_value());
+    EXPECT_FALSE(*deleted);
+    EXPECT_EQ(AsStringView(value), "sentinel");
+    EXPECT_EQ(database.SearchedTableOrder(), (std::vector<std::uint64_t>{9, 7, 5}));
+    ASSERT_TRUE(seek.has_value());
+    EXPECT_EQ(seek->file, &version.files(0)[0]);
 }
 
 TEST(LookupTest, SearchesLevel0FilesFromNewestToOldest) {
@@ -443,6 +534,40 @@ TEST(LookupTest, StopsSelectingDeeperLevelsAfterAFileDecides) {
     EXPECT_EQ(user_comparator.later_comparisons(), 0U);
 }
 
+TEST(LookupTest, StopsSelectingAfterDeletionOrSecondFileError) {
+    BoundaryTrackingComparator user_comparator;
+    DatabaseEngine database(user_comparator);
+    FileMetadata missing = database.WriteTable(5, {{"a", 1, "a"}, {"z", 1, "z"}});
+    missing.number = 50;
+    const Version deleted = database.MakeVersion({{0, database.WriteTable(6, {Deleted("k", 20)})},
+                                                  {1, Range(10, "zz-later-a", "zz-later-z")}});
+    const Version failed =
+        database.MakeVersion({{0, database.WriteTable(7, {{"a", 20, "a"}, {"z", 20, "z"}})},
+                              {1, missing},
+                              {2, Range(10, "zz-later-a", "zz-later-z")}});
+    const ByteView sentinel = AsBytes("sentinel");
+    std::vector<std::byte> value(sentinel.begin(), sentinel.end());
+    std::optional<SeekCharge> seek;
+    user_comparator.Reset();
+    const auto deletion = database.Read("k", 100, deleted, value, nullptr, nullptr, {}, &seek);
+    ASSERT_TRUE(deletion.has_value());
+    EXPECT_FALSE(*deletion);
+    EXPECT_FALSE(seek.has_value());
+    EXPECT_EQ(AsStringView(value), "sentinel");
+    EXPECT_EQ(user_comparator.later_comparisons(), 0U);
+
+    user_comparator.Reset();
+    const auto error = database.Read("k", 100, failed, value, nullptr, nullptr, {}, &seek);
+    ASSERT_FALSE(error.has_value());
+    EXPECT_EQ(error.error().code(), ErrorCode::NotFound);
+    EXPECT_EQ(AsStringView(value), "sentinel");
+    EXPECT_EQ(database.SearchedTableOrder(), (std::vector<std::uint64_t>{7, 50}));
+    EXPECT_EQ(user_comparator.later_comparisons(), 0U);
+    ASSERT_TRUE(seek.has_value());
+    EXPECT_EQ(seek->level, 0U);
+    EXPECT_EQ(seek->file, &failed.files(0)[0]);
+}
+
 TEST(LookupTest, ChargesTheFirstFileOfAReadThatSearchesAnother) {
     DatabaseEngine database(BytewiseComparator());
     const Version version = database.MakeVersion(
@@ -490,7 +615,25 @@ TEST(SampleChargeTest, StopsSelectingAfterTheSecondOverlap) {
         SampleCharge(version, comparator, Internal("k", 1).encoded());
     ASSERT_TRUE(charge.has_value());
     EXPECT_EQ((**charge->file).number, 6U);
+    EXPECT_EQ(charge->file, &version.files(0)[1]);
     EXPECT_EQ(user_comparator.later_comparisons(), 0U);
+}
+
+TEST(SampleChargeTest, StopsAfterADeeperSecondOverlapAndBorrowsTheOriginalSlot) {
+    BoundaryTrackingComparator user_comparator;
+    const InternalKeyComparator comparator(user_comparator);
+    DatabaseEngine database(user_comparator);
+    const Version version = database.MakeVersion({{1, Range(5, "a", "z")},
+                                                  {3, Range(6, "a", "z")},
+                                                  {4, Range(10, "zz-later-a", "zz-later-z")}});
+    const std::size_t before = database.file_system().operations().size();
+    user_comparator.Reset();
+    const auto charge = SampleCharge(version, comparator, Internal("k", 1).encoded());
+    ASSERT_TRUE(charge.has_value());
+    EXPECT_EQ(charge->level, 1U);
+    EXPECT_EQ(charge->file, &version.files(1)[0]);
+    EXPECT_EQ(user_comparator.later_comparisons(), 0U);
+    EXPECT_EQ(database.file_system().operations().size(), before);
 }
 
 TEST(SampleChargeTest, ChargesTheFirstOfSeveralFilesThatHoldTheKey) {
