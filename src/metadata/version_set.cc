@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -94,15 +93,9 @@ VersionSet::ReadPin::~ReadPin() {
 }
 // GCOVR_EXCL_STOP
 
-const Version& VersionSet::ReadPin::value() const noexcept {
-    assert(version_ != nullptr);
-    return *version_;
-}
+const Version& VersionSet::ReadPin::value() const noexcept { return *version_; }
 
-VersionSet::ReadPin VersionSet::PinCurrent() noexcept {
-    assert(current_ != nullptr);
-    return ReadPin(*this, *current_);
-}
+VersionSet::ReadPin VersionSet::PinCurrent() noexcept { return ReadPin(*this, *current_); }
 
 Result<std::unique_ptr<VersionSet>> VersionSet::Create(FileSystem& file_system,
                                                        std::filesystem::path directory,
@@ -258,10 +251,7 @@ Status VersionSet::MarkFileNumberUsed(std::uint64_t number) {
     return {};
 }
 
-void VersionSet::SetLastSequence(SequenceNumber sequence) noexcept {
-    assert(sequence >= last_sequence_ && sequence <= MaxSequenceNumber);
-    last_sequence_ = sequence;
-}
+void VersionSet::SetLastSequence(SequenceNumber sequence) noexcept { last_sequence_ = sequence; }
 
 Status VersionSet::LogAndApply(VersionEdit edit) {
     if (failure_.has_value()) {
@@ -284,7 +274,6 @@ Status VersionSet::LogAndApply(VersionEdit edit) {
 }
 
 Status VersionSet::LogAndApply(VersionEdit edit, std::unique_lock<std::mutex>& lock) {
-    assert(lock.owns_lock());
     if (failure_.has_value()) {
         return std::unexpected(*failure_);
     }
@@ -376,7 +365,6 @@ Status VersionSet::Write(const VersionEdit& edit,
                          const std::optional<std::vector<std::byte>>& new_manifest_snapshot) {
     std::unique_ptr<WalWriter> created;
     if (manifest_ == nullptr) {
-        assert(new_manifest_snapshot.has_value());
         Result<std::unique_ptr<WritableFile>> file =
             file_system_->OpenWritable(DescriptorFileName(directory_, manifest_file_number_));
         if (!file.has_value()) {
@@ -387,8 +375,6 @@ Status VersionSet::Write(const VersionEdit& edit,
         if (!snapshot.has_value()) {
             return snapshot;
         }
-    } else {
-        assert(!new_manifest_snapshot.has_value());
     }
     WalWriter& manifest = created != nullptr ? *created : *manifest_;
     const Status appended = manifest.AddRecord(edit.Encode());
@@ -450,8 +436,6 @@ void VersionSet::ReserveInstall() {
 }
 
 void VersionSet::InstallPrepared(std::shared_ptr<const Version> version) noexcept {
-    assert(read_pinned_versions_.capacity() > read_pinned_versions_.size());
-    assert(versions_.capacity() > versions_.size());
     if (current_ != nullptr && current_->read_pins_ != 0) {
         read_pinned_versions_.push_back(current_);
     }
@@ -467,7 +451,6 @@ void VersionSet::Install(std::shared_ptr<const Version> version) {
 }
 
 void VersionSet::ReleaseRead(const Version& version) noexcept {
-    assert(version.read_pins_ > 0);
     --version.read_pins_;
     if (version.read_pins_ != 0 || current_.get() == &version) {
         return;

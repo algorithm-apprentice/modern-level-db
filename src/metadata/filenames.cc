@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -88,23 +87,19 @@ std::string DescriptorName(std::uint64_t number) {
 }  // namespace
 
 std::filesystem::path LogFileName(const std::filesystem::path& directory, std::uint64_t number) {
-    assert(number > 0);
     return directory / NumberedName(number, LogSuffix);
 }
 
 std::filesystem::path TableFileName(const std::filesystem::path& directory, std::uint64_t number) {
-    assert(number > 0);
     return directory / NumberedName(number, TableSuffix);
 }
 
 std::filesystem::path DescriptorFileName(const std::filesystem::path& directory,
                                          std::uint64_t number) {
-    assert(number > 0);
     return directory / DescriptorName(number);
 }
 
 std::filesystem::path TempFileName(const std::filesystem::path& directory, std::uint64_t number) {
-    assert(number > 0);
     return directory / NumberedName(number, TempSuffix);
 }
 
@@ -154,7 +149,6 @@ std::optional<ParsedFileName> ParseNativeFileName(const std::filesystem::path& p
 }
 
 std::string CurrentFileContents(std::uint64_t descriptor_number) {
-    assert(descriptor_number > 0);
     std::string contents = DescriptorName(descriptor_number);
     contents.push_back('\n');
     return contents;

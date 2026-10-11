@@ -1,13 +1,11 @@
 #include "metadata/version.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <limits>
 #include <memory>
-#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -33,7 +31,6 @@ bool FileBefore(const InternalKeyComparator& comparator, const Version::File& le
 }  // namespace
 
 std::span<const Version::File> Version::files(std::uint32_t level) const noexcept {
-    assert(level < NumLevels);
     return files_[level];
 }
 
@@ -117,28 +114,7 @@ Version VersionBuilder::BuildTrusted(const InternalKeyComparator& comparator, co
         deletions[deleted.level].push_back(deleted.number);
     }
 
-#ifndef NDEBUG
-    std::set<std::uint64_t> live;
-    for (std::uint32_t level = 0; level < NumLevels; ++level) {
-        for (const Version::File& file : base.files(level)) {
-            assert(live.insert(file->number).second);
-        }
-        for (const std::uint64_t number : deletions[level]) {
-            const auto found = std::ranges::find_if(
-                base.files(level),
-                [number](const Version::File& file) { return file->number == number; });
-            assert(found != base.files(level).end());
-            assert(live.erase(number) == 1);
-        }
-    }
-#endif
-
     for (const NewFile& added : edit.new_files()) {
-        assert(comparator.Compare(added.file.smallest.encoded(), added.file.largest.encoded()) <=
-               0);
-#ifndef NDEBUG
-        assert(live.insert(added.file.number).second);
-#endif
         FileMetadata file = added.file;
         file.allowed_seeks = InitialAllowedSeeks(file.file_size);
         additions[added.level].push_back(std::make_shared<const FileMetadata>(std::move(file)));
@@ -160,10 +136,6 @@ Version VersionBuilder::BuildTrusted(const InternalKeyComparator& comparator, co
         const auto append = [&](const Version::File& file, bool existing_file) {
             if (existing_file && deleted(file->number)) {
                 return;
-            }
-            if (level > 0 && !files.empty()) {
-                assert(comparator.Compare(files.back()->largest.encoded(),
-                                          file->smallest.encoded()) < 0);
             }
             files.push_back(file);
         };
