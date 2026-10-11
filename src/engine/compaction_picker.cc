@@ -122,6 +122,40 @@ void AddBoundaryInputs(const InternalKeyComparator& comparator,
     }
 }
 
+struct InputExpansion {
+    Files inputs;
+    Files next_inputs;
+    KeyRange range;
+};
+
+std::optional<InputExpansion> TryExpandInputs(const Version& version,
+                                              const InternalKeyComparator& comparator,
+                                              std::uint32_t level,
+                                              std::span<const Version::File> inputs,
+                                              std::span<const Version::File> next_inputs,
+                                              const KeyRange& all, std::uint64_t target_file_size) {
+    if (next_inputs.empty()) {
+        return std::nullopt;
+    }
+    Files expanded = OverlappingFiles(version, level, comparator.user_comparator(), all);
+    AddBoundaryInputs(comparator, version.files(level), expanded);
+    if (!(expanded.size() > inputs.size() && TotalFileSize(next_inputs) + TotalFileSize(expanded) <
+                                                 ExpandedCompactionFactor * target_file_size)) {
+        return std::nullopt;
+    }
+    const KeyRange expanded_range = RangeOf(comparator, expanded);
+    Files expanded_next =
+        OverlappingFiles(version, level + 1, comparator.user_comparator(), expanded_range);
+    AddBoundaryInputs(comparator, version.files(level + 1), expanded_next);
+    if (expanded_next.size() != next_inputs.size()) {
+        return std::nullopt;
+    }
+    InputExpansion expansion{.inputs = std::move(expanded),
+                             .next_inputs = std::move(expanded_next),
+                             .range = expanded_range};
+    return expansion;
+}
+
 // Closes the input range over both levels, then records grandparents to bound
 // the overlap inherited by the output's next compaction.
 Compaction SetupInputs(std::shared_ptr<const Version> version,
@@ -135,25 +169,14 @@ Compaction SetupInputs(std::shared_ptr<const Version> version,
     KeyRange all = range;
     Widen(comparator, next_inputs, all);
 
-    // Take more files of the level if that keeps the next level's inputs.
-    if (!next_inputs.empty()) {
-        Files expanded = OverlappingFiles(*version, level, user_comparator, all);
-        AddBoundaryInputs(comparator, version->files(level), expanded);
-        if (expanded.size() > inputs.size() &&
-            TotalFileSize(next_inputs) + TotalFileSize(expanded) <
-                ExpandedCompactionFactor * target_file_size) {
-            const KeyRange expanded_range = RangeOf(comparator, expanded);
-            Files expanded_next =
-                OverlappingFiles(*version, level + 1, user_comparator, expanded_range);
-            AddBoundaryInputs(comparator, version->files(level + 1), expanded_next);
-            if (expanded_next.size() == next_inputs.size()) {
-                range = expanded_range;
-                inputs = std::move(expanded);
-                next_inputs = std::move(expanded_next);
-                all = range;
-                Widen(comparator, next_inputs, all);
-            }
-        }
+    if (auto expansion = TryExpandInputs(*version, comparator, level, inputs, next_inputs, all,
+                                         target_file_size);
+        expansion.has_value()) {
+        range = expansion->range;
+        inputs = std::move(expansion->inputs);
+        next_inputs = std::move(expansion->next_inputs);
+        all = range;
+        Widen(comparator, next_inputs, all);
     }
 
     Files grandparents;
