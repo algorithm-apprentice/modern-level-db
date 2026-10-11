@@ -54,6 +54,18 @@ Status DatabaseEngine::MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool
 }
 
 Status DatabaseEngine::SwitchMemTable() {
+    Result<PreparedRotation> prepared = PrepareRotation();
+    if (!prepared.has_value()) {
+        return std::unexpected(std::move(prepared).error());
+    }
+    CloseOldLogForRotation();
+    write_buffers_.InstallRotation(std::move(prepared->log), prepared->log_number,
+                                   std::move(prepared->memtable));
+    MaybeScheduleBackgroundWork();
+    return {};
+}
+
+Result<DatabaseEngine::PreparedRotation> DatabaseEngine::PrepareRotation() {
     const std::uint64_t number = versions_->NewFileNumber();
     const std::filesystem::path path = LogFileName(directory_, number);
     Result<std::unique_ptr<WritableFile>> file = file_system_->OpenWritable(path);
@@ -69,9 +81,15 @@ Status DatabaseEngine::SwitchMemTable() {
         // replays, so its directory entry is durable before it takes writes.
         const Status synced = file_system_->SyncDirectory(directory_);
         if (!synced.has_value()) {
-            return synced;
+            return std::unexpected(synced.error());
         }
     }
+    PreparedRotation prepared{
+        .log = std::move(new_log), .memtable = std::move(new_memtable), .log_number = number};
+    return prepared;
+}
+
+void DatabaseEngine::CloseOldLogForRotation() {
     Status closed;
     try {
         closed = write_buffers_.log().Close();
@@ -82,9 +100,6 @@ Status DatabaseEngine::SwitchMemTable() {
     if (!closed.has_value()) {
         RecordStickyError(closed.error());
     }
-    write_buffers_.InstallRotation(std::move(new_log), number, std::move(new_memtable));
-    MaybeScheduleBackgroundWork();
-    return {};
 }
 
 Status DatabaseEngine::CommitWrite(std::unique_lock<std::mutex>& lock, EncodedWriteBatch& group,

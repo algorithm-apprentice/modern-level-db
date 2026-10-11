@@ -192,6 +192,13 @@ private:
     [[nodiscard]] Status Recover(const DatabaseEngineOptions& options);
     [[nodiscard]] Status MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool force);
     [[nodiscard]] Status SwitchMemTable();
+    struct PreparedRotation {
+        std::unique_ptr<WalWriter> log;
+        std::shared_ptr<MemTable> memtable;
+        std::uint64_t log_number;
+    };
+    [[nodiscard]] Result<PreparedRotation> PrepareRotation();
+    void CloseOldLogForRotation();
     [[nodiscard]] Status CommitWrite(std::unique_lock<std::mutex>& lock, EncodedWriteBatch& group,
                                      bool sync);
     [[nodiscard]] bool NeedsCompaction() const;
@@ -203,6 +210,7 @@ private:
     // number. Returns whether it ran one rather than moving a file.
     [[nodiscard]] bool Compact(std::unique_lock<std::mutex>& lock,
                                std::vector<std::uint64_t>& outputs);
+    void InstallTrivialCompaction(const Compaction& compaction, std::unique_lock<std::mutex>& lock);
     [[nodiscard]] Status ApplyBackgroundEdit(Result<VersionEdit> edit,
                                              std::unique_lock<std::mutex>& lock,
                                              std::string_view closing_error);
