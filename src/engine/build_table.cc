@@ -36,6 +36,27 @@ Result<std::uint64_t> WriteTable(std::unique_ptr<WritableFile> file,
     return builder.file_size();
 }
 
+Status VerifyWrittenTable(TableCache& table_cache, std::uint64_t number, std::uint64_t size) {
+    const Result<TableCache::Handle> table = table_cache.Find(number, size);
+    if (!table.has_value()) {
+        return std::unexpected(table.error());
+    }
+    return {};
+}
+
+FileMetadata MakeTableMetadata(std::uint64_t number, std::uint64_t size, ByteView smallest,
+                               ByteView largest) {
+    InternalKey smallest_key = TakeTrusted(InternalKey::Decode(smallest));
+    InternalKey largest_key = TakeTrusted(InternalKey::Decode(largest));
+    FileMetadata metadata{
+        .number = number,
+        .file_size = size,
+        .smallest = std::move(smallest_key),
+        .largest = std::move(largest_key),
+    };
+    return metadata;
+}
+
 }  // namespace
 
 Result<std::optional<FileMetadata>> BuildTable(FileSystem& file_system,
@@ -59,23 +80,16 @@ Result<std::optional<FileMetadata>> BuildTable(FileSystem& file_system,
     ByteView largest;
     Result<std::uint64_t> size = WriteTable(std::move(*file), comparator, options, entry, largest);
     if (size.has_value()) {
-        const Result<TableCache::Handle> table = table_cache.Find(number, *size);
-        if (!table.has_value()) {
-            size = std::unexpected(table.error());
+        Status verified = VerifyWrittenTable(table_cache, number, *size);
+        if (!verified.has_value()) {
+            size = std::unexpected(std::move(verified).error());
         }
     }
     if (!size.has_value()) {
         static_cast<void>(file_system.RemoveFile(path));
         return std::unexpected(std::move(size).error());
     }
-    InternalKey smallest_key = TakeTrusted(InternalKey::Decode(smallest));
-    InternalKey largest_key = TakeTrusted(InternalKey::Decode(largest));
-    FileMetadata metadata{
-        .number = number,
-        .file_size = *size,
-        .smallest = std::move(smallest_key),
-        .largest = std::move(largest_key),
-    };
+    FileMetadata metadata = MakeTableMetadata(number, *size, smallest, largest);
     return std::optional<FileMetadata>(std::move(metadata));
 }
 
