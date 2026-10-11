@@ -227,6 +227,28 @@ TEST(DumpFileTest, DumpsWriteBatchesWithEscapedBinaryDataAndPerEntrySequences) {
     }
 }
 
+TEST(DumpFileTest, DumpsEmptyBatchEntryFieldsAtTheSequenceBoundary) {
+    MemoryFileSystem file_system;
+    const std::filesystem::path path = "000011.log";
+    EncodedWriteBatch batch;
+    batch.Put(ByteView{}, ByteView{});
+    batch.Delete(ByteView{});
+    batch.SetSequence(MaxSequenceNumber - 1);
+    WriteRecords(file_system, path, {Materialize(batch.encoded())});
+    StringOutput output;
+
+    const Status dumped = DumpFile(file_system, path, output);
+
+    ASSERT_TRUE(dumped.has_value()) << dumped.error().ToString();
+    const std::vector<std::string> expected{
+        "dump version=1 type=log file='000011.log'\n",
+        "record offset=0 sequence=72057594037927934 count=2\n",
+        "  put sequence=72057594037927934 key='' value=''\n",
+        "  delete sequence=72057594037927935 key=''\n",
+    };
+    EXPECT_EQ(output.appends(), expected);
+}
+
 TEST(DumpFileTest, PrintsPhysicalCorruptionContinuesAtTheNextBlockAndReturnsIt) {
     MemoryFileSystem file_system;
     const std::filesystem::path path = "000002.log";
