@@ -138,6 +138,9 @@ caller must stop using the writer and make that failure sticky at the database
 or version-set boundary. WalWriter returns the current operation's I/O error;
 it does not duplicate the owner's failure state. Debug builds assert non-null
 construction, single close, and no record or sync operation after close.
+Close marks the writer terminal only after the owned file's Close returns; an
+exception leaves the wrapper open so its owner can retain a coherent state or
+retry cleanup.
 
 Allocation failure while fragmenting occurs before I/O. The owned file's
 destructor remains the best-effort fallback when explicit `Close` is omitted.

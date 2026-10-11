@@ -82,7 +82,8 @@ Adopt `DBImpl`:
   otherwise switches to a new log and memtable: it allocates a log number,
   creates the log, closes the old log, recording a background error if that
   fails, makes the memtable immutable, starts a new one, and schedules
-  background work.
+  background work. If old-log Close throws, the engine records `Aborted` and
+  rethrows before changing the installed log or memtable.
 - **Background work** runs one task at a time. A task is scheduled unless one
   is already scheduled, the database is closing, a background error exists,
   or there is neither an immutable memtable nor a compaction to do. The task
@@ -222,7 +223,10 @@ class DatabaseEngine final {
   engine no longer holds the immutable memtable that the switch made.
 - A switch allocates the new log writer and memtable before it syncs the
   directory, closes the old log, or changes any state, so a failure or an
-  allocation that throws leaves the old log and memtable in place.
+  allocation that throws leaves the old log and memtable in place. WalWriter
+  commits its closed state only after the file Close returns, so a close
+  exception cannot leave the installed writer logically closed; the engine
+  makes that exception sticky before it propagates.
 - Scheduling follows LevelDB's conditions, with the mutex held: the engine
   marks a task as scheduled, then calls `Schedule`, which must queue the task
   without running it. If `Schedule` fails or throws, the engine clears the

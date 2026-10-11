@@ -80,8 +80,9 @@ Status WalWriter::Sync() {
 
 Status WalWriter::Close() {
     assert(!closed_);  // GCOVR_EXCL_BR_WITHOUT_HIT: single-close precondition
+    Status status = file_->Close();
     closed_ = true;
-    return file_->Close();
+    return status;
 }
 
 Status WalWriter::Append(ByteView data) { return file_->Append(data); }

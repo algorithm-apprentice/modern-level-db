@@ -678,6 +678,27 @@ TEST_F(DatabaseTest, StopsWritesWhenTheOldLogCannotBeClosed) {
     EXPECT_FALSE(database->WaitForBackgroundWork().has_value());
 }
 
+TEST_F(DatabaseTest, StopsWritesWhenClosingTheOldLogThrows) {
+    const auto database = Open();
+    Fill(*database, "a");
+    file_system_.SetOperationHook([](std::string_view operation) -> Status {
+        if (operation.starts_with("close ") && operation.ends_with(".log")) {
+            throw std::runtime_error("thrown");
+        }
+        return {};
+    });
+
+    EXPECT_THROW(static_cast<void>(Put(*database, "b", "1")), std::runtime_error);
+    file_system_.SetOperationHook({});
+
+    const Status later = Put(*database, "c", "1");
+    ASSERT_FALSE(later.has_value());
+    EXPECT_EQ(later.error().code(), ErrorCode::Aborted);
+    EXPECT_EQ(later.error().message(), "old WAL close threw during rotation");
+    EXPECT_EQ(Get(*database, "a"), Large());
+    EXPECT_EQ(executor_.queued(), 0U);
+}
+
 TEST_F(DatabaseTest, FlushesTheMemtableIntoATable) {
     const auto database = Open();
     ASSERT_TRUE(Put(*database, "a", "1").has_value());
