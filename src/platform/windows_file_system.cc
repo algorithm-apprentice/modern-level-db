@@ -294,6 +294,56 @@ Result<std::filesystem::path> ResolveDirectoryHandle(HANDLE handle,
     return std::filesystem::path(std::wstring(resolved.data(), length));
 }
 
+Result<std::vector<wchar_t>> DatabaseVolumeRoot(const std::filesystem::path& final,
+                                                const std::filesystem::path& original) {
+    std::vector<wchar_t> volume(std::max<std::size_t>(final.native().size() + 1, MAX_PATH + 1U));
+    if (!::GetVolumePathNameW(final.c_str(), volume.data(), static_cast<DWORD>(volume.size()))) {
+        return std::unexpected(FileError("database volume", original, ::GetLastError()));
+    }
+    return volume;
+}
+
+Status CheckFixedVolume(const wchar_t* volume, const WindowsFileOperations& operations) {
+    const UINT drive_type = operations.DriveType(volume);
+    if (drive_type == DRIVE_UNKNOWN || drive_type == DRIVE_NO_ROOT_DIR) {
+        return std::unexpected(Error::Io("could not determine the database volume type"));
+    }
+    if (drive_type != DRIVE_FIXED) {
+        return std::unexpected(Error::NotSupported("Windows databases require a fixed volume"));
+    }
+    return {};
+}
+
+Status CheckNtfsVolume(const wchar_t* volume, const std::filesystem::path& original,
+                       const WindowsFileOperations& operations) {
+    std::array<wchar_t, 32> file_system{};
+    if (!operations.VolumeInformation(volume, file_system.data(),
+                                      static_cast<DWORD>(file_system.size()))) {
+        return std::unexpected(FileError("database filesystem", original, ::GetLastError()));
+    }
+    if (::CompareStringOrdinal(file_system.data(), -1, L"NTFS", -1, TRUE) != CSTR_EQUAL) {
+        return std::unexpected(Error::NotSupported("Windows databases require NTFS"));
+    }
+    return {};
+}
+
+Status CheckDatabaseVolume(const std::filesystem::path& final,
+                           const std::filesystem::path& original,
+                           const WindowsFileOperations& operations) {
+    if (!DrivePath(final.native())) {
+        return std::unexpected(Error::NotSupported("resolved database volume is not local NTFS"));
+    }
+    auto volume = DatabaseVolumeRoot(final, original);
+    if (!volume.has_value()) {
+        return std::unexpected(std::move(volume).error());
+    }
+    Status fixed = CheckFixedVolume(volume->data(), operations);
+    if (!fixed.has_value()) {
+        return fixed;
+    }
+    return CheckNtfsVolume(volume->data(), original, operations);
+}
+
 class WindowsSequentialFile final : public SequentialFile {
 public:
     WindowsSequentialFile(ScopedHandle file, std::filesystem::path path,
@@ -650,27 +700,9 @@ Result<std::filesystem::path> WindowsFileSystem::PrepareDatabaseDirectory(
         return std::unexpected(std::move(resolved).error());
     }
     std::filesystem::path final(std::move(*resolved));
-    if (!DrivePath(final.native())) {
-        return std::unexpected(Error::NotSupported("resolved database volume is not local NTFS"));
-    }
-    std::vector<wchar_t> volume(std::max<std::size_t>(final.native().size() + 1, MAX_PATH + 1U));
-    if (!::GetVolumePathNameW(final.c_str(), volume.data(), static_cast<DWORD>(volume.size()))) {
-        return std::unexpected(FileError("database volume", directory, ::GetLastError()));
-    }
-    const UINT drive_type = operations_->DriveType(volume.data());
-    if (drive_type == DRIVE_UNKNOWN || drive_type == DRIVE_NO_ROOT_DIR) {
-        return std::unexpected(Error::Io("could not determine the database volume type"));
-    }
-    if (drive_type != DRIVE_FIXED) {
-        return std::unexpected(Error::NotSupported("Windows databases require a fixed volume"));
-    }
-    std::array<wchar_t, 32> file_system{};
-    if (!operations_->VolumeInformation(volume.data(), file_system.data(),
-                                        static_cast<DWORD>(file_system.size()))) {
-        return std::unexpected(FileError("database filesystem", directory, ::GetLastError()));
-    }
-    if (::CompareStringOrdinal(file_system.data(), -1, L"NTFS", -1, TRUE) != CSTR_EQUAL) {
-        return std::unexpected(Error::NotSupported("Windows databases require NTFS"));
+    Status admitted = CheckDatabaseVolume(final, directory, *operations_);
+    if (!admitted.has_value()) {
+        return std::unexpected(std::move(admitted).error());
     }
     const Status closed = CloseHandle(*parent, directory);
     if (!closed.has_value()) {
