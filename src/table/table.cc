@@ -118,6 +118,32 @@ Status ValidateIndex(const Block& index, std::uint64_t blocks_end,
     return index.ValidateEntries(visitor);
 }
 
+Result<Footer> ReadFooter(const RandomAccessFile& file, std::uint64_t blocks_end) {
+    std::array<std::byte, FooterSize> bytes{};
+    const Status read = ReadExactly(file, blocks_end, bytes);
+    if (!read.has_value()) {
+        return std::unexpected(read.error());
+    }
+    Result<Footer> footer = DecodeFooter(bytes);
+    if (!footer.has_value()) {
+        return std::unexpected(footer.error());
+    }
+    return footer;
+}
+
+Result<Block> ReadValidatedIndex(const RandomAccessFile& file, std::uint64_t blocks_end,
+                                 BlockHandle handle, BlockKeyFormat key_format) {
+    Result<Block> index = ReadBlock(file, blocks_end, handle);
+    if (!index.has_value()) {
+        return index;
+    }
+    const Status valid = ValidateIndex(*index, blocks_end, key_format);
+    if (!valid.has_value()) {
+        return std::unexpected(valid.error());
+    }
+    return index;
+}
+
 // Reads the filter block that the metaindex maps to the policy, if any.
 Status ReadFilter(const RandomAccessFile& file, std::uint64_t blocks_end, BlockHandle metaindex,
                   BloomFilterPolicy policy, std::optional<FilterBlockReader>& filter) {
@@ -172,23 +198,15 @@ Result<std::unique_ptr<Table>> Table::Open(std::unique_ptr<RandomAccessFile> fil
         return std::unexpected(Error::Corruption("file is too short to be a table"));
     }
     const std::uint64_t blocks_end = file_size - FooterSize;
-    std::array<std::byte, FooterSize> footer_bytes{};
-    const Status read = ReadExactly(*file, blocks_end, footer_bytes);
-    if (!read.has_value()) {
-        return std::unexpected(read.error());
-    }
-    const Result<Footer> footer = DecodeFooter(footer_bytes);
+    Result<Footer> footer = ReadFooter(*file, blocks_end);
     if (!footer.has_value()) {
-        return std::unexpected(footer.error());
+        return std::unexpected(std::move(footer).error());
     }
 
-    Result<Block> index = ReadBlock(*file, blocks_end, footer->index);
+    Result<Block> index =
+        ReadValidatedIndex(*file, blocks_end, footer->index, options.block_key_format);
     if (!index.has_value()) {
         return std::unexpected(std::move(index).error());
-    }
-    const Status valid = ValidateIndex(*index, blocks_end, options.block_key_format);
-    if (!valid.has_value()) {
-        return std::unexpected(valid.error());
     }
 
     std::optional<FilterBlockReader> filter;
