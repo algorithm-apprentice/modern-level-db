@@ -128,3 +128,34 @@ error-copy preservation. It did not edit files or execute builds/tests.
 Missing-parent and preflight wrong-kind cases must still be added before source
 extraction; native query faults/counts and allocation-exception ordering remain
 inspection-based limits rather than claims of executed characterization.
+
+## Implementation evidence
+
+Accepted design #213 merged after all 20 exact-head checks succeeded.
+Three new cases passed against original production at
+9ef8613cbc67d792384c0477f2aa8e0f532d9c7c before extraction. They assert guard
+priority without acquisition, existing/single-missing alias resolution with
+trailing separators and exact directory opening policy, missing-parent rejection,
+and eight first-failure/query-prefix/cleanup outcomes without directory creation.
+Failure messages use original PathUtf8 attribution and stable native-code prefixes,
+not localized system suffixes.
+
+Characterization preceded separate directory inspection/resolution and resolved
+volume-admission production topic commits. The eight-definition ledger is
+implemented; the directory owner remains in the parent until explicit close,
+and final existing/missing path construction still follows close success.
+Exact rebuilt original/final native/death/recovery/database JUnit sets contain
+120 unique passing cases, with all three required new cases and no
+failures/errors/skips. Directory-resolution intermediate selection passed 49 cases.
+No public/fault interfaces, query counts, directory creation, durability policy,
+coverage exclusions or other platform operations changed.
+Formatting, documentation and whitespace gates apply before publication.
+Uninjectable attribute/final-path/volume-root failures retain the stated
+inspection-based evidence limit.
+
+Independent combined review found no significant issue in the three changed
+paths and directly confirmed identical 120-case artifacts, all three required
+characterizations, 49-case intermediate evidence and characterization-before-
+extraction commit order. It did not edit files, execute builds/tests or
+independently establish artifact provenance; the stated native-query and
+allocation-exception inspection limits remain.
