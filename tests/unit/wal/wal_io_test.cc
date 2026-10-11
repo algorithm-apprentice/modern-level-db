@@ -458,6 +458,8 @@ TEST(WalReaderTest, UnknownTypeEmitsCorruptionThenContinues) {
     ASSERT_TRUE(corruption.has_value());
     EXPECT_EQ(corruption->offset, 0U);
     EXPECT_EQ(corruption->dropped_bytes, unknown.size());
+    EXPECT_EQ(corruption->error.code(), ErrorCode::Corruption);
+    EXPECT_EQ(corruption->error.message(), "WAL physical record has an unknown type");
     const auto record = NextRecord(reader);
     ASSERT_TRUE(record.has_value());
     EXPECT_EQ(AsStringView(record->data), "good");
@@ -478,6 +480,8 @@ TEST(WalReaderTest, ChecksumFailureDropsBlockButNotNextBlock) {
 
     const auto corruption = NextCorruption(reader);
     ASSERT_TRUE(corruption.has_value());
+    EXPECT_EQ(corruption->error.code(), ErrorCode::Corruption);
+    EXPECT_EQ(corruption->error.message(), "WAL physical record checksum mismatch");
     EXPECT_EQ(corruption->offset, 0U);
     EXPECT_EQ(corruption->dropped_bytes, WalBlockSize);
     const auto record = NextRecord(reader);
@@ -505,9 +509,14 @@ TEST(WalReaderTest, PhysicalCorruptionNeverJoinsFragmentedRecords) {
 
     const auto physical = NextCorruption(reader);
     ASSERT_TRUE(physical.has_value());
+    EXPECT_EQ(physical->error.code(), ErrorCode::Corruption);
+    EXPECT_EQ(physical->error.message(), "WAL physical record checksum mismatch");
     EXPECT_EQ(physical->offset, 0U);
+    EXPECT_EQ(physical->dropped_bytes, WalBlockSize - WalHeaderSize);
     const auto orphan = NextCorruption(reader);
     ASSERT_TRUE(orphan.has_value());
+    EXPECT_EQ(orphan->error.message(), "WAL fragment has no starting fragment");
+    EXPECT_EQ(orphan->dropped_bytes, 9U);
     EXPECT_EQ(orphan->offset, WalBlockSize);
     const auto record = NextRecord(reader);
     ASSERT_TRUE(record.has_value());
@@ -698,6 +707,120 @@ TEST(WalReaderTest, ReadErrorsAreTerminal) {
     ASSERT_FALSE(second.has_value());
     EXPECT_EQ(second.error().message(), first.error().message());
     EXPECT_EQ(state->read_calls, read_calls);
+}
+
+TEST(WalReaderTest, EmptyFirstStillSuppliesPhysicalCorruptionOffsetAndResetsAssembly) {
+    const auto prefix =
+        PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full), AsBytes("prefix"));
+    auto encoded = prefix;
+    const auto first = PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::First), {});
+    const auto corrupt = PhysicalRecord(9, AsBytes("bad"));
+    const auto last =
+        PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Last), AsBytes("orphan"));
+    const auto full =
+        PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full), AsBytes("good"));
+    encoded.insert(encoded.end(), first.begin(), first.end());
+    encoded.insert(encoded.end(), corrupt.begin(), corrupt.end());
+    encoded.insert(encoded.end(), last.begin(), last.end());
+    encoded.insert(encoded.end(), full.begin(), full.end());
+    auto source = std::make_shared<SequentialState>();
+    source->data = std::move(encoded);
+    WalReader reader(Sequential(source));
+    EXPECT_EQ(AsStringView(NextRecord(reader)->data), "prefix");
+
+    const auto physical = NextCorruption(reader);
+
+    ASSERT_TRUE(physical.has_value());
+    EXPECT_EQ(physical->error.code(), ErrorCode::Corruption);
+    EXPECT_EQ(physical->error.message(), "WAL physical record has an unknown type");
+    EXPECT_EQ(physical->offset, prefix.size());
+    EXPECT_EQ(physical->dropped_bytes, corrupt.size());
+    const auto orphan = NextCorruption(reader);
+    ASSERT_TRUE(orphan.has_value());
+    EXPECT_EQ(orphan->error.code(), ErrorCode::Corruption);
+    EXPECT_EQ(orphan->error.message(), "WAL fragment has no starting fragment");
+    EXPECT_EQ(orphan->offset, prefix.size() + first.size() + corrupt.size());
+    EXPECT_EQ(orphan->dropped_bytes, 6U);
+    const auto record = NextRecord(reader);
+    ASSERT_TRUE(record.has_value());
+    EXPECT_EQ(AsStringView(record->data), "good");
+    ExpectEof(reader);
+}
+
+TEST(WalReaderTest, FullInterruptionRetainsCombinedProvenanceAndRewindsWithoutReadAhead) {
+    const auto first =
+        PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::First), AsBytes("first-"));
+    const auto middle =
+        PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Middle), AsBytes("middle"));
+    const auto full =
+        PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full), AsBytes("good"));
+    auto encoded = first;
+    encoded.insert(encoded.end(), middle.begin(), middle.end());
+    encoded.insert(encoded.end(), full.begin(), full.end());
+    encoded.resize(WalBlockSize, std::byte{0});
+    const auto later =
+        PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full), AsBytes("later"));
+    encoded.insert(encoded.end(), later.begin(), later.end());
+    auto source = std::make_shared<SequentialState>();
+    source->data = std::move(encoded);
+    WalReader reader(Sequential(source));
+
+    const auto interrupted = NextCorruption(reader);
+
+    ASSERT_TRUE(interrupted.has_value());
+    EXPECT_EQ(interrupted->error.code(), ErrorCode::Corruption);
+    EXPECT_EQ(interrupted->error.message(),
+              "WAL fragmented record was interrupted by a full record");
+    EXPECT_EQ(interrupted->offset, 0U);
+    EXPECT_EQ(interrupted->dropped_bytes, 12U);
+    EXPECT_EQ(source->read_calls, 1);
+    EXPECT_EQ(source->position, WalBlockSize);
+    const auto record = NextRecord(reader);
+    ASSERT_TRUE(record.has_value());
+    EXPECT_EQ(AsStringView(record->data), "good");
+    EXPECT_EQ(record->offset, first.size() + middle.size());
+    EXPECT_EQ(source->read_calls, 1);
+    EXPECT_EQ(source->position, WalBlockSize);
+    const auto next_block = NextRecord(reader);
+    ASSERT_TRUE(next_block.has_value());
+    EXPECT_EQ(AsStringView(next_block->data), "later");
+    EXPECT_EQ(next_block->offset, WalBlockSize);
+    ExpectEof(reader);
+}
+
+TEST(WalReaderTest, OversizedPayloadIsCorruptionInACompleteBlockButBenignInTheFinalTail) {
+    std::vector<std::byte> header(WalHeaderSize, std::byte{0});
+    header[4] = std::byte{0xff};
+    header[5] = std::byte{0xff};
+    header[6] = static_cast<std::byte>(WalRecordType::Full);
+    auto complete = header;
+    complete.resize(WalBlockSize, std::byte{0x7f});
+    const auto good =
+        PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Full), AsBytes("good"));
+    complete.insert(complete.end(), good.begin(), good.end());
+    auto source = std::make_shared<SequentialState>();
+    source->data = std::move(complete);
+    WalReader reader(Sequential(source));
+
+    const auto corrupted = NextCorruption(reader);
+
+    ASSERT_TRUE(corrupted.has_value());
+    EXPECT_EQ(corrupted->error.code(), ErrorCode::Corruption);
+    EXPECT_EQ(corrupted->error.message(), "WAL physical record payload exceeds block capacity");
+    EXPECT_EQ(corrupted->offset, 0U);
+    EXPECT_EQ(corrupted->dropped_bytes, WalBlockSize);
+    const auto recovered = NextRecord(reader);
+    ASSERT_TRUE(recovered.has_value());
+    EXPECT_EQ(AsStringView(recovered->data), "good");
+    EXPECT_EQ(recovered->offset, WalBlockSize);
+
+    auto tail = std::make_shared<SequentialState>();
+    tail->data = std::move(header);
+    WalReader tail_reader(Sequential(tail));
+    ExpectEof(tail_reader);
+    const int read_calls = tail->read_calls;
+    ExpectEof(tail_reader);
+    EXPECT_EQ(tail->read_calls, read_calls);
 }
 
 TEST(WalReaderTest, InvalidFileAndReadCountViolationsAreTerminal) {
