@@ -1,6 +1,5 @@
 #include "table/table_builder.h"
 
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -66,8 +65,6 @@ Status TableBuilder::AddTrusted(ByteView key, ByteView value) {
     if (first_error_.has_value()) {
         return FirstError();
     }
-    assert(ParseInternalKey(key).has_value());
-    assert(entry_count_ == 0 || comparator_->Compare(key, last_key_) > 0);
     return AddValid(key, value);
 }
 

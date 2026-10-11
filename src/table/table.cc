@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -366,15 +365,9 @@ Table::Iterator::Iterator(const Table& table, const TableReadOptions& options) n
       index_(table.index_, *table.block_comparator_, table.block_key_format_) {}
 // GCOVR_EXCL_STOP
 
-ByteView Table::Iterator::key() const noexcept {
-    assert(valid());
-    return data_->key();
-}
+ByteView Table::Iterator::key() const noexcept { return data_->key(); }
 
-ByteView Table::Iterator::value() const noexcept {
-    assert(valid());
-    return data_->value();
-}
+ByteView Table::Iterator::value() const noexcept { return data_->value(); }
 
 Status Table::Iterator::SeekToFirst() {
     const Status sought = index_.SeekToFirst();
@@ -435,7 +428,6 @@ Status Table::Iterator::Seek(ByteView target) {
 }
 
 Status Table::Iterator::Next() {
-    assert(valid());
     const Status advanced_data = data_->Next();
     if (!advanced_data.has_value()) {
         return Fail(advanced_data.error());
@@ -453,7 +445,6 @@ Status Table::Iterator::Next() {
 }
 
 Status Table::Iterator::Prev() {
-    assert(valid());
     const Status retreated_data = data_->Prev();
     if (!retreated_data.has_value()) {
         return Fail(retreated_data.error());

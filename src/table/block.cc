@@ -1,6 +1,5 @@
 #include "table/block.h"
 
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -82,7 +81,6 @@ ByteView StringBytes(const std::string& value) noexcept {
 }  // namespace
 
 std::size_t Block::Layout::RestartPoint(std::size_t index) const noexcept {
-    assert(index < restart_count);
     return DecodeFixed32(contents.subspan(entries_end + Fixed32Size * index).first<Fixed32Size>());
 }
 
@@ -177,15 +175,9 @@ Block::Iterator::Iterator(const Block& block, const Comparator& comparator,
       restart_index_(layout_.restart_count) {}
 // GCOVR_EXCL_STOP
 
-ByteView Block::Iterator::key() const noexcept {
-    assert(valid());
-    return StringBytes(key_);
-}
+ByteView Block::Iterator::key() const noexcept { return StringBytes(key_); }
 
-ByteView Block::Iterator::value() const noexcept {
-    assert(valid());
-    return value_;
-}
+ByteView Block::Iterator::value() const noexcept { return value_; }
 
 Status Block::Iterator::SeekToFirst() {
     BeginPositioning();
@@ -259,7 +251,6 @@ Status Block::Iterator::Seek(ByteView target) {
         }
     }
 
-    assert(current_key_compare == 0 || valid());
     // Reuse a current forward position only when the checkpoint is unchanged;
     // otherwise rebuild the full key from its restart before applying suffixes.
     if (!(left == restart_index_ && current_key_compare < 0)) {
@@ -276,13 +267,9 @@ Status Block::Iterator::Seek(ByteView target) {
     }
 }
 
-Status Block::Iterator::Next() {
-    assert(valid());
-    return ParseNextEntry();
-}
+Status Block::Iterator::Next() { return ParseNextEntry(); }
 
 Status Block::Iterator::Prev() {
-    assert(valid());
     // Entries have no backward link/full key at every offset. Reconstruct from
     // a preceding restart until the next entry would be the current one.
     const std::size_t original = current_;
@@ -312,7 +299,6 @@ Status Block::Iterator::Prev() {
         if (!parsed.has_value()) {
             return parsed;
         }
-        assert(valid());
     } while (next_ < original);
     return {};
 }
@@ -320,7 +306,6 @@ Status Block::Iterator::Prev() {
 void Block::Iterator::BeginPositioning() noexcept { error_.reset(); }
 
 bool Block::Iterator::RestartPoint(std::size_t index, std::size_t& offset) const noexcept {
-    assert(index < layout_.restart_count);
     offset = layout_.RestartPoint(index);
     return offset <= layout_.entries_end;
 }

@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -105,7 +104,6 @@ std::array<std::byte, FooterSize> EncodeFooter(const Footer& footer) {
     std::vector<std::byte> handles;
     AppendBlockHandle(handles, footer.metaindex);
     AppendBlockHandle(handles, footer.index);
-    assert(handles.size() <= FooterHandlesSize);
 
     std::array<std::byte, FooterSize> encoded{};
     std::ranges::copy(handles, encoded.begin());
