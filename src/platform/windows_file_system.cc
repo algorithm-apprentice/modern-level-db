@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -180,7 +179,6 @@ public:
         return handle_ != INVALID_HANDLE_VALUE && handle_ != nullptr;
     }
     [[nodiscard]] BOOL Close() noexcept {
-        assert(valid());
         return operations_->Close(std::exchange(handle_, INVALID_HANDLE_VALUE));
     }
 
@@ -570,9 +568,7 @@ WindowsFileSystem::WindowsFileSystem(bool allow_weak_namespace_durability,
                                      std::shared_ptr<MappedReadLimiter> mmap_limiter)
     : allow_weak_namespace_durability_(allow_weak_namespace_durability),
       operations_(std::move(operations)),
-      mmap_limiter_(std::move(mmap_limiter)) {
-    assert(operations_ != nullptr);
-}
+      mmap_limiter_(std::move(mmap_limiter)) {}
 
 Result<std::filesystem::path> WindowsFileSystem::PrepareDatabaseDirectory(
     const std::filesystem::path& directory) const {

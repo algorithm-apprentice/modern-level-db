@@ -1,4 +1,3 @@
-#include <cassert>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -56,7 +55,6 @@ void SerialExecutor::Run(std::stop_token stop_token) {
             if (stop_token.stop_requested()) {
                 return;
             }
-            assert(!tasks_.empty());
             task = std::move(tasks_.front());
             tasks_.pop_front();
         }

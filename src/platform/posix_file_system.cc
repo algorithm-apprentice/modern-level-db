@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -355,10 +354,7 @@ public:
         // GCOVR_EXCL_STOP
     }
 
-    void SetMapping(void* mapping) noexcept {
-        assert(mapping_ == MAP_FAILED && mapping != MAP_FAILED);
-        mapping_ = mapping;
-    }
+    void SetMapping(void* mapping) noexcept { mapping_ = mapping; }
 
     void Commit() noexcept { active_ = false; }
 
