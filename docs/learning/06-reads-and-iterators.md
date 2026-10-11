@@ -5,6 +5,16 @@
 Prerequisites: [MVCC](03-memory-and-mvcc.md) and
 [table lookup](05-tables-filters-and-caches.md).
 
+## Lesson map
+
+| Question | Answer |
+|---|---|
+| What problem is this lesson about? | Finding the newest visible logical value across several ordered memory and file sources |
+| Who consumes the read path? | Public Get and Iterator calls |
+| What interface matters first? | Get outcomes, Iterator seek/next/prev, Snapshot selection, and borrowed/owned output |
+| What implementation will we open? | Source pins, mutable/immutable order, L0 chronology, level search, merging, and direction changes |
+| What should you be able to do afterward? | Predict a read result from versions/tombstones and explain why source order is correct |
+
 ## A Get is a visibility decision
 
 Before searching, the engine chooses a sequence:
@@ -172,14 +182,13 @@ Cache hits and mapped pages complicate the relationship to physical I/O.
 
 ## Source tour
 
-| File | Focus |
-|---|---|
-| [`database.cc`](../../src/engine/database.cc) | `Get`, `ReadSources`, and `NewIterator` |
-| [`lookup.cc`](../../src/engine/lookup.cc) | `LookupValue`, L0 ordering, and `LevelCandidate` |
-| [`iterators.cc`](../../src/engine/iterators.cc) | Merging and level concatenation |
-| [`db_iterator.cc`](../../src/engine/db_iterator.cc) | Visibility, reverse state, and direction changes |
-| [`seek_statistics.cc`](../../src/engine/seek_statistics.cc) | Seek-budget feedback |
-| [`db_iterator_test.cc`](../../tests/unit/engine/db_iterator_test.cc) | Seeks, tombstones, and direction changes |
+| Entry point | Interface or symbol | Question to answer | Representative evidence |
+|---|---|---|---|
+| [`database.cc`](../../src/engine/database.cc) | `Get`, `ReadSources`, `NewIterator` | Which snapshot and source owners are captured under the mutex? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
+| [`lookup.cc`](../../src/engine/lookup.cc) | `LookupValue`, overlapping-file visitation | Why do deletion and missing produce different control flow? | [`lookup_test.cc`](../../tests/unit/engine/lookup_test.cc) |
+| [`iterators.cc`](../../src/engine/iterators.cc) | merge and concatenating iterators | Why are L0 and nonzero levels composed differently? | [`iterators_test.cc`](../../tests/unit/engine/iterators_test.cc) |
+| [`db_iterator.cc`](../../src/engine/db_iterator.cc) | public visibility and direction state | How are internal versions collapsed into one user-key stream? | [`db_iterator_test.cc`](../../tests/unit/engine/db_iterator_test.cc) |
+| [`seek_statistics.cc`](../../src/engine/seek_statistics.cc) | sampled seek charges | How can reads request future maintenance without changing their result? | [`seek_statistics_test.cc`](../../tests/unit/engine/seek_statistics_test.cc) |
 
 Follow with [ADR-0030](../adr/0030-point-reads.md),
 [ADR-0031](../adr/0031-iterators.md), and the completed baseline in
@@ -190,6 +199,7 @@ Follow with [ADR-0030](../adr/0030-point-reads.md),
 1. What must a latest read do after finding a visible deletion in memory?
 2. Why are two latest Gets not necessarily a consistent two-key read?
 3. Can you save an iterator's `ByteView` and use it after advancing?
+4. What can happen if overlapping L0 files are searched oldest first?
 
 <details>
 <summary>Answers</summary>
@@ -198,5 +208,7 @@ Follow with [ADR-0030](../adr/0030-point-reads.md),
 2. Each call can capture a different published sequence. One explicit
    Snapshot is needed for a shared read view.
 3. No. Copy the bytes into owned storage first.
+4. An older value or tombstone can hide the newer update from a higher file
+   number, producing the wrong logical result.
 
 </details>

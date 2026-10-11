@@ -4,6 +4,16 @@
 
 Prerequisite: [the engine map](01-the-engine-map.md).
 
+## Lesson map
+
+| Question | Answer |
+|---|---|
+| What problem is this lesson about? | Giving bytes a stable portable representation that can be validated at clear boundaries |
+| Who consumes these formats? | WAL, table, metadata, MemTable, and lookup code |
+| What interface matters first? | `ByteView`, coding helpers, InternalKey, EncodedWriteBatch, and WriteBatchReader |
+| What implementation will we open? | Fixed-width encoding, varints, trailers, checked decoders, and trusted loops |
+| What should you be able to do afterward? | Decode a batch and internal key on paper and identify where external validation ends |
+
 ## Bytes are not text
 
 Keys and values can contain zero bytes and arbitrary binary data.
@@ -172,14 +182,12 @@ Table data entries, for example, are checked lazily as iterators reach them.
 
 ## Source tour
 
-| File | Focus |
-|---|---|
-| [`bytes.h`](../../include/modern_leveldb/base/bytes.h) | Owning storage versus borrowed views |
-| [`coding.cc`](../../src/base/coding.cc) | Fixed-width, varint, and failure-atomic consumption |
-| [`internal_key.cc`](../../src/format/internal_key.cc) | Encoding, parsing, lookup keys, and ordering |
-| [`write_batch.cc`](../../src/format/write_batch.cc) | Owned mutation and checked/trusted readers |
-| [`internal_key_test.cc`](../../tests/unit/format/internal_key_test.cc) | Independent bytes and ordering examples |
-| [`write_batch_test.cc`](../../tests/unit/format/write_batch_test.cc) | Malformed input, count mismatches, and aliasing |
+| Entry point | Interface or symbol | Question to answer | Representative evidence |
+|---|---|---|---|
+| [`bytes.h`](../../include/modern_leveldb/base/bytes.h) | `ByteView`, mutable views, conversions | Which object owns the bytes behind this view? | [`bytes_test.cc`](../../tests/unit/base/bytes_test.cc) |
+| [`coding.cc`](../../src/base/coding.cc) | fixed/varint encode and consume | Which failures leave the input unchanged? | [`coding_test.cc`](../../tests/unit/base/coding_test.cc) |
+| [`internal_key.cc`](../../src/format/internal_key.cc) | `InternalKey`, `LookupKey`, comparator | How do sequence and kind affect physical ordering? | [`internal_key_test.cc`](../../tests/unit/format/internal_key_test.cc) |
+| [`write_batch.cc`](../../src/format/write_batch.cc) | `EncodedWriteBatch`, `WriteBatchReader` | Where does external validation end and trusted iteration begin? | [`write_batch_test.cc`](../../tests/unit/format/write_batch_test.cc) |
 
 Then read [ADR-0012](../adr/0012-internal-key-format.md),
 [ADR-0016](../adr/0016-write-batch-format.md), and the owned-batch decisions
@@ -191,6 +199,8 @@ in [ADR-0060](../adr/0060-leveldb-write-path-parity.md).
 2. Which sorts first: `(a, 7, Value)` or `(a, 9, Deletion)`?
 3. Why is a successful encode/decode round trip insufficient to prove
    LevelDB format compatibility?
+4. After `WriteBatchReader::Open` validates a batch, should MemTable reparse
+   every tag and length during insertion?
 
 <details>
 <summary>Answers</summary>
@@ -199,5 +209,7 @@ in [ADR-0060](../adr/0060-leveldb-write-path-parity.md).
 2. Sequence 9's deletion sorts first. Sequence takes precedence over kind.
 3. An encoder and decoder can share the same wrong convention.
    Independent golden bytes or a reference implementation are needed.
+4. No. The checked boundary establishes the framing invariant; insertion uses
+   the trusted representation while preserving its storage lifetime.
 
 </details>

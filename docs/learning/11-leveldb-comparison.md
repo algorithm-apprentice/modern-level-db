@@ -1,4 +1,4 @@
-# Modern LevelDB, LevelDB, and Useful Next Features
+# Appendix: Modern LevelDB, LevelDB, and Useful Next Features
 
 [Learning path](README.md)
 

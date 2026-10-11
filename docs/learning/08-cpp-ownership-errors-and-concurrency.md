@@ -4,6 +4,19 @@
 
 Read this alongside any source tour where the C++ mechanisms are unfamiliar.
 
+> **Advanced engineering lesson:** the first pass requires the ownership and
+> synchronization conclusions, not mastery of every C++ memory-model detail.
+
+## Lesson map
+
+| Question | Answer |
+|---|---|
+| What problem is this lesson about? | Making lifetime, failure, publication, lock release, and shutdown arguments explicit |
+| Who consumes these contracts? | Contributors implementing every engine layer |
+| What interface matters first? | Ownership type, borrow lifetime, `Status`/exceptions, lock preconditions, and publication guarantees |
+| What implementation will we open? | RAII handles, expected-based errors, acquire/release links, mutex/condition-variable protocols, and background teardown |
+| What should you be able to do afterward? | Audit one pointer or unlocked operation and explain why its lifetime and synchronization are valid |
+
 ## Start with the lifetime question
 
 For each pointer or view, ask:
@@ -199,14 +212,14 @@ useful advanced exercise in making those arguments explicit.
 
 ## Source tour
 
-| File | Focus |
-|---|---|
-| [`result.h`](../../include/modern_leveldb/base/result.h) | Expected aliases, typed errors, source location |
-| [`api_internal.h`](../../src/api/api_internal.h) | Child ownership and reverse destruction order |
-| [`skiplist.h`](../../src/memory/skiplist.h) | Construction and acquire/release publication |
-| [`write_path.h`](../../src/engine/write_path.h) | Stack writer lifetime and leader guard |
-| [`database.cc`](../../src/engine/database.cc) | Lock release, pins, error containment, shutdown |
-| [`serial_executor.cc`](../../src/platform/serial_executor.cc) | Queue ownership and stop/join behavior |
+| Entry point | Interface or symbol | Question to answer | Representative evidence |
+|---|---|---|---|
+| [`result.h`](../../include/modern_leveldb/base/result.h) | `Error`, `Result`, `Status` | Which failures are ordinary typed results, and what may still throw? | [`result_test.cc`](../../tests/unit/base/result_test.cc) |
+| [`api_internal.h`](../../src/api/api_internal.h) | public handle implementations | Which owner keeps the engine and child state alive? | [`public_api_test.cc`](../../tests/unit/api/public_api_test.cc) |
+| [`skiplist.h`](../../src/memory/skiplist.h) | node initialization and publication | Which writes happen before a reader's acquire load can observe the node? | [`skiplist_test.cc`](../../tests/unit/memory/skiplist_test.cc) |
+| [`write_path.h`](../../src/engine/write_path.h) | stack writer and leader/sequence guards | How does exception unwinding restore queue and batch state? | [`write_path_test.cc`](../../tests/unit/engine/write_path_test.cc) |
+| [`database.cc`](../../src/engine/database.cc) | lock release, pins, errors, shutdown | What keeps state alive while slow I/O runs without the mutex? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
+| [`serial_executor.cc`](../../src/platform/serial_executor.cc) | queue ownership and stop/join | Who owns accepted work during teardown? | [`serial_executor_test.cc`](../../tests/unit/platform/serial_executor_test.cc) |
 
 Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),
 [ADR-0038](../adr/0038-public-raii-api.md), and
@@ -218,6 +231,8 @@ Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),
 2. Why is releasing a cache pin before using its value unsafe?
 3. Why is the private iterator declared after the engine state?
 4. Can an arbitrary disk buffer be passed to `OpenTrusted`?
+5. Why should an object set its terminal state after, rather than before, a
+   cleanup operation that can throw?
 
 <details>
 <summary>Answers</summary>
@@ -227,5 +242,8 @@ Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),
 3. Reverse destruction destroys the iterator first, while its engine is live.
 4. No. That path requires the owned batch's private validity invariant;
    external bytes need checked decoding.
+5. If cleanup throws after the state was committed, the owner can retain an
+   object that claims to be closed although the surrounding transition never
+   completed.
 
 </details>
