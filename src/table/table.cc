@@ -13,9 +13,6 @@
 #include <utility>
 #include <vector>
 
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-#include "instrumentation/read_diagnostics.h"
-#endif
 #include "base/result_internal.h"
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
@@ -70,16 +67,8 @@ Result<BlockContents> ReadStoredBlock(const RandomAccessFile& file, std::uint64_
     const std::size_t stored_size = static_cast<std::size_t>(handle.size) + BlockTrailerSize;
     if (const std::optional<ByteView> view = file.TryReadView(handle.offset, stored_size);
         view.has_value()) {
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-        read_diagnostics::Add(read_diagnostics::Counter::MappedViewBlocks);
-        read_diagnostics::Add(read_diagnostics::Counter::MappedViewBytes, view->size());
-#endif
         return DecodeStoredBlock(*view);
     }
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    read_diagnostics::Add(read_diagnostics::Counter::CopiedReadBlocks);
-    read_diagnostics::Add(read_diagnostics::Counter::CopiedReadBytes, stored_size);
-#endif
     std::vector<std::byte> stored(stored_size);
     const Status read = ReadExactly(file, handle.offset, stored);
     if (!read.has_value()) {
@@ -94,9 +83,6 @@ Result<Block> ReadBlock(const RandomAccessFile& file, std::uint64_t blocks_end,
     if (!contents.has_value()) {
         return std::unexpected(std::move(contents).error());
     }
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    read_diagnostics::StageScope construction(read_diagnostics::Stage::BlockConstruction);
-#endif
     return Block::Create(std::move(*contents));
 }
 
@@ -245,16 +231,7 @@ Table::Table(std::unique_ptr<RandomAccessFile> file, std::uint64_t blocks_end,
 Result<TableLookupKind> Table::Get(const LookupKey& key, std::vector<std::byte>& value,
                                    const TableReadOptions& options) const {
     Block::Iterator index(index_, *block_comparator_, block_key_format_);
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    Status index_sought;
-    {
-        read_diagnostics::BlockRoleScope role(read_diagnostics::BlockRole::Index);
-        read_diagnostics::StageScope seek(read_diagnostics::Stage::IndexSeek);
-        index_sought = index.Seek(key.internal_key());
-    }
-#else
     const Status index_sought = index.Seek(key.internal_key());
-#endif
     // GCOVR_EXCL_START: full physical index validation makes this seek infallible
     if (!index_sought.has_value()) {
         return std::unexpected(index_sought.error());
@@ -273,16 +250,7 @@ Result<TableLookupKind> Table::Get(const LookupKey& key, std::vector<std::byte>&
         return std::unexpected(block.error());
     }
     Block::Iterator entry(block->block(), *block_comparator_, block_key_format_);
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    Status data_sought;
-    {
-        read_diagnostics::BlockRoleScope role(read_diagnostics::BlockRole::Data);
-        read_diagnostics::StageScope seek(read_diagnostics::Stage::DataSeek);
-        data_sought = entry.Seek(key.internal_key());
-    }
-#else
     const Status data_sought = entry.Seek(key.internal_key());
-#endif
     if (!data_sought.has_value()) {
         return std::unexpected(data_sought.error());
     }
@@ -299,47 +267,21 @@ Result<TableLookupKind> Table::Get(const LookupKey& key, std::vector<std::byte>&
     if (parsed->kind == ValueKind::Deletion) {
         return TableLookupKind::Deletion;
     }
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    {
-        read_diagnostics::StageScope copy(read_diagnostics::Stage::ResultCopy);
-        read_diagnostics::Add(read_diagnostics::Counter::ResultBytes, entry.value().size());
-        value.resize(entry.value().size());
-        std::ranges::copy(entry.value(), value.begin());
-    }
-#else
     value.resize(entry.value().size());
     std::ranges::copy(entry.value(), value.begin());
-#endif
     return TableLookupKind::Value;
 }
 
 Result<Table::BlockReference> Table::ReadDataBlock(BlockHandle handle,
                                                    const TableReadOptions& options) const {
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    read_diagnostics::BlockRoleScope role(read_diagnostics::BlockRole::Data);
-#endif
     std::array<std::byte, 2 * sizeof(std::uint64_t)> cache_key{};
     if (block_cache_ != nullptr) {
         EncodeFixed64(std::span(cache_key).first<sizeof(std::uint64_t)>(), cache_id_);
         EncodeFixed64(std::span(cache_key).last<sizeof(std::uint64_t)>(), handle.offset);
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-        std::optional<BlockCache::Handle> cached;
-        {
-            read_diagnostics::StageScope lookup(read_diagnostics::Stage::BlockCacheLookup);
-            cached = block_cache_->Lookup(cache_key);
-        }
-#else
         std::optional<BlockCache::Handle> cached = block_cache_->Lookup(cache_key);
-#endif
         if (cached.has_value()) {
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-            read_diagnostics::Add(read_diagnostics::Counter::BlockCacheHits);
-#endif
             return BlockReference(std::move(*cached));
         }
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-        read_diagnostics::Add(read_diagnostics::Counter::BlockCacheMisses);
-#endif
     }
 
     Result<Block> block = ReadBlock(*file_, blocks_end_, handle);

@@ -9,9 +9,6 @@
 #include <utility>
 #include <vector>
 
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-#include "instrumentation/read_diagnostics.h"
-#endif
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/crc32c.h"
@@ -51,21 +48,6 @@ Result<StoredBlock> ValidateStoredBlock(ByteView stored) {
         .compression = compression,
     };
 }
-
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-void RecordStoredBlock(std::size_t bytes) noexcept {
-    read_diagnostics::Add(read_diagnostics::Counter::StoredBlocks);
-    read_diagnostics::Add(read_diagnostics::Counter::StoredBlockBytes, bytes);
-}
-
-void RecordDecodedBlock(std::size_t bytes, bool decompressed) noexcept {
-    read_diagnostics::Add(read_diagnostics::Counter::DecodedBlocks);
-    read_diagnostics::Add(read_diagnostics::Counter::DecodedBlockBytes, bytes);
-    if (decompressed) {
-        read_diagnostics::Add(read_diagnostics::Counter::DecompressedBlocks);
-    }
-}
-#endif
 
 }  // namespace
 
@@ -140,28 +122,16 @@ std::array<std::byte, BlockTrailerSize> EncodeBlockTrailer(ByteView contents,
 }
 
 Result<BlockContents> DecodeStoredBlock(std::vector<std::byte> stored) {
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    read_diagnostics::StageScope decode(read_diagnostics::Stage::StoredBlockDecode);
-    RecordStoredBlock(stored.size());
-#endif
     const Result<StoredBlock> decoded = ValidateStoredBlock(stored);
     if (!decoded.has_value()) {
         return std::unexpected(decoded.error());
     }
     if (decoded->compression == BlockCompression::None) {
         stored.resize(decoded->contents.size());
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-        RecordDecodedBlock(stored.size(), false);
-#endif
         return BlockContents::Owned(std::move(stored));
     }
     Result<std::vector<std::byte>> decompressed =
         DecompressBlock(decoded->contents, decoded->compression);
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    if (decompressed.has_value()) {
-        RecordDecodedBlock(decompressed->size(), true);
-    }
-#endif
     if (!decompressed.has_value()) {
         return std::unexpected(std::move(decompressed).error());
     }
@@ -169,27 +139,15 @@ Result<BlockContents> DecodeStoredBlock(std::vector<std::byte> stored) {
 }
 
 Result<BlockContents> DecodeStoredBlock(ByteView stored) {
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    read_diagnostics::StageScope decode(read_diagnostics::Stage::StoredBlockDecode);
-    RecordStoredBlock(stored.size());
-#endif
     const Result<StoredBlock> decoded = ValidateStoredBlock(stored);
     if (!decoded.has_value()) {
         return std::unexpected(decoded.error());
     }
     if (decoded->compression == BlockCompression::None) {
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-        RecordDecodedBlock(decoded->contents.size(), false);
-#endif
         return BlockContents::Borrowed(decoded->contents);
     }
     Result<std::vector<std::byte>> decompressed =
         DecompressBlock(decoded->contents, decoded->compression);
-#if MODERN_LEVELDB_READ_DIAGNOSTICS
-    if (decompressed.has_value()) {
-        RecordDecodedBlock(decompressed->size(), true);
-    }
-#endif
     if (!decompressed.has_value()) {
         return std::unexpected(std::move(decompressed).error());
     }
