@@ -144,8 +144,8 @@ public:
 
     // Registers the last sequence and keeps what it reads until the registration
     // is released. Each call returns a distinct registration.
-    [[nodiscard]] SnapshotRegistration GetSnapshot();
-    void ReleaseSnapshot(SnapshotRegistration& snapshot);
+    [[nodiscard]] SnapshotRegistration* GetSnapshot();
+    void ReleaseSnapshot(SnapshotRegistration*& snapshot);
 
     // Returns an owning snapshot of the current topology and maintenance state.
     [[nodiscard]] Result<DatabaseEngineState> GetState();

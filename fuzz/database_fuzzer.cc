@@ -42,14 +42,14 @@ void FuzzDatabase(ByteView input) {
     auto opened = DatabaseEngine::Open(options, "db");
     Require(opened.has_value());
     std::unique_ptr<DatabaseEngine> database = std::move(*opened);
-    std::optional<DatabaseEngine::SnapshotRegistration> snapshot;
+    DatabaseEngine::SnapshotRegistration* snapshot = nullptr;
     Model model;
     Model frozen;
     std::vector<std::byte> read_value;
 
     const auto verify_scan = [&](bool at_snapshot) {
         DatabaseEngineReadOptions read;
-        if (at_snapshot && snapshot.has_value()) {
+        if (at_snapshot && snapshot != nullptr) {
             read.snapshot = snapshot->sequence();
         }
         const Model& expected = read.snapshot.has_value() ? frozen : model;
@@ -103,7 +103,7 @@ void FuzzDatabase(ByteView input) {
             }
             case 4: {
                 DatabaseEngineReadOptions read;
-                if ((command & 8U) != 0 && snapshot.has_value()) {
+                if ((command & 8U) != 0 && snapshot != nullptr) {
                     read.snapshot = snapshot->sequence();
                 }
                 const std::vector<std::byte> previous = read_value;
@@ -120,20 +120,18 @@ void FuzzDatabase(ByteView input) {
                 break;
             }
             case 5:
-                if (snapshot.has_value()) {
-                    database->ReleaseSnapshot(*snapshot);
-                    snapshot.reset();
+                if (snapshot != nullptr) {
+                    database->ReleaseSnapshot(snapshot);
                 }
-                snapshot.emplace(database->GetSnapshot());
+                snapshot = database->GetSnapshot();
                 frozen = model;
                 break;
             case 6:
                 verify_scan((command & 8U) != 0);
                 break;
             case 7:
-                if (snapshot.has_value()) {
-                    database->ReleaseSnapshot(*snapshot);
-                    snapshot.reset();
+                if (snapshot != nullptr) {
+                    database->ReleaseSnapshot(snapshot);
                 }
                 executor.RunAll();
                 database.reset();
@@ -147,9 +145,9 @@ void FuzzDatabase(ByteView input) {
         Require(database->WaitForBackgroundWork().has_value());
     }
     verify_scan(false);
-    if (snapshot.has_value()) {
+    if (snapshot != nullptr) {
         verify_scan(true);
-        database->ReleaseSnapshot(*snapshot);
+        database->ReleaseSnapshot(snapshot);
     }
     executor.RunAll();
 }

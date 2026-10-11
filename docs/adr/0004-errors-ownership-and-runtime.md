@@ -20,7 +20,11 @@ these failures into corruption.
   named compile-time constants use PascalCase without a `k` prefix. Diagnostic
   code names such as `not_found` remain unchanged.
 - Exceptions are not used for normal storage-engine control flow.
-- Owning raw pointers are forbidden.
+- Public and component ownership boundaries use values or RAII handles, not
+  exposed owning raw pointers. Encapsulated storage-engine internals may use
+  intrusive raw links and opaque identity handles when one owner alone creates
+  and destroys the objects and the synchronization/reclamation invariant is
+  documented and tested.
 - Exclusive ownership uses values or `std::unique_ptr`.
 - Shared ownership requires a documented lifetime reason and must not be the
   default.

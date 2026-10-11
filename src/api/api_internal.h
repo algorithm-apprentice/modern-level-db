@@ -52,11 +52,11 @@ public:
     ~SnapshotRegistration() { state_->engine().ReleaseSnapshot(registration_); }
 
     [[nodiscard]] const std::shared_ptr<DatabaseState>& state() const noexcept { return state_; }
-    [[nodiscard]] SequenceNumber sequence() const noexcept { return registration_.sequence(); }
+    [[nodiscard]] SequenceNumber sequence() const noexcept { return registration_->sequence(); }
 
 private:
     std::shared_ptr<DatabaseState> state_;
-    DatabaseEngine::SnapshotRegistration registration_;
+    DatabaseEngine::SnapshotRegistration* registration_;
 };
 
 }  // namespace detail

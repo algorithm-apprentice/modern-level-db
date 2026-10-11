@@ -1,70 +1,52 @@
 #include "engine/snapshot_registry.h"
 
 #include <cassert>
-#include <utility>
 
 namespace modern_leveldb {
+
+SnapshotRegistry::SnapshotRegistry() noexcept : sentinel_(*this, 0) {
+    sentinel_.previous_ = &sentinel_;
+    sentinel_.next_ = &sentinel_;
+}
 
 SnapshotRegistry::~SnapshotRegistry() {
     assert(size_ == 0);  // GCOVR_EXCL_BR_WITHOUT_HIT: registrations retain the engine
 }
 
-SnapshotRegistry::Registration::Registration(Node& node) noexcept
-    : node_(&node), sequence_(node.sequence) {}
-
-SnapshotRegistry::Registration::Registration(Registration&& source) noexcept
-    : node_(std::exchange(source.node_, nullptr)), sequence_(source.sequence_) {}
-
-SnapshotRegistry::Registration::~Registration() {
-    assert(node_ == nullptr);  // GCOVR_EXCL_BR_WITHOUT_HIT: release-before-destruction contract
-}
-
-SnapshotRegistry::Registration SnapshotRegistry::Register(SequenceNumber sequence) {
-    assert(newest_ == nullptr ||
-           newest_->sequence <=
-               sequence);  // GCOVR_EXCL_BR_WITHOUT_HIT: monotonic database sequence
-    auto node = std::make_unique<Node>(*this, sequence);
-    Node* const registered = node.get();
-    registered->previous = newest_;
-    if (newest_ != nullptr) {
-        newest_->next = std::move(node);
-    } else {
-        oldest_ = std::move(node);
-    }
-    newest_ = registered;
+SnapshotRegistry::Registration* SnapshotRegistry::Register(SequenceNumber sequence) {
+    assert(size_ == 0 || sentinel_.previous_->sequence_ <=
+                             sequence);  // GCOVR_EXCL_BR_WITHOUT_HIT: monotonic database sequence
+    Registration* const registration = new Registration(*this, sequence);
+    registration->previous_ = sentinel_.previous_;
+    registration->next_ = &sentinel_;
+    registration->previous_->next_ = registration;
+    sentinel_.previous_ = registration;
     ++size_;
-    return Registration(*registered);
+    return registration;
 }
 
-void SnapshotRegistry::Release(Registration& registration) noexcept {
-    Node* const node = registration.node_;
-    assert(node != nullptr);         // GCOVR_EXCL_BR_WITHOUT_HIT: live-registration precondition
-    assert(node->registry == this);  // GCOVR_EXCL_BR_WITHOUT_HIT: registration-owner precondition
-
-    std::unique_ptr<Node>* owner = node->previous != nullptr ? &node->previous->next : &oldest_;
-    std::unique_ptr<Node> removed = std::move(*owner);
-    assert(removed.get() == node);  // GCOVR_EXCL_BR_WITHOUT_HIT: owning-link invariant
-    *owner = std::move(removed->next);
-    if (*owner != nullptr) {
-        (*owner)->previous = removed->previous;
-    } else {
-        newest_ = removed->previous;
-    }
-    removed->registry = nullptr;
-    removed->previous = nullptr;
-    registration.node_ = nullptr;
+void SnapshotRegistry::Release(Registration*& registration) noexcept {
+    assert(registration != nullptr);  // GCOVR_EXCL_BR_WITHOUT_HIT: live handle
+    assert(registration->registry_ ==
+           this);  // GCOVR_EXCL_BR_WITHOUT_HIT: registration-owner precondition
+    registration->previous_->next_ = registration->next_;
+    registration->next_->previous_ = registration->previous_;
+    registration->registry_ = nullptr;
+    Registration* const released = registration;
+    registration = nullptr;
+    delete released;
     --size_;
 }
 
 std::optional<SequenceNumber> SnapshotRegistry::oldest() const noexcept {
-    if (oldest_ == nullptr) {
+    if (size_ == 0) {
         return std::nullopt;
     }
-    return oldest_->sequence;
+    return sentinel_.next_->sequence_;
 }
 
 SequenceNumber SnapshotRegistry::OldestOr(SequenceNumber fallback) const noexcept {
-    return oldest_ == nullptr ? fallback : oldest_->sequence;
+    return size_ == 0 ? fallback : sentinel_.next_->sequence_;
 }
 
 }  // namespace modern_leveldb

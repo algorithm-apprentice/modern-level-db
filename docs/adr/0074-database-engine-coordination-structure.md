@@ -179,49 +179,67 @@ database mutex but no engine back-pointer. Add an internal
 ```cpp
 class SnapshotRegistry final {
 public:
+    SnapshotRegistry() noexcept;
+    SnapshotRegistry(const SnapshotRegistry&) = delete;
+    SnapshotRegistry& operator=(const SnapshotRegistry&) = delete;
+    SnapshotRegistry(SnapshotRegistry&&) = delete;
+    SnapshotRegistry& operator=(SnapshotRegistry&&) = delete;
+    ~SnapshotRegistry();
+
     class Registration final {
     public:
-        Registration(Registration&&) noexcept;
+        Registration(const Registration&) = delete;
+        Registration& operator=(const Registration&) = delete;
+        Registration(Registration&&) = delete;
+        Registration& operator=(Registration&&) = delete;
         [[nodiscard]] SequenceNumber sequence() const noexcept;
+
+    private:
+        friend class SnapshotRegistry;
+        Registration(SnapshotRegistry& registry, SequenceNumber sequence) noexcept;
+        ~Registration();
+
+        SnapshotRegistry* registry_;
+        SequenceNumber sequence_;
+        Registration* previous_;
+        Registration* next_;
     };
 
-    [[nodiscard]] Registration Register(SequenceNumber sequence);
-    void Release(Registration& registration) noexcept;
+    [[nodiscard]] Registration* Register(SequenceNumber sequence);
+    void Release(Registration*& registration) noexcept;
 
     [[nodiscard]] std::size_t size() const noexcept;
     [[nodiscard]] std::optional<SequenceNumber> oldest() const noexcept;
     [[nodiscard]] SequenceNumber OldestOr(SequenceNumber fallback) const noexcept;
 
 private:
-    struct Node {
-        SequenceNumber sequence;
-        Node* previous;
-        std::unique_ptr<Node> next;
-    };
-
-    std::unique_ptr<Node> oldest_;
-    Node* newest_;
+    Registration sentinel_;
+    std::size_t size_ = 0;
 };
 ```
 
 The registry is not internally synchronized. DatabaseEngine calls it with the
 database mutex held.
 
-- each acquisition returns a move-only registration handle identifying one
+- each acquisition returns an opaque registration pointer identifying one
   linked node, so duplicate sequences remain independent;
 - nodes append in the nondecreasing order established by the VersionSet's last
   sequence;
-- the forward `unique_ptr` chain owns every node; backward links and the newest
-  pointer are non-owning;
-- `Release` finds the owning forward link through the node's previous pointer,
-  unlinks the exact node, and reconnects its successor in constant time;
+- the registry alone constructs and destroys registrations; their destructor is
+  private, so callers cannot delete the opaque pointer;
+- `Release` unlinks the exact node in constant time, deletes it, and clears the
+  caller's handle;
 - compaction asks for `OldestOr(last_sequence)`;
 - state inspection asks for `size()` and `oldest()`.
 
 The public RAII `SnapshotRegistration` stores this internal handle and exposes
-its cached sequence to concurrent reads. This is an ownership-safe translation
-of pinned LevelDB's linked `SnapshotList`: the registration still identifies
-one exact node, while `unique_ptr` links replace owning raw pointers.
+its immutable sequence to concurrent reads. This directly preserves pinned
+LevelDB's linked `SnapshotList` ownership boundary: allocation, linking,
+unlinking, and deletion all remain private to the registry.
+
+The returned pointer is an identity handle, not an ownership transfer. This is
+the encapsulated intrusive-structure case permitted by ADR-0004; public callers
+still receive only the owning RAII `Snapshot` facade.
 
 ### Model the WAL and memtables as write-buffer state
 
@@ -458,8 +476,8 @@ decisions.
   explicit reasons. The proposal neither broadens shared ownership nor removes
   a measured hot-path mechanism by assumption.
 - Pinned LevelDB's linked SnapshotList was reviewed directly. SnapshotRegistry
-  preserves its registration identity and constant-time operations while
-  replacing owning raw links with a forward `unique_ptr` chain.
+  preserves its opaque registration identity, private node destruction, and
+  constant-time operations.
 - The current destructor and declaration order require the executor to stop
   first and resource owners to outlive their borrowers. The proposal leaves
   those lifetimes explicit.

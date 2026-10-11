@@ -16,12 +16,12 @@ TEST_F(DatabaseTest, WritesAndReadsValuesAndDeletions) {
     EXPECT_EQ(Scan(*database), (std::vector<std::string>{"b=3"}));
 
     // An empty batch takes no sequence.
-    auto before = database->GetSnapshot();
+    auto* before = database->GetSnapshot();
     EncodedWriteBatch empty;
     ASSERT_TRUE(database->Write(empty, false).has_value());
-    auto after = database->GetSnapshot();
-    EXPECT_EQ(after.sequence(), before.sequence());
-    EXPECT_EQ(before.sequence(), 4U);
+    auto* after = database->GetSnapshot();
+    EXPECT_EQ(after->sequence(), before->sequence());
+    EXPECT_EQ(before->sequence(), 4U);
     database->ReleaseSnapshot(before);
     database->ReleaseSnapshot(after);
 }
@@ -243,7 +243,7 @@ TEST_F(DatabaseTest, FlushWaitsForACommitThatReleasedTheMutex) {
 
 TEST_F(DatabaseTest, StopsWritesAfterAFailedCommit) {
     const auto database = Open();
-    auto before = database->GetSnapshot();
+    auto* before = database->GetSnapshot();
     FailInOperations(0);
 
     const Status failed = Put(*database, "a", "1");
@@ -253,8 +253,8 @@ TEST_F(DatabaseTest, StopsWritesAfterAFailedCommit) {
     ASSERT_FALSE(later.has_value());
     EXPECT_EQ(later.error().message(), "injected failure");
     EXPECT_EQ(Get(*database, "a"), "<none>");
-    auto after = database->GetSnapshot();
-    EXPECT_EQ(after.sequence(), before.sequence());
+    auto* after = database->GetSnapshot();
+    EXPECT_EQ(after->sequence(), before->sequence());
     database->ReleaseSnapshot(before);
     database->ReleaseSnapshot(after);
     EXPECT_FALSE(database->FlushMemTable().has_value());
@@ -263,7 +263,7 @@ TEST_F(DatabaseTest, StopsWritesAfterAFailedCommit) {
 TEST_F(DatabaseTest, StopsWritesAfterAFailedSync) {
     const auto database = Open();
     ASSERT_TRUE(Put(*database, "a", "1").has_value());
-    auto before = database->GetSnapshot();
+    auto* before = database->GetSnapshot();
     // A write appends its record twice and flushes it before it syncs.
     FailInOperations(3);
 
@@ -272,8 +272,8 @@ TEST_F(DatabaseTest, StopsWritesAfterAFailedSync) {
     EXPECT_EQ(failed.error().message(), "injected failure");
     EXPECT_FALSE(Put(*database, "c", "1").has_value());
     EXPECT_EQ(Get(*database, "a"), "1");
-    auto after = database->GetSnapshot();
-    EXPECT_EQ(after.sequence(), before.sequence());
+    auto* after = database->GetSnapshot();
+    EXPECT_EQ(after->sequence(), before->sequence());
     database->ReleaseSnapshot(before);
     database->ReleaseSnapshot(after);
 }
@@ -307,9 +307,9 @@ TEST_F(DatabaseTest, WritesProceedWhileManifestSyncIsBlocked) {
     std::future<Status> written =
         std::async(std::launch::async, [&] { return Put(*database, "c", "1"); });
     const std::future_status progress = written.wait_for(std::chrono::seconds(10));
-    std::optional<DatabaseEngine::SnapshotRegistration> snapshot;
+    DatabaseEngine::SnapshotRegistration* snapshot = nullptr;
     if (progress == std::future_status::ready) {
-        snapshot.emplace(database->GetSnapshot());
+        snapshot = database->GetSnapshot();
     }
     manifest.Open();
     runner.join();
@@ -317,9 +317,9 @@ TEST_F(DatabaseTest, WritesProceedWhileManifestSyncIsBlocked) {
 
     ASSERT_EQ(progress, std::future_status::ready);
     EXPECT_TRUE(written.get().has_value());
-    ASSERT_TRUE(snapshot.has_value());
+    ASSERT_NE(snapshot, nullptr);
     EXPECT_EQ(snapshot->sequence(), 3U);
-    database->ReleaseSnapshot(*snapshot);
+    database->ReleaseSnapshot(snapshot);
     EXPECT_EQ(Get(*database, "c"), "1");
 }
 

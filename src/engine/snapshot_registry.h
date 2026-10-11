@@ -2,67 +2,57 @@
 #define MODERN_LEVELDB_ENGINE_SNAPSHOT_REGISTRY_H_
 
 #include <cstddef>
-#include <memory>
 #include <optional>
 
 #include "format/internal_key.h"
 
 namespace modern_leveldb {
 
-// Tracks every active snapshot registration in nondecreasing sequence order.
-// It is not thread-safe; DatabaseEngine uses it with the database mutex held.
+// Tracks active snapshots in a nondecreasing intrusive list. The registry alone
+// creates and deletes nodes. It is not thread-safe; DatabaseEngine uses it with
+// the database mutex held.
 class SnapshotRegistry final {
-    struct Node;
-
 public:
-    SnapshotRegistry() = default;
-    SnapshotRegistry(const SnapshotRegistry&) = delete;
-    SnapshotRegistry& operator=(const SnapshotRegistry&) = delete;
-    SnapshotRegistry(SnapshotRegistry&&) = delete;
-    SnapshotRegistry& operator=(SnapshotRegistry&&) = delete;
-    ~SnapshotRegistry();
-
     class Registration final {
     public:
         Registration(const Registration&) = delete;
         Registration& operator=(const Registration&) = delete;
-        Registration(Registration&& source) noexcept;
+        Registration(Registration&&) = delete;
         Registration& operator=(Registration&&) = delete;
-        ~Registration();
 
         [[nodiscard]] SequenceNumber sequence() const noexcept { return sequence_; }
 
     private:
         friend class SnapshotRegistry;
 
-        explicit Registration(Node& node) noexcept;
+        Registration(SnapshotRegistry& registry, SequenceNumber sequence) noexcept
+            : registry_(&registry), sequence_(sequence) {}
+        ~Registration() = default;
 
-        Node* node_;
+        SnapshotRegistry* registry_;
         SequenceNumber sequence_;
+        Registration* previous_ = nullptr;
+        Registration* next_ = nullptr;
     };
 
+    SnapshotRegistry() noexcept;
+    SnapshotRegistry(const SnapshotRegistry&) = delete;
+    SnapshotRegistry& operator=(const SnapshotRegistry&) = delete;
+    SnapshotRegistry(SnapshotRegistry&&) = delete;
+    SnapshotRegistry& operator=(SnapshotRegistry&&) = delete;
+    ~SnapshotRegistry();
+
     // Requires a sequence not below the newest active registration.
-    [[nodiscard]] Registration Register(SequenceNumber sequence);
-    // Requires a live registration returned by this registry.
-    void Release(Registration& registration) noexcept;
+    [[nodiscard]] Registration* Register(SequenceNumber sequence);
+    // Requires a live registration returned by this registry. Clears the handle.
+    void Release(Registration*& registration) noexcept;
 
     [[nodiscard]] std::size_t size() const noexcept { return size_; }
     [[nodiscard]] std::optional<SequenceNumber> oldest() const noexcept;
     [[nodiscard]] SequenceNumber OldestOr(SequenceNumber fallback) const noexcept;
 
 private:
-    struct Node {
-        Node(SnapshotRegistry& owner, SequenceNumber value) noexcept
-            : registry(&owner), sequence(value) {}
-
-        SnapshotRegistry* registry;
-        SequenceNumber sequence;
-        Node* previous = nullptr;
-        std::unique_ptr<Node> next;
-    };
-
-    std::unique_ptr<Node> oldest_;
-    Node* newest_ = nullptr;
+    Registration sentinel_;
     std::size_t size_ = 0;
 };
 
