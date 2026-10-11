@@ -21,6 +21,7 @@
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
 #include "platform/mapped_read_limiter.h"
+#include "platform/path.h"
 #include "platform/windows_file_system_internal.h"
 #include "support/temporary_directory.h"
 #include "table/table.h"
@@ -61,9 +62,22 @@ public:
     mutable unsigned sync_calls = 0;
     mutable unsigned close_calls = 0;
     mutable unsigned live_views = 0;
+    mutable unsigned open_calls = 0;
+    mutable unsigned inspect_calls = 0;
+    mutable DWORD opened_access = 0;
+    mutable DWORD opened_share = 0;
+    mutable DWORD opened_disposition = 0;
+    mutable DWORD opened_flags = 0;
+    mutable std::wstring opened_path;
 
     HANDLE Open(const wchar_t* path, DWORD access, DWORD share, DWORD disposition,
                 DWORD flags) const noexcept override {
+        ++open_calls;
+        opened_path = path;
+        opened_access = access;
+        opened_share = share;
+        opened_disposition = disposition;
+        opened_flags = flags;
         if (fail_open) {
             ::SetLastError(ERROR_ACCESS_DENIED);
             return INVALID_HANDLE_VALUE;
@@ -75,6 +89,7 @@ public:
         return handle;
     }
     BOOL Inspect(HANDLE file, BY_HANDLE_FILE_INFORMATION* information) const noexcept override {
+        ++inspect_calls;
         if (fail_inspect) {
             ::SetLastError(ERROR_READ_FAULT);
             return FALSE;
@@ -229,6 +244,28 @@ public:
         return WindowsFileOperations::VolumeInformation(volume, file_system, size);
     }
 };
+
+Status OpenRegularMode(WindowsFileSystem& file_system, const std::filesystem::path& path,
+                       int mode) {
+    const auto outcome = [](auto result) -> Status {
+        if (!result.has_value()) {
+            return std::unexpected(std::move(result).error());
+        }
+        return {};
+    };
+    switch (mode) {
+        case 0:
+            return outcome(file_system.OpenWritable(path));
+        case 1:
+            return outcome(file_system.OpenAppendable(path));
+        case 2:
+            return outcome(file_system.OpenSequential(path));
+        case 3:
+            return outcome(file_system.OpenRandomAccess(path));
+        default:
+            return outcome(file_system.LockFile(path));
+    }
+}
 
 struct NativeHandleCloser {
     void operator()(void* handle) const noexcept {
@@ -1029,6 +1066,107 @@ TEST(WindowsFileSystemTest, PartialAcquisitionFailureReleasesHandlesAndRetainsNa
     ASSERT_FALSE(rejected.has_value());
     EXPECT_EQ(rejected.error().code(), ErrorCode::Io);
     EXPECT_EQ(operations->live_handles, 0U);
+}
+
+TEST(WindowsFileSystemTest, RegularOpeningModesKeepTheirExactNativePolicies) {
+    struct Policy {
+        DWORD access;
+        DWORD share;
+        DWORD disposition;
+        DWORD flags;
+    };
+    const std::array<Policy, 5> policies{{
+        {GENERIC_WRITE, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL},
+        {GENERIC_WRITE, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL},
+        {GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL},
+        {GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, OPEN_EXISTING, FILE_FLAG_OVERLAPPED},
+        {GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_ALWAYS,
+         FILE_ATTRIBUTE_NORMAL},
+    }};
+    TemporaryDirectory directory;
+    const auto path = directory.path() / "regular";
+    for (int mode = 0; mode < 5; ++mode) {
+        SCOPED_TRACE(mode);
+        WriteFixture(path, "content");
+        const auto operations = std::make_shared<FaultOperations>();
+        WindowsFileSystem file_system(true, operations, nullptr);
+        ASSERT_TRUE(OpenRegularMode(file_system, path, mode).has_value());
+        const auto& policy = policies[static_cast<std::size_t>(mode)];
+        EXPECT_EQ(operations->opened_access, policy.access);
+        EXPECT_EQ(operations->opened_share, policy.share);
+        EXPECT_EQ(operations->opened_disposition, policy.disposition);
+        EXPECT_EQ(operations->opened_flags, policy.flags);
+        EXPECT_TRUE(operations->opened_path.starts_with(L"\\\\?\\"));
+        EXPECT_TRUE(operations->opened_path.ends_with(path.filename().native()));
+        EXPECT_EQ(operations->open_calls, 1U);
+        EXPECT_EQ(operations->inspect_calls, 1U);
+        EXPECT_EQ(operations->close_calls, 1U);
+        EXPECT_EQ(operations->live_handles, 0U);
+    }
+}
+
+TEST(WindowsFileSystemTest, RegularOpeningModesRejectPathSyntaxBeforeNativeOpen) {
+    struct InvalidPath {
+        std::filesystem::path path;
+        ErrorCode code;
+        std::string_view message;
+    };
+    const std::vector<InvalidPath> invalid{
+        {{}, ErrorCode::InvalidArgument, "filesystem path is empty or contains a null"},
+        {std::filesystem::path{std::wstring(L"bad\0path", 8)}, ErrorCode::InvalidArgument,
+         "filesystem path is empty or contains a null"},
+        {L"\\\\.\\device", ErrorCode::NotSupported, "device namespace paths are not supported"},
+        {L"\\\\?\\GLOBALROOT\\device", ErrorCode::NotSupported,
+         "this extended path namespace is not supported"},
+        {L"CON", ErrorCode::NotSupported, "DOS device names require an explicit file path"},
+        {L"CON. ", ErrorCode::InvalidArgument,
+         "ordinary DOS path components must not end in a dot or space"},
+    };
+    for (int mode = 0; mode < 5; ++mode) {
+        SCOPED_TRACE(mode);
+        const auto operations = std::make_shared<FaultOperations>();
+        operations->fail_open = true;
+        WindowsFileSystem file_system(true, operations, nullptr);
+        for (const auto& test_case : invalid) {
+            const Status result = OpenRegularMode(file_system, test_case.path, mode);
+            ASSERT_FALSE(result.has_value());
+            EXPECT_EQ(result.error().code(), test_case.code);
+            EXPECT_EQ(result.error().message(), test_case.message);
+        }
+        EXPECT_EQ(operations->open_calls, 0U);
+        EXPECT_EQ(operations->inspect_calls, 0U);
+        EXPECT_EQ(operations->close_calls, 0U);
+    }
+}
+
+TEST(WindowsFileSystemTest, RegularAcquisitionFailurePreservesPrimaryErrorAndClosesOnce) {
+    TemporaryDirectory directory;
+    const auto path = directory.path() / "regular";
+    for (int mode = 0; mode < 5; ++mode) {
+        for (const bool open_failure : {true, false}) {
+            SCOPED_TRACE(testing::Message() << mode << "/" << open_failure);
+            WriteFixture(path, "content");
+            const auto operations = std::make_shared<FaultOperations>();
+            operations->fail_open = open_failure;
+            operations->fail_inspect = true;
+            operations->fail_close = true;
+            WindowsFileSystem file_system(true, operations, nullptr);
+            const Status result = OpenRegularMode(file_system, path, mode);
+            ASSERT_FALSE(result.has_value());
+            EXPECT_EQ(result.error().code(), ErrorCode::Io);
+            const std::string expected =
+                open_failure ? "open '"
+                             : "file information '" + PathUtf8(path).value() + "' (Win32 30)";
+            EXPECT_TRUE(result.error().message().starts_with(expected));
+            if (open_failure) {
+                EXPECT_NE(result.error().message().find("Win32 5"), std::string_view::npos);
+            }
+            EXPECT_EQ(operations->open_calls, 1U);
+            EXPECT_EQ(operations->inspect_calls, open_failure ? 0U : 1U);
+            EXPECT_EQ(operations->close_calls, open_failure ? 0U : 1U);
+            EXPECT_EQ(operations->live_handles, 0U);
+        }
+    }
 }
 
 TEST(WindowsFileSystemTest, PendingReadsCompleteBeforeTheirEventIsReleased) {
