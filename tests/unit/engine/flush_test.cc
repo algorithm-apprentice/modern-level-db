@@ -169,9 +169,9 @@ class FlushMemTableTest : public testing::Test {
 protected:
     FlushMemTableTest() {
         options_.target_file_size = 100;
-        EXPECT_TRUE(memtable_.Add(3, ValueKind::Value, AsBytes("b"), AsBytes("beta")).has_value());
-        EXPECT_TRUE(memtable_.Add(5, ValueKind::Deletion, AsBytes("a"), {}).has_value());
-        EXPECT_TRUE(memtable_.Add(4, ValueKind::Value, AsBytes("c"), AsBytes("gamma")).has_value());
+        memtable_.Add(3, ValueKind::Value, AsBytes("b"), AsBytes("beta"));
+        memtable_.Add(5, ValueKind::Deletion, AsBytes("a"), {});
+        memtable_.Add(4, ValueKind::Value, AsBytes("c"), AsBytes("gamma"));
     }
 
     Result<VersionEdit> Flush(MemoryFileSystem& file_system, TableCache& cache,

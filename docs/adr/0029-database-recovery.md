@@ -153,8 +153,8 @@ Result<RecoveredDatabase> RecoverDatabase(FileSystem& file_system,
 
 - File system errors and the errors of `VersionSet`, `BuildTable`, and the
   table cache are returned. A complete record that is not a valid write
-  batch, a batch whose sequence does not follow the sequences before it, and
-  entries that the memtable rejects are `Corruption`.
+  batch or whose sequence does not follow the batches before it is
+  `Corruption`. Validated records enter trusted memtable insertion.
 - If recovery fails, it releases the lock and evicts from the table cache
   every number it allocated for a table, including one whose build failed or
   threw. The files are left for obsolete-file cleanup, and the logs they came

@@ -102,33 +102,22 @@ TEST(SkipListTest, EmptyListAndIteratorAreInvalid) {
     EXPECT_FALSE(iterator.valid());
 }
 
-TEST(SkipListTest, InsertsAndRejectsDuplicates) {
+TEST(SkipListTest, InsertsFindsAndIteratesUniqueKeys) {
     Arena arena;
     IntegerCompare compare;
     IntegerList list(compare, arena);
 
-    EXPECT_TRUE(list.Insert(10));
-    EXPECT_TRUE(list.Insert(5));
-    EXPECT_TRUE(list.Insert(20));
-    EXPECT_FALSE(list.Insert(10));
+    list.Insert(10);
+    list.Insert(5);
+    list.Insert(20);
     EXPECT_TRUE(list.Contains(5));
     EXPECT_TRUE(list.Contains(10));
     EXPECT_TRUE(list.Contains(20));
     EXPECT_FALSE(list.Contains(15));
-}
-
-TEST(SkipListTest, TrustedInsertionFindsAndIteratesUniqueKeys) {
-    Arena arena;
-    IntegerCompare compare;
-    IntegerList list(compare, arena);
-
-    list.InsertTrusted(30U);
-    list.InsertTrusted(10U);
-    list.InsertTrusted(20U);
 
     IntegerList::Iterator iterator(list);
     iterator.SeekToFirst();
-    for (const std::uint64_t expected : std::array<std::uint64_t, 3>{10U, 20U, 30U}) {
+    for (const std::uint64_t expected : std::array<std::uint64_t, 3>{5U, 10U, 20U}) {
         ASSERT_TRUE(iterator.valid());
         EXPECT_EQ(iterator.entry(), expected);
         iterator.Next();
@@ -144,22 +133,22 @@ TEST(SkipListTest, CompactNodesMatchLevelDbArenaConsumption) {
 
     EXPECT_EQ(arena.memory_usage(), block_charge);
     for (std::uint64_t key = 1; key <= 216U; ++key) {
-        list.InsertTrusted(key);
+        list.Insert(key);
     }
     EXPECT_EQ(arena.memory_usage(), block_charge);
 
-    list.InsertTrusted(217U);
+    list.Insert(217U);
     EXPECT_EQ(arena.memory_usage(), 2U * block_charge);
 }
 
 #ifndef NDEBUG
-TEST(SkipListDeathTest, TrustedInsertionAssertsUniqueKeys) {
+TEST(SkipListDeathTest, InsertionAssertsUniqueKeys) {
     Arena arena;
     IntegerCompare compare;
     IntegerList list(compare, arena);
-    list.InsertTrusted(7U);
+    list.Insert(7U);
 
-    EXPECT_DEATH(list.InsertTrusted(7U), "");
+    EXPECT_DEATH(list.Insert(7U), "");
 }
 #endif
 
@@ -168,7 +157,7 @@ TEST(SkipListTest, IteratesSeeksAndMovesBackward) {
     IntegerCompare compare;
     IntegerList list(compare, arena);
     for (const std::uint64_t key : std::array<std::uint64_t, 4>{30, 10, 40, 20}) {
-        ASSERT_TRUE(list.Insert(key));
+        list.Insert(key);
     }
 
     IntegerList::Iterator iterator(list);
@@ -208,7 +197,9 @@ TEST(SkipListTest, MatchesRandomizedSetModel) {
     for (int insertion = 0; insertion < 2'000; ++insertion) {
         random = random * 1664525U + 1013904223U;
         const std::uint64_t key = random % 5'000U;
-        EXPECT_EQ(list.Insert(key), model.insert(key).second);
+        if (model.insert(key).second) {
+            list.Insert(key);
+        }
     }
 
     for (std::uint64_t target = 0; target < 5'000; target += 17) {
@@ -249,9 +240,8 @@ TEST(SkipListTest, StoresArenaBackedBinaryViews) {
     const ByteView between = allocate_key(std::string_view("a\0y", 3));
     const ByteView beta = allocate_key(std::string_view("b\0y", 3));
     const ByteView after = allocate_key("z");
-    ASSERT_TRUE(list.Insert(beta));
-    ASSERT_TRUE(list.Insert(alpha));
-    EXPECT_FALSE(list.Insert(alpha));
+    list.Insert(beta);
+    list.Insert(alpha);
     EXPECT_TRUE(list.Contains(beta));
     EXPECT_FALSE(list.Contains(between));
     EXPECT_FALSE(list.Contains(after));
@@ -273,8 +263,8 @@ TEST(SkipListTest, ConcurrentReadersObserveOnlyInitializedOrderedNodes) {
     Arena arena;
     ConcurrentKeyCompare compare;
     SkipList<ConcurrentKey, ConcurrentKeyCompare> list(compare, arena);
-    ASSERT_TRUE(list.Insert(MakeConcurrentKey(0)));
-    ASSERT_TRUE(list.Insert(MakeConcurrentKey(Modulus)));
+    list.Insert(MakeConcurrentKey(0));
+    list.Insert(MakeConcurrentKey(Modulus));
 
     std::atomic<bool> done = false;
     std::atomic<int> failures = 0;
@@ -313,7 +303,7 @@ TEST(SkipListTest, ConcurrentReadersObserveOnlyInitializedOrderedNodes) {
     readers_ready.wait();
     for (std::uint64_t index = 1; index <= InsertedCount; ++index) {
         const std::uint64_t order = (index * 37U) % Modulus;
-        ASSERT_TRUE(list.Insert(MakeConcurrentKey(order)));
+        list.Insert(MakeConcurrentKey(order));
         if (index % 64U == 0U) {
             std::this_thread::yield();
         }
@@ -345,7 +335,6 @@ TEST(SkipListTest, ConcurrentReadersObserveOnlyInitializedOrderedNodes) {
     }
     EXPECT_TRUE(list.Contains(MakeConcurrentKey(0)));
     EXPECT_TRUE(list.Contains(MakeConcurrentKey(Modulus)));
-    EXPECT_FALSE(list.Insert(MakeConcurrentKey(0)));
 
     std::uint64_t missing = 1;
     while (missing < Modulus && list.Contains(MakeConcurrentKey(missing))) {

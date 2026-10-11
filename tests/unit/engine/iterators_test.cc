@@ -329,8 +329,7 @@ protected:
                             ValueKind kind = ValueKind::Value) {
         MemTable memtable(BytewiseComparator());
         for (const auto& [user_key, sequence] : keys) {
-            EXPECT_TRUE(
-                memtable.Add(sequence, kind, AsBytes(user_key), AsBytes(user_key)).has_value());
+            memtable.Add(sequence, kind, AsBytes(user_key), AsBytes(user_key));
         }
         TableCache cache(file_system_, directory_, comparator_, InternalTableOptions(), 0);
         TableBuilderOptions options;
@@ -637,9 +636,9 @@ TEST_F(LevelIteratorTest, HoldsItsVersion) {
 
 TEST(MemTableIteratorTest, ReadsAndHoldsTheMemtable) {
     auto memtable = std::make_shared<MemTable>(BytewiseComparator());
-    ASSERT_TRUE(memtable->Add(2, ValueKind::Value, AsBytes("b"), AsBytes("b")).has_value());
-    ASSERT_TRUE(memtable->Add(1, ValueKind::Value, AsBytes("a"), AsBytes("a")).has_value());
-    ASSERT_TRUE(memtable->Add(3, ValueKind::Deletion, AsBytes("c"), {}).has_value());
+    memtable->Add(2, ValueKind::Value, AsBytes("b"), AsBytes("b"));
+    memtable->Add(1, ValueKind::Value, AsBytes("a"), AsBytes("a"));
+    memtable->Add(3, ValueKind::Deletion, AsBytes("c"), {});
     const std::weak_ptr<const MemTable> held = memtable;
     const auto iterator = NewMemTableIterator(std::move(memtable));
 
@@ -654,10 +653,10 @@ using InternalIteratorTest = TablesTest;
 
 TEST_F(InternalIteratorTest, MergesEverySource) {
     auto memtable = std::make_shared<MemTable>(BytewiseComparator());
-    ASSERT_TRUE(memtable->Add(30, ValueKind::Value, AsBytes("m"), AsBytes("m")).has_value());
-    ASSERT_TRUE(memtable->Add(31, ValueKind::Value, AsBytes("c"), AsBytes("c")).has_value());
+    memtable->Add(30, ValueKind::Value, AsBytes("m"), AsBytes("m"));
+    memtable->Add(31, ValueKind::Value, AsBytes("c"), AsBytes("c"));
     auto immutable = std::make_shared<MemTable>(BytewiseComparator());
-    ASSERT_TRUE(immutable->Add(20, ValueKind::Value, AsBytes("c"), AsBytes("c")).has_value());
+    immutable->Add(20, ValueKind::Value, AsBytes("c"), AsBytes("c"));
     const auto version = MakeVersion({{0, WriteTable(12, {{"b", 11}, {"z", 12}})},
                                       {0, WriteTable(13, {{"c", 13}})},
                                       {1, WriteTable(10, {{"a", 5}, {"c", 6}})},

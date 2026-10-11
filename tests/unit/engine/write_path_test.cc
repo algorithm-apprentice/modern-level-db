@@ -79,18 +79,12 @@ TEST(InsertBatchTest, AddsEntriesWithTheirSequences) {
     MemTable memtable(BytewiseComparator());
 
     WriteBatchReader reader = WriteBatchReader::Open(batch.encoded()).value();
-    ASSERT_TRUE(InsertBatch(reader, memtable).has_value());
+    InsertBatch(reader, memtable);
 
     EXPECT_EQ(Lookup(memtable, "a", 10), "alpha");
     EXPECT_EQ(Lookup(memtable, "a", 12), "again");
     EXPECT_EQ(Lookup(memtable, "b", 11), "<deleted>");
     EXPECT_EQ(Lookup(memtable, "b", 10), "<missing>");
-
-    // Inserting the same entries again is rejected.
-    WriteBatchReader again = WriteBatchReader::Open(batch.encoded()).value();
-    const Status duplicate = InsertBatch(again, memtable);
-    ASSERT_FALSE(duplicate.has_value());
-    EXPECT_EQ(duplicate.error().code(), ErrorCode::InvalidArgument);
 }
 
 TEST(InsertBatchTest, TrustedOwnedBatchAddsEntriesWithoutRevalidation) {
@@ -101,7 +95,7 @@ TEST(InsertBatchTest, TrustedOwnedBatchAddsEntriesWithoutRevalidation) {
     MemTable memtable(BytewiseComparator());
 
     WriteBatchReader reader = WriteBatchReader::OpenTrusted(batch);
-    InsertBatchTrusted(reader, memtable);
+    InsertBatch(reader, memtable);
 
     EXPECT_EQ(Lookup(memtable, "a", 20), "alpha");
     EXPECT_EQ(Lookup(memtable, "b", 21), "<deleted>");

@@ -86,7 +86,7 @@ rejected because no current caller needs them.
 Add `src/engine/write_path.{h,cc}`:
 
 ```cpp
-Status InsertBatch(WriteBatchReader& batch, MemTable& memtable);
+void InsertBatch(WriteBatchReader& batch, MemTable& memtable);
 
 Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log,
                    MemTable& memtable);
@@ -105,16 +105,17 @@ class WriteQueue final {
 };
 ```
 
-- `InsertBatch` adds the remaining entries of the batch to the memtable with
-  their sequences and returns the memtable's first error.
+- `InsertBatch` adds a validated batch's remaining entries through trusted
+  memtable insertion. Batch parsing and sequence reservation establish its
+  kind, lengths, and unique internal keys before this boundary.
 - `CommitGroup` appends a prepared group to the log, syncs the log if `sync`
   is set, and then inserts the group into the memtable, which cannot fail for
   a prepared group whose sequences the version set allocated. It returns the
-  log's first error. The log writer keeps that error, so the log accepts no
-  later record. It may throw `std::bad_alloc` from the log writer or the
-  memtable. Only the front writer calls it, without the database mutex,
-  because the memtable accepts one writer at a time alongside concurrent
-  readers.
+  current append or sync error; DatabaseEngine makes that commit failure
+  sticky and accepts no later write. It may throw `std::bad_alloc` from the
+  log writer or the memtable. Only the front writer calls it, without the
+  database mutex, because the memtable accepts one writer at a time alongside
+  concurrent readers.
 - `Write` requires `lock` to own the database mutex. It queues the batch and
   waits until it is at the front or its batch has been committed. At the
   front, it calls `prepare`; if that fails, only this writer returns the

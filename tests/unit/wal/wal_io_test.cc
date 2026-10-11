@@ -253,10 +253,6 @@ TEST(WalWriterTest, WritesExactRecordsFlushesSyncsAndClosesExplicitly) {
     ASSERT_TRUE(writer.Close().has_value());
     EXPECT_EQ(state->sync_calls, 1);
     EXPECT_EQ(state->close_calls, 1);
-
-    EXPECT_EQ(writer.AddRecord(AsBytes("late")).error().code(), ErrorCode::InvalidArgument);
-    EXPECT_EQ(writer.Sync().error().code(), ErrorCode::InvalidArgument);
-    EXPECT_EQ(writer.Close().error().code(), ErrorCode::InvalidArgument);
 }
 
 TEST(WalWriterTest, StreamsFragmentedRecordsButFlushesOncePerLogicalRecord) {
@@ -313,7 +309,7 @@ TEST(WalWriterTest, AlignedReopenDoesNotAddAnExtraBlock) {
     EXPECT_EQ(state->data[WalBlockSize + 6U], static_cast<std::byte>(WalRecordType::Full));
 }
 
-TEST(WalWriterTest, FirstIoErrorPoisonsWriterButCloseStillRuns) {
+TEST(WalWriterTest, AppendAndCloseReportTheirOwnErrors) {
     const auto state = std::make_shared<WritableState>();
     state->fail_append_call = 2;
     state->fail_close = true;
@@ -322,24 +318,14 @@ TEST(WalWriterTest, FirstIoErrorPoisonsWriterButCloseStillRuns) {
     const Status first = writer.AddRecord(AsBytes("payload"));
     ASSERT_FALSE(first.has_value());
     EXPECT_EQ(first.error().message(), "injected append failure");
-    const int append_calls = state->append_calls;
-
-    const Status second = writer.AddRecord(AsBytes("ignored"));
-    const Status sync = writer.Sync();
     const Status close = writer.Close();
 
-    ASSERT_FALSE(second.has_value());
-    ASSERT_FALSE(sync.has_value());
     ASSERT_FALSE(close.has_value());
-    EXPECT_EQ(second.error().message(), first.error().message());
-    EXPECT_EQ(sync.error().message(), first.error().message());
-    EXPECT_EQ(close.error().message(), first.error().message());
-    EXPECT_EQ(state->append_calls, append_calls);
-    EXPECT_EQ(state->sync_calls, 0);
+    EXPECT_EQ(close.error().message(), "injected close failure");
     EXPECT_EQ(state->close_calls, 1);
 }
 
-TEST(WalWriterTest, FailureInEveryAppendStepPoisonsWriter) {
+TEST(WalWriterTest, ReportsFailureInEveryAppendStep) {
     struct AppendFailureCase {
         const char* step;
         std::uint64_t initial_file_size;
@@ -372,9 +358,6 @@ TEST(WalWriterTest, FailureInEveryAppendStepPoisonsWriter) {
         EXPECT_EQ(failed.error().message(), "injected append failure");
         EXPECT_EQ(state->append_sizes.back(), test_case.failing_append_size);
         EXPECT_EQ(state->flush_calls, flush_calls);
-        const int append_calls = state->append_calls;
-        EXPECT_EQ(writer.AddRecord(AsBytes("ignored")).error().message(), failed.error().message());
-        EXPECT_EQ(state->append_calls, append_calls);
     }
 }
 
@@ -389,11 +372,9 @@ TEST(WalWriterTest, CloseReportsFileCloseFailure) {
     ASSERT_FALSE(close.has_value());
     EXPECT_EQ(close.error().message(), "injected close failure");
     EXPECT_EQ(state->close_calls, 1);
-    EXPECT_EQ(writer.Close().error().code(), ErrorCode::InvalidArgument);
-    EXPECT_EQ(state->close_calls, 1);
 }
 
-TEST(WalWriterTest, FlushAndSyncFailuresPoisonWriter) {
+TEST(WalWriterTest, ReportsFlushAndSyncFailures) {
     const auto flush_state = std::make_shared<WritableState>();
     flush_state->fail_flush = true;
     WalWriter flush_writer(Writable(flush_state));
@@ -401,8 +382,6 @@ TEST(WalWriterTest, FlushAndSyncFailuresPoisonWriter) {
     ASSERT_FALSE(flush.has_value());
     EXPECT_EQ(flush.error().message(), "injected flush failure");
     EXPECT_EQ(flush_state->flush_calls, 1);
-    EXPECT_EQ(flush_writer.Sync().error().message(), flush.error().message());
-    EXPECT_EQ(flush_state->sync_calls, 0);
 
     const auto sync_state = std::make_shared<WritableState>();
     sync_state->fail_sync = true;
@@ -411,16 +390,40 @@ TEST(WalWriterTest, FlushAndSyncFailuresPoisonWriter) {
     const Status sync = sync_writer.Sync();
     ASSERT_FALSE(sync.has_value());
     EXPECT_EQ(sync.error().message(), "injected sync failure");
-    EXPECT_EQ(sync_writer.AddRecord(AsBytes("ignored")).error().message(), sync.error().message());
 }
 
-TEST(WalWriterTest, NullFileReturnsInvalidArgumentWithoutDereference) {
-    WalWriter writer(nullptr);
-
-    EXPECT_EQ(writer.AddRecord(AsBytes("record")).error().code(), ErrorCode::InvalidArgument);
-    EXPECT_EQ(writer.Sync().error().code(), ErrorCode::InvalidArgument);
-    EXPECT_EQ(writer.Close().error().code(), ErrorCode::InvalidArgument);
+#ifndef NDEBUG
+TEST(WalWriterDeathTest, RequiresAFileAndSingleClose) {
+    EXPECT_DEATH({ WalWriter writer(nullptr); }, "");
+    EXPECT_DEATH(
+        {
+            const auto state = std::make_shared<WritableState>();
+            WalWriter writer(Writable(state));
+            static_cast<void>(writer.Close());
+            static_cast<void>(writer.Close());
+        },
+        "");
 }
+
+TEST(WalWriterDeathTest, RejectsRecordAndSyncAfterClose) {
+    EXPECT_DEATH(
+        {
+            const auto state = std::make_shared<WritableState>();
+            WalWriter writer(Writable(state));
+            static_cast<void>(writer.Close());
+            static_cast<void>(writer.AddRecord(AsBytes("late")));
+        },
+        "");
+    EXPECT_DEATH(
+        {
+            const auto state = std::make_shared<WritableState>();
+            WalWriter writer(Writable(state));
+            static_cast<void>(writer.Close());
+            static_cast<void>(writer.Sync());
+        },
+        "");
+}
+#endif
 
 TEST(WalReaderTest, RoundTripsShortReadsEmptyAndFragmentedRecords) {
     const auto destination = std::make_shared<WritableState>();

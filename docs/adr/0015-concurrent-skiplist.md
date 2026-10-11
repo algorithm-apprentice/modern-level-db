@@ -44,8 +44,9 @@ Adopt:
 Change:
 
 - Use project naming and `Arena::AllocateAligned`.
-- Return `false` for an attempted duplicate insertion instead of relying only
-  on a debug assertion.
+- Keep LevelDB's single trusted `Insert`: callers establish uniqueness, and
+  Debug builds assert the precondition. Validated batches and reserved write
+  sequences establish it before memtable insertion.
 - Avoid LevelDB's trailing `atomic<Node*> next_[1]` allocation technique.
   Allocate and construct the variable-height atomic link sequence separately
   in arena storage, then store its pointer in a trivially destructible node.

@@ -86,10 +86,8 @@ Entry Deleted(std::string_view key, SequenceNumber sequence) {
 
 void Fill(MemTable& memtable, std::initializer_list<Entry> entries) {
     for (const Entry& entry : entries) {
-        EXPECT_TRUE(memtable
-                        .Add(entry.sequence, entry.kind, AsBytes(entry.key),
-                             entry.kind == ValueKind::Value ? AsBytes(entry.value) : ByteView())
-                        .has_value());
+        memtable.Add(entry.sequence, entry.kind, AsBytes(entry.key),
+                     entry.kind == ValueKind::Value ? AsBytes(entry.value) : ByteView());
     }
 }
 

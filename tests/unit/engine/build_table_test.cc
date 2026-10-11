@@ -58,10 +58,10 @@ protected:
     BuildTableTest() {
         options_.block_size = 1;
         options_.filter_policy = BloomFilterPolicy(10);
-        EXPECT_TRUE(memtable_.Add(3, ValueKind::Value, AsBytes("b"), AsBytes("beta")).has_value());
-        EXPECT_TRUE(memtable_.Add(5, ValueKind::Deletion, AsBytes("a"), {}).has_value());
-        EXPECT_TRUE(memtable_.Add(1, ValueKind::Value, AsBytes("a"), AsBytes("alpha")).has_value());
-        EXPECT_TRUE(memtable_.Add(4, ValueKind::Value, AsBytes("c"), AsBytes("gamma")).has_value());
+        memtable_.Add(3, ValueKind::Value, AsBytes("b"), AsBytes("beta"));
+        memtable_.Add(5, ValueKind::Deletion, AsBytes("a"), {});
+        memtable_.Add(1, ValueKind::Value, AsBytes("a"), AsBytes("alpha"));
+        memtable_.Add(4, ValueKind::Value, AsBytes("c"), AsBytes("gamma"));
     }
 
     Result<std::optional<FileMetadata>> Build(MemoryFileSystem& file_system, TableCache& cache,

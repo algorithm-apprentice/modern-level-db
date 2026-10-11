@@ -28,11 +28,6 @@
 namespace modern_leveldb {
 namespace {
 
-std::unexpected<Error> InvalidEntry(const Error& error) {
-    return std::unexpected(
-        Error::Corruption("log record's entry is not valid: " + std::string(error.message())));
-}
-
 // Returns the directory that holds the named directory's entry.
 std::filesystem::path ParentDirectory(std::filesystem::path directory) {
     if (!directory.has_filename()) {
@@ -250,10 +245,7 @@ private:
             last_sequence_ = batch->sequence() - 1;
             return {};
         }
-        const Status inserted = InsertBatch(*batch, *memtable_);
-        if (!inserted.has_value()) {
-            return InvalidEntry(inserted.error());
-        }
+        InsertBatch(*batch, *memtable_);
         last_sequence_ = batch->sequence() + batch->count() - 1;
         has_entries_ = true;
         if (memtable_->memory_usage() > options_->write_buffer_size) {

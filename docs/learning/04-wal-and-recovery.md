@@ -188,7 +188,7 @@ obsolete-file cleanup instead of guessing.
 |---|---|
 | [`file_system.h`](../../src/platform/file_system.h) | Explicit durability primitives |
 | [`wal_format.cc`](../../src/format/wal_format.cc) | Fragment boundaries and checksums |
-| [`wal_io.cc`](../../src/wal/wal_io.cc) | Reassembly, tail handling, and first-error poisoning |
+| [`wal_io.cc`](../../src/wal/wal_io.cc) | Framing, reassembly, tail handling, and current I/O errors |
 | [`recovery.cc`](../../src/engine/recovery.cc) | Directory locking, WAL selection, and checked replay |
 | [`version_set.cc`](../../src/metadata/version_set.cc) | `Write`, `InstallCurrent`, and installation order |
 | [`power_loss_test.cc`](../../tests/crash/power_loss_test.cc) | Allowed recovered states at failure boundaries |

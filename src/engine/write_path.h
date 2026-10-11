@@ -19,17 +19,13 @@
 
 namespace modern_leveldb {
 
-// Adds the remaining entries of the batch to the memtable with their sequences
-// and returns the memtable's first error.
-[[nodiscard]] Status InsertBatch(WriteBatchReader& batch, MemTable& memtable);
-
-// Adds the remaining entries of a trusted owned batch whose sequence interval
-// is reserved and whose internal keys are unique in the memtable.
-void InsertBatchTrusted(WriteBatchReader& batch, MemTable& memtable);
+// Adds the remaining entries of a validated batch whose sequence interval is
+// reserved and whose internal keys are unique in the memtable.
+void InsertBatch(WriteBatchReader& batch, MemTable& memtable);
 
 // Appends a prepared group to the log, syncs the log if asked, and inserts the
-// group into the memtable. Returns the log's first error, which the log writer
-// keeps. Only one writer at a time may call it for a memtable.
+// group into the memtable. Returns the current append or sync error; the engine
+// makes commit failures sticky. Only one writer at a time may call it.
 [[nodiscard]] Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log,
                                  MemTable& memtable);
 
