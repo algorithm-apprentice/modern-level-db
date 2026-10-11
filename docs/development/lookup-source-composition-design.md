@@ -2,9 +2,10 @@
 
 ## Status and scope
 
-Design proposal for Q01/Q02/Q03 from the
+Accepted design for Q01/Q02/Q03 from the
 [production composition plan](production-function-composition-plan.md).
-No production implementation is included in this design PR.
+Design-only #189 was independently reviewed and merged after all 20 exact-head
+checks succeeded. The implementation record below describes the separate batch.
 
 Scope is `src/engine/lookup.cc` source decisions and candidate visitation, plus
 sharing the existing owned-value copy with `src/table/table.cc` through a small
@@ -173,3 +174,53 @@ The production-wide recursive composition goal remains open after this batch.
 Independent design review found no significant issue. Its nonblocking request
 for exact original-slot address assertions is included in characterization.
 The reviewer inspected source/tests without executing builds or tests.
+
+## Implementation record
+
+Characterization was committed before production edits. Five added cases cover
+memory ownership/empty values/tombstones/reset, Missing with optional immutable,
+exact L0-to-deeper order, early deletion/error and original-slot charges, and
+lazy sampling whose second match is in a deeper level. Existing sampling now
+also checks its exact original version slot. The fixture derives its unordered
+searched-file set from the same ordered filesystem-log extraction.
+
+Three subsequent topic commits implement candidate traversal, memory decisions
+and shared owned copying. No public source interface or sampling/seek policy
+changed. Shared copying is the relocated existing table operation, not another
+implementation.
+
+| Definition | Reviewed composition or domain leaf |
+|---|---|
+| `UserKeyInFileRange` | Inclusive admission under the configured comparator; lower/upper comparisons retain original short circuit. |
+| `LevelZeroCandidates` | Reserve original full span capacity, select original slot pointers with the range predicate, sort newest first. Projection reads one file number. |
+| `CandidateCursor::NextLevelZero` | One ordered L0 advancement; no metadata ownership transfer or deeper selection. |
+| `CandidateCursor::NextDeeperLevel` | Scan monotonic level state with existing LevelCandidate; advance only within the requested next-candidate operation. |
+| `CandidateCursor::Next` | Compose L0 advancement and deferred deeper advancement. |
+| `ForEachOverlapping` | Build named local cursor and compose one visitor loop; bool and Result<bool> remain distinct compile-time categories. |
+| `SearchMemTable` | One source lookup and classification; owned Value delegates copying, Deletion decides and Missing falls through. |
+| `SearchMemory` | Compose mutable then optional immutable decision; engaged false is distinct from nullopt. |
+| `LookupValue` | Reset charge, compose memory decision and existing table visitor/charge/result behavior. Its table visitor remains a recursive frontier. |
+| Private inline `CopyLookupValue` | Resize and copy one borrowed nonaliasing byte range into owned output, with original exception behavior. |
+
+Table::LookupDataBlock continues using the same CopyLookupValue name and holds
+its original block owner/pin through copying. No table-routing or cache-lifetime
+change is needed. The sort projection is a one-number access leaf; existing
+LevelCandidate's partition predicate and LookupValue/SampleCharge visitors
+remain subsequent recursive frontiers rather than receiving whole-function
+certification here.
+
+All 64 selected LookupTest/SampleChargeTest/SeekStatisticsTest/TableTest cases
+pass before/after with exact unique JUnit case-set equality, all five added names
+present, and no failures/errors/skips. Cursor and memory slices each pass the
+same 18 lookup/sampling cases. The initial characterization harness used two
+different temporary span views for iterator endpoints; Windows checked iterators
+correctly rejected those ranges. Named views fixed the test harness before
+the passing original-production characterization commit and all extraction.
+
+Local evidence is Windows Debug with the actual unit target rebuilt for each
+production slice. Formatting/whitespace checks pass. This is not allocation
+failure injection, backend-disabled testing or broader read-path performance
+certification. Independent combined implementation review found no significant
+correctness, design or test gap across the six scoped files. It independently
+inspected both 64-case and intermediate 18-case XML sets without executing
+tests. Exact-head remote CI remains the delivery gate.

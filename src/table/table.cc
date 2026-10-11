@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bytes_internal.h"
 #include "base/result_internal.h"
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
@@ -220,11 +221,6 @@ Status ReadFilter(const RandomAccessFile& file, std::uint64_t blocks_end, BlockH
     }
     filter.emplace(std::move(*reader));
     return {};
-}
-
-void CopyLookupValue(ByteView source, std::vector<std::byte>& value) {
-    value.resize(source.size());
-    std::ranges::copy(source, value.begin());
 }
 
 }  // namespace

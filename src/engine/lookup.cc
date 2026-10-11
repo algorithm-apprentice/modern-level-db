@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bytes_internal.h"
 #include "base/result_internal.h"
 #include "metadata/version_edit.h"
 #include "modern_leveldb/base/bytes.h"
@@ -26,6 +27,33 @@ enum class Decision {
     Value,
     Deletion,
 };
+
+Decision SearchMemTable(const MemTable& source, const LookupKey& key,
+                        std::vector<std::byte>& value) {
+    const MemTableLookup found = source.Lookup(key);
+    if (found.kind == MemTableLookupKind::Value) {
+        CopyLookupValue(found.value, value);
+        return Decision::Value;
+    }
+    if (found.kind == MemTableLookupKind::Deletion) {
+        return Decision::Deletion;
+    }
+    return Decision::Missing;
+}
+
+std::optional<bool> SearchMemory(const MemTable& memtable, const MemTable* immutable,
+                                 const LookupKey& key, std::vector<std::byte>& value) {
+    for (const MemTable* source : {&memtable, immutable}) {
+        if (source == nullptr) {
+            continue;
+        }
+        const Decision decision = SearchMemTable(*source, key, value);
+        if (decision != Decision::Missing) {
+            return decision == Decision::Value;
+        }
+    }
+    return std::nullopt;
+}
 
 Result<Decision> SearchFile(TableCache& table_cache, const FileMetadata& file, const LookupKey& key,
                             std::vector<std::byte>& value, const TableReadOptions& options) {
@@ -77,17 +105,18 @@ const Version::File* LevelCandidate(std::span<const Version::File> files,
     return &*found;
 }
 
-template <typename Visitor>
-Status ForEachOverlapping(const Version& version, const InternalKeyComparator& comparator,
-                          ByteView user_key, ByteView internal_key, Visitor&& visitor) {
-    using VisitorResult = std::remove_cvref_t<std::invoke_result_t<Visitor&, const Candidate&>>;
-    static_assert(std::is_same_v<VisitorResult, bool> ||
-                  std::is_same_v<VisitorResult, Result<bool>>);
+bool UserKeyInFileRange(const FileMetadata& file, const Comparator& comparator, ByteView user_key) {
+    return comparator.Compare(user_key, file.smallest.user_key()) >= 0 &&
+           comparator.Compare(user_key, file.largest.user_key()) <= 0;
+}
+
+std::vector<const Version::File*> LevelZeroCandidates(std::span<const Version::File> files,
+                                                      const Comparator& comparator,
+                                                      ByteView user_key) {
     std::vector<const Version::File*> level0;
-    level0.reserve(version.files(0).size());
-    for (const Version::File& file : version.files(0)) {
-        if (comparator.user_comparator().Compare(user_key, file->smallest.user_key()) >= 0 &&
-            comparator.user_comparator().Compare(user_key, file->largest.user_key()) <= 0) {
+    level0.reserve(files.size());
+    for (const Version::File& file : files) {
+        if (UserKeyInFileRange(*file, comparator, user_key)) {
             level0.push_back(&file);
         }
     }
@@ -95,36 +124,65 @@ Status ForEachOverlapping(const Version& version, const InternalKeyComparator& c
     // must not win over a later overwrite or deletion.
     std::ranges::sort(level0, std::ranges::greater{},
                       [](const Version::File* file) { return (**file).number; });
+    return level0;
+}
 
-    for (const Version::File* file : level0) {
-        const Candidate candidate{.level = 0, .file = file};
-        if constexpr (std::is_same_v<VisitorResult, bool>) {
-            if (!visitor(candidate)) {
-                return {};
-            }
-        } else {
-            Result<bool> keep_going = visitor(candidate);
-            if (!keep_going.has_value()) {
-                return std::unexpected(std::move(keep_going).error());
-            }
-            if (!*keep_going) {
-                return {};
-            }
+// L0 ordering is prepared eagerly; deeper levels are selected only on advancement.
+struct CandidateCursor {
+    const Version& version;
+    const InternalKeyComparator& comparator;
+    ByteView user_key;
+    ByteView internal_key;
+    std::vector<const Version::File*> level0;
+    std::size_t level0_position = 0;
+    std::uint32_t next_level = 1;
+
+    std::optional<Candidate> NextLevelZero() {
+        if (level0_position == level0.size()) {
+            return std::nullopt;
         }
+        return Candidate{.level = 0, .file = level0[level0_position++]};
     }
 
-    for (std::uint32_t level = 1; level < NumLevels; ++level) {
-        const Version::File* file =
-            LevelCandidate(version.files(level), comparator, user_key, internal_key);
-        if (file == nullptr) {
-            continue;
+    std::optional<Candidate> NextDeeperLevel() {
+        while (next_level < NumLevels) {
+            const std::uint32_t level = next_level++;
+            const Version::File* file =
+                LevelCandidate(version.files(level), comparator, user_key, internal_key);
+            if (file != nullptr) {
+                return Candidate{.level = level, .file = file};
+            }
         }
+        return std::nullopt;
+    }
+
+    std::optional<Candidate> Next() {
+        if (auto candidate = NextLevelZero(); candidate.has_value()) {
+            return candidate;
+        }
+        return NextDeeperLevel();
+    }
+};
+
+template <typename Visitor>
+Status ForEachOverlapping(const Version& version, const InternalKeyComparator& comparator,
+                          ByteView user_key, ByteView internal_key, Visitor&& visitor) {
+    using VisitorResult = std::remove_cvref_t<std::invoke_result_t<Visitor&, const Candidate&>>;
+    static_assert(std::is_same_v<VisitorResult, bool> ||
+                  std::is_same_v<VisitorResult, Result<bool>>);
+    CandidateCursor candidates{
+        .version = version,
+        .comparator = comparator,
+        .user_key = user_key,
+        .internal_key = internal_key,
+        .level0 = LevelZeroCandidates(version.files(0), comparator.user_comparator(), user_key)};
+    while (const auto candidate = candidates.Next()) {
         if constexpr (std::is_same_v<VisitorResult, bool>) {
-            if (!visitor(Candidate{.level = level, .file = file})) {
+            if (!visitor(*candidate)) {
                 return {};
             }
         } else {
-            Result<bool> keep_going = visitor(Candidate{.level = level, .file = file});
+            Result<bool> keep_going = visitor(*candidate);
             if (!keep_going.has_value()) {
                 return std::unexpected(std::move(keep_going).error());
             }
@@ -146,19 +204,8 @@ Result<bool> LookupValue(const MemTable& memtable, const MemTable* immutable,
     seek.reset();
     // Newest source with a visible entry decides. A tombstone decides absence,
     // unlike Missing, which permits searching older sources.
-    for (const MemTable* source : {&memtable, immutable}) {
-        if (source == nullptr) {
-            continue;
-        }
-        const MemTableLookup found = source->Lookup(key);
-        if (found.kind == MemTableLookupKind::Value) {
-            value.resize(found.value.size());
-            std::ranges::copy(found.value, value.begin());
-            return true;
-        }
-        if (found.kind == MemTableLookupKind::Deletion) {
-            return false;
-        }
+    if (const auto decision = SearchMemory(memtable, immutable, key, value); decision.has_value()) {
+        return *decision;
     }
 
     std::optional<Candidate> previous;
