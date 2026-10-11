@@ -124,6 +124,31 @@ Status DumpWalFramed(FileSystem& file_system, const std::filesystem::path& path,
     }
 }
 
+std::string WriteBatchEntryPrefix(const WriteBatchEntry& entry) {
+    std::string prefix = "  ";
+    prefix += entry.kind == ValueKind::Value ? "put" : "delete";
+    prefix += " sequence=";
+    prefix += std::to_string(entry.sequence);
+    return prefix;
+}
+
+void AppendDiagnosticBytesField(std::string& output, std::string_view name, ByteView value) {
+    output.push_back(' ');
+    output.append(name);
+    output += "='";
+    output += EscapeDiagnosticBytes(value);
+    output.push_back('\'');
+}
+
+std::string FormatWriteBatchEntry(const WriteBatchEntry& entry) {
+    std::string line = WriteBatchEntryPrefix(entry);
+    AppendDiagnosticBytesField(line, "key", entry.key);
+    if (entry.kind == ValueKind::Value) {
+        AppendDiagnosticBytesField(line, "value", entry.value);
+    }
+    return line;
+}
+
 Status FormatWriteBatch(const WalLogicalRecord& record, WritableFile& output,
                         std::optional<Error>& first) {
     Result<WriteBatchReader> batch = WriteBatchReader::Open(record.data);
@@ -145,18 +170,7 @@ Status FormatWriteBatch(const WalLogicalRecord& record, WritableFile& output,
         return header_status;
     }
     while (const std::optional<WriteBatchEntry> entry = batch->Next()) {
-        std::string line = "  ";
-        line += entry->kind == ValueKind::Value ? "put" : "delete";
-        line += " sequence=";
-        line += std::to_string(entry->sequence);
-        line += " key='";
-        line += EscapeDiagnosticBytes(entry->key);
-        line.push_back('\'');
-        if (entry->kind == ValueKind::Value) {
-            line += " value='";
-            line += EscapeDiagnosticBytes(entry->value);
-            line.push_back('\'');
-        }
+        std::string line = FormatWriteBatchEntry(*entry);
         const Status appended = AppendDiagnosticLine(output, std::move(line));
         if (!appended.has_value()) {
             return appended;

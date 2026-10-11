@@ -2,7 +2,8 @@
 
 ## Status and scope
 
-Design proposal; no implementation is included.
+Design accepted in #173. Implementation status is recorded per slice below;
+accepting this plan does not complete the production-wide goal.
 The source baseline is `d508ac144b4115c701ed13ed1bda329fd5aa0755`.
 This extends the finite inventory delivered under
 [ADR-0077](../adr/0077-bounded-orchestration-composition.md), rather than claiming
@@ -256,6 +257,34 @@ Design publication/merge precedes implementation. Run the focused dump and
 command cases after extraction, then obtain a separate independent code review
 before publishing the implementation PR. D01a's completion does not complete
 D01, the dump file's recursive audit, or the production-wide goal.
+
+### D01a implementation record
+
+The entry-rendering extraction is implemented; its associated implementation PR
+records delivery status. This slice changes only WAL entry rendering and its
+characterization, not table/MANIFEST text, traversal, or escaping.
+
+| Function | Responsibility and stopping boundary |
+|---|---|
+| `FormatWriteBatch` | Its entry loop now composes checked iteration, complete entry rendering, and diagnostic append/error propagation. The remaining record-level decoding/header/error paths are later recursive-review frontiers. |
+| `FormatWriteBatchEntry` | Composition of prefix rendering and quoted key/value fields, with the existing put-only value condition. |
+| `WriteBatchEntryPrefix` | One fixed prefix grammar: indentation, trusted put/delete spelling, and decimal sequence. Ordinary string operations and decimal conversion are its representation primitives. |
+| `AppendDiagnosticBytesField` | One named quoted-field grammar, shared by key and value; it delegates byte escaping to the existing shared operation. The escaper's internal decomposition remains pending. |
+
+`DumpsEmptyBatchEntryFieldsAtTheSequenceBoundary` was added before extraction and
+passed against the original formatter. It checks all four append boundaries,
+empty put key/value, delete's absent value field, and the final two valid
+sequences. The same 28 focused dump/command cases passed before and after
+extraction, including binary escaping and every-rendered-section output
+failures. Formatting and the warnings-as-errors Debug build are checked for
+the implementation; this evidence is not a claim about unmodified worklist
+entries or the whole production tree.
+
+A separate independent implementation persona reviewed the D01a diff and
+surrounding reader/formatter contracts and found no actionable findings. This
+was static code review; the main agent separately verified the before/after
+JUnit case sets and results. Publication and merge still require green checks
+on the exact implementation PR head.
 
 ## Representative recursive designs
 

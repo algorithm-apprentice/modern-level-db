@@ -23,7 +23,8 @@ This completed backlog is not a certification that every production function
 has reached an atomic responsibility. The subsequent
 [production function composition plan](production-function-composition-plan.md)
 records the broader production-only scan and recursive decomposition goal.
-That plan is a draft; its implementation is not included in this completion.
+That plan is a separate design backlog; its per-slice implementation status is
+not included in this earlier completion.
 
 ## Task execution contract
 
