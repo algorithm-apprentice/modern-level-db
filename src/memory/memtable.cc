@@ -88,7 +88,8 @@ const MemTable& MemTable::ReadPin::value() const noexcept {
 }
 
 MemTable::MemTable(const Comparator& user_comparator)
-    : internal_comparator_(user_comparator),
+    : user_comparator_(user_comparator),
+      internal_comparator_(user_comparator),
       entry_comparator_{internal_comparator_},
       table_(entry_comparator_, arena_) {}
 
@@ -111,7 +112,7 @@ MemTableLookup MemTable::Lookup(const LookupKey& key) const {
     const MemTableEntryView entry = DecodeMemTableEntry(iterator.entry());
     const ByteView candidate_user_key =
         entry.internal_key.first(entry.internal_key.size() - InternalKeyTrailerSize);
-    if (internal_comparator_.user_comparator().Compare(candidate_user_key, key.user_key()) != 0) {
+    if (user_comparator_.Compare(candidate_user_key, key.user_key()) != 0) {
         return {};
     }
 

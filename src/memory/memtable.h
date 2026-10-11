@@ -111,6 +111,7 @@ public:
 private:
     friend class DatabaseEngine;
 
+    const Comparator& user_comparator_;
     InternalKeyComparator internal_comparator_;
     EntryComparator entry_comparator_;
     Arena arena_;
