@@ -372,6 +372,23 @@ Status VersionSet::ApplyPrepared(VersionEdit edit, Version version,
     auto candidate = std::make_shared<const Version>(std::move(version));
     ReserveInstall();
 
+    Status written = WritePrepared(edit, new_manifest_snapshot, lock);
+    if (!written.has_value()) {
+        failure_ = written.error();
+        return written;
+    }
+    // Persist first, publish second. Readers keep the old Version during I/O;
+    // an uncertain write failure must not authorize cleanup using the candidate.
+    compact_pointers_ = std::move(compact_pointers);
+    log_number_ = log_number;
+    prev_log_number_ = prev_log_number;
+    InstallPrepared(std::move(candidate));
+    return {};
+}
+
+Status VersionSet::WritePrepared(const VersionEdit& edit,
+                                 const std::optional<std::vector<std::byte>>& new_manifest_snapshot,
+                                 std::unique_lock<std::mutex>* lock) {
     Status written;
     if (lock == nullptr) {
         written = Write(edit, new_manifest_snapshot);
@@ -385,17 +402,7 @@ Status VersionSet::ApplyPrepared(VersionEdit edit, Version version,
         }
         lock->lock();
     }
-    if (!written.has_value()) {
-        failure_ = written.error();
-        return written;
-    }
-    // Persist first, publish second. Readers keep the old Version during I/O;
-    // an uncertain write failure must not authorize cleanup using the candidate.
-    compact_pointers_ = std::move(compact_pointers);
-    log_number_ = log_number;
-    prev_log_number_ = prev_log_number;
-    InstallPrepared(std::move(candidate));
-    return {};
+    return written;
 }
 
 Status VersionSet::Validate(const VersionEdit& edit) const {
@@ -430,16 +437,11 @@ Status VersionSet::Write(const VersionEdit& edit,
                          const std::optional<std::vector<std::byte>>& new_manifest_snapshot) {
     std::unique_ptr<WalWriter> created;
     if (manifest_ == nullptr) {
-        Result<std::unique_ptr<WritableFile>> file =
-            file_system_->OpenWritable(DescriptorFileName(directory_, manifest_file_number_));
-        if (!file.has_value()) {
-            return std::unexpected(std::move(file).error());
+        Result<std::unique_ptr<WalWriter>> writer = CreateManifest(*new_manifest_snapshot);
+        if (!writer.has_value()) {
+            return std::unexpected(std::move(writer).error());
         }
-        created = std::make_unique<WalWriter>(std::move(*file));
-        const Status snapshot = created->AddRecord(*new_manifest_snapshot);
-        if (!snapshot.has_value()) {
-            return snapshot;
-        }
+        created = std::move(*writer);
     }
     WalWriter& manifest = created != nullptr ? *created : *manifest_;
     const Status appended = manifest.AddRecord(edit.Encode());
@@ -465,6 +467,20 @@ Status VersionSet::Write(const VersionEdit& edit,
     }
     manifest_ = std::move(created);
     return {};
+}
+
+Result<std::unique_ptr<WalWriter>> VersionSet::CreateManifest(ByteView snapshot) {
+    Result<std::unique_ptr<WritableFile>> file =
+        file_system_->OpenWritable(DescriptorFileName(directory_, manifest_file_number_));
+    if (!file.has_value()) {
+        return std::unexpected(std::move(file).error());
+    }
+    auto created = std::make_unique<WalWriter>(std::move(*file));
+    const Status appended = created->AddRecord(snapshot);
+    if (!appended.has_value()) {
+        return std::unexpected(appended.error());
+    }
+    return created;
 }
 
 // Selects metadata through a synced temporary file, rename, then namespace barrier.
