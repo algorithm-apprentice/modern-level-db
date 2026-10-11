@@ -94,6 +94,18 @@ table; naming consistency must be checked during review.
 
 ## API and comments
 
+### Compose functions by responsibility
+
+Prefer textbook-style compositions of small, single-responsibility functions.
+An orchestration function should name a few stages, with each stage implemented
+by a separate function; decompose a stage again when it still mixes independent
+responsibilities. Keep a complex algorithm together when its coupled state is
+clearer as one unit. Split by responsibility, not an arbitrary line limit, and
+avoid trivial wrappers or generic execution frameworks.
+
+See [ADR-0076](../adr/0076-textbook-source-composition.md) for the source-cleanup
+scope and preserved contracts.
+
 Follow [ADR-0004](../adr/0004-errors-ownership-and-runtime.md) for the error,
 ownership, and runtime model.
 
@@ -109,8 +121,9 @@ ownership, and runtime model.
 For performance-sensitive internal loops, establish validity at explicit
 boundaries and rely on documented object/loop invariants afterward. Do not
 repeat recoverable-error checks for states those invariants exclude. Keep
-external-input and I/O failures explicit, and use debug assertions for proven
-internal preconditions. Any unchecked helper needs identified callers and a
+external-input and I/O failures explicit. Production code documents proven
+internal preconditions rather than repeating runtime assertions. Keep compile-time
+`static_assert` checks and behavioral test assertions. Any unchecked helper needs identified callers and a
 complete validity/lifetime argument; see
 [ADR-0046](../adr/0046-validated-block-decoding-experiment.md) for the historical
 proof pattern and [ADR-0055](../adr/0055-leveldb-block-iterator-parity.md) for the
