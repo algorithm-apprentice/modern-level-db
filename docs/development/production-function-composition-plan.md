@@ -1,0 +1,372 @@
+# Production Function Composition Plan
+
+## Status and scope
+
+Design proposal; no implementation is included.
+The source baseline is `d508ac144b4115c701ed13ed1bda329fd5aa0755`.
+This extends the finite inventory delivered under
+[ADR-0077](../adr/0077-bounded-orchestration-composition.md), rather than claiming
+that its three completed slices established the style of the whole codebase.
+
+The current scope is the 55 tracked `.cc` files under `src` and
+`tools/modern_leveldb_tool.cc`: 56 files and 10,482 source lines. Benchmarks,
+tests, fuzz targets, Python tools, generated code, and external dependencies are
+not refactoring candidates. Directly dependent headers and characterization
+tests may change when implementing a production slice.
+
+A syntax-only tree-sitter scan inventories 741 `function_definition` nodes and
+40 lambda expressions, including inline members, constructors, destructors,
+templates, and both native implementations. There were no parser error or
+missing nodes. These are syntax counts, not a compiler-resolved call graph or a
+claim that 741 runtime bodies have passed an atomic-responsibility audit.
+The complete signatures, source ranges, immediate statements, calls, and lambda
+ranges are retained in session scan evidence. The file dispositions below and
+the source-read candidates are the starting worklist, not a final style
+certification.
+
+## Recursive design rule
+
+Every function does one named job. When that job consists of independently
+meaningful smaller jobs, express them as calls to named functions and apply the
+same rule recursively. A composite function coordinates its children; a leaf
+implements one indivisible domain operation.
+
+"Atomic" describes responsibility, not concurrency or a single C++ statement.
+For example, encoding one fixed-width integer may need several shifts and stores
+but still be a leaf. A sequence of option validation, file acquisition, replay,
+and installation is not a leaf, even if written briefly. No line threshold,
+short-function exemption, or blanket "complex algorithm" exemption applies.
+Algorithm invariants constrain the decomposition; they do not exempt the
+algorithm from having its independently meaningful steps named.
+
+Review both ordinary functions and lambdas. Standard-library operations and
+existing project primitives can already be children; do not add a project
+wrapper merely to rename a single call. Conversely, a short function that mixes
+two distinct policies still needs decomposition.
+
+Each implementation slice records the parent, children, and stopping reason
+for every new or changed leaf. Check the children themselves before declaring
+the parent complete. A leaf's stopping reason must identify the domain operation
+and its coupled state or representation, not merely say "small" or "complicated."
+
+## Shared operations
+
+Search for prior art before extracting a new helper. Prefer the narrowest scope
+that covers its real callers: a private method or file-local function first,
+then the owning subsystem's internal interface when sharing crosses files.
+Avoid new public API, generic callback frameworks, utility dumping grounds, and
+parameter bags that obscure ownership.
+
+Concrete opportunities and limits:
+
+| Operation | Existing evidence | Proposed treatment |
+|---|---|---|
+| File ordering | `FileBefore` in `src/metadata/version.cc:26`; equivalent checked-build comparator at lines 80-83 | Reuse the existing ordering rule in checked and trusted build paths. Do not merge their validation contracts. |
+| Regular Windows file acquisition | `OpenWriter:513-535`, `OpenSequential:629-645`, `OpenRandomAccess:647-662`, `LockFile:886-900` | Share native-path conversion, configured handle opening, and regular-file validation. Keep access, sharing, disposition, flags, contention handling, and caller ownership explicit. |
+| Table physical decoding | `ReadExactly`, `ReadStoredBlock`, `ReadBlock`, `IndexHandle`, and `ValidateIndex` already exist in `src/table/table.cc` | Reuse them below footer, index, filter, and lookup stages; do not introduce another read/decode stack. |
+| Overlap visitation | `ForEachOverlapping` in `src/engine/lookup.cc:81-137` is already shared by lookup and sampling | Extract candidate selection and the repeated visitor-result handling within this design; preserve both supported visitor result categories and early-stop semantics. |
+| First-error retention | `RememberFirstError` is already shared by native writers; `TableBuilder::Record` returns a boolean and dump's `RememberFirst` accepts a borrowed error | Do not force these through a status-returning helper that adds error copies or changes allocation/exception behavior. Share only an exactly compatible primitive if a later slice demonstrates the benefit. |
+| New-WAL durability | Recovery syncs the WAL and then the directory at `src/engine/recovery.cc:160-169`; rotation only syncs the directory at `src/engine/database_write.cc:67-74` | Not one interchangeable operation. Keep the policies distinct; do not add a common helper that silently inserts or removes a sync. |
+| Native mapping | POSIX inspects size before acquiring a slot and falls back on `fstat`/`mmap` failure; Windows acquires first and reports size/map/close failures | Share only proven platform-neutral predicates if useful. Do not unify the resource transactions or their error policies. |
+
+## File-by-file disposition
+
+`Structured` means the syntax/statement inventory exposes existing primitives
+or named compositions and no higher-priority extraction was selected here. It
+does **not** waive recursive leaf review. `Decompose` names a concrete frontier
+for the task table. Every file, including structured files, participates in the
+final per-function audit.
+
+| Production file | Definitions | Disposition and review frontier |
+|---|---:|---|
+| `src/api/database.cc` | 18 | Decompose public open-option preparation; preserve existing shared read preparation and owner handling. |
+| `src/api/iterator.cc` | 12 | Structured: moved-from guards, positioning delegation, and state ownership. |
+| `src/api/snapshot.cc` | 3 | Structured: registration ownership and special members. |
+| `src/api/write_batch.cc` | 11 | Structured: public batch ownership and mutation delegation. |
+| `src/base/coding.cc` | 26 | Structured: bounded scalar and length-prefixed encoding primitives; inspect representation-bound loops as leaves. |
+| `src/base/comparator.cc` | 5 | Structured: comparison, separator, and successor primitives; inspect prefix-search/update boundary. |
+| `src/base/crc32c.cc` | 4 | Structured: CRC extension and masking operations. |
+| `src/base/hash.cc` | 1 | Structured: one hash transform; inspect word/tail stages rather than exempting its algorithm. |
+| `src/base/result_internal.cc` | 1 | Structured: first-error retention primitive, already reused. |
+| `src/cache/sharded_lru_cache_core.cc` | 38 | Decompose insertion eligibility/admission from preparation, retirement, and pin transfer. |
+| `src/diagnostics/dump_command.cc` | 15 | Decompose argument classification from file-loop execution. |
+| `src/diagnostics/dump_file.cc` | 17 | Decompose record/entry rendering from decoding, traversal, and output-error handling. |
+| `src/diagnostics/posix_output.cc` | 7 | Structured: borrowed output, partial-write progress, and pipe-error handling. |
+| `src/diagnostics/windows_output.cc` | 9 | Structured: borrowed handle checks and bounded write progress. |
+| `src/engine/build_table.cc` | 2 | Decompose verified-output metadata construction from build orchestration; reuse `WriteTable`. |
+| `src/engine/compaction_picker.cc` | 11 | Decompose the input-expansion decision inside `SetupInputs`. |
+| `src/engine/compaction.cc` | 11 | Decompose output lifecycle, history/drop policy, overlap advancement, and durable edit assembly. |
+| `src/engine/database_background.cc` | 15 | Decompose trivial-move installation and rewrite setup; retain shared edit installation and completed cleanup composition. |
+| `src/engine/database_read.cc` | 13 | Structured: capture/read/charge lifecycle; audit lock and exception boundaries before moving any child. |
+| `src/engine/database_write.cc` | 5 | Decompose old-log close handling from rotation orchestration; do not merge recovery's sync policy. |
+| `src/engine/database.cc` | 10 | Structured: options, opening, recovery installation, and lifetime setup already have named boundaries. |
+| `src/engine/db_iterator.cc` | 14 | Decompose direction repositioning and per-entry visibility/history transitions. |
+| `src/engine/flush.cc` | 5 | Structured: build, namespace durability, level choice, and edit construction; audit helper leaves. |
+| `src/engine/iterators.cc` | 41 | Decompose merge direction changes and child positioning; preserve existing level-source assembly. |
+| `src/engine/lookup.cc` | 6 | Decompose L0 candidate selection, visitor handling, and memory-source decisions. |
+| `src/engine/recovery.cc` | 21 | Decompose directory inventory, selected-log replay, and recovery publication around existing helpers. |
+| `src/engine/seek_statistics.cc` | 6 | Structured: seek charging, retained-file selection, and sampling periods. |
+| `src/engine/snapshot_registry.cc` | 5 | Structured: registration, release, and oldest-sequence queries. |
+| `src/engine/table_cache.cc` | 4 | Structured: cache lookup and owned table loading; audit admission/error ownership. |
+| `src/engine/write_buffer_state.cc` | 7 | Structured: explicit installation and immutable ownership transitions. |
+| `src/engine/write_path.cc` | 9 | Structured: queue grouping, commit, and completion; inspect eligibility and append as separate meaningful children. |
+| `src/format/internal_key.cc` | 24 | Structured: checked/trusted decoding, lookup encoding, and comparison; inspect separator preparation versus acceptance. |
+| `src/format/wal_format.cc` | 8 | Decompose header/payload bounds and checksum validation without changing recovery actions. |
+| `src/format/write_batch.cc` | 15 | Decompose one encoded-entry validation from whole-batch validation. |
+| `src/memory/arena.cc` | 5 | Structured: alignment, fallback, and block allocation primitives. |
+| `src/memory/memtable.cc` | 16 | Structured: entry encoding/decoding, lower-bound lookup, and mutation; keep borrowed values bounded by owner lifetime. |
+| `src/metadata/filenames.cc` | 16 | Structured: generation, numeric/name parsing, and CURRENT validation. |
+| `src/metadata/version_edit.cc` | 18 | Decompose compound tag payloads while reusing existing field readers. |
+| `src/metadata/version_set.cc` | 24 | Decompose MANIFEST acquisition/replay/finalization, unlocked persistence, and new-MANIFEST creation. |
+| `src/metadata/version.cc` | 8 | Decompose per-level edit preparation and sorted merge; reuse file ordering. |
+| `src/platform/clock.cc` | 2 | Structured: clock query and cancellable sleep. |
+| `src/platform/file_system.cc` | 1 | Structured: platform factory and explicit namespace-durability admission. |
+| `src/platform/path.cc` | 1 | Structured: path-to-UTF-8 conversion. |
+| `src/platform/posix_file_system.cc` | 74 | Decompose mapping eligibility and directory reading; inspect writer/open/lock helper leaves with native error rules intact. |
+| `src/platform/serial_executor.cc` | 4 | Structured: scheduling, worker execution, and stop/join lifetime boundaries. |
+| `src/platform/windows_file_system.cc` | 61 | Decompose path validation/resolution, database volume admission, shared regular-file opening, mapping, enumeration, and failed read completion. |
+| `src/table/block_builder.cc` | 5 | Structured: prefix-compressed entry construction and restart management; audit common-prefix computation separately. |
+| `src/table/block_format.cc` | 12 | Structured: block handles, footer/trailer, bounds, checksum, and compression dispatch. |
+| `src/table/block.cc` | 26 | Decompose restart search, forward positioning, and full-entry validation stages. |
+| `src/table/bloom_filter.cc` | 6 | Structured: sizing, construction, and probing; inspect hashing versus bit-probe loops as leaf boundaries. |
+| `src/table/compression.cc` | 5 | Decompose codec-specific compression/decompression from selection and worthwhile-size policy. |
+| `src/table/filter_block.cc` | 10 | Structured: filter grouping, offset layout, creation, and membership; audit offset validation versus layout decoding. |
+| `src/table/table_builder.cc` | 12 | Decompose metaindex/filter completion, index completion, and footer persistence. |
+| `src/table/table.cc` | 22 | Decompose footer, validated index, filter-handle discovery, and data-block lookup. |
+| `src/wal/wal_io.cc` | 12 | Decompose physical failure recovery and logical fragment transitions; include fragment-writing lambda/loop responsibilities. |
+| `tools/modern_leveldb_tool.cc` | 2 | Structured: native/portable entrypoints delegate to the same command implementation. |
+
+## Initial small-task worklist
+
+Names below describe intended responsibilities, not frozen signatures. Each row
+is a bounded implementation/characterization slice. The list is deliberately
+not limited to the previously delivered three candidates. New child tasks found
+by recursive inspection must be added, not hidden behind completion of a row.
+Task counts are not mandatory PR counts; related slices may share an accepted
+design, while implementation stays responsibility-sized.
+
+All locations refer to the baseline above. Dependencies are actual code/design
+dependencies; priority waves are scheduling suggestions, not extra dependencies.
+
+| ID | Baseline parent | Child responsibility and recursive frontier | Prerequisites |
+|---|---|---|---|
+| D01 | `dump_file.cc:127-166`, `245-309` | Two independent implementation slices: D01a renders a batch entry; D01b renders a table entry. Separate each from reader/traversal loops and reuse compatible byte escaping. | None |
+| D02 | `dump_file.cc:177-243` | Render comparator/scalar fields and each file/pointer record through named payload formatters; preserve record order. | None |
+| D03 | `dump_command.cc:69-104` | Classify help/invalid/dump arguments before executing the existing file loop; separate file-loop error policy from syntax validation. | None |
+| M01 | `version_set.cc:112-135` | Acquire the CURRENT-selected MANIFEST: read/parse CURRENT, validate its number, open the file with the existing NotFound translation. | None |
+| M02 | `version_set.cc:137-191` | Apply one MANIFEST record: decode, check comparator, checked builder application, compact-pointer updates, and counter accumulation as named children. | None |
+| M03 | `version_set.cc:193-226` | Validate recovered counters, build the checked version, and publish the recovered state as distinct children. | M02 |
+| M04 | `version_set.cc:288-334` | Name the unlocked write/relock boundary; keep all candidate, snapshot, and install-reservation allocation before I/O. | None |
+| M05 | `version_set.cc:364-403` | Create and snapshot a new MANIFEST separately from append/sync/CURRENT installation. | None |
+| M06 | `version_edit.cc:194-270` | Decode compact-pointer, deleted-file, and new-file payloads using existing `ReadLevel`, `ReadFileNumber`, and `ReadInternalKey`. | None |
+| M07 | `version.cc:96-126` | Prepare per-level deletions/additions with named counting, reservation, and metadata initialization boundaries. | None |
+| M08 | `version.cc:128-156`, `72-94` | Merge one level's sorted files; preserve deletion filtering and linear merge, and share `FileBefore` with checked sorting. | None |
+| R01 | `recovery.cc:114-150` | Inventory relevant tables/logs separately from referenced-table validation, sorting, and number reservation. | None |
+| R02 | `recovery.cc:338-374` | Replay selected logs and finish replay separately from new-WAL creation and recovered-state installation; retain `CreateRecoveryLog`. | None |
+| Q01 | `lookup.cc:81-137` | Select and order L0 candidates separately from deeper-level selection and visitation. | None |
+| Q02 | `lookup.cc:81-137` | Share visitor error/continue/stop handling without erasing its return-category contract or changing sampling. | None |
+| Q03 | `lookup.cc:141-194` | Decide the memory sources using existing Missing/Value/Deletion semantics; compose memory and table search at the caller. | None |
+| T01 | `table.cc:164-191` | Read/decode a footer and load/validate an index through existing physical-read primitives. | None |
+| T02 | `table.cc:122-160` | Find/decode an optional filter handle separately from loading and owning filter contents. | None |
+| T03 | `table.cc:231-273` | Search a loaded data block separately from index/filter routing; copy values before releasing the block pin. | None |
+| T04 | `table_builder.cc:167-185` | Finish filter/metaindex and pending index entries as named children, preserving sticky error gates and buffers. | None |
+| T05 | `table_builder.cc:186-198` | Encode/append the footer and persist the finished table as named children; retain Finish's close/error priority. | None |
+| T06 | `build_table.cc:41-80` | Verify the completed table and construct its metadata separately from source iteration/file creation and existing `WriteTable`. | None |
+| C01 | `compaction.cc:115-135` | Open an output, initialize its key range, append an entry, and decide its size boundary through named children. | None |
+| C02 | `compaction.cc:138-157` | Finish/reset a builder, verify its reopened table, and record output metadata through named children. | None |
+| C03 | `compaction.cc:188-262` | Maintain user-key history and decide entry retention through named children; keep per-entry orchestration and final output/edit assembly separate. | None |
+| C04 | `compaction.cc:37-52`, `72-87` | Advance grandparent overlap and test one deeper level's coverage as named state operations, then compose stop/drop decisions. | None |
+| C05 | `compaction_picker.cc:127-170` | Attempt bounded input expansion separately from initial two-level closure and grandparent collection. | None |
+| I01 | `iterators.cc:268-327` | Name forward/reverse direction transitions; each transition composes per-child repositioning, then Next/Prev advance and select. | None |
+| I02 | `db_iterator.cc:115-209` | Name direction-change positioning and per-entry visible-history transitions without separating borrowed key/value from their owners. | None |
+| I03 | `block.cc:208-262` | Find a restart, restore/reuse a checkpoint, and scan to the lower bound through distinct children; preserve optimized current-position reuse. | None |
+| I04 | `block.cc:116-159`, `336-373` | Name entry decoding, restart validation, reconstruction, and visitation/iterator-state commit; reuse the existing `DecodeEntry` primitive. | None |
+| F01 | `format/write_batch.cc:21-61` | Validate one encoded record; compose record-count iteration and trailing-byte checks without altering trusted Next. | None |
+| F02 | `format/wal_format.cc:120-171` | Name header/payload bounds and checksum validation; retain zero-marker and unknown-type check ordering/recovery actions. | None |
+| F03 | `table/compression.cc:47-137` | Name codec-specific adapters; compose selection and worthwhile-size policy using existing `PrepareOutput`. | None |
+| W01 | `wal_io.cc:157-210` | Decode one physical fragment and apply its discard/truncated-tail recovery policy separately from block filling. | None |
+| W02 | `wal_io.cc:83-155` | Name full/first/continuation/zero transitions and partial-record interruption handling; keep event/continue control explicit. | None |
+| N01 | `windows_file_system.cc:100-151` | Validate ordinary path components separately from accepted namespace forms and absolute-path resolution. | None |
+| N02 | `windows_file_system.cc:100-151` | Resolve an absolute path with the current grow/retry loop, then encode the extended drive/UNC form as a named child. | None |
+| N03 | `windows_file_system.cc:556-627` | Inspect existing/missing database paths and resolve the admitted directory handle before volume checks. | None |
+| N04 | `windows_file_system.cc:556-627` | Validate resolved local fixed NTFS policy through named drive/volume/filesystem checks; preserve explicit weak-durability consent. | None |
+| N05 | `windows_file_system.cc:513-535`, `629-662`, `886-912` | Share regular-file opening/validation among writer, sequential reader, random reader, and lock acquisition. | None |
+| N06 | `posix_file_system.cc:598-654` | Determine mapped length separately from the slot/map/commit transaction, retaining copied fallback on size-inspection failure. | None |
+| N07 | `windows_file_system.cc:647-710` | Name eligibility and section/view acquisition, while retaining the pending mapping guard through close checks and owner allocation. | None |
+| N08 | `posix_file_system.cc:695-729`, `windows_file_system.cc:737-782` | Name native directory-entry collection separately from acquisition/close/error precedence, using separate platform-specific children. | None |
+| N09 | `windows_file_system.cc:271-318` | Complete or drain/cancel a positioned read as a named operation while event/OVERLAPPED/output owners remain alive. | None |
+| A01 | `api/database.cc:96-118` | Prepare validated engine options using existing compression translation/validation and options conversion. | None |
+| A02 | `database_background.cc:149-189` | Name trivial-move installation separately from rewrite setup, preserving shared `ApplyBackgroundEdit` and pending outputs. | None |
+| A03 | `database_write.cc:56-88` | Name old-WAL close/error handling; compose preparation, namespace durability, close, installation, and scheduling without merging policies. | None |
+| K01 | `sharded_lru_cache_core.cc:182-210` | Name admission eligibility and locked insertion/accounting; keep retired-entry destruction outside the shard mutex. | None |
+
+Suggested waves: start with D01-D03, M06, F03, and A01 to establish the leaf
+review pattern; then tackle table stages, lookup, and recovery; then MANIFEST
+publication, compaction, iterators, native resource transactions, and cache
+admission. This is a risk/value order, not permission to leave later waves or
+structured files unexamined. Same-file changes are sequential; independent
+preparation does not authorize simultaneous writes in this worktree.
+
+M03 uses the private replay-state helper introduced by M02. Other extractions
+retain existing caller interfaces and can be prepared without their neighboring
+extractions; sharing a file or a suggested wave order is not a prerequisite.
+Re-evaluate this table if an accepted slice changes an interface or adds a
+concrete helper/type dependency.
+
+## First implementation slice: D01a
+
+Start with only WAL batch-entry rendering in `FormatWriteBatch`. Table-entry
+rendering, MANIFEST rendering, traversal, byte-escape implementation, command
+handling, and all other worklist entries remain separate work.
+
+The intended file-local composition is:
+
+- `FormatWriteBatch` owns checked batch decoding, the record header, entry
+  iteration, one diagnostic append per entry, and immediate output-failure
+  propagation. It calls `FormatWriteBatchEntry` instead of constructing entry
+  text in its loop.
+- `FormatWriteBatchEntry` composes `WriteBatchEntryPrefix` and
+  `AppendDiagnosticBytesField`, including the value field only for a put.
+- `WriteBatchEntryPrefix` renders the existing put/delete and decimal sequence
+  prefix. Its leaf responsibility is this fixed prefix grammar, implemented
+  using ordinary string operations and decimal conversion.
+- `AppendDiagnosticBytesField` appends one named, single-quoted byte field.
+  Reuse it for both key and value and delegate escaping to the existing
+  `EscapeDiagnosticBytes`. The field grammar is one responsibility; the
+  existing shared escaper remains a subsequent recursive-review frontier, not
+  a newly certified atomic leaf.
+
+These are private formatting operations, not new public API or an output
+abstraction. All borrowed entry bytes remain valid for the complete rendering
+call. Build the complete string before `AppendDiagnosticLine`; retain its LF
+handling and exactly one output append per line. Preserve field order, put/delete
+spelling, decimal sequences, escaping, empty fields, deletion's absent value
+field, and the absence of new catches or success-shaped error fallbacks.
+
+Characterization uses the public `DumpFile` operation. Retain
+`DumpsWriteBatchesWithEscapedBinaryDataAndPerEntrySequences` and
+`PropagatesOutputFailureFromEveryRenderedSection` in
+`tests/unit/diagnostics/dump_file_test.cc`. Before extraction, add a case with
+empty put key/value and an empty delete key whose two sequences end at
+`MaxSequenceNumber`; assert exact text and append boundaries. This is
+unchanged-behavior characterization and must pass on the original code, not a
+manufactured red test.
+
+Design publication/merge precedes implementation. Run the focused dump and
+command cases after extraction, then obtain a separate independent code review
+before publishing the implementation PR. D01a's completion does not complete
+D01, the dump file's recursive audit, or the production-wide goal.
+
+## Representative recursive designs
+
+### MANIFEST recovery
+
+`VersionSet::Recover` composes acquisition, record replay, and finalization.
+Replay composes one-record decoding, comparator validation, checked version-edit
+application, pointer updates, and counter updates. Finalization composes required
+field/bounds validation, checked version construction, and publication.
+
+Use a private nested recovery helper if private member access and persistent
+replay state require it. Its builder/counters belong to this recovery only;
+the comparator and still-unpublished VersionSet remain borrowed. Keep VersionSet
+allocation before builder construction as today. Do not expose private state or
+introduce a general recovery framework.
+
+Each record retains the exact failure priority: physical corruption, decode,
+comparator mismatch, builder application, and counter monotonicity. MANIFEST
+physical corruption remains fatal, unlike replayable WAL physical corruption.
+Required next/log/sequence fields and largest-number bounds are checked before
+building/installing the version. Do not replace the checked recovery builder
+with runtime's trusted path.
+
+### Compaction
+
+`RunCompaction` composes per-entry processing and finalization. Per-entry
+processing invokes the hook, advances grandparents even for dropped entries,
+handles an output boundary, parses the key, updates history, decides retention,
+appends retained entries, and advances input in exactly that order.
+
+A small history owner may hold the existing user-key and preceding-sequence
+state; its update and decision children must preserve short-circuit deeper-level
+checks and update the preceding sequence even when the entry is dropped.
+Grandparent advancement and per-level coverage remain monotonic operations, not
+fresh searches per entry. Output opening and finishing each receive their own
+recursive review. Finalization checks input failure before finishing an output,
+syncs a nonempty output namespace before adding those files to the edit, and
+does not add a sync for empty output.
+
+### Table opening and lookup
+
+`Table::Open` composes footer acquisition, validated index loading, optional
+filter loading, and cache identity/owned table construction. Filter loading
+composes metaindex validation/handle discovery with content reading and reader
+construction. A missing filter is success, not corruption.
+
+`Table::Get` composes index routing, optional filter rejection, pinned data-block
+loading, and block lookup. A block-lookup helper returns the existing owned/copy
+result, not a borrowed value that outlives its BlockReference. Preserve mapped
+file backing lifetime, cache key identity, fill-cache behavior, and read order.
+
+## Characterization and review gates
+
+Before implementing a row, read its real callers and relevant tests, then record
+concrete test cases and exact focused selectors. Existing behavior-preserving
+extractions retain characterization; add missing cases first. Do not manufacture
+a red test for unchanged behavior or treat last round's passing tree as proof of
+a new revision.
+
+| Area | Existing test entrypoints | Required boundary evidence |
+|---|---|---|
+| Dump/CLI | `tests/unit/diagnostics/dump_file_test.cc`, `dump_command_test.cc` | Exact LF text/escaping/order; continue on recoverable input corruption; output/report failure precedence; native options validated before reads. |
+| Metadata | `tests/unit/metadata/version_set_test.cc`, `version_edit_test.cc`, `version_test.cc` | Malformed fields and error text/order; recovered counters; checked/trusted equivalence; linear merge; allocation before I/O; relock on status failure and throw; persist before publish. |
+| Recovery/lookup | `tests/unit/engine/recovery_test.cc`, `lookup_test.cc` | Missing referenced files; ordered reservation/replay; cleanup and lock lifetime; WAL versus MANIFEST corruption policy; memory tombstones; newest-first L0; seek-charge timing and early stop. |
+| Table/format | `tests/unit/table/table_test.cc`, `table_builder_test.cc`, `block_test.cc`, `compression_test.cc`; `tests/unit/format/write_batch_test.cc`, `wal_format_test.cc` | Truncated/oversized reads, filter absence, physical validation, copied/owned contents, cache pins, exact tail bytes/I/O order, sticky close priority, checked/trusted boundary, codec fallback. |
+| Compaction/iterators | `tests/unit/engine/compaction_test.cc`, `compaction_picker_test.cc`, `iterators_test.cc`, `db_iterator_test.cc` | Snapshot and tombstone history; dropped-entry overlap advancement; output boundaries; equal-key direction switches; empty/error children; no duplicated/skipped records. |
+| Native I/O | `tests/unit/platform/posix_file_system_test.cc`, `windows_file_system_test.cc` | Slots/handles/views released on failure/throw; copied fallback versus fatal mapping errors; close priority; failed async completion drains kernel references; platform directory-enumeration rules. |
+| Cache/write/background | `tests/unit/cache/sharded_lru_cache_test.cc`, `cache_allocation_test.cc`; `tests/unit/engine/database_write_test.cc`, `database_background_test.cc` | Reentrant deleter remains outside mutex; overflow/admission and pin transfer; pending output protection; sticky error ordering; WAL close/rotation and sequence publication. |
+| WAL reader | `tests/unit/wal/wal_io_test.cc`, `wal_io_native_test.cc` | Crash-truncated tails, zero markers, interruption fragment rewind, dropped-byte accounting, fragment payload lifetime, terminal errors. |
+
+Resource transactions keep their current owners and cleanup order. Helpers
+borrow when moving ownership would shorten a handle, pin, iterator, memtable,
+snapshot, or mapped backing lifetime. Locks stay visible at boundaries; no
+callback abstraction hides unlock/relock, publication, or failure recording.
+Keep status errors distinct from exceptions and preserve first-error priority.
+
+Design is reviewed by an independent persona before a design-only PR is
+published/merged under the existing delivery contract. Implementation receives
+a separate review after its focused characterization passes. Review findings
+and publication status are recorded honestly; local review is not GitHub
+approval, and a draft worklist is not implemented work.
+
+### Local design review
+
+An independent design persona reproduced the syntax counts, checked the named
+test paths, examined the material storage/ownership recommendations, and
+confirmed that structured files are not excluded from recursive completion.
+It found one unsupported prerequisite: A02 did not need C03's internal
+compaction decomposition. That edge was removed. A follow-up dependency audit
+also removed scheduling-only edges from the other independent extractions.
+This was a bounded review of the draft, not a completed atomic-function audit,
+implementation review, or GitHub approval.
+
+A subsequent independent review checked the D01a design against the formatter,
+checked batch reader, and existing characterization before any production
+implementation. It found no actionable design findings. Its conclusion is
+limited to this first slice; implementation still requires its own review and
+exact-head CI.
+
+## Completion criterion
+
+The implementation goal is broader than this scan deliverable. Complete a
+per-function ledger for the original definitions and lambdas and all newly
+introduced helpers. Each entry is either a reviewed composition with named
+children or a reviewed leaf with a responsibility-based stopping reason.
+Resolve every remaining mixed-responsibility frontier, including those found
+inside existing helpers and structured files. Re-scan to catch new or overlooked
+definitions and platform branches.
+
+Passing behavioral checks does not alone establish this design property;
+independent code review must inspect the decomposition and leaf reasons too.
+Conversely, a nice decomposition does not establish semantic parity without
+characterization. Only after both are satisfied can the full production goal
+be called complete. Benchmark refactoring remains outside this round.

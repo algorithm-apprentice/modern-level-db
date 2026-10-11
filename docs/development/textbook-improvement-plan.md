@@ -19,6 +19,12 @@ dependencies, generated files, and unrelated features are excluded.
 [ADR-0076](../adr/0076-textbook-source-composition.md) defines the preserved
 behavior and source-style policy.
 
+This completed backlog is not a certification that every production function
+has reached an atomic responsibility. The subsequent
+[production function composition plan](production-function-composition-plan.md)
+records the broader production-only scan and recursive decomposition goal.
+That plan is a draft; its implementation is not included in this completion.
+
 ## Task execution contract
 
 Only one task is actively being implemented at a time. A task changes one named
