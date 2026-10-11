@@ -204,6 +204,87 @@ private:
     std::vector<FileMetadata> finished_;
 };
 
+class VisibleHistory {
+public:
+    explicit VisibleHistory(const Comparator& comparator) noexcept : comparator_(comparator) {}
+
+    bool ShouldDrop(const InternalKeyView& entry, SequenceNumber smallest_snapshot,
+                    BaseLevel& base_level) {
+        StartUserKey(entry.user_key);
+        // A visible preceding entry shadows either kind. An unshadowed deletion
+        // needs its own snapshot visibility and no deeper value to hide.
+        const bool drop =
+            (last_sequence_.has_value() && *last_sequence_ <= smallest_snapshot) ||
+            (entry.kind == ValueKind::Deletion && entry.sequence <= smallest_snapshot &&
+             base_level.IsBaseLevelForKey(entry.user_key));
+        last_sequence_ = entry.sequence;
+        return drop;
+    }
+
+private:
+    void StartUserKey(ByteView key) {
+        if (!user_key_.has_value() || comparator_.Compare(key, *user_key_) != 0) {
+            user_key_.emplace(key.begin(), key.end());
+            last_sequence_.reset();
+        }
+    }
+
+    const Comparator& comparator_;
+    std::optional<std::vector<std::byte>> user_key_;
+    std::optional<SequenceNumber> last_sequence_;
+};
+
+Status ProcessEntry(InternalIterator& input, SequenceNumber smallest_snapshot,
+                    const CompactionHooks& hooks, GrandparentOverlap& grandparents,
+                    BaseLevel& base_level, VisibleHistory& history, Outputs& outputs) {
+    const Status before = hooks.before_entry();
+    if (!before.has_value()) {
+        return std::unexpected(before.error());
+    }
+    const ByteView key = input.key();
+    // Overlap advances for every entry, including records history drops.
+    if (grandparents.ShouldStopBefore(key) && outputs.open()) {
+        const Status finished = outputs.Finish();
+        if (!finished.has_value()) {
+            return std::unexpected(finished.error());
+        }
+    }
+    const Result<InternalKeyView> parsed = ParseInternalKey(key);
+    if (!parsed.has_value()) {
+        return std::unexpected(parsed.error());
+    }
+    if (!history.ShouldDrop(*parsed, smallest_snapshot, base_level)) {
+        const Status added = outputs.Add(key, input.value());
+        if (!added.has_value()) {
+            return std::unexpected(added.error());
+        }
+    }
+    return {};
+}
+
+Result<VersionEdit> FinishCompaction(FileSystem& file_system,
+                                     const std::filesystem::path& directory,
+                                     const Compaction& compaction, Outputs& outputs) {
+    if (outputs.open()) {
+        const Status finished = outputs.Finish();
+        if (!finished.has_value()) {
+            return std::unexpected(finished.error());
+        }
+    }
+    VersionEdit edit = CompactionEdit(compaction);
+    if (outputs.finished().empty()) {
+        return edit;
+    }
+    const Status synced = file_system.SyncDirectory(directory);
+    if (!synced.has_value()) {
+        return std::unexpected(synced.error());
+    }
+    for (const FileMetadata& output : outputs.finished()) {
+        static_cast<void>(edit.AddFile(compaction.level + 1, output));
+    }
+    return edit;
+}
+
 }  // namespace
 
 std::unique_ptr<InternalIterator> NewCompactionIterator(const Compaction& compaction,
@@ -229,70 +310,21 @@ Result<VersionEdit> RunCompaction(FileSystem& file_system, const std::filesystem
                                     GrandparentOverlapFactor * options.target_file_size);
     BaseLevel base_level(*compaction.version, compaction.level, user_comparator);
     Outputs outputs(file_system, directory, comparator, options, table_cache, hooks);
-    std::optional<std::vector<std::byte>> user_key;
-    std::optional<SequenceNumber> last_sequence;
+    VisibleHistory history(user_comparator);
 
     Status moved = input.SeekToFirst();
     while (moved.has_value() && input.valid()) {
-        const Status before = hooks.before_entry();
-        if (!before.has_value()) {
-            return std::unexpected(before.error());
-        }
-        const ByteView key = input.key();
-        // The grandparents pass for every entry, whether it is kept or dropped.
-        if (grandparents.ShouldStopBefore(key) && outputs.open()) {
-            const Status finished = outputs.Finish();
-            if (!finished.has_value()) {
-                return std::unexpected(finished.error());
-            }
-        }
-        const Result<InternalKeyView> parsed = ParseInternalKey(key);
-        if (!parsed.has_value()) {
-            return std::unexpected(parsed.error());
-        }
-        if (!user_key.has_value() || user_comparator.Compare(parsed->user_key, *user_key) != 0) {
-            user_key.emplace(parsed->user_key.begin(), parsed->user_key.end());
-            last_sequence.reset();
-        }
-        // Descending history makes the preceding sequence newer. Once that
-        // sequence is visible to the oldest snapshot, this older entry is hidden
-        // for everyone, including when it is a tombstone. Otherwise, dropping a
-        // tombstone requires its visibility to the oldest snapshot and no deeper value.
-        const bool drop =
-            (last_sequence.has_value() && *last_sequence <= smallest_snapshot) ||
-            (parsed->kind == ValueKind::Deletion && parsed->sequence <= smallest_snapshot &&
-             base_level.IsBaseLevelForKey(parsed->user_key));
-        last_sequence = parsed->sequence;
-        if (!drop) {
-            const Status added = outputs.Add(key, input.value());
-            if (!added.has_value()) {
-                return std::unexpected(added.error());
-            }
+        Status processed = ProcessEntry(input, smallest_snapshot, hooks, grandparents, base_level,
+                                        history, outputs);
+        if (!processed.has_value()) {
+            return std::unexpected(std::move(processed).error());
         }
         moved = input.Next();
     }
     if (!moved.has_value()) {
         return std::unexpected(moved.error());
     }
-    if (outputs.open()) {
-        const Status finished = outputs.Finish();
-        if (!finished.has_value()) {
-            return std::unexpected(finished.error());
-        }
-    }
-
-    VersionEdit edit = CompactionEdit(compaction);
-    if (outputs.finished().empty()) {
-        return edit;
-    }
-    const Status synced = file_system.SyncDirectory(directory);
-    if (!synced.has_value()) {
-        return std::unexpected(synced.error());
-    }
-    for (const FileMetadata& output : outputs.finished()) {
-        static_cast<void>(edit.AddFile(compaction.level + 1, output));
-    }
-    return edit;
+    return FinishCompaction(file_system, directory, compaction, outputs);
 }
 
 }  // namespace modern_leveldb
