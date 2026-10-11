@@ -177,7 +177,8 @@ A production-code node is complete only when:
 - Its public contract is documented.
 - Its dependency direction follows the architecture rules.
 - Focused tests cover successful, boundary, malformed, and failure behavior.
-- Sanitizer-compatible code contains no owning raw pointers.
+- Sanitizer-compatible code contains no unencapsulated owning raw pointers;
+  intrusive links and opaque identity handles retain one documented owner.
 - Persistent-format nodes and shared binary codecs have independent LevelDB
   golden-vector tests.
 - Performance-sensitive nodes have a baseline before optimization.

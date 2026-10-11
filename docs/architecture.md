@@ -291,8 +291,9 @@ flowchart TD
    `engine`.
 7. Background execution is injected through an interface and does not own DB
    policy.
-8. Owning raw pointers are forbidden. Borrowed references must be explicit in
-   API contracts.
+8. Public and component ownership boundaries use values or RAII handles.
+   Intrusive raw links and opaque identity handles may remain inside one
+   documented owner; borrowed references must be explicit in API contracts.
 9. Each persistent transition has a documented synchronization order and a
    fault-injection test.
 10. Diagnostics depend on existing decoders, never on the engine or public API,

@@ -15,6 +15,7 @@
 
 #include "engine/db_iterator.h"
 #include "engine/seek_statistics.h"
+#include "engine/snapshot_registry.h"
 #include "engine/table_cache.h"
 #include "engine/write_buffer_state.h"
 #include "engine/write_path.h"
@@ -74,8 +75,8 @@ struct DatabaseEngineOptions {
 [[nodiscard]] DatabaseEngineOptions SanitizeOptions(DatabaseEngineOptions options);
 
 struct DatabaseEngineReadOptions {
-    // A sequence that GetSnapshot returned and that is not yet released; without
-    // one, reads see the last sequence.
+    // The sequence of a GetSnapshot registration that is not yet released;
+    // without one, reads see the last sequence.
     std::optional<SequenceNumber> snapshot;
     bool fill_cache = true;
 };
@@ -118,6 +119,8 @@ class DatabaseEngine final {
     };
 
 public:
+    using SnapshotRegistration = SnapshotRegistry::Registration;
+
     // Opens or creates the database in the directory, which it keeps locked.
     [[nodiscard]] static Result<std::unique_ptr<DatabaseEngine>> Open(
         DatabaseEngineOptions options, std::filesystem::path directory);
@@ -133,8 +136,8 @@ public:
     // call may be running.
     ~DatabaseEngine();
 
-    // Commits the batch, syncing the log first if asked. After a background
-    // error, every write returns it.
+    // Commits the batch, syncing the log first if asked. After a sticky error,
+    // every write returns it.
     [[nodiscard]] Status Write(EncodedWriteBatch& batch, bool sync);
 
     // Writes the key's value and returns true, or leaves it unchanged and
@@ -147,20 +150,20 @@ public:
     [[nodiscard]] std::unique_ptr<DbIterator> NewIterator(
         const DatabaseEngineReadOptions& options = {});
 
-    // Returns the last sequence and keeps what it reads until it is released.
-    // Each call needs its own release.
-    [[nodiscard]] SequenceNumber GetSnapshot();
-    void ReleaseSnapshot(SequenceNumber snapshot);
+    // Registers the last sequence and keeps what it reads until the registration
+    // is released. Each call returns a distinct registration.
+    [[nodiscard]] SnapshotRegistration* GetSnapshot();
+    void ReleaseSnapshot(SnapshotRegistration*& snapshot);
 
     // Returns an owning snapshot of the current topology and maintenance state.
     [[nodiscard]] Result<DatabaseEngineState> GetState();
 
     // Switches to a new memtable, even an empty one, and waits until the old one
-    // is flushed. Returns the background error if there is one.
+    // is flushed. Returns the sticky error if there is one.
     [[nodiscard]] Status FlushMemTable();
 
-    // Waits until no background task is scheduled, and returns the background
-    // error if there is one.
+    // Waits until no background task is scheduled, and returns the sticky error
+    // if there is one.
     [[nodiscard]] Status WaitForBackgroundWork();
 
 private:
@@ -205,8 +208,8 @@ private:
     [[nodiscard]] Status BeforeCompactionEntry();
     void RecordReadSample(ByteView internal_key);
     void RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock);
-    void RecordBackgroundError(Error error);
-    [[nodiscard]] std::unexpected<Error> BackgroundError() const;
+    void RecordStickyError(Error error);
+    [[nodiscard]] std::unexpected<Error> StickyError() const;
 
     // Owned resources, destroyed after everything that uses them.
     std::unique_ptr<FileSystem> owned_file_system_;
@@ -226,12 +229,12 @@ private:
     std::unique_ptr<VersionSet> versions_;
     WriteBufferState write_buffers_;
     WriteQueue write_queue_;
-    std::multiset<SequenceNumber> snapshots_;
+    SnapshotRegistry snapshots_;
     std::set<std::uint64_t> pending_outputs_;
     SeekStatistics seek_statistics_;
     // The last seed of an iterator's read sampling.
     std::uint32_t seed_ = 0;
-    std::optional<Error> background_error_;
+    std::optional<Error> sticky_error_;
     bool background_scheduled_ = false;
     // Mirror state that a compaction checks without the mutex.
     std::atomic<bool> closing_ = false;

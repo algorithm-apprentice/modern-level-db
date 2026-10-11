@@ -218,8 +218,8 @@ useful advanced exercise in making those arguments explicit.
 | [`api_internal.h`](../../src/api/api_internal.h) | public handle implementations | Which owner keeps the engine and child state alive? | [`public_api_test.cc`](../../tests/unit/api/public_api_test.cc) |
 | [`skiplist.h`](../../src/memory/skiplist.h) | node initialization and publication | Which writes happen before a reader's acquire load can observe the node? | [`skiplist_test.cc`](../../tests/unit/memory/skiplist_test.cc) |
 | [`write_path.h`](../../src/engine/write_path.h) | stack writer and leader/sequence guards | How does exception unwinding restore queue and batch state? | [`write_path_test.cc`](../../tests/unit/engine/write_path_test.cc) |
-| [`database_read.cc`](../../src/engine/database_read.cc) | lock release and typed read pins | What keeps read sources alive while slow I/O runs without the mutex? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
-| [`database_background.cc`](../../src/engine/database_background.cc) | sticky failure, unlocked maintenance, shutdown | How do background transitions regain the mutex and preserve failure ownership? | [`database_test.cc`](../../tests/unit/engine/database_test.cc) |
+| [`database_read.cc`](../../src/engine/database_read.cc) | lock release and typed read pins | What keeps read sources alive while slow I/O runs without the mutex? | [`database_read_test.cc`](../../tests/unit/engine/database_read_test.cc) |
+| [`database_background.cc`](../../src/engine/database_background.cc) | sticky failure, unlocked maintenance, shutdown | How do background transitions regain the mutex and preserve failure ownership? | [`database_background_test.cc`](../../tests/unit/engine/database_background_test.cc) |
 | [`serial_executor.cc`](../../src/platform/serial_executor.cc) | queue ownership and stop/join | Who owns accepted work during teardown? | [`serial_executor_test.cc`](../../tests/unit/platform/serial_executor_test.cc) |
 
 Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),

@@ -1,4 +1,3 @@
-#include <cassert>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -119,18 +118,14 @@ void DatabaseEngine::RecordReadSample(ByteView internal_key) {
     }
 }
 
-SequenceNumber DatabaseEngine::GetSnapshot() {
+DatabaseEngine::SnapshotRegistration* DatabaseEngine::GetSnapshot() {
     const std::lock_guard lock(mutex_);
-    const SequenceNumber sequence = versions_->last_sequence();
-    snapshots_.insert(sequence);
-    return sequence;
+    return snapshots_.Register(versions_->last_sequence());
 }
 
-void DatabaseEngine::ReleaseSnapshot(SequenceNumber snapshot) {
+void DatabaseEngine::ReleaseSnapshot(SnapshotRegistration*& snapshot) {
     const std::lock_guard lock(mutex_);
-    const auto found = snapshots_.find(snapshot);
-    assert(found != snapshots_.end());
-    snapshots_.erase(found);
+    snapshots_.Release(snapshot);
 }
 
 Result<DatabaseEngineState> DatabaseEngine::GetState() {
@@ -151,9 +146,7 @@ Result<DatabaseEngineState> DatabaseEngine::GetState() {
 
     state.last_sequence = versions_->last_sequence();
     state.snapshot_count = snapshots_.size();
-    if (!snapshots_.empty()) {
-        state.oldest_snapshot_sequence = *snapshots_.begin();
-    }
+    state.oldest_snapshot_sequence = snapshots_.oldest();
     state.write_queue_depth = write_queue_.size();
     state.mutable_memtable_bytes = write_buffers_.published_mutable_bytes();
     if (write_buffers_.has_immutable()) {
@@ -161,7 +154,7 @@ Result<DatabaseEngineState> DatabaseEngine::GetState() {
     }
     state.protected_output_count = pending_outputs_.size();
     state.background_work_scheduled = background_scheduled_;
-    state.sticky_error = background_error_;
+    state.sticky_error = sticky_error_;
     return state;
 }
 

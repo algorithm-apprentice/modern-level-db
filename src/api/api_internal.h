@@ -45,18 +45,18 @@ private:
 class SnapshotRegistration final {
 public:
     explicit SnapshotRegistration(std::shared_ptr<DatabaseState> state)
-        : state_(std::move(state)), sequence_(state_->engine().GetSnapshot()) {}
+        : state_(std::move(state)), registration_(state_->engine().GetSnapshot()) {}
 
     SnapshotRegistration(const SnapshotRegistration&) = delete;
     SnapshotRegistration& operator=(const SnapshotRegistration&) = delete;
-    ~SnapshotRegistration() { state_->engine().ReleaseSnapshot(sequence_); }
+    ~SnapshotRegistration() { state_->engine().ReleaseSnapshot(registration_); }
 
     [[nodiscard]] const std::shared_ptr<DatabaseState>& state() const noexcept { return state_; }
-    [[nodiscard]] SequenceNumber sequence() const noexcept { return sequence_; }
+    [[nodiscard]] SequenceNumber sequence() const noexcept { return registration_->sequence(); }
 
 private:
     std::shared_ptr<DatabaseState> state_;
-    SequenceNumber sequence_;
+    DatabaseEngine::SnapshotRegistration* registration_;
 };
 
 }  // namespace detail

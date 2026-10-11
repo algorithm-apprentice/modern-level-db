@@ -32,13 +32,17 @@ add_executable(
   unit/engine/build_table_test.cc
   unit/engine/compaction_test.cc
   unit/engine/compaction_picker_test.cc
-  unit/engine/database_test.cc
+  unit/engine/database_background_test.cc
+  unit/engine/database_lifecycle_test.cc
+  unit/engine/database_read_test.cc
+  unit/engine/database_write_test.cc
   unit/engine/db_iterator_test.cc
   unit/engine/flush_test.cc
   unit/engine/iterators_test.cc
   unit/engine/lookup_test.cc
   unit/engine/recovery_test.cc
   unit/engine/seek_statistics_test.cc
+  unit/engine/snapshot_registry_test.cc
   unit/engine/table_cache_test.cc
   unit/engine/write_buffer_state_test.cc
   unit/engine/write_path_test.cc

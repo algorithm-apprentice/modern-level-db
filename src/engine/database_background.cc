@@ -24,8 +24,8 @@ namespace modern_leveldb {
 Status DatabaseEngine::WaitForBackgroundWork() {
     std::unique_lock lock(mutex_);
     background_finished_.wait(lock, [this] { return !background_scheduled_; });
-    if (background_error_.has_value()) {
-        return BackgroundError();
+    if (sticky_error_.has_value()) {
+        return StickyError();
     }
     return {};
 }
@@ -39,7 +39,7 @@ bool DatabaseEngine::NeedsCompaction() const {
 }
 
 void DatabaseEngine::MaybeScheduleBackgroundWork() {
-    if (background_scheduled_ || closing_ || background_error_.has_value()) {
+    if (background_scheduled_ || closing_ || sticky_error_.has_value()) {
         return;
     }
     if (!write_buffers_.has_immutable() && !NeedsCompaction()) {
@@ -55,13 +55,13 @@ void DatabaseEngine::MaybeScheduleBackgroundWork() {
     }
     if (!scheduled.has_value()) {
         background_scheduled_ = false;
-        RecordBackgroundError(scheduled.error());
+        RecordStickyError(scheduled.error());
     }
 }
 
 void DatabaseEngine::BackgroundCall() {
     std::unique_lock lock(mutex_);
-    if (!closing_ && !background_error_.has_value()) {
+    if (!closing_ && !sticky_error_.has_value()) {
         try {
             if (write_buffers_.has_immutable()) {
                 FlushImmutable(lock);
@@ -72,7 +72,7 @@ void DatabaseEngine::BackgroundCall() {
             if (!lock.owns_lock()) {
                 lock.lock();
             }
-            RecordBackgroundError(Error::Aborted("background work stopped with an exception"));
+            RecordStickyError(Error::Aborted("background work stopped with an exception"));
         }
     }
     background_scheduled_ = false;
@@ -107,7 +107,7 @@ void DatabaseEngine::FlushImmutable(std::unique_lock<std::mutex>& lock) {
     if (!applied.has_value()) {
         // Recorded first, so that no cleanup removes a table that the edit may
         // still reference.
-        RecordBackgroundError(applied.error());
+        RecordStickyError(applied.error());
         pending_outputs_.erase(number);
         return;
     }
@@ -146,8 +146,7 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
         return false;
     }
 
-    const SequenceNumber smallest_snapshot =
-        snapshots_.empty() ? versions_->last_sequence() : *snapshots_.begin();
+    const SequenceNumber smallest_snapshot = snapshots_.OldestOr(versions_->last_sequence());
     const std::unique_ptr<InternalIterator> input =
         NewCompactionIterator(*compaction, table_cache_, comparator_);
     CompactionOptions options;
@@ -183,7 +182,7 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
 
 void DatabaseEngine::FinishCompaction(const Status& applied) {
     if (!applied.has_value()) {
-        RecordBackgroundError(applied.error());
+        RecordStickyError(applied.error());
         return;
     }
     seek_statistics_.Retain(*versions_->current());
@@ -200,8 +199,8 @@ Status DatabaseEngine::BeforeCompactionEntry() {
     // Only background work, which this is, drops the immutable memtable.
     assert(write_buffers_.has_immutable());
     FlushImmutable(lock);
-    if (background_error_.has_value()) {
-        return BackgroundError();
+    if (sticky_error_.has_value()) {
+        return StickyError();
     }
     return {};
 }
@@ -209,7 +208,7 @@ Status DatabaseEngine::BeforeCompactionEntry() {
 void DatabaseEngine::RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock) {
     // Uncertain metadata failure forbids reclamation: either durable topology
     // may still need the files. Otherwise retain all pinned Versions and outputs.
-    if (background_error_.has_value()) {
+    if (sticky_error_.has_value()) {
         return;
     }
     // Recovery and every flush set the previous log number to zero.
@@ -258,14 +257,14 @@ void DatabaseEngine::RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock) {
     lock.lock();
 }
 
-void DatabaseEngine::RecordBackgroundError(Error error) {
+void DatabaseEngine::RecordStickyError(Error error) {
     // Keeps the first error.
-    background_error_ = background_error_.value_or(std::move(error));
+    sticky_error_ = sticky_error_.value_or(std::move(error));
     background_finished_.notify_all();
 }
 
-std::unexpected<Error> DatabaseEngine::BackgroundError() const {
-    return std::unexpected(*background_error_);
+std::unexpected<Error> DatabaseEngine::StickyError() const {
+    return std::unexpected(*sticky_error_);
 }
 
 }  // namespace modern_leveldb

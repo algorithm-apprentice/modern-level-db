@@ -19,8 +19,8 @@ The algorithms behind those responsibilities are already separated:
   `engine/compaction`;
 - seek charging lives in `engine/seek_statistics`.
 
-The remaining engine implementation is nevertheless difficult to read as a
-bounded unit:
+At the time of this decision, the remaining engine implementation was
+difficult to read as a bounded unit:
 
 - `src/engine/database.h` has 251 lines;
 - `src/engine/database.cc` has 712 lines;
@@ -179,28 +179,67 @@ database mutex but no engine back-pointer. Add an internal
 ```cpp
 class SnapshotRegistry final {
 public:
-    void Register(SequenceNumber sequence);
-    void Release(SequenceNumber sequence);
+    SnapshotRegistry() noexcept;
+    SnapshotRegistry(const SnapshotRegistry&) = delete;
+    SnapshotRegistry& operator=(const SnapshotRegistry&) = delete;
+    SnapshotRegistry(SnapshotRegistry&&) = delete;
+    SnapshotRegistry& operator=(SnapshotRegistry&&) = delete;
+    ~SnapshotRegistry();
+
+    class Registration final {
+    public:
+        Registration(const Registration&) = delete;
+        Registration& operator=(const Registration&) = delete;
+        Registration(Registration&&) = delete;
+        Registration& operator=(Registration&&) = delete;
+        [[nodiscard]] SequenceNumber sequence() const noexcept;
+
+    private:
+        friend class SnapshotRegistry;
+        Registration(SnapshotRegistry& registry, SequenceNumber sequence) noexcept;
+        ~Registration();
+
+        SnapshotRegistry* registry_;
+        SequenceNumber sequence_;
+        Registration* previous_;
+        Registration* next_;
+    };
+
+    [[nodiscard]] Registration* Register(SequenceNumber sequence);
+    void Release(Registration*& registration) noexcept;
 
     [[nodiscard]] std::size_t size() const noexcept;
     [[nodiscard]] std::optional<SequenceNumber> oldest() const noexcept;
     [[nodiscard]] SequenceNumber OldestOr(SequenceNumber fallback) const noexcept;
 
 private:
-    std::multiset<SequenceNumber> sequences_;
+    Registration sentinel_;
+    std::size_t size_ = 0;
 };
 ```
 
 The registry is not internally synchronized. DatabaseEngine calls it with the
 database mutex held.
 
-- duplicate registrations of the same sequence remain valid;
-- `Release` keeps the current caller invariant that the registration exists;
+- each acquisition returns an opaque registration pointer identifying one
+  linked node, so duplicate sequences remain independent;
+- nodes append in the nondecreasing order established by the VersionSet's last
+  sequence;
+- the registry alone constructs and destroys registrations; their destructor is
+  private, so callers cannot delete the opaque pointer;
+- `Release` unlinks the exact node in constant time, deletes it, and clears the
+  caller's handle;
 - compaction asks for `OldestOr(last_sequence)`;
 - state inspection asks for `size()` and `oldest()`.
 
-This type owns the multiset invariant instead of exposing container operations
-throughout DatabaseEngine.
+The public RAII `SnapshotRegistration` stores this internal handle and exposes
+its immutable sequence to concurrent reads. This directly preserves pinned
+LevelDB's linked `SnapshotList` ownership boundary: allocation, linking,
+unlinking, and deletion all remain private to the registry.
+
+The returned pointer is an identity handle, not an ownership transfer. This is
+the encapsulated intrusive-structure case permitted by ADR-0004; public callers
+still receive only the owning RAII `Snapshot` facade.
 
 ### Model the WAL and memtables as write-buffer state
 
@@ -436,6 +475,9 @@ decisions.
 - ADR-0004 requires shared ownership and performance abstractions to have
   explicit reasons. The proposal neither broadens shared ownership nor removes
   a measured hot-path mechanism by assumption.
+- Pinned LevelDB's linked SnapshotList was reviewed directly. SnapshotRegistry
+  preserves its opaque registration identity, private node destruction, and
+  constant-time operations.
 - The current destructor and declaration order require the executor to stop
   first and resource owners to outlive their borrowers. The proposal leaves
   those lifetimes explicit.
@@ -458,6 +500,11 @@ gate is review and acceptance of this ADR.
 - [ADR-0057: Pinned LevelDB Version and Output Parity](0057-leveldb-version-output-parity.md)
 - [ADR-0061: Typed Database State Inspection](0061-typed-database-state-inspection.md)
 - [Document-First Development](../development/document-first-development.md)
+- [Pinned LevelDB SnapshotList](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/snapshot.h)
 - [`src/engine/database.h`](../../src/engine/database.h)
 - [`src/engine/database.cc`](../../src/engine/database.cc)
-- [`tests/unit/engine/database_test.cc`](../../tests/unit/engine/database_test.cc)
+- [`tests/unit/engine/database_test_support.h`](../../tests/unit/engine/database_test_support.h)
+- [`tests/unit/engine/database_lifecycle_test.cc`](../../tests/unit/engine/database_lifecycle_test.cc)
+- [`tests/unit/engine/database_read_test.cc`](../../tests/unit/engine/database_read_test.cc)
+- [`tests/unit/engine/database_write_test.cc`](../../tests/unit/engine/database_write_test.cc)
+- [`tests/unit/engine/database_background_test.cc`](../../tests/unit/engine/database_background_test.cc)
