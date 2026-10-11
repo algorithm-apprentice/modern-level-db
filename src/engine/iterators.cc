@@ -37,7 +37,7 @@ public:
         return {};
     }
     [[nodiscard]] Status Seek(ByteView target) override {
-        iterator_.SeekTrusted(target);
+        iterator_.Seek(target);
         return {};
     }
     [[nodiscard]] Status Next() override {

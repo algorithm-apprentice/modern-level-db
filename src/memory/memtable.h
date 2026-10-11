@@ -98,15 +98,12 @@ public:
         [[nodiscard]] ByteView value() const;
         void Next() { iterator_.Next(); }
         void Prev() { iterator_.Prev(); }
-        [[nodiscard]] Status Seek(ByteView internal_key);
         // Requires a valid internally constructed internal key.
-        void SeekTrusted(ByteView internal_key);
+        void Seek(ByteView internal_key);
         void SeekToFirst() { iterator_.SeekToFirst(); }
         void SeekToLast() { iterator_.SeekToLast(); }
 
     private:
-        void SeekEncoded(ByteView internal_key);
-
         Table::Iterator iterator_;
         std::vector<std::byte> seek_key_;
     };

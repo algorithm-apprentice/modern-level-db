@@ -141,22 +141,7 @@ ByteView MemTable::Iterator::key() const {
 
 ByteView MemTable::Iterator::value() const { return DecodeMemTableEntry(iterator_.entry()).value; }
 
-Status MemTable::Iterator::Seek(ByteView internal_key) {
-    const Result<InternalKeyView> parsed = ParseInternalKey(internal_key);
-    if (!parsed.has_value()) {
-        return std::unexpected(parsed.error());
-    }
-
-    SeekEncoded(internal_key);
-    return {};
-}
-
-void MemTable::Iterator::SeekTrusted(ByteView internal_key) {
-    assert(ParseInternalKey(internal_key).has_value());
-    SeekEncoded(internal_key);
-}
-
-void MemTable::Iterator::SeekEncoded(ByteView internal_key) {
+void MemTable::Iterator::Seek(ByteView internal_key) {
     const std::size_t prefix_size = VarintLength(static_cast<std::uint32_t>(internal_key.size()));
     seek_key_.resize(prefix_size + internal_key.size());
     MutableByteView output(seek_key_);
