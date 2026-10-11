@@ -124,11 +124,17 @@ Status DumpWalFramed(FileSystem& file_system, const std::filesystem::path& path,
     }
 }
 
+void AppendDiagnosticNumberField(std::string& output, std::string_view name, std::uint64_t value) {
+    output.push_back(' ');
+    output.append(name);
+    output.push_back('=');
+    output += std::to_string(value);
+}
+
 std::string WriteBatchEntryPrefix(const WriteBatchEntry& entry) {
     std::string prefix = "  ";
     prefix += entry.kind == ValueKind::Value ? "put" : "delete";
-    prefix += " sequence=";
-    prefix += std::to_string(entry.sequence);
+    AppendDiagnosticNumberField(prefix, "sequence", entry.sequence);
     return prefix;
 }
 
@@ -138,6 +144,11 @@ void AppendDiagnosticBytesField(std::string& output, std::string_view name, Byte
     output += "='";
     output += EscapeDiagnosticBytes(value);
     output.push_back('\'');
+}
+
+void AppendDiagnosticKindField(std::string& output, ValueKind kind) {
+    output += " kind=";
+    output += KindText(kind);
 }
 
 std::string FormatWriteBatchEntry(const WriteBatchEntry& entry) {
@@ -256,6 +267,22 @@ Status FormatVersionEdit(const WalLogicalRecord& record, WritableFile& output,
     return {};
 }
 
+std::string FormatTableEntry(const InternalKeyView& key, ByteView value) {
+    std::string line = "entry";
+    AppendDiagnosticBytesField(line, "user_key", key.user_key);
+    AppendDiagnosticNumberField(line, "sequence", key.sequence);
+    AppendDiagnosticKindField(line, key.kind);
+    AppendDiagnosticBytesField(line, "value", value);
+    return line;
+}
+
+std::string FormatBadTableEntry(ByteView encoded_key, ByteView value) {
+    std::string line = "bad_key";
+    AppendDiagnosticBytesField(line, "encoded", encoded_key);
+    AppendDiagnosticBytesField(line, "value", value);
+    return line;
+}
+
 Status DumpTable(FileSystem& file_system, const std::filesystem::path& path,
                  std::string_view escaped_path, WritableFile& output) {
     // Diagnostic traversal uses arbitrary bytewise keys and no cache population.
@@ -290,22 +317,10 @@ Status DumpTable(FileSystem& file_system, const std::filesystem::path& path,
         const Result<InternalKeyView> parsed = ParseInternalKey(iterator.key());
         std::string line;
         if (!parsed.has_value()) {
-            line = "bad_key encoded='";
-            line += EscapeDiagnosticBytes(iterator.key());
-            line += "' value='";
-            line += EscapeDiagnosticBytes(iterator.value());
-            line.push_back('\'');
+            line = FormatBadTableEntry(iterator.key(), iterator.value());
             RememberFirst(first, Error::Corruption("table entry has a malformed internal key"));
         } else {
-            line = "entry user_key='";
-            line += EscapeDiagnosticBytes(parsed->user_key);
-            line += "' sequence=";
-            line += std::to_string(parsed->sequence);
-            line += " kind=";
-            line += KindText(parsed->kind);
-            line += " value='";
-            line += EscapeDiagnosticBytes(iterator.value());
-            line.push_back('\'');
+            line = FormatTableEntry(*parsed, iterator.value());
         }
         const Status appended = AppendDiagnosticLine(output, std::move(line));
         if (!appended.has_value()) {
