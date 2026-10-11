@@ -145,9 +145,13 @@ and background-installation decisions in #163. Each implementation received
 a separate code-persona review and passed its remote CI checks before merging.
 Remaining local commits are not evidence of remote delivery.
 
-A01 was committed locally as `c09c7e6`; its focused foundation run passed 187
-tests. It still needs separate code review, isolated-revision verification, and
-an implementation PR after this design is reviewed and merged.
+A01 was originally committed locally as `c09c7e6`; its focused foundation run
+passed 187 tests. After design #164 merged, the isolated implementation was
+reapplied to that base. A separate C++ invariant/resource-lifecycle persona
+identified no actionable code findings. The rebased warnings-as-errors MSVC
+Debug build and 711 unit-labeled checks passed. Seven assertion-only death tests
+were removed; supported behavior tests and static assertions remain. Remote CI
+and implementation-PR merge are still required for delivery.
 
 A02-A06 remain uncommitted preparation. Their current Debug build succeeded,
 but a combined CTest run reported 12 build-integration failures or not-run
