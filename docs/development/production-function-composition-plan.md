@@ -401,6 +401,7 @@ recursive completion.
 
 The [checked record design](record-validation-composition-design.md)
 was independently reviewed and accepted in #185 before implementation.
+Its implementation was delivered in #186 after all 20 exact-head checks passed.
 Per-record/complete batch proof and WAL bounds/checksum composition use separate
 topic commits. The detailed ledger names all seven new/changed functions.
 
@@ -408,9 +409,43 @@ Four new cases and strengthened existing errors/recovery tuples passed before
 production edits. All 58 selected batch/fragmenter/decoder/reader/writer cases
 pass before/after with exact JUnit parity; the batch slice passes 17 cases.
 Independent combined implementation review found no significant issues without
-executing tests. Exact published-head CI remains the delivery gate.
+executing tests.
 Trusted iteration, fragmentation, WAL I/O recovery and remaining recursive
 frontiers are not certified by this batch.
+
+### A01 implementation record
+
+The [API opening design](api-open-options-composition-design.md) was reviewed
+and accepted in #187; its implementation was delivered in #188 after all
+20 exact-head checks passed. PrepareEngineOptions composes restart validation,
+compression translation/validation and existing option mapping before Open
+acquires its engine and constructs the shared owner.
+
+All 16 selected public API cases passed before/after with exact JUnit parity,
+including mixed-invalid priority and native Zstd endpoints. The actual
+modern_leveldb_public_api_tests target, separate from the general unit target,
+was rebuilt for both recorded runs. Independent implementation review found
+no significant issue and inspected the XML without running tests.
+Broader engine acquisition, allocation exceptions and remaining recursive
+frontiers are not certified by this batch.
+
+### Q01/Q02/Q03 implementation record
+
+The [lookup source design](lookup-source-composition-design.md) was independently
+reviewed and accepted in #189. Separate topic commits compose ordered L0/lazy
+deeper candidates, memory decisions and the relocated private shared owned copy.
+The detailed ledger includes cursor methods, parent compositions, the new
+private header definition and existing lambda frontiers.
+
+Five added public-interface characterization cases passed on original
+production before extraction. All 64 selected lookup/sampling/seek/table cases
+pass before/after with exact JUnit parity; both intermediate slices pass the
+same 18 lookup/sampling cases. Original-slot charge identity, untouched
+non-value output, memory ownership after release and lazy stop/error selection
+are directly characterized. Independent implementation review found no
+significant issue and independently inspected the XML without running tests.
+Exact-head remote CI remains the delivery gate; remaining recursive frontiers
+are not certified.
 
 ### MANIFEST recovery
 
