@@ -266,11 +266,11 @@ std::size_t ShardedLruCacheCore::ShardIndex(std::uint32_t hash) noexcept {
 
 ShardedLruCacheCore::PendingEntry ShardedLruCacheCore::CreateEntry(ByteView key, PendingValue value,
                                                                    std::size_t charge) {
-    // GCOVR_EXCL_START: requires a ByteView larger than SIZE_MAX - sizeof(Entry)
-    if (key.size() > std::numeric_limits<std::size_t>::max() - sizeof(Entry)) {
-        throw std::bad_array_new_length();
-    }
-    // GCOVR_EXCL_STOP
+#ifndef NDEBUG
+    const bool key_size_fits =
+        key.size() <= std::numeric_limits<std::size_t>::max() - sizeof(Entry);
+    assert(key_size_fits);  // GCOVR_EXCL_BR_WITHOUT_HIT: trusted key extent
+#endif
     void* storage = ::operator new(sizeof(Entry) + key.size());
     auto* entry = static_cast<Entry*>(storage);
     std::construct_at(entry, value.get(), value.get_deleter().deleter, charge, key.size(),

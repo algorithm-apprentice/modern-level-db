@@ -61,8 +61,8 @@ Result<TableCache::Handle> TableCache::Find(std::uint64_t file_number, std::uint
     if (!table.has_value()) {
         return std::unexpected(std::move(table).error());
     }
-    // Tables have charge one, so the charge accounting could overflow only with
-    // SIZE_MAX tables in one shard; Insert would return that error.
+    // Tables have charge one, so accounting saturation would require SIZE_MAX
+    // tables in one shard.
     return tables_.Insert(key, std::move(*table), 1);
 }
 

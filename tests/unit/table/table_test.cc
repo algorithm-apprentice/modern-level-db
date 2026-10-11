@@ -237,7 +237,7 @@ private:
 std::vector<std::byte> BlockOf(std::initializer_list<std::pair<ByteView, ByteView>> entries) {
     BlockBuilder builder(1);
     for (const auto& [key, value] : entries) {
-        EXPECT_TRUE(builder.Add(key, value).has_value());
+        builder.Add(key, value);
     }
     return Materialize(builder.Finish());
 }

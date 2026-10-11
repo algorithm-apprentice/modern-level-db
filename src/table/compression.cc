@@ -50,9 +50,6 @@ bool TryCompressBlock(ByteView raw, BlockCompression requested, int zstd_level,
     if (raw.empty()) {
         return false;
     }
-    if (raw.size() > MaxBlockSize) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 needs over 4 GiB
-        return false;                 // GCOVR_EXCL_LINE: needs over 4 GiB
-    }
 
     switch (requested) {
         case BlockCompression::None:

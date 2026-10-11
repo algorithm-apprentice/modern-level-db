@@ -6,7 +6,6 @@
 #include <vector>
 
 #include "modern_leveldb/base/bytes.h"
-#include "modern_leveldb/base/result.h"
 
 namespace modern_leveldb {
 
@@ -23,12 +22,11 @@ public:
     BlockBuilder& operator=(BlockBuilder&&) = delete;
     ~BlockBuilder() = default;
 
-    // Keys must strictly increase under the comparator that will read the
-    // block. Returns InvalidArgument, leaving the builder unchanged, if the entry
-    // would make the finished block larger than UINT32_MAX bytes. Requires that
-    // Finish has not been called since construction or the last Reset. If Add or
-    // Finish throws, the builder must be Reset before it is used again.
-    [[nodiscard]] Status Add(ByteView key, ByteView value);
+    // Keys must strictly increase under the comparator that will read the block.
+    // Entry lengths and the finished block size must fit their uint32 encoding.
+    // Requires that Finish has not been called since construction or the last
+    // Reset. If Add or Finish throws, the builder must be Reset before reuse.
+    void Add(ByteView key, ByteView value);
 
     // Appends the restart array and returns the block, which stays valid until
     // Reset or destruction.
