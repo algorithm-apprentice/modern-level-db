@@ -155,10 +155,7 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
     // The need that scheduled this task remains, since only background work
     // installs versions or drops the file to compact.
     if (IsTrivialMove(*compaction, policy_.max_file_size)) {
-        VersionEdit edit = CompactionEdit(*compaction);
-        // The file is valid at the next level, which nothing there overlaps.
-        static_cast<void>(edit.AddFile(compaction->level + 1, *compaction->inputs[0].front()));
-        FinishCompaction(versions_->LogAndApply(std::move(edit), lock));
+        InstallTrivialCompaction(*compaction, lock);
         return false;
     }
 
@@ -186,6 +183,14 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
         ApplyBackgroundEdit(std::move(edit), lock, "the database closed during a compaction");
     FinishCompaction(applied);
     return true;
+}
+
+void DatabaseEngine::InstallTrivialCompaction(const Compaction& compaction,
+                                              std::unique_lock<std::mutex>& lock) {
+    VersionEdit edit = CompactionEdit(compaction);
+    // The file is valid at the next level, which nothing there overlaps.
+    static_cast<void>(edit.AddFile(compaction.level + 1, *compaction.inputs[0].front()));
+    FinishCompaction(versions_->LogAndApply(std::move(edit), lock));
 }
 
 Status DatabaseEngine::ApplyBackgroundEdit(Result<VersionEdit> edit,
