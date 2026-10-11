@@ -374,12 +374,57 @@ Implementation proceeds through sequential, exact-head pull requests:
    and implementation outcome in architecture and this ADR, then audit the
    complete concept index and learning source tours.
 
-Each pull request is reviewed and merged before the next begins. Production
-implementation does not start until this proposed ADR is approved.
+Each pull request is reviewed and merged before the next begins. Implementation
+began only after this ADR was accepted in PR #152.
 
 Every pull request that moves a source or test entry point updates its direct
 concept-index and source-tour links in that same revision. Step 6 is the final
 cross-document audit, not permission to leave stale navigation between stages.
+
+## Implementation outcome
+
+The accepted sequence completed as focused pull requests:
+
+| Pull request | Outcome |
+|---|---|
+| #153 | Partitioned production definitions into lifecycle, read, write, and background translation units with all 34 method bodies unchanged |
+| #155 | Partitioned 58 existing database tests into the same four flows with all test bodies unchanged |
+| #156 | Adopted database-wide sticky-error vocabulary |
+| #157 | Added the intrusive, constant-time SnapshotRegistry and retained its opaque node identity behind public RAII snapshots |
+| #158 | Added WriteBufferState and EnginePolicy and removed the corresponding parallel DatabaseEngine fields |
+
+The resulting production files are bounded by responsibility:
+
+| File | Lines after implementation |
+|---|---:|
+| `database.cc` | 150 |
+| `database_read.cc` | 161 |
+| `database_write.cc` | 140 |
+| `database_background.cc` | 270 |
+| `write_buffer_state.h` / `.cc` | 70 / 67 |
+
+`DatabaseEngine` now has 24 direct data members instead of approximately 33.
+The reduction is a consequence of behavior ownership, not a size target:
+
+- four retained configuration fields became one const EnginePolicy;
+- WAL, log number, mutable/immutable MemTables, published bytes, retained
+  read-pinned tables, and the immutable atomic mirror became one
+  WriteBufferState;
+- the snapshot container became one SnapshotRegistry with an explicit
+  registration contract.
+
+The test source now has one 410-line shared fixture and lifecycle/read/write/
+background files of 141/473/388/623 lines. The original 58 test bodies remain,
+with focused SnapshotRegistry and WriteBufferState tests added.
+
+During implementation, Windows profiling exposed an independent owned-job
+accounting race. PR #154 fixed it separately rather than mixing it into the
+engine-structure changes.
+
+The ownership review also refined ADR-0004: public and component ownership
+remain RAII-based, while one encapsulated storage-engine owner may use
+intrusive raw links and opaque identity handles when construction, destruction,
+synchronization, and reclamation remain private and tested.
 
 ## Validation
 
@@ -469,29 +514,29 @@ The design was checked against the current source, tests, and retained
 decisions.
 
 - ADR-0037 requires DatabaseEngine to own the state joining otherwise separate
-  algorithms. The proposal retains that aggregate-root role.
+  algorithms. The implementation retains that aggregate-root role.
 - ADR-0057 requires typed synchronous read pins and shared ownership for
-  longer-lived consumers. The proposal keeps both models.
+  longer-lived consumers. The implementation keeps both models.
 - ADR-0004 requires shared ownership and performance abstractions to have
-  explicit reasons. The proposal neither broadens shared ownership nor removes
-  a measured hot-path mechanism by assumption.
+  explicit reasons. The implementation neither broadens shared ownership nor
+  removes a measured hot-path mechanism by assumption.
 - Pinned LevelDB's linked SnapshotList was reviewed directly. SnapshotRegistry
   preserves its opaque registration identity, private node destruction, and
   constant-time operations.
 - The current destructor and declaration order require the executor to stop
-  first and resource owners to outlive their borrowers. The proposal leaves
-  those lifetimes explicit.
+  first and resource owners to outlive their borrowers. The implementation
+  leaves those lifetimes explicit.
 - The current WAL-close exception repair requires replacement state not to be
   installed after a throw. WriteBufferState therefore owns only the final
   state installation, not the close operation or its policy.
 - Background scheduling cannot become an independent object without sharing
-  the engine mutex, VersionSet, and sticky failure. The proposal keeps it as
-  engine coordination and limits the first step to source partitioning.
+  the engine mutex, VersionSet, and sticky failure. The implementation keeps it
+  as engine coordination; source partitioning did not create another service.
 - A generic resource holder was removed from the initial scope because it
   reduced field count without yet improving a domain invariant.
 
-No unresolved design question requires production experimentation. The next
-gate is review and acceptance of this ADR.
+The implementation outcome above closes the design gate; no deferred
+production experiment remains.
 
 ## References
 
@@ -503,6 +548,11 @@ gate is review and acceptance of this ADR.
 - [Pinned LevelDB SnapshotList](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/snapshot.h)
 - [`src/engine/database.h`](../../src/engine/database.h)
 - [`src/engine/database.cc`](../../src/engine/database.cc)
+- [`src/engine/database_read.cc`](../../src/engine/database_read.cc)
+- [`src/engine/database_write.cc`](../../src/engine/database_write.cc)
+- [`src/engine/database_background.cc`](../../src/engine/database_background.cc)
+- [`src/engine/snapshot_registry.h`](../../src/engine/snapshot_registry.h)
+- [`src/engine/write_buffer_state.h`](../../src/engine/write_buffer_state.h)
 - [`tests/unit/engine/database_test_support.h`](../../tests/unit/engine/database_test_support.h)
 - [`tests/unit/engine/database_lifecycle_test.cc`](../../tests/unit/engine/database_lifecycle_test.cc)
 - [`tests/unit/engine/database_read_test.cc`](../../tests/unit/engine/database_read_test.cc)

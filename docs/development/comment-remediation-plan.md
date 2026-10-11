@@ -415,7 +415,9 @@ validator, or named test instead.
 
 Each filename is relative to its directory column. Machine-readable
 annotations remain intact in every category. These are comment-review
-dispositions, not claims of exhaustive behavioral verification.
+dispositions, not claims of exhaustive behavioral verification. Filenames
+refer to the fixed audit baseline and are not a maintained current-source
+index.
 
 | Directory | Disposition | Files | Change or retain/no-addition rationale |
 |---|---|---|---|
@@ -481,7 +483,7 @@ dispositions, not claims of exhaustive behavioral verification.
 | `tests/unit/diagnostics` | R | `dump_file_test.cc` | Preserve the targeted malformed/physical-file explanation. |
 | `tests/unit/diagnostics` | N | `dump_command_test.cc`, `posix_output_test.cc`, `windows_output_test.cc` | Named command/output cases and assertions carry the contract. |
 | `tests/unit/engine` | C | `compaction_picker_test.cc`, `iterators_test.cc`, `recovery_test.cc`, `seek_statistics_test.cc` | Explain boundary-history failure, equal-entry direction changes, empty-batch sequences, and deterministic sampling locally. |
-| `tests/unit/engine` | R | `build_table_test.cc`, `compaction_test.cc`, `database_background_test.cc`, `database_lifecycle_test.cc`, `database_read_test.cc`, `database_test_support.h`, `database_write_test.cc`, `db_iterator_test.cc`, `flush_test.cc`, `lookup_test.cc`, `table_cache_test.cc`, `write_path_test.cc` | Keep useful targeted schedule, ordering, overlap, and failure explanations instead of annotating every test. |
+| `tests/unit/engine` | R | `build_table_test.cc`, `compaction_test.cc`, `database_test.cc`, `db_iterator_test.cc`, `flush_test.cc`, `lookup_test.cc`, `table_cache_test.cc`, `write_path_test.cc` | Keep useful targeted schedule, ordering, overlap, and failure explanations instead of annotating every test. |
 | `tests/unit/engine` | N | `database_native_test.cc`, `database_windows_test.cc`, `database_without_posix_test.cc` | Named platform/engine cases already identify the tested boundary. |
 | `tests/unit/format` | C | `internal_key_test.cc` | Decompose the independent trailer bytes instead of relying only on encoder/decoder agreement. |
 | `tests/unit/format` | N | `wal_format_test.cc`, `write_batch_test.cc` | Named fragmentation, malformed-batch, and trusted-equivalence cases expose their expected outcomes. |
