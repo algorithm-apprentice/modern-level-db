@@ -245,3 +245,13 @@ helper existed. They exercise empty inputs, existing-child preservation, L0
 span order, one deeper-level run, no eager I/O, and Version retention while an
 external input list remains borrowed. Compaction coverage checks selected files
 only in both L0 and deeper runs, both traversal directions, and no cache filling.
+
+### Background installation outcome
+
+Slice 3 shares only `ApplyBackgroundEdit`. It leaves sticky failure, pending-output
+release, immutable reset, notification, seek statistics, and reclamation in their
+original callers. Strengthened characterization tests passed before extraction.
+They distinguish built files from installed topology after a concurrent foreground
+failure, assert immutable/output/sticky state after returned flush errors, and
+check that failed flush/compaction construction never appends a MANIFEST edit or
+reclaims files.

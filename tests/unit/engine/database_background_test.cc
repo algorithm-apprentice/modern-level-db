@@ -60,6 +60,7 @@ TEST_F(DatabaseTest, StopsWritesAfterAFailedFlush) {
     std::optional<Status> flushed;
     std::thread flusher([&] { flushed = database->FlushMemTable(); });
     executor_.WaitForTask();
+    const std::size_t start = file_system_.operations().size();
     file_system_.SetOperationHook([](std::string_view operation) -> Status {
         if (OpensATable(operation)) {
             return std::unexpected(Error::Io("injected failure"));
@@ -75,6 +76,17 @@ TEST_F(DatabaseTest, StopsWritesAfterAFailedFlush) {
     EXPECT_FALSE(Put(*database, "b", "1").has_value());
     EXPECT_EQ(Get(*database, "a"), "1");
     EXPECT_FALSE(database->WaitForBackgroundWork().has_value());
+    const auto state = database->GetState();
+    ASSERT_TRUE(state.has_value());
+    EXPECT_TRUE(state->immutable_memtable_bytes.has_value());
+    EXPECT_EQ(state->protected_output_count, 0U);
+    EXPECT_FALSE(state->background_work_scheduled);
+    ASSERT_TRUE(state->sticky_error.has_value());
+    EXPECT_EQ(state->sticky_error->message(), "injected failure");
+    for (const std::string& operation : OperationsSince(start)) {
+        EXPECT_FALSE(operation.starts_with("append MANIFEST-")) << operation;
+        EXPECT_FALSE(operation.starts_with("remove ")) << operation;
+    }
 }
 
 TEST_F(DatabaseTest, KeepsObsoleteFilesAfterABackgroundError) {
@@ -105,6 +117,17 @@ TEST_F(DatabaseTest, KeepsObsoleteFilesAfterABackgroundError) {
     EXPECT_EQ(Numbers(FileType::Table).size(), 1U);
     EXPECT_TRUE(Exists(Numbered(old_log, ".log")));
     EXPECT_EQ(Get(*database, "a"), "1");
+    const auto state = database->GetState();
+    ASSERT_TRUE(state.has_value());
+    EXPECT_FALSE(state->immutable_memtable_bytes.has_value());
+    EXPECT_EQ(state->protected_output_count, 0U);
+    ASSERT_TRUE(state->sticky_error.has_value());
+    EXPECT_EQ(state->sticky_error->message(), failed.error().message());
+    std::size_t installed_files = 0;
+    for (const DatabaseEngineLevelState& level : state->levels) {
+        installed_files += level.file_count;
+    }
+    EXPECT_EQ(installed_files, 1U);
 }
 
 TEST_F(DatabaseTest, SkipsBackgroundWorkAfterAnError) {
@@ -425,6 +448,7 @@ TEST_F(DatabaseTest, StopsWritesAfterACompactionFails) {
         SCOPED_TRACE(failing);
         const auto database = Open();
         ASSERT_EQ(executor_.queued(), 1U);
+        const std::size_t start = file_system_.operations().size();
         file_system_.SetOperationHook([failing](std::string_view operation) -> Status {
             if (operation.starts_with(failing)) {
                 return std::unexpected(Error::Io("injected failure"));
@@ -438,6 +462,18 @@ TEST_F(DatabaseTest, StopsWritesAfterACompactionFails) {
         EXPECT_EQ(later.error().message(), "injected failure");
         EXPECT_EQ(Levels(), "4 1 1 0 0 0 0");
         EXPECT_EQ(Get(*database, "a"), Large());
+        const auto state = database->GetState();
+        ASSERT_TRUE(state.has_value());
+        EXPECT_EQ(state->protected_output_count, 0U);
+        EXPECT_FALSE(state->background_work_scheduled);
+        ASSERT_TRUE(state->sticky_error.has_value());
+        EXPECT_EQ(state->sticky_error->message(), "injected failure");
+        for (const std::string& operation : OperationsSince(start)) {
+            EXPECT_FALSE(operation.starts_with("remove ")) << operation;
+            if (failing != "append MANIFEST-") {
+                EXPECT_FALSE(operation.starts_with("append MANIFEST-")) << operation;
+            }
+        }
     }
 
     // Opening removes the failed outputs, and the compaction runs again.
