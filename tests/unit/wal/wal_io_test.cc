@@ -9,6 +9,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -45,6 +46,7 @@ struct WritableState {
     bool fail_flush = false;
     bool fail_sync = false;
     bool fail_close = false;
+    bool throw_close = false;
 };
 
 class TrackingWritableFile final : public WritableFile {
@@ -80,6 +82,9 @@ public:
 
     Status Close() override {
         ++state_->close_calls;
+        if (state_->throw_close) {
+            throw std::runtime_error("injected close exception");
+        }
         if (state_->fail_close) {
             return std::unexpected(Error::Io("injected close failure"));
         }
@@ -372,6 +377,19 @@ TEST(WalWriterTest, CloseReportsFileCloseFailure) {
     ASSERT_FALSE(close.has_value());
     EXPECT_EQ(close.error().message(), "injected close failure");
     EXPECT_EQ(state->close_calls, 1);
+}
+
+TEST(WalWriterTest, CloseCanBeRetriedAfterAnException) {
+    const auto state = std::make_shared<WritableState>();
+    state->throw_close = true;
+    WalWriter writer(Writable(state));
+
+    EXPECT_THROW(static_cast<void>(writer.Close()), std::runtime_error);
+    EXPECT_EQ(state->close_calls, 1);
+
+    state->throw_close = false;
+    EXPECT_TRUE(writer.Close().has_value());
+    EXPECT_EQ(state->close_calls, 2);
 }
 
 TEST(WalWriterTest, ReportsFlushAndSyncFailures) {

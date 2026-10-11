@@ -275,7 +275,13 @@ Status DatabaseEngine::SwitchMemTable() {
             return synced;
         }
     }
-    const Status closed = log_->Close();
+    Status closed;
+    try {
+        closed = log_->Close();
+    } catch (...) {
+        RecordBackgroundError(Error::Aborted("old WAL close threw during rotation"));
+        throw;
+    }
     if (!closed.has_value()) {
         RecordBackgroundError(closed.error());
     }
