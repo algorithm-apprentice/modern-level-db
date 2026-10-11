@@ -23,20 +23,31 @@ static_assert(Arena::Alignment == std::max(sizeof(void*), std::size_t{8}));
 
 constexpr std::size_t BlockCharge(std::size_t bytes) noexcept { return bytes + sizeof(std::byte*); }
 
-TEST(ArenaTest, StartsEmptyAndDoesNotReserveMemoryForZeroBytes) {
+MutableByteView AllocateView(Arena& arena, std::size_t size, bool aligned = false) {
+    std::byte* storage = aligned ? arena.AllocateAligned(size) : arena.Allocate(size);
+    return MutableByteView(storage, size);
+}
+
+TEST(ArenaTest, StartsEmpty) {
     Arena arena;
 
-    EXPECT_EQ(arena.memory_usage(), 0U);
-    EXPECT_TRUE(arena.Allocate(0).empty());
-    EXPECT_TRUE(arena.AllocateAligned(0).empty());
     EXPECT_EQ(arena.memory_usage(), 0U);
 }
 
-TEST(ArenaTest, ReturnsWritableViewsWithExactRequestedSizes) {
+#ifndef NDEBUG
+TEST(ArenaDeathTest, RequiresPositiveAllocationSizes) {
     Arena arena;
 
-    MutableByteView first = arena.Allocate(3);
-    MutableByteView second = arena.Allocate(7);
+    EXPECT_DEATH(static_cast<void>(arena.Allocate(0)), "");
+    EXPECT_DEATH(static_cast<void>(arena.AllocateAligned(0)), "");
+}
+#endif
+
+TEST(ArenaTest, ReturnedStorageSupportsRequestedWritableViews) {
+    Arena arena;
+
+    MutableByteView first = AllocateView(arena, 3);
+    MutableByteView second = AllocateView(arena, 7);
 
     ASSERT_EQ(first.size(), 3U);
     ASSERT_EQ(second.size(), 7U);
@@ -59,8 +70,7 @@ TEST(ArenaTest, PreservesAllAllocationsAcrossBlockGrowth) {
     for (std::size_t index = 0; index < 2'000; ++index) {
         const std::size_t size = index % 131U + 1U;
         const auto pattern = static_cast<std::byte>(index % 251U);
-        MutableByteView bytes =
-            index % 7U == 0U ? arena.AllocateAligned(size) : arena.Allocate(size);
+        MutableByteView bytes = AllocateView(arena, size, index % 7U == 0U);
         std::ranges::fill(bytes, pattern);
         allocations.push_back({bytes, pattern});
     }
@@ -76,7 +86,7 @@ TEST(ArenaTest, ReturnsLevelDbAlignedStorageAfterUnalignedAllocations) {
     (void)arena.Allocate(1);
 
     for (std::size_t size = 1; size <= 64; ++size) {
-        MutableByteView bytes = arena.AllocateAligned(size);
+        MutableByteView bytes = AllocateView(arena, size, true);
         ASSERT_EQ(bytes.size(), size);
         EXPECT_EQ(reinterpret_cast<std::uintptr_t>(bytes.data()) % Arena::Alignment, 0U);
         std::ranges::fill(bytes, std::byte{0xa5});
@@ -100,15 +110,15 @@ TEST(ArenaTest, GivesLargeAllocationsDedicatedBlocksWithoutDiscardingSmallBlock)
     Arena arena;
     MutableByteView current_tail;
     for (int allocation = 0; allocation < 3; ++allocation) {
-        current_tail = arena.Allocate(1'024);
+        current_tail = AllocateView(arena, 1'024);
     }
     EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U));
 
-    MutableByteView large = arena.Allocate(1'025);
+    MutableByteView large = AllocateView(arena, 1'025);
     EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U) + BlockCharge(1'025U));
     std::ranges::fill(large, std::byte{0x5a});
 
-    MutableByteView small = arena.Allocate(8);
+    MutableByteView small = AllocateView(arena, 8);
     EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U) + BlockCharge(1'025U));
     EXPECT_EQ(small.data(), current_tail.data() + current_tail.size());
     EXPECT_TRUE(std::ranges::all_of(large, [](std::byte byte) { return byte == std::byte{0x5a}; }));
@@ -116,9 +126,9 @@ TEST(ArenaTest, GivesLargeAllocationsDedicatedBlocksWithoutDiscardingSmallBlock)
 
 TEST(ArenaTest, UsesCurrentBlockWhenALargeRequestStillFits) {
     Arena arena;
-    MutableByteView first = arena.Allocate(8);
+    MutableByteView first = AllocateView(arena, 8);
 
-    MutableByteView large = arena.Allocate(1'025);
+    MutableByteView large = AllocateView(arena, 1'025);
 
     EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U));
     EXPECT_EQ(large.data(), first.data() + first.size());

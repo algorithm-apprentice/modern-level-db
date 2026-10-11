@@ -29,6 +29,12 @@ arena block:
                                              allocation pointer ^
 ```
 
+Arena returns the address of raw storage. The caller already knows the
+requested size: MemTable wraps the pointer and encoded size in a writable byte
+view, while SkipList uses the aligned pointer for placement construction.
+This keeps logical range bounds with the consumer rather than repeating them
+in the allocator's return value.
+
 The current implementation uses 4 KiB normal blocks and dedicated
 allocations for requests larger than 1 KiB when it needs a fallback.
 It does not free individual entries. Destroying the arena releases its

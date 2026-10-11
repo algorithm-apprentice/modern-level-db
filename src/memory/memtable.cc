@@ -43,7 +43,7 @@ std::size_t TrustedEncodedSize(ByteView key, ByteView value) noexcept {
 
 const std::byte* EncodeEntry(Arena& arena, SequenceNumber sequence, ValueKind kind, ByteView key,
                              ByteView value, std::size_t encoded_size) {
-    MutableByteView output = arena.Allocate(encoded_size);
+    MutableByteView output(arena.Allocate(encoded_size), encoded_size);
     const std::byte* const entry = output.data();
     const std::size_t internal_key_size = key.size() + InternalKeyTrailerSize;
     EncodeVarint32Trusted(output, static_cast<std::uint32_t>(internal_key_size));

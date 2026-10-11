@@ -5,8 +5,6 @@
 #include <memory>
 #include <vector>
 
-#include "modern_leveldb/base/bytes.h"
-
 namespace modern_leveldb {
 
 // Monotonic byte storage: allocations remain stable until arena destruction,
@@ -27,8 +25,9 @@ public:
 
     ~Arena() = default;
 
-    [[nodiscard]] MutableByteView Allocate(std::size_t bytes);
-    [[nodiscard]] MutableByteView AllocateAligned(std::size_t bytes);
+    // Requires a positive size. Returned storage remains valid until destruction.
+    [[nodiscard]] std::byte* Allocate(std::size_t bytes);
+    [[nodiscard]] std::byte* AllocateAligned(std::size_t bytes);
 
     // Reserved block bytes plus per-block pointer accounting, not live payload
     // size or total process memory. Must not race with allocation.
