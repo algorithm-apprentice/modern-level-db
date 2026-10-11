@@ -96,18 +96,21 @@ decision. Current operational docs must not advertise the removed executable.
 
 ## Small execution slices
 
-1. Persist this design and the source-style policy.
-2. Remove assertions in foundation/memory/format/cache/WAL components, retaining
-   the audited operations and supported-domain tests.
-3. Remove assertions in engine/table/platform/API components and reconcile
-   assertion-only tests and private state.
-4. Remove read-diagnostic hooks, build targets, report paths, and dedicated tests
-   as one coherent dependency slice; the ordinary build must remain usable.
-5. Reconcile current architecture, learning, tooling docs, and historical links;
-   verify the supported product and retained profiling paths.
+Follow the bounded backlog in the
+[textbook improvement plan](../development/textbook-improvement-plan.md).
+The project owner requested smaller tasks than the original component-wide
+slices. Complete one named responsibility at a time, with its evidence and
+commit boundary, before starting the next implementation task.
 
-Keep each implementation slice independently buildable, reviewed, and persisted.
-Do not combine an unrelated large-function rewrite with these removals.
+First finish and separate the existing uncommitted assertion cleanup. Retire
+the diagnostic executable and runner coherently before deleting its unreachable
+hooks in smaller source-area tasks. Do not leave a runnable diagnostic program
+that silently reports partial measurements.
+
+Review function composition separately from instrumentation removal. Inventory
+concrete candidates and preserved complex algorithms, then give each accepted
+candidate its own bounded design, implementation, and verification task. Do not
+combine an unrelated large-function rewrite with these removals.
 
 ## Evidence
 
