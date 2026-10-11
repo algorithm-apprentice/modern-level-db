@@ -2,8 +2,10 @@
 
 ## Status and scope
 
-Design proposal for A02/A03 from the
+Accepted design for A02/A03 from the
 [production composition plan](production-function-composition-plan.md).
+Design-only #197 passed independent review and all 20 exact-head checks before
+merge. The separate implementation record follows below.
 Scope is DatabaseEngine::Compact's trivial-move branch and SwitchMemTable's
 replacement preparation/old-log close composition, plus private declarations
 in `src/engine/database.h` and direct existing engine tests.
@@ -139,3 +141,36 @@ Independent design review found no significant issue after inspecting current
 engine/write-buffer source and related tests. It did not execute builds/tests.
 State assertions supplement the original ordering/visibility/retry oracles,
 not substitute for them.
+
+## Implementation record
+
+Characterization strengthened four existing DatabaseTest cases before production
+edits. Trivial move checks exact error/state and successful level/protection
+state, retaining its no-table-I/O/no-removal oracles.
+Rotation preparation failures keep sequence/mutable state with no immutable,
+sticky error, scheduling, Close or Append. Returned old-close failure preserves
+sequence, installs an empty mutable and original immutable generation, records
+the original Io error and performs no new Append. Thrown close leaves mutable
+generation unchanged, no immutable, exact sticky Aborted and no new Append.
+
+Separate rotation and trivial-move source commits implement all five ledger
+definitions plus the private named PreparedRotation declaration. The owner
+field order is log, memtable, number; standard reverse destruction releases the
+replacement memtable before the log on failure/throw.
+Existing WriteBufferState and checked VersionSet operations remain unchanged.
+
+After #194 delivered its independent compaction implementation, this unpublished
+branch rebased without content changes in the five engine/source/test paths.
+The strengthened tests were rebuilt and rerun against integrated original
+engine sources and restored final extraction. All 54 DatabaseTest cases pass
+with exact unique JUnit before/after equality and no failures/errors/skips;
+the earlier rotation slice also passed all 54.
+
+Local evidence is Windows Debug with actual modern_leveldb_unit_tests rebuilt
+each time. No new test names were needed: each strengthened existing case now
+asserts materially stronger state/order distinctions. This is not allocation
+injection or native handle-destruction evidence.
+Independent combined implementation review found no actionable correctness,
+design or required test gap across the seven scoped files and independently
+inspected the 54-case XML sets without executing tests.
+Exact-head remote CI remains the delivery gate.

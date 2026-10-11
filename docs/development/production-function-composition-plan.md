@@ -466,8 +466,9 @@ LogReplay/version/WAL/native operations remain recursive frontiers.
 
 The [compaction composition design](compaction-output-history-composition-design.md)
 was independently reviewed and accepted in #193. Separate monotonic cursor,
-output transaction and visible-history/entry/finalization topic commits
-implement its fifteen-definition recursive ledger.
+output transaction and visible-history/entry/finalization topic commits were
+delivered in #194 after all 20 exact-head checks passed. The
+implementation follows its fifteen-definition recursive ledger.
 
 Five added characterization cases passed on original production before
 extraction. All 50 compaction/picker/table-builder cases pass before/after with
@@ -475,8 +476,25 @@ exact JUnit parity, and intermediate slices pass 18 and 37 cases.
 Snapshot/coverage short circuits, mixed error priority, metadata ownership and
 input-failure suppression of completion are directly characterized.
 Independent implementation review found no significant issue and independently
-inspected the XML without executing tests. Exact-head CI remains the delivery
-gate. Deeper primitives and whole-production recursive completion are not certified.
+inspected the XML without executing tests.
+Deeper primitives and whole-production recursive completion are not certified.
+
+### A02/A03 implementation record
+
+The [engine transaction design](background-rotation-composition-design.md) was
+independently reviewed and accepted in #197. Separate rotation and trivial-move
+topic commits compose replacement acquisition, old-close sticky policy, original
+installation/scheduling and unchanged-file edit application.
+
+Four existing characterization cases were strengthened before source edits.
+All 54 DatabaseTest cases pass before/after with exact JUnit parity, including
+reruns on the integrated #194 baseline. Returned-close-error generation
+installation, thrown-close noninstallation, preparation retry and trivial
+move/no-cleanup distinctions are directly asserted.
+Independent combined implementation review found no actionable issue and
+independently inspected the XML without running tests. Exact-head CI remains
+the delivery gate; rewrite setup, write-buffer internals and remaining recursive
+frontiers stay open.
 
 ### MANIFEST recovery
 
