@@ -40,6 +40,21 @@ public:
     void FindShortSuccessor(std::vector<std::byte>&) const override {}
 };
 
+class ExpansionTrackingComparator final : public Comparator {
+public:
+    int Compare(ByteView left, ByteView right) const noexcept override {
+        if (AsStringView(left) == "f" && AsStringView(right) == "h") {
+            ++expanded_next_comparisons;
+        }
+        return BytewiseComparator().Compare(left, right);
+    }
+    std::string_view Name() const noexcept override { return "test.ExpansionTracking"; }
+    void FindShortestSeparator(std::vector<std::byte>&, ByteView) const override {}
+    void FindShortSuccessor(std::vector<std::byte>&) const override {}
+
+    mutable int expanded_next_comparisons = 0;
+};
+
 InternalKey Key(std::string_view user_key, SequenceNumber sequence) {
     return InternalKey::Create(AsBytes(user_key), sequence, ValueKind::Value).value();
 }
@@ -291,6 +306,69 @@ TEST_F(CompactionPickerTest, CollectsTheGrandparentsOfTheWholeRange) {
                      {91}, {95});
     ExpectCompaction(Pick(deep, SeekCompaction{.level = 5, .file = deep->files(5)[0]}), 5, {91},
                      {95}, {});
+}
+
+TEST_F(CompactionPickerTest, ExpansionUpdatesGrandparentsAndRetainsOriginalFileOwners) {
+    for (const std::uint64_t next_size : {4999U, 5000U}) {
+        SCOPED_TRACE(next_size);
+        auto version = Make({{1, File(50, "a", "b", 10000)},
+                             {1, File(51, "c", "h", 10000)},
+                             {1, File(59, "x", "z", 10 * MiB)},
+                             {2, File(60, "b", "c", next_size)},
+                             {3, File(70, "b", "b")},
+                             {3, File(71, "f", "g")}});
+        const bool admitted = next_size == 4999;
+        std::weak_ptr<const Version> owner = version;
+        const auto compaction = Pick(version);
+        ExpectCompaction(compaction, 1, admitted ? Numbered{50, 51} : Numbered{50}, {60},
+                         admitted ? Numbered{70, 71} : Numbered{70});
+        ExpectPointer(compaction, Key(admitted ? "h" : "b", 1));
+        ASSERT_TRUE(compaction.has_value());
+        EXPECT_EQ(compaction->inputs[0][0].get(), version->files(1)[0].get());
+        EXPECT_EQ(compaction->inputs[1][0].get(), version->files(2)[0].get());
+        if (admitted) {
+            EXPECT_EQ(compaction->inputs[0][1].get(), version->files(1)[1].get());
+            EXPECT_EQ(compaction->grandparents[1].get(), version->files(3)[1].get());
+        }
+        version.reset();
+        EXPECT_FALSE(owner.expired());
+        EXPECT_EQ(AsStringView(compaction->compact_pointer.user_key()), admitted ? "h" : "b");
+        EXPECT_EQ(AsStringView(compaction->inputs[1][0]->largest.user_key()), "c");
+        EXPECT_EQ(AsStringView(compaction->grandparents.back()->largest.user_key()),
+                  admitted ? "g" : "b");
+    }
+}
+
+TEST_F(CompactionPickerTest, ExpandedNextInputsKeepTheirBoundaryChain) {
+    const auto version = Make({{1, File(50, "a", "b")},
+                               {1, File(51, "c", "d")},
+                               {1, File(59, "x", "z", 10 * MiB)},
+                               {2, File(60, Key("b", 9), Key("k", 5))},
+                               {2, File(61, Key("k", 3), Key("m", 1))},
+                               {3, File(70, "l", "m")}});
+    const auto compaction = Pick(version);
+    ExpectCompaction(compaction, 1, {50, 51}, {60, 61}, {70});
+    ExpectPointer(compaction, Key("d", 1));
+}
+
+TEST(CompactionPickerTrackingTest, RejectedBudgetSuppressesExpandedNextSelection) {
+    for (const std::uint64_t next_size : {4999U, 5000U}) {
+        ExpansionTrackingComparator user_comparator;
+        const InternalKeyComparator comparator(user_comparator);
+        const auto version = MakeVersion(comparator, {{1, File(50, "a", "b", 10000)},
+                                                      {1, File(51, "c", "h", 10000)},
+                                                      {1, File(59, "x", "z", 10 * MiB)},
+                                                      {2, File(60, "b", "c", next_size)},
+                                                      {2, File(61, "f", "g")}});
+        std::array<std::optional<InternalKey>, NumLevels> pointers{};
+        user_comparator.expanded_next_comparisons = 0;
+        const auto compaction =
+            PickCompaction(version, comparator, pointers, std::nullopt, TargetFileSize);
+        ASSERT_TRUE(compaction.has_value());
+        EXPECT_EQ(Numbers(compaction->inputs[0]), (Numbered{50}));
+        EXPECT_EQ(Numbers(compaction->inputs[1]), (Numbered{60}));
+        EXPECT_EQ(user_comparator.expanded_next_comparisons, next_size == 4999 ? 1 : 0);
+    }
 }
 
 TEST_F(CompactionPickerTest, MovesOneFileWithFewGrandparentBytes) {

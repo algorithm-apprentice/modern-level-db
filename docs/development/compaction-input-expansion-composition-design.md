@@ -2,8 +2,10 @@
 
 ## Status and scope
 
-Design proposal for C05 from the
+Accepted design for C05 from the
 [production composition plan](production-function-composition-plan.md).
+Design-only #195 was independently reviewed and merged after all 20 exact-head
+checks succeeded. Its bounded implementation record follows below.
 Only SetupInputs in `src/engine/compaction_picker.cc` and its private expansion
 children/direct tests are in scope. No scoring, L0 closure, iterator/output,
 native filesystem or benchmark changes.
@@ -35,7 +37,7 @@ published in the returned Compaction.
 Introduce private named `InputExpansion` aggregate containing:
 
 - Owned expanded source and next-level vectors of original Version::File owners.
-- Borrowed expanded source KeyRange and final union KeyRange.
+- Borrowed expanded source KeyRange.
 
 `TryExpandInputs` borrows version, comparator and existing source/next spans,
 level, target size and union range. It returns optional<InputExpansion>.
@@ -51,16 +53,16 @@ right operand, arithmetic/overflow policy and comparator order. This does not
 claim evaluation sequencing for the operands of C++ addition.
 Do not compare file numbers or substitute bytewise range checks.
 
-Construct the named result only after expanded next count matches. Compute its
-union by the same range assignment and Widen operation while expanded vectors
-and caller version are alive. Moves do not introduce allocations or shorten
+Construct the named result only after expanded next count matches. The parent
+computes its union by the same range assignment and Widen operation after
+replacing input vectors. Moves do not introduce allocations or shorten
 metadata lifetime. Returning rejection destroys candidate vectors without
 touching caller-selected input state.
 
 SetupInputs composes original two-level closure, optional expansion application,
 original grandparent collection and named returned Compaction construction.
 Apply the result's source range and move its source/next vectors together, then
-assign union. Original version ownership stays in the parent until the final
+assign/widen union. Original version ownership stays in the parent until the final
 aggregate. No ref-parameter forest, new public type, allocated context or generic
 planner framework.
 
@@ -111,3 +113,38 @@ Independent design review found no significant issue. It clarified addition
 operand placement versus unspecified evaluation sequencing, now stated above.
 Expanded-next boundary and short-circuit oracles remain implementation-review
 requirements. The reviewer inspected source/tests without executing tests.
+
+## Implementation record
+
+Three new characterization cases passed and were committed before production
+extraction: accepted/rejected work budget changes grandparent sets and source
+pointer while preserving original metadata identity/ownership; expanded-next
+admission retains its boundary chain; tracked comparator pair proves byte-budget
+rejection skips expanded-next selection, and an admitted budget then rejects a
+larger next-input set.
+
+The implementation simplifies the accepted proposal's result by omitting its
+union-range field. Compute final Widen in SetupInputs after replacing source and
+next vectors, exactly as original code. Computing it inside TryExpandInputs
+would run configured comparator calls while the old next-input vector still
+held additional metadata owners; this refinement preserves original owner
+replacement/compare order and removes unneeded carried state. It is explicitly
+included in combined implementation review.
+
+TryExpandInputs composes original optional guards and candidate primitives;
+SetupInputs composes its original closure, admitted vector/range replacement,
+Widen, grandparents and named returned compaction. These two ledger definitions
+are implemented; remaining picker helpers/parents/lambdas are still recursive
+frontiers.
+
+All 29 selected picker/reverse-picker/tracking/compaction cases pass before/after
+with exact unique JUnit parity, all three added names present and no
+failures/errors/skips. Each run rebuilt actual modern_leveldb_unit_tests in
+Windows Debug on original and final C05 source. #194's new compaction tests
+were not yet part of this independent branch, so its integrated case set will
+be separately validated once available. The shared ledger remains untouched
+while #194 owns its delivery updates.
+Independent combined implementation review found no significant issue and
+confirmed the smaller result preserves original replacement-before-Widen
+ordering. It independently inspected both 29-case XML sets without running
+tests. Exact-head remote CI remains the delivery gate.
