@@ -522,7 +522,34 @@ priority, sparse counters/pointers, historical maxima, no later-block recovery
 read, pre-append thrown failure/retry, candidate ownership and concurrent
 allocation/sequence changes. Independent combined review found no significant
 issue and directly verified both 115-case artifacts without running tests.
-Exact-head CI remains required before delivery; unmodified helper leaves remain open.
+Delivery completed in #203 after all 20 exact-head checks succeeded;
+unmodified helper leaves remain open.
+
+### K01 implementation record
+
+The [cache admission design](cache-admission-composition-design.md) was accepted
+in #199 and delivered in #200 after independent combined review and all 20
+exact-head checks succeeded. Eligibility and locked commit reuse existing cache
+primitives while the parent retains scoped locking, pending ownership,
+unlocked reclamation and returned pin transfer.
+Three added original-source characterizations verify replacement accounting,
+new-mapping erasure during replacement reclamation and allocation-free
+overflow rejection before prepared bucket growth. Exact 31-case original/final
+cache/allocation/table-cache parity uses both real test executables.
+Deeper table/list/retention/typed-cache helpers remain recursive frontiers.
+
+### I01/I02 implementation record
+
+The [engine iterator transition design](engine-iterator-transition-composition-design.md)
+was independently reviewed and accepted in #205. Separate merge-direction and
+user-position/history topic commits follow its fifteen-function ledger.
+Four added original-source cases measure exact child ordering/failure stopping,
+owned binary/empty reverse outputs over reused buffers, and beginning outcome;
+reverse sampling additionally measures exact period counts.
+The same 105 iterator/compaction/database cases pass before/after with exact
+JUnit parity; merge direction alone passes eight cases. Independent combined
+review and exact-head CI remain required before delivery. Other source,
+sampling, bulk positioning and block iterator frontiers stay open.
 
 ### MANIFEST recovery
 

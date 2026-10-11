@@ -2,7 +2,7 @@
 
 ## Scope
 
-Design proposal for I01/I02 in the
+Design accepted in #205 for I01/I02 in the
 [production composition plan](production-function-composition-plan.md).
 Scope is MergingIterator direction transitions in iterators.cc, DbIterator
 positioning/visibility in db_iterator.cc/h and directly related tests.
@@ -138,3 +138,22 @@ Independent source-grounded design review found no significant issue. Its
 mutable-state reference signatures, AdvanceForNext single-Fail rule and
 test-buffer ownership caution are included above. It inspected source/tests
 without editing files or executing builds/tests.
+
+## Implementation evidence
+
+Four added cases passed on original source at
+`16282d222e5c3157930c453e5b27d35d72ab3590` before extraction:
+`DirectionTransitionsPreserveExactChildMoveOrder`,
+`FailedDirectionTransitionStopsBeforeEveryLaterChildMove`,
+`ReverseOutputsOwnBinaryAndEmptyKeysAcrossReusedChildBuffers`, and
+`BeginningExhaustionStopsPositioningAndExplicitSeekRestoresIt`.
+The existing reverse-sampling case also asserts exact period counts.
+Test-local record/buffer adapters do not alter the shared scripted fixture.
+
+Original and combined implementations pass the same 105 unique cases across
+the eight named iterator/compaction/database suites, with exact JUnit parity
+and no failures/errors/skips. The merge-direction topic passes eight cases.
+The actual unit executable was rebuilt after each topic. The ledger describes
+all fifteen new/changed function bodies in this extraction.
+FinishReverseScan returns void because it cannot return a status failure;
+its parent composes it with the original successful scan completion.
