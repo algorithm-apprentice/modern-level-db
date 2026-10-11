@@ -78,7 +78,7 @@ calendar deadline: progress is measured by verified task outcomes.
 The rows are delivery order, not a claim that every adjacent pair has a technical
 dependency. Dependent source and test changes remain in the same small task.
 
-| ID | Small task | Acceptance boundary | Initial state |
+| ID | Small task | Acceptance boundary | Delivery state |
 |---|---|---|---|
 | P01 | Persist policy and the bounded backlog | ADR and style guide agree with this plan | Done |
 | A01 | Remove foundation assertions | Foundation, cache, memory, format, and WAL operations retain their side effects | Delivered in #165 |
@@ -93,17 +93,17 @@ dependency. Dependent source and test changes remain in the same small task.
 | D04 | Remove native filesystem hooks | Preserve POSIX and Windows acquisition, cleanup, and error contracts | Delivered in #167 |
 | D05 | Delete the unused instrumentation leaf | Delete its two source files and remaining build macros; no live target or include refers to them | Delivered in #167 |
 | D06 | Reconcile diagnostic documentation | Current docs advertise supported paths only; historical rationale links to retirement | Delivered in #167 |
-| F01 | Inventory API and engine orchestration | Name concrete mixed-responsibility functions, or record why no change is needed | Inventory below; design delivery pending |
-| F02 | Inventory storage and recovery orchestration | Review table, WAL, metadata, and recovery; identify complex algorithms to keep intact | Inventory below; design delivery pending |
-| F03 | Inventory foundation and platform composition | Review base, cache, memory, native I/O, and offline diagnostics without inventing wrappers | Inventory below; design delivery pending |
-| F04 | Inventory benchmark and tool composition | Review repository-owned harnesses and scripts separately from engine algorithms | Inventory below; design delivery pending |
-| F05 | Freeze and execute accepted child refactors | Each accepted candidate gets a named task and separate design, checks, and commit | Three children frozen below; implementation pending |
-| L01 | Reconcile learning and architecture guidance | Source tours, contracts, and examples match the implemented function boundaries | Pending |
-| V01 | Verify the ordinary product | Required build, unit, API, and build-integration checks pass in the configured toolchain | Pending |
-| V02 | Verify storage behavior | Model, compatibility, and crash checks pass in their supported environment | Pending |
-| V03 | Verify retained performance tooling | Ordinary performance contracts/smoke and native CPU capture/calibration remain supported | Pending |
-| V04 | Verify docs and removal boundaries | Tool/doc checks pass; no production runtime assertion, retired macro, or diagnostic target remains | Pending |
-| V05 | Complete independent review and handoff | Resolve actionable findings, record environment gaps and evidence, persist the final outcome | Pending |
+| F01 | Inventory API and engine orchestration | Name concrete mixed-responsibility functions, or record why no change is needed | Done; reviewed design #168 |
+| F02 | Inventory storage and recovery orchestration | Review table, WAL, metadata, and recovery; identify complex algorithms to keep intact | Done; reviewed design #168 |
+| F03 | Inventory foundation and platform composition | Review base, cache, memory, native I/O, and offline diagnostics without inventing wrappers | Done; reviewed design #168 |
+| F04 | Inventory benchmark and tool composition | Review repository-owned harnesses and scripts separately from engine algorithms | Done; reviewed design #168 |
+| F05 | Freeze and execute accepted child refactors | Each accepted candidate gets a named task and separate design, checks, and commit | Done; #169, #170, #171 |
+| L01 | Reconcile learning and architecture guidance | Source tours, contracts, and examples match the implemented function boundaries | Done; child source tours and this handoff |
+| V01 | Verify the ordinary product | Required build, unit, API, and build-integration checks pass in the configured toolchain | Done; integrated checks and child CI |
+| V02 | Verify storage behavior | Model, compatibility, and crash checks pass in their supported environment | Done; integrated checks and child CI |
+| V03 | Verify retained performance tooling | Ordinary performance contracts/smoke and native CPU capture/calibration remain supported | Done; integrated checks and child CI |
+| V04 | Verify docs and removal boundaries | Tool/doc checks pass; no production runtime assertion, retired macro, or diagnostic target remains | Done; evidence below |
+| V05 | Complete independent review and handoff | Resolve actionable findings, record environment gaps and evidence, persist the final outcome | Done; independent reviews clean and evidence recorded here |
 
 Assertion preparation has already touched several source areas in one working
 tree. Audit assertion-only members and retain the small internal commits, but
@@ -163,9 +163,9 @@ accepted children.
 
 | Child | Responsibility | Source change surface | State |
 |---|---|---|---|
-| F05-01 | Separate obsolete-file retention, locked collection and unlocked deletion | `database.h`, `database_background.cc` | Awaiting design delivery |
-| F05-02 | Separate fresh recovery WAL acquisition and durability barriers | `recovery.cc` | Awaiting design delivery |
-| F05-03 | Separate pure workload argument construction from experiment lifecycle | `run_performance.py`, `performance_test.py` | Awaiting design delivery |
+| F05-01 | Separate obsolete-file retention, locked collection and unlocked deletion | `database.h`, `database_background.cc` | Delivered in #169 |
+| F05-02 | Separate fresh recovery WAL acquisition and durability barriers | `recovery.cc` | Delivered in #170 |
+| F05-03 | Separate pure workload argument construction from experiment lifecycle | `run_performance.py`, `performance_test.py` | Delivered in #171 |
 
 After the frozen list is delivered, unrelated newly discovered improvements
 belong to a later backlog. Required fixes for defects introduced by this work
@@ -231,6 +231,69 @@ on final head `2c339bc02c479a094f0b7790e480583a2c32d7e5`; #167 merged as
 the reviewed head. Stable patch IDs confirmed the seven remaining prepared code
 slices were retained. Local/remote delivered branches were deleted and main was
 synchronized; the saved pre-delivery stash remains a recovery archive.
+
+### Composition delivery and final acceptance
+
+The frozen inventory and ADR-0077 merged in design-only #168 after independent
+design review and all 20 exact-head checks. That review corrected a genuine
+planning error before implementation: failed directory listing must return with
+the mutex held, whereas a successful empty collection still unlocks/relocks.
+A separate narrow design follow-up confirmed the correction.
+
+F05-01 passed its separate implementation-persona review and 122 selected
+database/iterator checks before publication. All 20 checks passed on
+`ef92addfc5d3067864966f0cdcd2519459b58fea`; #169 merged as
+`d538a0a0bdef293a2e3aef05753a745f93ff38e4`.
+F05-02 independently passed review and 86 recovery/database checks.
+All 20 checks passed on `afe03b4b88e6708078966aed2741fd40885972c7`;
+#170 merged as `bd04a481bcf1d9d05788266883c936e126fc9115`.
+Both delivered topic branches were removed.
+
+F05-03 added four pure-helper tests first and observed the missing-helper import
+failure, then implemented the extraction. The four checks and actual ordinary
+performance contracts passed; its independent code persona found no issues.
+A differential comparison of the original inline argument statements and new
+helper matched exactly for 3,072 combinations spanning all 24 cases, both smoke
+modes, effective repetition/time values and ownership/access/durability controls.
+The remaining artifact/process/error transaction was deliberately retained.
+All 20 checks passed on #171 head
+`1095f8f9a97cc00b8a1fbb50d6be00bac78e8f1c`; it merged as
+`d071c5dc215654f1a3407bd12e8f7e63b5261608`. Its delivered branches were removed.
+
+The three independent patches were composed locally without changing any
+published head. The integrated source/test tree at `ad6ebdc` was verified
+identical to merged main at `d071c5d` and passed:
+
+| Acceptance | Command / scope | Actual outcome |
+|---|---|---|
+| V01 | Warnings-as-errors `windows-debug` build; CTest `-L "unit\|cmake"` | 710 unit and 13 CMake checks passed |
+| V02 | `windows-compatibility` build; CTest `-L "model\|compatibility\|crash"` | 18 checks passed |
+| V03 | Optimized `windows-profiling` build; full performance label | 11 checks passed, including ordinary contracts/smoke, mutations and native CPU capture/calibration |
+| V04 | Documentation validator and tool suite; changed C++ formatter; diff check | Validator/format clean and 13 documentation tests passed |
+| V04 | Production/include/benchmark/build scan and generated Debug/profiling compile commands | No runtime assert, retired macro, collector include or dedicated target |
+| V05 | Separate integration-persona pass of cross-child boundaries and source guidance | No actionable integration findings |
+
+CTest selections used fail-on-empty behavior and retained JUnit reports.
+The changed learning tours explain cleanup's lock stages and recovery's
+acquisition-versus-publication boundary; the profiling guide explains pure
+argument construction versus lifecycle ownership. Existing examples require no
+API changes. The historical comment-remediation measurement record is retained
+as evidence from its original date, not as advertising for retired targets.
+
+These Windows runs do not establish native POSIX behavior, macOS capture,
+sanitizers or GCC coverage. Each implementation's applicable remote checks
+provide that platform evidence; the final child and reviewed completion handoff
+are recorded here without promoting docs-only CI acknowledgements into runtime
+evidence. A separate completion-documentation persona found no actionable
+inaccuracies or omissions. The completion-record PR changes documentation only;
+the reviewed code tree is unchanged.
+
+The agreed bounded goal is complete: all 24 parent tasks and all three frozen
+children have implementation or justified keep decisions, independent reviews,
+verification evidence and persistent delivery. This is not a claim that every
+future product feature or conceivable readability improvement is finished.
+Further unrelated candidates belong to a new backlog; required fixes to this
+delivered work do not.
 
 Use task status and this document's outcome entries as the handoff, not memory
 of previous conversation turns. Record actual checks after execution; do not

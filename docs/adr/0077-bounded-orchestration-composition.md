@@ -1,6 +1,6 @@
 # ADR-0077: Bounded Orchestration Composition
 
-- Status: Accepted
+- Status: Implemented
 - Date: 2026-10-12
 
 ## Concept and contract
@@ -127,3 +127,12 @@ on its exact final head; remove delivered local and remote branches.
 Reconcile the plan and learning guidance with actual outcomes after delivery.
 Final acceptance includes the integrated ordinary product, storage, performance,
 documentation/removal checks, and a separate review of the completion handoff.
+
+## Outcome
+
+The independently reviewed design merged in #168 before implementation.
+The three children merged separately in #169, #170 and #171 after separate
+implementation-persona reviews and all applicable exact-head checks passed.
+The composed tree matches merged main; final integrated validation and the
+independently reviewed handoff are recorded in the
+[improvement plan](../development/textbook-improvement-plan.md).

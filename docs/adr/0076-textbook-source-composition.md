@@ -1,6 +1,6 @@
 # ADR-0076: Textbook Source Composition
 
-- Status: Accepted
+- Status: Implemented
 - Date: 2026-10-11
 
 ## Concept and contract
