@@ -79,6 +79,8 @@ std::vector<std::byte> Key(std::string_view user_key, SequenceNumber sequence,
 
 struct WritableState {
     std::vector<std::byte> data;
+    std::vector<std::size_t> append_sizes;
+    std::vector<std::string> operations;
     int append_calls = 0;
     int flush_calls = 0;
     int sync_calls = 0;
@@ -94,6 +96,8 @@ public:
         : state_(std::move(state)) {}
 
     Status Append(ByteView data) override {
+        state_->operations.emplace_back("append");
+        state_->append_sizes.push_back(data.size());
         ++state_->append_calls;
         if (state_->fail_append_call == state_->append_calls) {
             return std::unexpected(Error::Io("injected append failure"));
@@ -103,11 +107,13 @@ public:
     }
 
     Status Flush() override {
+        state_->operations.emplace_back("flush");
         ++state_->flush_calls;
         return {};
     }
 
     Status Sync() override {
+        state_->operations.emplace_back("sync");
         ++state_->sync_calls;
         if (state_->fail_sync) {
             return std::unexpected(Error::Io("injected sync failure"));
@@ -116,6 +122,7 @@ public:
     }
 
     Status Close() override {
+        state_->operations.emplace_back("close");
         ++state_->close_calls;
         if (state_->fail_close) {
             return std::unexpected(Error::Io("injected close failure"));
@@ -505,6 +512,86 @@ TEST_F(TableBuilderTest, ReportsSyncAndCloseFailures) {
     const Status finished = both->Finish();
     ASSERT_FALSE(finished.has_value());
     EXPECT_EQ(finished.error().message(), "injected sync failure");
+    EXPECT_EQ(state_->data, FromHex(EmptyTable));
+    EXPECT_EQ(both->file_size(), state_->data.size());
+    EXPECT_EQ(state_->sync_calls, 1);
+    EXPECT_EQ(state_->close_calls, 1);
+    EXPECT_EQ(state_->flush_calls, 0);
+    ASSERT_GE(state_->operations.size(), 2U);
+    EXPECT_EQ(state_->operations[state_->operations.size() - 2], "sync");
+    EXPECT_EQ(state_->operations.back(), "close");
+}
+
+TEST_F(TableBuilderTest, PreservesTailAppendPrefixesAndCompleteBlockSizeOnFailure) {
+    for (const bool filtered : {false, true}) {
+        for (const bool has_entries : {false, true}) {
+            SCOPED_TRACE(testing::Message() << filtered << "/" << has_entries);
+            TableBuilderOptions options;
+            if (filtered) {
+                options = WithFilter(options);
+            }
+            const auto add_entries = [&](TableBuilder& builder) {
+                if (has_entries) {
+                    ASSERT_TRUE(builder.Add(Key("apple", 3), AsBytes("a")).has_value());
+                    ASSERT_TRUE(builder.Add(Key("apricot", 2), AsBytes("b")).has_value());
+                }
+            };
+
+            state_ = std::make_shared<WritableState>();
+            auto reference = MakeBuilder(options);
+            ASSERT_NO_FATAL_FAILURE(add_entries(*reference));
+            EXPECT_EQ(state_->append_calls, 0);
+            ASSERT_TRUE(reference->Finish().has_value());
+            const auto reference_bytes = state_->data;
+            const auto append_sizes = state_->append_sizes;
+            ASSERT_FALSE(append_sizes.empty());
+            ASSERT_EQ(append_sizes.size() % 2, 1U);
+            EXPECT_EQ(append_sizes.back(), FooterSize);
+            EXPECT_EQ(reference->file_size(), reference_bytes.size());
+            EXPECT_EQ(state_->sync_calls, 1);
+            EXPECT_EQ(state_->close_calls, 1);
+            EXPECT_EQ(state_->flush_calls, 0);
+            std::vector<std::string> complete_operations(append_sizes.size(), "append");
+            complete_operations.emplace_back("sync");
+            complete_operations.emplace_back("close");
+            EXPECT_EQ(state_->operations, complete_operations);
+
+            std::size_t prefix_size = 0;
+            std::size_t complete_block_size = 0;
+            for (std::size_t failing = 0; failing < append_sizes.size(); ++failing) {
+                SCOPED_TRACE(failing);
+                state_ = std::make_shared<WritableState>();
+                state_->fail_append_call = static_cast<int>(failing + 1);
+                state_->fail_close = true;
+                auto builder = MakeBuilder(options);
+                ASSERT_NO_FATAL_FAILURE(add_entries(*builder));
+
+                const Status finished = builder->Finish();
+                ASSERT_FALSE(finished.has_value());
+                EXPECT_EQ(finished.error().message(), "injected append failure");
+                EXPECT_EQ(builder->file_size(), complete_block_size);
+                EXPECT_EQ(state_->data,
+                          std::vector<std::byte>(
+                              reference_bytes.begin(),
+                              reference_bytes.begin() + static_cast<std::ptrdiff_t>(prefix_size)));
+                std::vector<std::string> failed_operations(failing + 1, "append");
+                failed_operations.emplace_back("close");
+                EXPECT_EQ(state_->operations, failed_operations);
+                EXPECT_EQ(state_->sync_calls, 0);
+                EXPECT_EQ(state_->close_calls, 1);
+                EXPECT_EQ(state_->flush_calls, 0);
+                ExpectError(builder->Add(Key("z", 1), {}), ErrorCode::InvalidArgument);
+                ExpectError(builder->AddTrusted(Key("z", 1), {}), ErrorCode::InvalidArgument);
+                ExpectError(builder->Finish(), ErrorCode::InvalidArgument);
+                EXPECT_EQ(state_->operations, failed_operations);
+
+                prefix_size += append_sizes[failing];
+                if (failing % 2 == 1) {
+                    complete_block_size = prefix_size;
+                }
+            }
+        }
+    }
 }
 
 TEST_F(TableBuilderTest, RejectsCallsAfterFinish) {
