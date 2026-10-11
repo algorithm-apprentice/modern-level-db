@@ -39,6 +39,7 @@ add_executable(
   unit/engine/lookup_test.cc
   unit/engine/recovery_test.cc
   unit/engine/seek_statistics_test.cc
+  unit/engine/snapshot_registry_test.cc
   unit/engine/table_cache_test.cc
   unit/engine/write_path_test.cc
   unit/format/internal_key_test.cc

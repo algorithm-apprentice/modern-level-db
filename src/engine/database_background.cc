@@ -163,8 +163,7 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
         return false;
     }
 
-    const SequenceNumber smallest_snapshot =
-        snapshots_.empty() ? versions_->last_sequence() : *snapshots_.begin();
+    const SequenceNumber smallest_snapshot = snapshots_.OldestOr(versions_->last_sequence());
     const std::unique_ptr<InternalIterator> input =
         NewCompactionIterator(*compaction, table_cache_, comparator_);
     CompactionOptions options;

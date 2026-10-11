@@ -15,6 +15,7 @@
 
 #include "engine/db_iterator.h"
 #include "engine/seek_statistics.h"
+#include "engine/snapshot_registry.h"
 #include "engine/table_cache.h"
 #include "engine/write_path.h"
 #include "format/internal_key.h"
@@ -230,7 +231,7 @@ private:
     std::shared_ptr<const MemTable> immutable_;
     std::vector<std::shared_ptr<const MemTable>> read_pinned_memtables_;
     WriteQueue write_queue_;
-    std::multiset<SequenceNumber> snapshots_;
+    SnapshotRegistry snapshots_;
     std::set<std::uint64_t> pending_outputs_;
     SeekStatistics seek_statistics_;
     // The last seed of an iterator's read sampling.

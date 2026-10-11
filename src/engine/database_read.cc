@@ -1,4 +1,3 @@
-#include <cassert>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -122,15 +121,13 @@ void DatabaseEngine::RecordReadSample(ByteView internal_key) {
 SequenceNumber DatabaseEngine::GetSnapshot() {
     const std::lock_guard lock(mutex_);
     const SequenceNumber sequence = versions_->last_sequence();
-    snapshots_.insert(sequence);
+    snapshots_.Register(sequence);
     return sequence;
 }
 
 void DatabaseEngine::ReleaseSnapshot(SequenceNumber snapshot) {
     const std::lock_guard lock(mutex_);
-    const auto found = snapshots_.find(snapshot);
-    assert(found != snapshots_.end());
-    snapshots_.erase(found);
+    snapshots_.Release(snapshot);
 }
 
 Result<DatabaseEngineState> DatabaseEngine::GetState() {
@@ -151,9 +148,7 @@ Result<DatabaseEngineState> DatabaseEngine::GetState() {
 
     state.last_sequence = versions_->last_sequence();
     state.snapshot_count = snapshots_.size();
-    if (!snapshots_.empty()) {
-        state.oldest_snapshot_sequence = *snapshots_.begin();
-    }
+    state.oldest_snapshot_sequence = snapshots_.oldest();
     state.write_queue_depth = write_queue_.size();
     state.mutable_memtable_bytes = published_mutable_memtable_bytes_;
     if (immutable_ != nullptr) {
