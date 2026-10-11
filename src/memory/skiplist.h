@@ -51,10 +51,11 @@ public:
         std::array<Node*, MaxHeight> predecessors{};
         Node* existing = FindGreaterOrEqual(entry, predecessors.data());
 #ifndef NDEBUG
-        const bool unique =
-            existing == nullptr ||  // GCOVR_EXCL_BR_WITHOUT_HIT: duplicate is caller error
-            !Equal(existing->entry, entry);
-        assert(unique);
+        const bool duplicate =
+            existing != nullptr &&  // GCOVR_EXCL_BR_WITHOUT_HIT: duplicate is caller error
+            Equal(                  // GCOVR_EXCL_BR_WITHOUT_HIT: duplicate is caller error
+                existing->entry, entry);
+        assert(!duplicate);
 #endif
         (void)existing;
         InsertAfterSearch(entry, predecessors);
