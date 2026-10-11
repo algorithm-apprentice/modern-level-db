@@ -2,7 +2,10 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -50,6 +53,28 @@ std::vector<std::uint64_t> Numbers(const Version& version, std::uint32_t level) 
     }
     return numbers;
 }
+
+class CountingComparator final : public Comparator {
+public:
+    int Compare(ByteView left, ByteView right) const noexcept override {
+        comparisons_.fetch_add(1, std::memory_order_relaxed);
+        return BytewiseComparator().Compare(left, right);
+    }
+    std::string_view Name() const noexcept override { return BytewiseComparator().Name(); }
+    void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const override {
+        BytewiseComparator().FindShortestSeparator(start, limit);
+    }
+    void FindShortSuccessor(std::vector<std::byte>& key) const override {
+        BytewiseComparator().FindShortSuccessor(key);
+    }
+    void Reset() noexcept { comparisons_.store(0, std::memory_order_relaxed); }
+    std::size_t comparisons() const noexcept {
+        return comparisons_.load(std::memory_order_relaxed);
+    }
+
+private:
+    mutable std::atomic<std::size_t> comparisons_{0};
+};
 
 class VersionBuilderTest : public testing::Test {
 protected:
@@ -153,17 +178,136 @@ TEST_F(VersionBuilderTest, TrustedBuildLinearlyMergesALargeBase) {
         const std::string prefix = "key" + std::to_string(10000 + number);
         metadata.push_back(File(number, prefix + "a", prefix + "z"));
     }
-    const Version base = Applied(Version(), {Adding(1, metadata)});
+    CountingComparator user_comparator;
+    const InternalKeyComparator comparator(user_comparator);
+    VersionBuilder builder(comparator, Version());
+    ASSERT_TRUE(builder.Apply(Adding(1, metadata)).has_value());
+    Result<Version> built = builder.Build();
+    ASSERT_TRUE(built.has_value());
+    const Version base = std::move(*built);
     VersionEdit edit;
     ASSERT_TRUE(edit.RemoveFile(1, 1024).has_value());
     ASSERT_TRUE(edit.AddFile(1, File(2049, "key11024b", "key11024c")).has_value());
 
-    const Version version = VersionBuilder::BuildTrusted(comparator_, base, edit);
+    user_comparator.Reset();
+    const Version version = VersionBuilder::BuildTrusted(comparator, base, edit);
+    EXPECT_LE(user_comparator.comparisons(), base.files(1).size() + 1);
 
     ASSERT_EQ(version.files(1).size(), 2048U);
     EXPECT_EQ(version.files(1).front(), base.files(1).front());
     EXPECT_EQ(version.files(1).back(), base.files(1).back());
     EXPECT_EQ(Numbers(version, 1)[1023], 2049U);
+    for (std::size_t index = 0; index < version.files(1).size(); ++index) {
+        if (index == 1023) {
+            EXPECT_EQ(version.files(1)[index]->number, 2049U);
+        } else {
+            EXPECT_EQ(version.files(1)[index], base.files(1)[index]);
+        }
+    }
+}
+
+TEST_F(VersionBuilderTest, TrustedBuildPreservesTiesReplacementsAndEmptyDeltas) {
+    const Version base =
+        Applied(Version(), {Adding(0, {File(4, "a", "d"), File(2, "a", "c"), File(8, "z", "z")})});
+    base.files(0)[1]->allowed_seeks = 17;
+    const std::vector<Version::File> original(base.files(0).begin(), base.files(0).end());
+    VersionEdit empty;
+    VersionEdit deletions;
+    ASSERT_TRUE(deletions.RemoveFile(0, 2).has_value());
+    ASSERT_TRUE(deletions.RemoveFile(0, 8).has_value());
+    VersionEdit additions = Adding(0, {File(9, "zz", "zz"), File(3, "a", "b")});
+    VersionEdit replacement = Adding(0, {File(2, "a", "b"), File(1, "a", "b")});
+    ASSERT_TRUE(replacement.RemoveFile(0, 2).has_value());
+    ASSERT_TRUE(replacement.RemoveFile(0, 8).has_value());
+
+    const std::vector<std::vector<std::uint64_t>> expected{
+        {2, 4, 8}, {4}, {2, 3, 4, 8, 9}, {1, 2, 4}};
+    std::size_t scenario = 0;
+    for (const VersionEdit& edit : {empty, deletions, additions, replacement}) {
+        SCOPED_TRACE(scenario);
+        const std::vector<std::byte> encoded = edit.Encode();
+        const Version checked = Applied(base, {edit});
+        const Version trusted = VersionBuilder::BuildTrusted(comparator_, base, edit);
+        EXPECT_EQ(Numbers(checked, 0), expected[scenario]);
+        EXPECT_EQ(Numbers(trusted, 0), expected[scenario]);
+        for (std::uint32_t level = 1; level < NumLevels; ++level) {
+            EXPECT_TRUE(checked.files(level).empty());
+            EXPECT_TRUE(trusted.files(level).empty());
+        }
+        for (const Version::File& file : trusted.files(0)) {
+            for (const Version::File& old : original) {
+                if (file->number == old->number && !edit.deleted_files().contains(DeletedFile{
+                                                       .level = 0, .number = old->number})) {
+                    EXPECT_EQ(file, old);
+                    EXPECT_EQ(file->allowed_seeks, old->allowed_seeks);
+                }
+            }
+        }
+        if (scenario == 3) {
+            EXPECT_NE(trusted.files(0)[1], original[0]);
+            EXPECT_EQ(comparator_.Compare(trusted.files(0)[1]->largest, Key("b", 100)), 0);
+        }
+        EXPECT_EQ(edit.Encode(), encoded);
+        EXPECT_EQ(std::vector<Version::File>(base.files(0).begin(), base.files(0).end()), original);
+        EXPECT_EQ(Numbers(base, 0), (std::vector<std::uint64_t>{2, 4, 8}));
+        EXPECT_EQ(base.files(0)[1]->allowed_seeks, 17);
+        ++scenario;
+    }
+
+    const Version trusted_empty = VersionBuilder::BuildTrusted(comparator_, Version(), empty);
+    for (std::uint32_t level = 0; level < NumLevels; ++level) {
+        EXPECT_TRUE(trusted_empty.files(level).empty());
+    }
+}
+
+TEST_F(VersionBuilderTest, InitializesNewSeekBudgetsWithoutChangingRetainedFilesOrEdits) {
+    const Version base = Applied(Version(), {Adding(0, {File(1, "a", "b")})});
+    base.files(0).front()->allowed_seeks = 7;
+    constexpr std::uint64_t BytesPerSeek = 16384;
+    for (const std::uint64_t size :
+         {std::uint64_t{0}, 100 * BytesPerSeek - 1, 100 * BytesPerSeek, 101 * BytesPerSeek,
+          std::numeric_limits<std::uint64_t>::max()}) {
+        SCOPED_TRACE(size);
+        FileMetadata file = File(2, "c", "d");
+        file.file_size = size;
+        file.allowed_seeks = 900;
+        const VersionEdit edit = Adding(0, {file});
+        const std::vector<std::byte> encoded = edit.Encode();
+        const Version checked = Applied(base, {edit});
+        const Version trusted = VersionBuilder::BuildTrusted(comparator_, base, edit);
+        const std::int64_t expected =
+            size / BytesPerSeek < 100 ? 100 : static_cast<std::int64_t>(size / BytesPerSeek);
+        EXPECT_EQ(checked.files(0)[1]->allowed_seeks, expected);
+        EXPECT_EQ(trusted.files(0)[1]->allowed_seeks, expected);
+        EXPECT_EQ(trusted.files(0)[1]->file_size, size);
+        EXPECT_EQ(checked.files(0).front(), base.files(0).front());
+        EXPECT_EQ(trusted.files(0).front(), base.files(0).front());
+        EXPECT_EQ(base.files(0).front()->allowed_seeks, 7);
+        EXPECT_EQ(edit.new_files().front().file.allowed_seeks, 900);
+        EXPECT_EQ(edit.Encode(), encoded);
+        EXPECT_EQ(file.allowed_seeks, 900);
+    }
+}
+
+TEST_F(VersionBuilderTest, ReportsTheFirstFailureInPhaseAndEntryOrder) {
+    const Version base = Applied(Version(), {Adding(0, {File(1, "a", "b")})});
+    VersionEdit missing_deletion = Adding(0, {File(1, "z", "a")});
+    ASSERT_TRUE(missing_deletion.RemoveFile(0, 9).has_value());
+    const VersionEdit live_reversed = Adding(0, {File(1, "z", "a")});
+    const VersionEdit reversed_before_live = Adding(0, {File(2, "z", "a"), File(1, "a", "b")});
+    const std::vector<std::string> messages{"edit deletes file 9, which is not live in level 0",
+                                            "edit adds file 1, which is already live",
+                                            "file 2 has its smallest key after its largest"};
+    std::size_t scenario = 0;
+    for (const VersionEdit& edit : {missing_deletion, live_reversed, reversed_before_live}) {
+        SCOPED_TRACE(scenario);
+        VersionBuilder builder(comparator_, base);
+        const Status applied = builder.Apply(edit);
+        ASSERT_FALSE(applied.has_value());
+        EXPECT_EQ(applied.error().code(), ErrorCode::InvalidArgument);
+        EXPECT_EQ(applied.error().message(), messages[scenario]);
+        ++scenario;
+    }
 }
 
 TEST_F(VersionBuilderTest, AppliesEditsInOrder) {
