@@ -310,7 +310,8 @@ public:
                 std::fprintf(stderr, "native collector cleanup termination failed (Win32 %lu)\n",
                              ::GetLastError());
             }
-            if (process_ && ::WaitForSingleObject(process_->get(), 5'000) != WAIT_OBJECT_0) {
+            if (process_ && process_->valid() &&
+                ::WaitForSingleObject(process_->get(), 5'000) != WAIT_OBJECT_0) {
                 std::fprintf(stderr, "native collector cleanup reap failed\n");
             }
         }
@@ -344,16 +345,26 @@ public:
         Check(::GetExitCodeProcess(handle(), &code) != FALSE, "GetExitCodeProcess(profile)");
         if (code != 0)
             throw std::runtime_error("owned workload failed with code " + std::to_string(code));
-        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION information{};
-        Check(::QueryInformationJobObject(job_.get(), JobObjectBasicAccountingInformation,
-                                          &information, sizeof(information), nullptr) != FALSE,
-              "QueryInformationJobObject(profile)");
-        if (information.ActiveProcesses != 0) {
-            throw std::runtime_error("owned workload left live descendants");
+
+        // Job accounting releases an exited process only after its remaining
+        // references close. Descendants, if any, stay visible after these two.
+        thread_->Close();
+        process_->Close();
+        const auto drain_deadline = Clock::now() + std::chrono::seconds(5);
+        while (true) {
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION information{};
+            Check(::QueryInformationJobObject(job_.get(), JobObjectBasicAccountingInformation,
+                                              &information, sizeof(information), nullptr) != FALSE,
+                  "QueryInformationJobObject(profile)");
+            if (information.ActiveProcesses == 0) {
+                break;
+            }
+            if (Clock::now() >= drain_deadline) {
+                throw std::runtime_error("owned workload left live descendants");
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         finished_ = true;
-        process_->Close();
-        thread_->Close();
         job_.Close();
     }
 
