@@ -39,6 +39,17 @@ Result<TableCache::Handle> TableCache::Find(std::uint64_t file_number, std::uint
         return std::move(*cached);
     }
 
+    Result<std::unique_ptr<Table>> table = OpenTable(file_number, file_size);
+    if (!table.has_value()) {
+        return std::unexpected(std::move(table).error());
+    }
+    // Tables have charge one, so accounting saturation would require SIZE_MAX
+    // tables in one shard.
+    return tables_.Insert(key, std::move(*table), 1);
+}
+
+Result<std::unique_ptr<Table>> TableCache::OpenTable(std::uint64_t file_number,
+                                                     std::uint64_t file_size) {
     Result<std::unique_ptr<RandomAccessFile>> file =
         file_system_->OpenRandomAccess(TableFileName(directory_, file_number), file_size);
     if (!file.has_value()) {
@@ -49,9 +60,7 @@ Result<TableCache::Handle> TableCache::Find(std::uint64_t file_number, std::uint
     if (!table.has_value()) {
         return std::unexpected(std::move(table).error());
     }
-    // Tables have charge one, so accounting saturation would require SIZE_MAX
-    // tables in one shard.
-    return tables_.Insert(key, std::move(*table), 1);
+    return table;
 }
 
 void TableCache::Evict(std::uint64_t file_number) { tables_.Erase(CacheKey(file_number)); }
