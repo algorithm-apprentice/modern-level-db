@@ -227,6 +227,77 @@ public:
     }
 };
 
+struct CurrentReadState {
+    std::size_t chunk_size = 3;
+    std::optional<std::size_t> failed_call;
+    std::optional<std::size_t> oversized_call;
+    std::vector<std::size_t> requests;
+    unsigned destructs = 0;
+    bool selected_manifest_opened = false;
+    bool closed_before_selected = false;
+};
+
+class ChunkedCurrentReader final : public SequentialFile {
+public:
+    ChunkedCurrentReader(std::unique_ptr<SequentialFile> file, CurrentReadState& state) noexcept
+        : file_(std::move(file)), state_(state) {}
+    ~ChunkedCurrentReader() override { ++state_.destructs; }
+
+    Result<std::size_t> Read(MutableByteView output) override {
+        const std::size_t call = state_.requests.size();
+        state_.requests.push_back(output.size());
+        if (state_.failed_call == call) {
+            return std::unexpected(Error::Io("current chunk failure"));
+        }
+        if (state_.oversized_call == call) {
+            return output.size() + 1;
+        }
+        return file_->Read(output.first(std::min(output.size(), state_.chunk_size)));
+    }
+
+private:
+    std::unique_ptr<SequentialFile> file_;
+    CurrentReadState& state_;
+};
+
+class ChunkedCurrentFileSystem final : public MemoryFileSystem {
+public:
+    CurrentReadState current;
+
+    Result<std::unique_ptr<SequentialFile>> OpenSequential(
+        const std::filesystem::path& path) override {
+        if (path.filename() != "CURRENT") {
+            current.selected_manifest_opened = true;
+            current.closed_before_selected = current.destructs == 1;
+            return MemoryFileSystem::OpenSequential(path);
+        }
+        auto file = MemoryFileSystem::OpenSequential(path);
+        if (!file.has_value()) {
+            return std::unexpected(std::move(file).error());
+        }
+        return std::make_unique<ChunkedCurrentReader>(std::move(*file), current);
+    }
+};
+
+class NameCountingComparator final : public Comparator {
+public:
+    mutable std::atomic<unsigned> name_calls{0};
+
+    int Compare(ByteView left, ByteView right) const noexcept override {
+        return BytewiseComparator().Compare(left, right);
+    }
+    std::string_view Name() const noexcept override {
+        name_calls.fetch_add(1, std::memory_order_relaxed);
+        return BytewiseComparator().Name();
+    }
+    void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const override {
+        BytewiseComparator().FindShortestSeparator(start, limit);
+    }
+    void FindShortSuccessor(std::vector<std::byte>& key) const override {
+        BytewiseComparator().FindShortSuccessor(key);
+    }
+};
+
 class VersionSetTest : public testing::Test {
 protected:
     std::unique_ptr<VersionSet> Create(FileSystem& file_system) {
@@ -854,6 +925,199 @@ TEST_F(VersionSetTest, ReturnsFileErrorsWhileRecovering) {
     const auto set = TryRecover(oversized);
     ASSERT_FALSE(set.has_value());
     EXPECT_EQ(set.error().code(), ErrorCode::Io);
+}
+
+TEST_F(VersionSetTest, CurrentShortChunksReachEofBeforeSelectionOrParsing) {
+    for (bool malformed : {false, true}) {
+        SCOPED_TRACE(malformed);
+        ChunkedCurrentFileSystem file_system;
+        Populate(file_system);
+        const std::string contents =
+            malformed ? std::string(70, 'x') + "\n" : CurrentFileContents(1);
+        file_system.Write(CurrentFileName(directory_), Materialize(AsBytes(contents)));
+        const auto recovered = TryRecover(file_system);
+        const std::size_t calls = (contents.size() + file_system.current.chunk_size - 1) /
+                                      file_system.current.chunk_size +
+                                  1;
+        EXPECT_EQ(file_system.current.requests, std::vector<std::size_t>(calls, 64));
+        EXPECT_EQ(file_system.current.destructs, 1U);
+        if (malformed) {
+            ASSERT_FALSE(recovered.has_value());
+            EXPECT_EQ(recovered.error().code(), ErrorCode::Corruption);
+            EXPECT_FALSE(file_system.current.selected_manifest_opened);
+        } else {
+            ASSERT_TRUE(recovered.has_value());
+            EXPECT_TRUE(file_system.current.selected_manifest_opened);
+            EXPECT_TRUE(file_system.current.closed_before_selected);
+            ASSERT_EQ((*recovered)->current()->files(1).size(), 1U);
+            EXPECT_EQ((*recovered)->current()->files(1).front()->number, 2U);
+        }
+    }
+}
+
+TEST_F(VersionSetTest, CurrentPartialReadErrorsPrecedeParsingAndCloseItsOwner) {
+    for (bool oversized : {false, true}) {
+        SCOPED_TRACE(oversized);
+        ChunkedCurrentFileSystem file_system;
+        Populate(file_system);
+        file_system.Write(CurrentFileName(directory_), Materialize(AsBytes("malformed CURRENT")));
+        if (oversized) {
+            file_system.current.oversized_call = 2;
+        } else {
+            file_system.current.failed_call = 2;
+        }
+        const auto recovered = TryRecover(file_system);
+        ASSERT_FALSE(recovered.has_value());
+        EXPECT_EQ(recovered.error().code(), ErrorCode::Io);
+        EXPECT_EQ(recovered.error().message(),
+                  oversized ? "CURRENT returned an oversized read" : "current chunk failure");
+        EXPECT_EQ(file_system.current.requests, (std::vector<std::size_t>{64, 64, 64}));
+        EXPECT_EQ(file_system.current.destructs, 1U);
+        EXPECT_FALSE(file_system.current.selected_manifest_opened);
+    }
+}
+
+TEST_F(VersionSetTest, TemporaryCurrentStagesPreserveBytesNameAndFailurePrefix) {
+    MemoryFileSystem reference;
+    Populate(reference);
+    auto reference_set = Recover(reference);
+    ASSERT_NE(reference_set, nullptr);
+    const std::size_t start = reference.operations().size();
+    ASSERT_TRUE(reference_set->LogAndApply(Growth(*reference_set)).has_value());
+    const State after = StateOf(*reference_set);
+    const std::vector<std::string> written(
+        reference.operations().begin() + static_cast<std::ptrdiff_t>(start),
+        reference.operations().end());
+    const auto temporary_open = std::ranges::find(written, "open_writable 000003.dbtmp");
+    ASSERT_NE(temporary_open, written.end());
+    const auto temporary_index = static_cast<std::size_t>(temporary_open - written.begin());
+    const std::vector<std::string> stages{"open_writable 000003.dbtmp",  "append 000003.dbtmp",
+                                          "sync 000003.dbtmp",           "close 000003.dbtmp",
+                                          "rename 000003.dbtmp CURRENT", "sync_directory db"};
+    EXPECT_EQ(std::vector<std::string>(temporary_open, written.end()), stages);
+
+    for (std::size_t failing = 0; failing <= stages.size(); ++failing) {
+        SCOPED_TRACE(failing);
+        MemoryFileSystem file_system;
+        Populate(file_system);
+        auto set = Recover(file_system);
+        ASSERT_NE(set, nullptr);
+        const auto edit = Growth(*set);
+        const State before = StateOf(*set);
+        const auto old_current = set->current();
+        const std::size_t first = file_system.operations().size();
+        if (failing != stages.size()) {
+            file_system.FailOperation(first + temporary_index + failing,
+                                      Error::Io("temporary stage failure"));
+        }
+        const Status applied = set->LogAndApply(edit);
+        if (failing == stages.size()) {
+            ASSERT_TRUE(applied.has_value());
+            EXPECT_EQ(StateOf(*set), after);
+        } else {
+            ASSERT_FALSE(applied.has_value());
+            EXPECT_EQ(applied.error().message(), "temporary stage failure");
+            EXPECT_EQ(StateOf(*set), before);
+            EXPECT_EQ(set->current(), old_current);
+            const std::size_t operations = file_system.operations().size();
+            const Status retry = set->LogAndApply(VersionEdit());
+            ASSERT_FALSE(retry.has_value());
+            EXPECT_EQ(retry.error().message(), "temporary stage failure");
+            EXPECT_EQ(file_system.operations().size(), operations);
+        }
+        std::vector<std::string> observed;
+        bool started = false;
+        for (std::size_t index = first; index != file_system.operations().size(); ++index) {
+            const auto& operation = file_system.operations()[index];
+            EXPECT_FALSE(operation.starts_with("remove"));
+            started = started || operation == stages.front();
+            if (started && (operation.find(".dbtmp") != std::string::npos ||
+                            operation == "sync_directory db")) {
+                observed.push_back(operation);
+            }
+        }
+        const std::size_t count = std::min(failing + 1, stages.size());
+        EXPECT_EQ(observed,
+                  std::vector<std::string>(stages.begin(),
+                                           stages.begin() + static_cast<std::ptrdiff_t>(count)));
+        EXPECT_EQ(Text(file_system.Contents(CurrentFileName(directory_))),
+                  CurrentFileContents(failing >= 5 ? 3 : 1));
+        const auto temporary = file_system.Contents(TempFileName(directory_, 3));
+        if (failing == 0 || failing >= 5) {
+            EXPECT_FALSE(temporary.has_value());
+        } else {
+            EXPECT_EQ(Text(temporary), failing == 1 ? "" : CurrentFileContents(3));
+        }
+    }
+}
+
+TEST_F(VersionSetTest, RuntimeProofPriorityIsLazyOrderedAndDoesNotLatch) {
+    for (unsigned scenario = 0; scenario != 6; ++scenario) {
+        SCOPED_TRACE(scenario);
+        MemoryFileSystem file_system;
+        NameCountingComparator names;
+        InternalKeyComparator comparator(names);
+        auto created = VersionSet::Create(file_system, directory_, comparator);
+        ASSERT_TRUE(created.has_value());
+        auto set = std::move(*created);
+        const std::uint64_t log = set->NewFileNumber();
+        VersionEdit setup;
+        setup.SetLogNumber(log);
+        setup.SetPrevLogNumber(log);
+        ASSERT_TRUE(set->LogAndApply(setup).has_value());
+        const std::uint64_t next = set->NewFileNumber() + 1;
+        if (scenario == 0) {
+            ASSERT_TRUE(set->MarkFileNumberUsed(FileNumberLimit - 1).has_value());
+            EXPECT_EQ(set->NewFileNumber(), FileNumberLimit);
+        }
+        const State before = StateOf(*set);
+        const auto old_current = set->current();
+        const std::size_t operations = file_system.operations().size();
+        names.name_calls.store(0, std::memory_order_relaxed);
+        VersionEdit edit;
+        if (scenario <= 1) {
+            edit.SetComparatorName("other");
+        }
+        if (scenario <= 2) {
+            edit.SetLogNumber(log - 1);
+        } else if (scenario == 3) {
+            edit.SetLogNumber(next);
+        }
+        edit.SetPrevLogNumber(next);
+        ASSERT_TRUE(edit.AddFile(0, File(next + 1, "a", "b")).has_value());
+        ASSERT_TRUE(edit.AddFile(1, File(next, "c", "d")).has_value());
+        if (scenario == 5) {
+            edit.SetPrevLogNumber(next - 1);
+        }
+        const Status rejected = set->LogAndApply(edit);
+        ASSERT_FALSE(rejected.has_value());
+        EXPECT_EQ(rejected.error().code(), ErrorCode::InvalidArgument);
+        const std::array<std::string, 6> errors{
+            "file numbers are exhausted",
+            "edit names comparator other",
+            "edit's log number " + std::to_string(log - 1) +
+                " is below the current one or not below the next file number",
+            "edit's log number " + std::to_string(next) +
+                " is below the current one or not below the next file number",
+            "edit's previous log number is not below the next file number",
+            "edit adds file " + std::to_string(next + 1) +
+                ", which is not below the next file number"};
+        EXPECT_EQ(rejected.error().message(), errors[scenario]);
+        EXPECT_EQ(names.name_calls.load(std::memory_order_relaxed), scenario == 1 ? 1U : 0U);
+        EXPECT_EQ(file_system.operations().size(), operations);
+        EXPECT_EQ(StateOf(*set), before);
+        EXPECT_EQ(set->current(), old_current);
+        if (scenario != 0) {
+            VersionEdit valid;
+            valid.SetLogNumber(log);
+            valid.SetPrevLogNumber(next - 1);
+            ASSERT_TRUE(set->LogAndApply(valid).has_value());
+            EXPECT_EQ(set->prev_log_number(), next - 1);
+            ASSERT_TRUE(set->LogAndApply(VersionEdit()).has_value());
+            EXPECT_EQ(set->prev_log_number(), next - 1);
+            EXPECT_EQ(names.name_calls.load(std::memory_order_relaxed), scenario == 1 ? 1U : 0U);
+        }
+    }
 }
 
 TEST_F(VersionSetTest, RejectsCorruptManifests) {

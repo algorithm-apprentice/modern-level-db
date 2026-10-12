@@ -23,27 +23,55 @@
 namespace modern_leveldb {
 namespace {
 
-Result<std::string> ReadCurrent(FileSystem& file_system, const std::filesystem::path& directory) {
-    Result<std::unique_ptr<SequentialFile>> file =
-        file_system.OpenSequential(CurrentFileName(directory));
-    if (!file.has_value()) {
-        return std::unexpected(std::move(file).error());
+Result<std::size_t> ReadCurrentChunk(SequentialFile& file, MutableByteView output) {
+    const Result<std::size_t> read = file.Read(output);
+    if (!read.has_value()) {
+        return std::unexpected(read.error());
     }
+    if (*read > output.size()) {
+        return std::unexpected(Error::Io("CURRENT returned an oversized read"));
+    }
+    return *read;
+}
+
+Result<std::string> ReadCurrentContents(SequentialFile& file) {
     std::string contents;
     std::array<std::byte, 64> buffer{};
     while (true) {
-        const Result<std::size_t> read = (*file)->Read(buffer);
+        Result<std::size_t> read = ReadCurrentChunk(file, buffer);
         if (!read.has_value()) {
-            return std::unexpected(read.error());
-        }
-        if (*read > buffer.size()) {
-            return std::unexpected(Error::Io("CURRENT returned an oversized read"));
+            return std::unexpected(std::move(read).error());
         }
         if (*read == 0) {
             return contents;
         }
         contents.append(AsStringView(ByteView(buffer).first(*read)));
     }
+}
+
+Result<std::string> ReadCurrent(FileSystem& file_system, const std::filesystem::path& directory) {
+    Result<std::unique_ptr<SequentialFile>> file =
+        file_system.OpenSequential(CurrentFileName(directory));
+    if (!file.has_value()) {
+        return std::unexpected(std::move(file).error());
+    }
+    return ReadCurrentContents(**file);
+}
+
+Status WriteCurrentTemporary(WritableFile& file, ByteView contents) {
+    const Status appended = file.Append(contents);
+    if (!appended.has_value()) {
+        return appended;
+    }
+    const Status synced = file.Sync();
+    if (!synced.has_value()) {
+        return synced;
+    }
+    const Status closed = file.Close();
+    if (!closed.has_value()) {
+        return closed;
+    }
+    return {};
 }
 
 struct SelectedManifest {
@@ -76,6 +104,51 @@ Result<SelectedManifest> OpenSelectedManifest(FileSystem& file_system,
     }
     SelectedManifest selected{.number = *number, .file = std::move(*file)};
     return selected;
+}
+
+Status CheckFileNumberCapacity(std::uint64_t next_file_number) {
+    if (next_file_number > FileNumberLimit) {
+        return std::unexpected(Error::InvalidArgument("file numbers are exhausted"));
+    }
+    return {};
+}
+
+Status CheckComparatorName(const std::optional<std::string>& name, const Comparator& comparator) {
+    if (name.has_value() && *name != comparator.Name()) {
+        return std::unexpected(Error::InvalidArgument("edit names comparator " + *name));
+    }
+    return {};
+}
+
+Status CheckCurrentLogNumber(const std::optional<std::uint64_t>& edited_log_number,
+                             std::uint64_t current_log_number, std::uint64_t next_file_number) {
+    const std::uint64_t log_number = edited_log_number.value_or(current_log_number);
+    if (log_number < current_log_number || log_number >= next_file_number) {
+        return std::unexpected(Error::InvalidArgument(
+            "edit's log number " + std::to_string(log_number) + " is below the current one or " +
+            "not below the next file number"));
+    }
+    return {};
+}
+
+Status CheckPreviousLogNumber(const std::optional<std::uint64_t>& edited_log_number,
+                              std::uint64_t next_file_number) {
+    if (edited_log_number.value_or(0) >= next_file_number) {
+        return std::unexpected(
+            Error::InvalidArgument("edit's previous log number is not below the next file number"));
+    }
+    return {};
+}
+
+Status CheckAddedFileNumbers(const VersionEdit& edit, std::uint64_t next_file_number) {
+    for (const NewFile& added : edit.new_files()) {
+        if (added.file.number >= next_file_number) {
+            return std::unexpected(
+                Error::InvalidArgument("edit adds file " + std::to_string(added.file.number) +
+                                       ", which is not below the next file number"));
+        }
+    }
+    return {};
 }
 
 Error InManifest(std::uint64_t offset, const Error& error) {
@@ -406,31 +479,23 @@ Status VersionSet::WritePrepared(const VersionEdit& edit,
 }
 
 Status VersionSet::Validate(const VersionEdit& edit) const {
-    if (next_file_number_ > FileNumberLimit) {
-        return std::unexpected(Error::InvalidArgument("file numbers are exhausted"));
+    Status capacity = CheckFileNumberCapacity(next_file_number_);
+    if (!capacity.has_value()) {
+        return std::unexpected(std::move(capacity).error());
     }
-    const std::optional<std::string>& name = edit.comparator_name();
-    if (name.has_value() && *name != comparator_->user_comparator().Name()) {
-        return std::unexpected(Error::InvalidArgument("edit names comparator " + *name));
+    Status comparator = CheckComparatorName(edit.comparator_name(), comparator_->user_comparator());
+    if (!comparator.has_value()) {
+        return std::unexpected(std::move(comparator).error());
     }
-    const std::uint64_t log_number = edit.log_number().value_or(log_number_);
-    if (log_number < log_number_ || log_number >= next_file_number_) {
-        return std::unexpected(Error::InvalidArgument(
-            "edit's log number " + std::to_string(log_number) + " is below the current one or " +
-            "not below the next file number"));
+    Status log = CheckCurrentLogNumber(edit.log_number(), log_number_, next_file_number_);
+    if (!log.has_value()) {
+        return std::unexpected(std::move(log).error());
     }
-    if (edit.prev_log_number().value_or(0) >= next_file_number_) {
-        return std::unexpected(
-            Error::InvalidArgument("edit's previous log number is not below the next file number"));
+    Status previous = CheckPreviousLogNumber(edit.prev_log_number(), next_file_number_);
+    if (!previous.has_value()) {
+        return std::unexpected(std::move(previous).error());
     }
-    for (const NewFile& added : edit.new_files()) {
-        if (added.file.number >= next_file_number_) {
-            return std::unexpected(
-                Error::InvalidArgument("edit adds file " + std::to_string(added.file.number) +
-                                       ", which is not below the next file number"));
-        }
-    }
-    return {};
+    return CheckAddedFileNumbers(edit, next_file_number_);
 }
 
 Status VersionSet::Write(const VersionEdit& edit,
@@ -492,17 +557,9 @@ Status VersionSet::InstallCurrent() const {
         return std::unexpected(std::move(file).error());
     }
     const std::string contents = CurrentFileContents(manifest_file_number_);
-    const Status appended = (*file)->Append(AsBytes(contents));
-    if (!appended.has_value()) {
-        return appended;
-    }
-    const Status synced = (*file)->Sync();
-    if (!synced.has_value()) {
-        return synced;
-    }
-    const Status closed = (*file)->Close();
-    if (!closed.has_value()) {
-        return closed;
+    Status persisted = WriteCurrentTemporary(**file, AsBytes(contents));
+    if (!persisted.has_value()) {
+        return std::unexpected(std::move(persisted).error());
     }
     const Status renamed = file_system_->RenameFile(temporary, CurrentFileName(directory_));
     if (!renamed.has_value()) {

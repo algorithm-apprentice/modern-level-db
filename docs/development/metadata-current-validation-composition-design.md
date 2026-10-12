@@ -33,9 +33,11 @@ only through new envelopes. Sequential ownership remains alive through reading
 and result construction and closes on the original return/unwind boundary.
 No new CURRENT length limit, fallback/default filename or ignored read failure.
 
-InstallCurrent owns its temporary writer. Compute the temporary path, open it,
-then encode CurrentFileContents, append those exact LF-terminated bytes, Sync
+InstallCurrent owns its temporary writer and encoded string. Compute the
+temporary path, open it, then encode CurrentFileContents in the parent. Its
+persistence child borrows those exact LF-terminated bytes for Append, Sync
 and Close. Only afterward Rename to CurrentFileName and SyncDirectory.
+Keep the parent string alive through the name transaction as in the original.
 The MANIFEST name barrier before this transaction remains in Write.
 Do not precompute CURRENT bytes or snapshot a manifest number before OpenWritable:
 preserve the existing allocation/observation order at the I/O boundary.
@@ -71,8 +73,8 @@ and externally synchronized caller contracts.
 | ReadCurrent | Acquire the existing sequential owner, then read its contents; retains owner through child result/unwind. |
 | ReadCurrentContents | One accumulated-byte progress operation: checked chunk, EOF decision and standard string append, over the unchanged 64-byte scratch buffer. |
 | ReadCurrentChunk | One checked read boundary: original error copy or size-bound proof; no parse/append/EOF policy. |
-| VersionSet::InstallCurrent | Existing path/open, complete temporary-byte persistence, rename and directory barrier; owns the borrowed child's writer throughout. |
-| WriteCurrentTemporary | Compose existing encoding, Append, Sync and Close in the original order; borrowed writer, no acquisition or rename. |
+| VersionSet::InstallCurrent | Existing path/open/encoding, complete temporary-byte persistence, rename and directory barrier; owns the child's writer and bytes throughout. |
+| WriteCurrentTemporary | Compose Append, Sync and Close of prepared CURRENT bytes in the original order; borrowed writer/bytes, no acquisition, encoding or rename. |
 | VersionSet::Validate | Compose the five ordered runtime proofs below; no builder, counter mutation, filesystem operation or sticky-error change. |
 | CheckFileNumberCapacity | One next-counter exhaustion decision with its existing bound/message. |
 | CheckComparatorName | One optional comparator-name proof; call Name only for a present edit field after earlier guards succeed. |
@@ -148,3 +150,65 @@ unchanged-production characterization without private-state access.
 Source/header/tests remain unchanged; the reviewer did not edit files, execute
 builds/tests or perform allocation-fault experiments. This is design evidence,
 not implementation runtime verification.
+
+## Original characterization stage
+
+Design accepted in #222, merged as
+2c6de1c290d4eba59f721710b08c5dc12c84622c.
+Four new public-operation cases cover CURRENT short/malformed chunks through
+EOF and owner release, error/oversized priority after partial progress, exact
+temporary-byte/name/stage prefixes for six failures plus success, and six
+mixed-invalid runtime proofs with lazy Name observation and nonsticky retry.
+All pass before any production/private-header changes.
+
+Test-local wrappers retain the real MemoryFileSystem owner and return injected
+chunk failures without constructing an oversized span. Destructors only count
+owner release; the comparator uses atomic Name counting and delegates the
+unchanged bytewise comparison contract. Temporary-stage observations allow
+unrelated scoped MANIFEST cleanup instead of suppressing it.
+
+Native Windows Debug's final original selection passes 119 unique cases:
+VersionSetTest, VersionBuilderTest, VersionTest, RecoveryTest and DatabaseTest,
+including all four additions. Exact JUnit names are retained for final parity.
+The earlier 106-case selection omitted the coupled builder/version cases; the
+final selection explicitly retains the same five suites as #203.
+Final implementation execution and combined implementation review are pending.
+
+Independent bounded characterization review found no significant issue and
+verified all four new names, the 119-case XML and unchanged production/header.
+It confirmed public behavior, owner/error/temporary-stage boundaries, lazy
+ordered proofs and valid retries. No edits or builds/tests/allocation experiments
+were performed by the reviewer; the earlier build log's 106-case selector is
+not substituted for the final 119-case XML and case-execution log.
+
+Before the persistence topic, ownership is clarified to retain the original
+encoded string in InstallCurrent through rename/directory sync. The child
+borrows prepared bytes rather than destroying a child-local string earlier.
+Encoding remains after OpenWritable, using the existing named primitive; no
+extra owner type, parameter bag or change to the transaction is introduced.
+
+A narrow independent read-only review confirmed that this ownership clarification
+preserves encoding/number observation after open, the original parent string
+lifetime and logical const-Status copy sites. It found no significant issue and
+performed no edits/builds/tests before the persistence implementation.
+
+## Implementation and native parity
+
+Separate checked-read, ordered-runtime-proof and borrowed-temporary-persistence
+topic commits implement the eleven-definition ledger. Read-error copies stay
+at the checked chunk observation; temporary failure copies stay at the original
+Append/Sync/Close sites. Newly introduced propagation moves existing errors.
+The parent retains writer and encoded bytes through rename/directory sync.
+
+Read and runtime intermediate selections each pass 35 VersionSetTest cases.
+Final native Windows Debug JUnit has exactly the same 119 unique classname/name
+pairs as the unchanged-production baseline, including all four new cases and
+no failures, errors or skips. No header/seam/recovery/unlock/topology/coverage
+policy change is introduced. Allocation throws remain inspection-based.
+Formatting, documentation and whitespace checks pass locally.
+Independent combined read-only review found no significant issue in the
+three-file diff and surrounding callers against accepted baseline `2c6de1c`.
+It independently verified the 119-case XML parity and all four additions.
+Allocation throws, precise copy counts and destruction-before-parse remain
+inspection-based rather than directly instrumented. Exact-head hosted CI is
+still a delivery gate.
