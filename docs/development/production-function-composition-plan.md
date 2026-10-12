@@ -576,6 +576,8 @@ changed paths verified in main.
 | N07 and Windows portion of N08 | [Windows mapping/enumeration](windows-mapping-enumeration-composition-design.md) | Delivered in #218 after accepted #217; 163-case original/final native parity, 54-case mapping intermediate, and actual hosted Windows Debug selected names match the original 163. |
 | N09 and shared positioned-read range proof | [Windows positioned reads](windows-positioned-read-composition-design.md) | Delivered in #221 after accepted #220; 166-case original/final native parity, 57-case preparation intermediate, and actual hosted Windows Debug selected names match the original 166. |
 | Recursive CURRENT I/O and runtime validation | [CURRENT/runtime validation](metadata-current-validation-composition-design.md) | Delivered in #223 after accepted #222; 119-case original/final native parity, separate 35-case read/proof intermediates, and actual hosted Windows Debug selected names match the original 119. |
+| Recursive snapshot materialization and live-file union | [Snapshot/liveness](metadata-snapshot-liveness-composition-design.md) | Delivered in #225 after accepted #224; 121-case original/final native parity, 37-case snapshot intermediate, and actual hosted Windows Debug selected names match the original 121. |
+| Recursive byte selection and fixed-width escaping | [Diagnostic byte escaping](diagnostic-byte-escape-composition-design.md) | Delivered in #228 after accepted #227; 103-case original/final native parity, 35-case diagnostic intermediate, and actual hosted Windows Debug selected names match the original 103. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -599,9 +601,17 @@ Database suites. Its final original 119 cases are not the earlier incomplete
 Parent encoding/file lifetimes, precise error-copy sites and allocation throws
 remain inspection-based where no direct observer exists.
 
+#225 adds two snapshot/liveness cases to the same five-suite metadata selection
+used by #223, so its original/final 121 is distinct from that earlier 119.
+#228 uses a different diagnostic/WAL/table/native-output selection: its
+literal 735-character golden covers ordered bytes 0-255, not Unicode decoding.
+Its 103 and 35 counts are not metadata or older WAL batch totals.
+Allocation/copy/destruction or growth/mutation observations remain
+inspection-based where the detailed designs explicitly say so.
+
 The selected N01-N09 slices are delivered, not the whole native source files.
-Other recursive frontiers include diagnostic escaping and record orchestration,
-metadata snapshot/liveness, prepared-state publication and recovered-counter
+Other recursive frontiers include diagnostic record/table traversal and
+header/internal-key assemblers, metadata prepared-state publication and recovered-counter
 children, cache table/list/reference operations, deeper block positioning/
 decoding, WAL fragmentation and codec helpers, and remaining engine/native
 children. This is not an exhaustive
