@@ -126,3 +126,42 @@ API completion does not begin metadata/diagnostics work.
 Review nonempty level projection, owner destruction order, moved-from
 boundaries, snapshot/database identity checks, copy-versus-borrowed batch
 submission, Error ownership and exact public test identity parity.
+
+## Final implementation ledger
+
+The final production scan at
+`e2da36072ddf514dfaded4c4f3d31bbee42e370f` reports 67 mechanical
+definitions and one lambda. Adding the four manually reconciled defaulted
+move-assignment definitions yields 71 definitions.
+
+The complete session ledger assigns every entry:
+
+| Disposition | Definitions | Lambdas |
+|---|---:|---:|
+| Reviewed leaf | 45 | 1 |
+| Reviewed composition | 26 | 0 |
+| Unclassified | 0 | 0 |
+
+The seven parser recovery nodes remain default-argument/type-identifier gaps in
+`db.h` and add no definitions. `api-final-disposition.json` retains every
+mechanical/manual definition, source range, ownership group and stopping reason.
+
+`PublicLevelState` is the only new definition. It copies one engine level's file
+count and bytes into the public representation. `PublicState` retains fixed
+level iteration, scalar/optional projection and sticky Error ownership.
+
+## Integrated review and validation
+
+Review confirmed DatabaseState/Iterator/Snapshot destruction ordering,
+snapshot-database identity checks, all moved-from diagnostics, Write versus
+WriteExclusive copy/borrow boundaries and the unchanged GetState transform
+lambda.
+
+The strengthened state case creates a real nonempty table topology, reopens the
+database, captures one nonempty projected level and proves the copied public
+state survives database destruction. It passes 20 consecutive executions.
+
+Windows Debug and Release both pass the exact 23 characterized public API
+identities. The complete Windows Debug suite passes all 869 tests, and
+GCC/Werror compiles the changed API object. Hosted POSIX/native identity parity
+and GCC 13 coverage remain final delivery requirements.
