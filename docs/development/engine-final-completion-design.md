@@ -190,7 +190,7 @@ trivial-versus-rewrite return semantics.
 ## Final implementation ledger
 
 The final production scan at
-`c14ac6f6dabcab7f604ac0d4d321ee2169ece5e2` reports 322 mechanical
+`9c3fdb2bddbe8c214ac8ab0711f7f93a2a4d5b6a` reports 322 mechanical
 definitions and 24 lambdas. Adding the same nine manually reconciled deleted
 free-function overloads yields 331 definitions.
 
@@ -230,6 +230,9 @@ fallback. Compaction callbacks retain `outputs` only through the synchronous
 rewrite call, allocate while the database lock is held, and acquire `mutex_`
 only when invoked after unlock. A thrown rewrite still reaches
 `BackgroundCall`, which retains the existing relock-before-Aborted policy.
+GCC/Werror also required every `PointLookup` aggregate field to be named
+explicitly; the reviewed initialization now states all traversal state without
+changing its defaults.
 
 The final Windows Debug selection exactly matches all 158 characterized
 identities with no failure, error or skip. The same 158 identities pass in
