@@ -573,6 +573,9 @@ changed paths verified in main.
 | N01/N02/N05 native path and shared regular opening | [Native opening](native-path-opening-composition-design.md) | Delivered in #212 after accepted #209; 121-case original/final parity, with a 46-case path intermediate selection. |
 | N03/N04 directory resolution and storage admission | [Native directory admission](native-directory-admission-composition-design.md) | Delivered in #214 after accepted #213; 120-case original/final parity, with a 49-case resolution intermediate selection. |
 | N06 and POSIX portion of N08 | [POSIX mapping/directory](posix-mapping-directory-composition-design.md) | Delivered in #216 after accepted #215; actual native CI logs have identical original/final Linux 766 and macOS 761 unique case sets, including focused 82/77-case sets. |
+| N07 and Windows portion of N08 | [Windows mapping/enumeration](windows-mapping-enumeration-composition-design.md) | Delivered in #218 after accepted #217; 163-case original/final native parity, 54-case mapping intermediate, and actual hosted Windows Debug selected names match the original 163. |
+| N09 and shared positioned-read range proof | [Windows positioned reads](windows-positioned-read-composition-design.md) | Delivered in #221 after accepted #220; 166-case original/final native parity, 57-case preparation intermediate, and actual hosted Windows Debug selected names match the original 166. |
+| Recursive CURRENT I/O and runtime validation | [CURRENT/runtime validation](metadata-current-validation-composition-design.md) | Delivered in #223 after accepted #222; 119-case original/final native parity, separate 35-case read/proof intermediates, and actual hosted Windows Debug selected names match the original 119. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -582,17 +585,26 @@ The draft became ready only after implementation review, native comparison and
 all 20 reviewed-head checks succeeded; it is now merged, not a pending draft.
 Case counts from native CTest logs are not represented as JUnit artifacts.
 
-Windows N07 and the Windows portion of N08 have an accepted
-[mapping/enumeration design](windows-mapping-enumeration-composition-design.md)
-in #217. Implementation #218 has independent combined review and local native
-163-case original/final parity, including five new characterization cases;
-hosted exact-head CI/delivery remains pending at this record.
-Do not treat design-only acknowledgement jobs as native execution.
+#218 adds five mapping/enumeration characterization cases; #221 adds three
+positioned-read cases to that native selection, so 163 and 166 are different
+batch baselines, not interchangeable counts. Genuine still-pending kernel
+cancellation/draining and allocation throws remain inspection-based; the
+existing completion-failure seam waits for real completion before reporting
+failure. Native Windows evidence is not inferred from Linux coverage or
+design-only acknowledgement jobs.
 
-Windows N09 remains open. Other recursive frontiers include diagnostic escaping
-and record orchestration, runtime metadata/CURRENT helpers, cache table/list/
-reference operations, deeper block positioning/decoding, WAL fragmentation and
-codec helpers, and remaining engine/native children. This is not an exhaustive
+#223 retains the coupled VersionSet, VersionBuilder, Version, Recovery and
+Database suites. Its final original 119 cases are not the earlier incomplete
+106-case selection or a subsequent integrated selection with extra cases.
+Parent encoding/file lifetimes, precise error-copy sites and allocation throws
+remain inspection-based where no direct observer exists.
+
+The selected N01-N09 slices are delivered, not the whole native source files.
+Other recursive frontiers include diagnostic escaping and record orchestration,
+metadata snapshot/liveness, prepared-state publication and recovered-counter
+children, cache table/list/reference operations, deeper block positioning/
+decoding, WAL fragmentation and codec helpers, and remaining engine/native
+children. This is not an exhaustive
 replacement for the final every-definition audit: all structured dispositions,
 new helpers, private-header bodies and lambdas still participate. Benchmarks
 remain outside scope.
