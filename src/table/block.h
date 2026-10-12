@@ -120,6 +120,8 @@ private:
                                                   std::size_t right);
     [[nodiscard]] Status RestoreCheckpoint(std::size_t index, int current_key_compare);
     [[nodiscard]] Status ScanToLowerBound(ByteView target);
+    [[nodiscard]] Status FindPreviousRestart(std::size_t original, bool& found);
+    [[nodiscard]] Status ScanToPreviousEntry(std::size_t original);
     [[nodiscard]] bool RestartPoint(std::size_t index, std::size_t& offset) const noexcept;
     [[nodiscard]] Status RestartKey(std::size_t index, ByteView& key);
     [[nodiscard]] Status SeekToRestartPoint(std::size_t index);

@@ -303,19 +303,13 @@ Status Block::Iterator::Prev() {
     // Entries have no backward link/full key at every offset. Reconstruct from
     // a preceding restart until the next entry would be the current one.
     const std::size_t original = current_;
-    while (true) {
-        std::size_t restart = 0;
-        if (!RestartPoint(restart_index_, restart)) {
-            return Corruption();
-        }
-        if (restart < original) {
-            break;
-        }
-        if (restart_index_ == 0) {
-            Invalidate();
-            return {};
-        }
-        --restart_index_;
+    bool found = false;
+    Status searched = FindPreviousRestart(original, found);
+    if (!searched.has_value()) {
+        return searched;
+    }
+    if (!found) {
+        return {};
     }
 
     const Status sought = SeekToRestartPoint(restart_index_);
@@ -324,6 +318,28 @@ Status Block::Iterator::Prev() {
         return sought;
     }
     // GCOVR_EXCL_STOP
+    return ScanToPreviousEntry(original);
+}
+
+Status Block::Iterator::FindPreviousRestart(std::size_t original, bool& found) {
+    while (true) {
+        std::size_t restart = 0;
+        if (!RestartPoint(restart_index_, restart)) {
+            return Corruption();
+        }
+        if (restart < original) {
+            found = true;
+            return {};
+        }
+        if (restart_index_ == 0) {
+            Invalidate();
+            return {};
+        }
+        --restart_index_;
+    }
+}
+
+Status Block::Iterator::ScanToPreviousEntry(std::size_t original) {
     do {
         const Status parsed = ParseNextEntry();
         if (!parsed.has_value()) {
