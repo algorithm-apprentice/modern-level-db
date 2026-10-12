@@ -396,6 +396,14 @@ std::string FormatBadTableEntry(ByteView encoded_key, ByteView value) {
     return line;
 }
 
+std::string FormatVisitedTableEntry(const Result<InternalKeyView>& parsed,
+                                    const Table::Iterator& iterator) {
+    if (!parsed.has_value()) {
+        return FormatBadTableEntry(iterator.key(), iterator.value());
+    }
+    return FormatTableEntry(*parsed, iterator.value());
+}
+
 Status FinishDiagnosticTable(Status& progress, std::optional<Error>& first) {
     if (!progress.has_value()) {
         if (progress.error().code() != ErrorCode::Corruption) {
@@ -412,11 +420,9 @@ Status DumpTableEntries(Table::Iterator& iterator, WritableFile& output) {
     while (moved.has_value() && iterator.valid()) {
         const Result<InternalKeyView> parsed = ParseInternalKey(iterator.key());
         std::string line;
+        line = FormatVisitedTableEntry(parsed, iterator);
         if (!parsed.has_value()) {
-            line = FormatBadTableEntry(iterator.key(), iterator.value());
             RememberFirst(first, Error::Corruption("table entry has a malformed internal key"));
-        } else {
-            line = FormatTableEntry(*parsed, iterator.value());
         }
         const Status appended = AppendDiagnosticLine(output, std::move(line));
         if (!appended.has_value()) {
