@@ -78,6 +78,10 @@ struct InternalKeyView {
 
 [[nodiscard]] Result<InternalKeyView> ParseInternalKey(ByteView encoded);
 
+// Requires enough output, a 56-bit sequence and a valid kind; advances past the key.
+void EncodeInternalKeyTrusted(MutableByteView& output, ByteView user_key, SequenceNumber sequence,
+                              ValueKind kind) noexcept;
+
 // Owns a seek target in both length-prefixed memtable and internal-key forms.
 // Views borrow this object; reacquire them after a move (inline storage can relocate).
 class LookupKey final {
@@ -105,6 +109,9 @@ private:
     [[nodiscard]] std::byte* data() noexcept;
     [[nodiscard]] const std::byte* data() const noexcept;
     void ResetToCanonicalEmpty() noexcept;
+    void PrepareStorage(std::size_t encoded_size, std::size_t prefix_size);
+    void TransferStorageFrom(LookupKey& source) noexcept;
+    void InitializeCanonicalEmpty() noexcept;
 
     std::array<std::byte, InlineCapacity> inline_storage_{};
     std::unique_ptr<std::byte[]> heap_storage_;
