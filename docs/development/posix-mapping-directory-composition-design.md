@@ -178,3 +178,10 @@ read errno still precedes explicit close and error construction.
 Formatting, documentation and whitespace checks pass locally.
 Native implementation execution and original/final parity remain pending
 updated CI; Windows compilation is not a substitute for that evidence.
+
+Independent bounded implementation review found no significant issue in the
+three changed paths and independently verified original native execution,
+focused case sets and characterization-before-extraction commit order.
+It did not edit files or execute builds/tests. Allocation/syscall failures remain
+inspection-based; updated native execution and exact before/after case parity
+are still required before making the draft ready or merging.
