@@ -260,7 +260,15 @@ Result<bool> LookupValue(const MemTable& memtable, const MemTable* immutable,
     }
 
     PointLookup lookup{
-        .table_cache = table_cache, .key = key, .value = value, .seek = seek, .options = options};
+        .table_cache = table_cache,
+        .key = key,
+        .value = value,
+        .seek = seek,
+        .options = options,
+        .previous = std::nullopt,
+        .decided = false,
+        .found_value = false,
+    };
     const Status visited = ForEachOverlapping(
         version, comparator, key.user_key(), key.internal_key(),
         [&](const Candidate& candidate) -> Result<bool> { return lookup.Visit(candidate); });
