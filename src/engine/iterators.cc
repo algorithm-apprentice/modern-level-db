@@ -99,22 +99,7 @@ public:
         if (!opened.has_value()) {
             return opened;
         }
-        const Status sought = entries_->Seek(target);
-        if (!sought.has_value()) {
-            return Fail(sought.error());
-        }
-        if (entries_->valid()) {
-            return {};
-        }
-        // The seek passed the table's last entry, unless the table has none.
-        const Status first = entries_->SeekToFirst();
-        if (!first.has_value()) {
-            return Fail(first.error());
-        }
-        if (!entries_->valid()) {
-            return Fail(EmptyTable(index));
-        }
-        return EnterAfter(index);
+        return SeekInOpenFile(target, index);
     }
 
     [[nodiscard]] Status Next() override {
@@ -149,6 +134,25 @@ private:
     [[nodiscard]] Error EmptyTable(std::size_t index) const {
         return Error::Corruption("table file " + std::to_string(files_[index]->number) +
                                  " has no entries");
+    }
+
+    [[nodiscard]] Status SeekInOpenFile(ByteView target, std::size_t index) {
+        const Status sought = entries_->Seek(target);
+        if (!sought.has_value()) {
+            return Fail(sought.error());
+        }
+        if (entries_->valid()) {
+            return {};
+        }
+        // The seek passed the table's last entry, unless the table has none.
+        const Status first = entries_->SeekToFirst();
+        if (!first.has_value()) {
+            return Fail(first.error());
+        }
+        if (!entries_->valid()) {
+            return Fail(EmptyTable(index));
+        }
+        return EnterAfter(index);
     }
 
     // Positions the iterator at the first entry of the file after the one at
