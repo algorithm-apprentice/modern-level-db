@@ -14,6 +14,8 @@ layout admission, then gives every current Bloom/FilterBlock definition a
 bounded semantic disposition. Keep reviewed design, original-source
 characterization and two production topics as local commits, then publish one
 non-draft PR.
+The design and original characterization are accepted; both production topics
+are implemented locally. Integrated review and delivery remain pending.
 
 No public API, Bloom bytes/probe count/false-positive policy, filter range,
 offset-array format, builder overflow policy, block ownership/cacheability,
@@ -189,3 +191,43 @@ squash delivery.
 Successful tests do not prove arbitrary allocation failure, false-positive
 rates outside the existing statistical case, borrowed backing mutation,
 unsupported builder reuse, performance, or whole-production completion.
+
+## Local implementation evidence
+
+The accepted design is commit `18f10c2`. Original-source characterization is
+split before production edits: `588771d` covers exact integer probe policy and
+six literal bit positions; `c099472` covers layout priority/messages/source
+locations through both ownership entrypoints. Independent review found no
+significant issue. An initial test compile corrected the probe-case array count
+and missing algorithm include before the unchanged-production run.
+
+A fresh unchanged-production Windows Debug build froze 162 identities:
+
+| Suite | Cases |
+| --- | ---: |
+| BloomFilterTest | 11 |
+| FilterBlockTest | 6 |
+| FilterBlockReaderTest | 4 |
+| BlockCompressionTest | 7 |
+| TableBuilderTest | 19 |
+| TableTest | 38 |
+| TableNativeTest | 2 |
+| TableCacheTest | 7 |
+| LookupTest | 14 |
+| DatabaseTest | 54 |
+
+The production topics remain separate local commits. `8f97881` composes Bloom
+delta/position/set/query representation; its five-suite selection is the exact
+original 78-identity subset. `2449e34` composes filter layout issues and offset
+topology; its eight-suite selection is the exact original 144-identity subset.
+The final integrated selection exactly matches all original 162 identities,
+with no failure, error, skip or duplicate.
+
+Complete GCOVR/LCOV/NOLINT annotation multisets are unchanged across all four
+production paths. The final scan reports 34 definitions, zero lambdas and zero
+recovery nodes, matching the complete ledger. Local GCC Release
+warnings-as-errors with `-fno-range-for-ext-temps` compiles both production
+objects and every portable changed/coupled test translation unit.
+Documentation validation and `git diff --check` pass. Hosted GCC 13 branch
+coverage, Windows native execution/name parity and normal merge remain delivery
+obligations.
