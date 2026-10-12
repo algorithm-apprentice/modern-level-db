@@ -16,6 +16,9 @@ engine/write_buffer_state.cc/.h. Existing engine/database_write.cc remains
 byte-identical. Tests stay in write_path_test.cc and
 write_buffer_state_test.cc, with write-batch/WAL/recovery/database suites as
 coupled behavior.
+The design and corrected original characterization are accepted; all three
+production topics are implemented locally. Integrated review and delivery
+remain pending.
 
 No public API, queue ordering, grouping limit, sequence reservation, WAL bytes,
 sync policy, MemTable insertion, sticky-error policy, mutex ownership, atomic
@@ -308,3 +311,44 @@ squash delivery.
 Successful tests do not prove arbitrary allocation failure, scheduler fairness,
 lock freedom, physical copy/move/destruction counts, unsupported concurrent
 writers outside WriteQueue, performance, or whole-production completion.
+
+## Local implementation evidence
+
+The accepted design is commit `78dcf55`. Original-source characterization is
+split before production edits: `9cb3f4e` adds exact grouping boundaries and
+unlocked prepare throws; `fcea842` adds selective retained-generation cleanup.
+Independent review found one missing current-generation oracle; it was added
+before the corrected unchanged-production run.
+
+A fresh corrected unchanged-production Windows Debug build froze 114 identities:
+
+| Suite | Cases |
+| --- | ---: |
+| InsertBatchTest | 2 |
+| CommitGroupTest | 2 |
+| WriteQueueTest | 17 |
+| WriteBufferStateTest | 3 |
+| WriteBatchTest | 8 |
+| WalWriterTest | 10 |
+| WalIoNativeTest | 1 |
+| RecoveryTest | 17 |
+| DatabaseTest | 54 |
+
+The production topics remain separate local commits. `530500c` composes
+PersistGroup and exact follower/group materialization; its six-suite selection
+is the exact original 40-identity subset. `a48af55` composes queue admission,
+sequence-restored single/shared commit and completion publication; its
+WriteQueue/Database selection is the exact original 71-identity subset.
+`5f6d61c` composes active/immutable generation ownership; its
+WriteBufferState/Recovery/Database selection is the exact original 74-identity
+subset. The final integrated selection exactly matches all original
+114 identities, with no failure, error, skip or duplicate.
+
+Complete GCOVR/LCOV/NOLINT annotation multisets are unchanged across all four
+owned production paths. The expanded final scan reports 61 named definitions,
+three lambdas and zero recovery nodes, matching the complete ledger. Local GCC
+Release warnings-as-errors with `-fno-range-for-ext-temps` compiles both
+production objects and every portable changed/coupled test translation unit.
+Documentation validation and `git diff --check` pass. Hosted GCC 13 branch
+coverage, Windows native execution/name parity and normal merge remain delivery
+obligations.
