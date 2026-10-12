@@ -90,6 +90,51 @@ Result<SelectedManifest> OpenSelectedManifest(FileSystem& file_system,
     return selected;
 }
 
+Status CheckFileNumberCapacity(std::uint64_t next_file_number) {
+    if (next_file_number > FileNumberLimit) {
+        return std::unexpected(Error::InvalidArgument("file numbers are exhausted"));
+    }
+    return {};
+}
+
+Status CheckComparatorName(const std::optional<std::string>& name, const Comparator& comparator) {
+    if (name.has_value() && *name != comparator.Name()) {
+        return std::unexpected(Error::InvalidArgument("edit names comparator " + *name));
+    }
+    return {};
+}
+
+Status CheckCurrentLogNumber(const std::optional<std::uint64_t>& edited_log_number,
+                             std::uint64_t current_log_number, std::uint64_t next_file_number) {
+    const std::uint64_t log_number = edited_log_number.value_or(current_log_number);
+    if (log_number < current_log_number || log_number >= next_file_number) {
+        return std::unexpected(Error::InvalidArgument(
+            "edit's log number " + std::to_string(log_number) + " is below the current one or " +
+            "not below the next file number"));
+    }
+    return {};
+}
+
+Status CheckPreviousLogNumber(const std::optional<std::uint64_t>& edited_log_number,
+                              std::uint64_t next_file_number) {
+    if (edited_log_number.value_or(0) >= next_file_number) {
+        return std::unexpected(
+            Error::InvalidArgument("edit's previous log number is not below the next file number"));
+    }
+    return {};
+}
+
+Status CheckAddedFileNumbers(const VersionEdit& edit, std::uint64_t next_file_number) {
+    for (const NewFile& added : edit.new_files()) {
+        if (added.file.number >= next_file_number) {
+            return std::unexpected(
+                Error::InvalidArgument("edit adds file " + std::to_string(added.file.number) +
+                                       ", which is not below the next file number"));
+        }
+    }
+    return {};
+}
+
 Error InManifest(std::uint64_t offset, const Error& error) {
     return Error::Corruption("MANIFEST record at offset " + std::to_string(offset) + ": " +
                              std::string(error.message()));
@@ -418,31 +463,23 @@ Status VersionSet::WritePrepared(const VersionEdit& edit,
 }
 
 Status VersionSet::Validate(const VersionEdit& edit) const {
-    if (next_file_number_ > FileNumberLimit) {
-        return std::unexpected(Error::InvalidArgument("file numbers are exhausted"));
+    Status capacity = CheckFileNumberCapacity(next_file_number_);
+    if (!capacity.has_value()) {
+        return std::unexpected(std::move(capacity).error());
     }
-    const std::optional<std::string>& name = edit.comparator_name();
-    if (name.has_value() && *name != comparator_->user_comparator().Name()) {
-        return std::unexpected(Error::InvalidArgument("edit names comparator " + *name));
+    Status comparator = CheckComparatorName(edit.comparator_name(), comparator_->user_comparator());
+    if (!comparator.has_value()) {
+        return std::unexpected(std::move(comparator).error());
     }
-    const std::uint64_t log_number = edit.log_number().value_or(log_number_);
-    if (log_number < log_number_ || log_number >= next_file_number_) {
-        return std::unexpected(Error::InvalidArgument(
-            "edit's log number " + std::to_string(log_number) + " is below the current one or " +
-            "not below the next file number"));
+    Status log = CheckCurrentLogNumber(edit.log_number(), log_number_, next_file_number_);
+    if (!log.has_value()) {
+        return std::unexpected(std::move(log).error());
     }
-    if (edit.prev_log_number().value_or(0) >= next_file_number_) {
-        return std::unexpected(
-            Error::InvalidArgument("edit's previous log number is not below the next file number"));
+    Status previous = CheckPreviousLogNumber(edit.prev_log_number(), next_file_number_);
+    if (!previous.has_value()) {
+        return std::unexpected(std::move(previous).error());
     }
-    for (const NewFile& added : edit.new_files()) {
-        if (added.file.number >= next_file_number_) {
-            return std::unexpected(
-                Error::InvalidArgument("edit adds file " + std::to_string(added.file.number) +
-                                       ", which is not below the next file number"));
-        }
-    }
-    return {};
+    return CheckAddedFileNumbers(edit, next_file_number_);
 }
 
 Status VersionSet::Write(const VersionEdit& edit,
