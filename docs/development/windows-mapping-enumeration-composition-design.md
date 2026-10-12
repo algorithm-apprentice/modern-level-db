@@ -142,3 +142,33 @@ the transaction, error-copy, native-name and cleanup-priority constraints.
 The reviewer did not edit files, execute builds/tests or launch nested agents.
 This is design acceptance evidence, not native implementation verification;
 allocation failures remain inspection-based.
+
+## Original characterization stage
+
+Design accepted in #217, merged as
+7519bdd59e1e93468fbbdc98e0393bb65240eb7f.
+Five new native cases cover hint/budget/observed-size query order, exact mapping
+publication/failure prefixes and slot reuse, owned enumeration names and first
+entry/advance order, admission/Find suppression, and terminal-error priority
+over cleanup failure after partial traversal.
+
+The existing test-local seam records a fixed-capacity native call trace; it
+also scripts names in a reused native buffer and captures closed handle identity.
+No production seam or implementation is changed at this stage.
+Synthetic find handles are closed only by their test-local owner implementation.
+
+Native Windows Debug execution on the unchanged production source passes
+163 unique cases across WindowsFileSystemTest, WindowsFileSystemDeathTest,
+TableTest, RecoveryTest and DatabaseTest, including all five new cases.
+Their JUnit case set is retained for exact final comparison.
+An earlier narrower run passed 109 cases; the final original baseline explicitly
+adds the coupled DatabaseTest suite rather than confusing the two selectors.
+Implementation/native final parity remain pending.
+
+Independent characterization review identified that an initial dot entry could
+not detect accidentally advancing before processing Find's first result.
+The scripted first result is now a non-dot Unicode name explicitly required in
+the output. A narrow independent follow-up found no significant issue and
+confirmed first-result publication, buffer reuse, dot filtering and partial
+traversal before the fourth-Next failure. The unchanged production rerun still
+passes all 163 unique cases. Neither reviewer executed builds/tests.
