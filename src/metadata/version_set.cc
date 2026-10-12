@@ -151,6 +151,13 @@ Status CheckAddedFileNumbers(const VersionEdit& edit, std::uint64_t next_file_nu
     return {};
 }
 
+void ApplyCompactPointerEdits(const VersionEdit& edit,
+                              std::array<std::optional<InternalKey>, NumLevels>& compact_pointers) {
+    for (const CompactPointer& pointer : edit.compact_pointers()) {
+        compact_pointers[pointer.level] = pointer.key;
+    }
+}
+
 Error InManifest(std::uint64_t offset, const Error& error) {
     return Error::Corruption("MANIFEST record at offset " + std::to_string(offset) + ": " +
                              std::string(error.message()));
@@ -272,7 +279,7 @@ struct VersionSet::ManifestRecovery {
         if (!applied.has_value()) {
             return std::unexpected(InManifest(record.offset, applied.error()));
         }
-        UpdateCompactPointers(*edit, set);
+        ApplyCompactPointerEdits(*edit, set.compact_pointers_);
         return AccumulateCounters(*edit, record.offset);
     }
 
@@ -284,12 +291,6 @@ struct VersionSet::ManifestRecovery {
                                                           std::string(comparator.Name())));
         }
         return {};
-    }
-
-    static void UpdateCompactPointers(const VersionEdit& edit, VersionSet& set) {
-        for (const CompactPointer& pointer : edit.compact_pointers()) {
-            set.compact_pointers_[pointer.level] = pointer.key;
-        }
     }
 
     Status AccumulateCounters(const VersionEdit& edit, std::uint64_t offset) {
@@ -331,6 +332,15 @@ struct VersionSet::ManifestRecovery {
     }
 
     Status ValidateCounters() const {
+        Status required = RequireRecoveredCounterFields();
+        if (!required.has_value()) {
+            return required;
+        }
+        const std::uint64_t next = next_file.value();
+        return ValidateRecoveredCounterBounds(next);
+    }
+
+    Status RequireRecoveredCounterFields() const {
         if (!next_file.has_value()) {
             return std::unexpected(Error::Corruption("MANIFEST has no next file number"));
         }
@@ -340,7 +350,10 @@ struct VersionSet::ManifestRecovery {
         if (!last_sequence.has_value()) {
             return std::unexpected(Error::Corruption("MANIFEST has no last sequence"));
         }
-        const std::uint64_t next = next_file.value();
+        return {};
+    }
+
+    Status ValidateRecoveredCounterBounds(std::uint64_t next) const {
         if (next > FileNumberLimit) {
             return std::unexpected(
                 Error::Corruption("MANIFEST's next file number is beyond the file number limit"));
@@ -465,19 +478,11 @@ Status VersionSet::ApplyPrepared(VersionEdit edit, Version version,
                                  std::unique_lock<std::mutex>* lock) {
     const std::uint64_t log_number = edit.log_number().value_or(log_number_);
     const std::uint64_t prev_log_number = edit.prev_log_number().value_or(prev_log_number_);
-    edit.SetLogNumber(log_number);
-    edit.SetPrevLogNumber(prev_log_number);
-    static_cast<void>(edit.SetNextFileNumber(next_file_number_));
-    static_cast<void>(edit.SetLastSequence(last_sequence_));
+    PrepareRuntimeEditCounters(edit, log_number, prev_log_number);
     std::array<std::optional<InternalKey>, NumLevels> compact_pointers = compact_pointers_;
-    for (const CompactPointer& pointer : edit.compact_pointers()) {
-        compact_pointers[pointer.level] = pointer.key;
-    }
+    ApplyCompactPointerEdits(edit, compact_pointers);
     std::optional<std::vector<std::byte>> new_manifest_snapshot;
-    if (manifest_ == nullptr) {
-        new_manifest_snapshot =
-            Snapshot(comparator_->user_comparator(), compact_pointers_, *current_).Encode();
-    }
+    PrepareManifestSnapshot(new_manifest_snapshot);
     // Prepare ownership/capacity before I/O: after the durable edit succeeds,
     // publishing its topology must not need another allocation.
     auto candidate = std::make_shared<const Version>(std::move(version));
@@ -490,11 +495,34 @@ Status VersionSet::ApplyPrepared(VersionEdit edit, Version version,
     }
     // Persist first, publish second. Readers keep the old Version during I/O;
     // an uncertain write failure must not authorize cleanup using the candidate.
+    PublishPreparedEdit(compact_pointers, candidate, log_number, prev_log_number);
+    return {};
+}
+
+void VersionSet::PrepareRuntimeEditCounters(VersionEdit& edit, std::uint64_t log_number,
+                                            std::uint64_t prev_log_number) const {
+    edit.SetLogNumber(log_number);
+    edit.SetPrevLogNumber(prev_log_number);
+    static_cast<void>(edit.SetNextFileNumber(next_file_number_));
+    static_cast<void>(edit.SetLastSequence(last_sequence_));
+}
+
+void VersionSet::PrepareManifestSnapshot(
+    std::optional<std::vector<std::byte>>& new_manifest_snapshot) const {
+    if (manifest_ == nullptr) {
+        new_manifest_snapshot =
+            Snapshot(comparator_->user_comparator(), compact_pointers_, *current_).Encode();
+    }
+}
+
+void VersionSet::PublishPreparedEdit(
+    std::array<std::optional<InternalKey>, NumLevels>& compact_pointers,
+    std::shared_ptr<const Version>& candidate, std::uint64_t log_number,
+    std::uint64_t prev_log_number) {
     compact_pointers_ = std::move(compact_pointers);
     log_number_ = log_number;
     prev_log_number_ = prev_log_number;
     InstallPrepared(std::move(candidate));
-    return {};
 }
 
 Status VersionSet::WritePrepared(const VersionEdit& edit,
@@ -612,11 +640,19 @@ void VersionSet::ReserveInstall() {
 }
 
 void VersionSet::InstallPrepared(std::shared_ptr<const Version> version) noexcept {
+    RetainPinnedCurrent();
+    std::erase_if(versions_,
+                  [](const std::weak_ptr<const Version>& held) { return held.expired(); });
+    RegisterCurrentVersion(version);
+}
+
+void VersionSet::RetainPinnedCurrent() noexcept {
     if (current_ != nullptr && current_->read_pins_ != 0) {
         read_pinned_versions_.push_back(current_);
     }
-    std::erase_if(versions_,
-                  [](const std::weak_ptr<const Version>& held) { return held.expired(); });
+}
+
+void VersionSet::RegisterCurrentVersion(std::shared_ptr<const Version>& version) noexcept {
     versions_.emplace_back(version);
     current_ = std::move(version);
 }
