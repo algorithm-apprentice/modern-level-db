@@ -183,6 +183,18 @@ VersionEdit Snapshot(const Comparator& user_comparator,
     return snapshot;
 }
 
+void CollectLevelFileNumbers(std::span<const Version::File> files, std::set<std::uint64_t>& live) {
+    for (const Version::File& file : files) {
+        live.insert(file->number);
+    }
+}
+
+void CollectVersionFileNumbers(const Version& version, std::set<std::uint64_t>& live) {
+    for (std::uint32_t level = 0; level < NumLevels; ++level) {
+        CollectLevelFileNumbers(version.files(level), live);
+    }
+}
+
 }  // namespace
 
 VersionSet::VersionSet(FileSystem& file_system, std::filesystem::path directory,
@@ -381,11 +393,7 @@ std::set<std::uint64_t> VersionSet::LiveFiles() const {
         if (version == nullptr) {
             continue;
         }
-        for (std::uint32_t level = 0; level < NumLevels; ++level) {
-            for (const Version::File& file : version->files(level)) {
-                live.insert(file->number);
-            }
-        }
+        CollectVersionFileNumbers(*version, live);
     }
     return live;
 }
