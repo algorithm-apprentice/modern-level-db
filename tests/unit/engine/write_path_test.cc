@@ -59,6 +59,29 @@ std::string Keys(const EncodedWriteBatch& batch) {
     return keys;
 }
 
+std::size_t ValueSizeForEncodedBatchSize(std::string_view key, std::size_t target_size) {
+    std::size_t low = 0;
+    std::size_t high = target_size;
+    while (low <= high) {
+        const std::size_t value_size = low + (high - low) / 2U;
+        const EncodedWriteBatch batch = Batch({{key, std::string(value_size, 'v')}});
+        const std::size_t encoded_size = batch.encoded().size();
+        if (encoded_size == target_size) {
+            return value_size;
+        }
+        if (encoded_size < target_size) {
+            low = value_size + 1U;
+        } else {
+            if (value_size == 0) {
+                break;
+            }
+            high = value_size - 1U;
+        }
+    }
+    ADD_FAILURE() << "No one-record batch has encoded size " << target_size;
+    return 0;
+}
+
 std::string Lookup(const MemTable& memtable, std::string_view key, SequenceNumber sequence) {
     const MemTableLookup found = memtable.Lookup(LookupKey::Create(AsBytes(key), sequence).value());
     if (found.kind == MemTableLookupKind::Missing) {
@@ -492,6 +515,44 @@ TEST(WriteQueueTest, LimitsTheSizeOfAGroup) {
     }
 }
 
+TEST(WriteQueueTest, AdmitsExactSmallAndLargeGroupLimitsButNotOneByteMore) {
+    constexpr std::size_t KiB = 1'024;
+    constexpr std::size_t MiB = 1'024 * KiB;
+    struct Boundary {
+        std::size_t leader_size;
+        std::size_t follower_size;
+    };
+    constexpr std::array boundaries{
+        Boundary{64, 128 * KiB},
+        Boundary{200 * KiB, MiB - 200 * KiB},
+    };
+    for (const Boundary& boundary : boundaries) {
+        SCOPED_TRACE(boundary.leader_size);
+        const std::size_t leader_value = ValueSizeForEncodedBatchSize("w1", boundary.leader_size);
+        const std::size_t exact_value = ValueSizeForEncodedBatchSize("w2", boundary.follower_size);
+        const std::size_t over_value =
+            ValueSizeForEncodedBatchSize("w2", boundary.follower_size + 1U);
+        const std::array cases{
+            std::pair{exact_value, std::vector<std::string>{"w1,w2"}},
+            std::pair{over_value, std::vector<std::string>{"w1", "w2"}},
+        };
+        for (const auto& [follower_value, expected] : cases) {
+            QueueHarness harness;
+            harness.prepare().wait_at = 0;
+            harness.StartWriter("w1", false, leader_value);
+            harness.WaitForGate(harness.prepare());
+            harness.StartWriter("w2", false, follower_value);
+            harness.WaitForQueue(2);
+
+            harness.OpenGate(harness.prepare());
+
+            EXPECT_EQ(harness.Join(),
+                      (std::map<std::string, std::string>{{"w1", "ok"}, {"w2", "ok"}}));
+            EXPECT_EQ(harness.groups(), expected);
+        }
+    }
+}
+
 TEST(WriteQueueTest, GroupsBatchesWhateverSequencesTheyHold) {
     QueueHarness harness;
     harness.prepare().wait_at = 0;
@@ -564,6 +625,25 @@ TEST(WriteQueueTest, ReleasesTheQueueWhenAStepThrows) {
         EXPECT_EQ(results.at("w3"), "ok");
         EXPECT_EQ(harness.groups(), (std::vector<std::string>{"w1,w2", "w3"}));
     }
+}
+
+TEST(WriteQueueTest, ReacquiresAfterPrepareUnlocksAndThrowsBeforeWakingTheFollower) {
+    QueueHarness harness;
+    harness.prepare().wait_at = 0;
+    harness.prepare().throw_at = 0;
+    harness.prepare().unlock_to_throw = true;
+    harness.StartWriter("w1", false);
+    harness.WaitForGate(harness.prepare());
+    harness.StartWriter("w2", false);
+    harness.WaitForQueue(2);
+
+    harness.OpenGate(harness.prepare());
+
+    EXPECT_EQ(harness.Join(),
+              (std::map<std::string, std::string>{{"w1", "threw step failed"}, {"w2", "ok"}}));
+    EXPECT_EQ(harness.groups(), (std::vector<std::string>{"w2"}));
+    std::unique_lock lock(harness.mutex());
+    EXPECT_EQ(harness.queue().size(), 0U);
 }
 
 TEST(WriteQueueTest, RunsAForcedWriterAloneBetweenGroups) {
