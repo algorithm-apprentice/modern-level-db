@@ -13,6 +13,8 @@ link/unlink stages and seek-record eligibility, then gives every current
 definition and sampling lambda a bounded semantic disposition. Keep reviewed
 design, original-source characterization and three production topics as local
 commits, then publish one non-draft PR.
+The design and original characterization are accepted; all three production
+topics are implemented locally. Integrated review and delivery remain pending.
 
 No public API, cache key, table open/read order, snapshot ordering, metadata seek
 budget, sampling sequence, compaction scheduling, owner lifetime, mutex policy,
@@ -178,3 +180,21 @@ Debug original-name parity before normal squash delivery.
 Successful tests do not prove single-flight opens, arbitrary allocation failure,
 invalid registry handles, concurrent registry/statistics access, scheduler
 fairness, performance, or whole-production completion.
+
+## Local implementation evidence
+
+The accepted design is `5ff685c`; original characterization is `b4e59cd`.
+A fresh unchanged-production Windows Debug build froze 89 identities:
+TableCacheTest 8, SnapshotRegistryTest 4, ReadSamplingPeriodsTest 1,
+SeekStatisticsTest 8, LookupTest 14 and DatabaseTest 54.
+
+Production topics remain separate commits: `cd1cdbe` composes TableCache loading
+(exact original subset 76), `7e79ace` composes snapshot link/unlink (58), and
+`5f2bfa8` composes seek eligibility (76). Final results exactly match all
+original 89 identities with no failure/error/skip/duplicate.
+
+All six annotation multisets are unchanged. The final scan reports 38 named
+definitions, one lambda and zero recovery nodes. Local GCC Release
+warnings-as-errors with `-fno-range-for-ext-temps` compiles all changed/coupled
+objects. Documentation and whitespace checks pass; hosted GCC 13 coverage,
+Windows native identity parity and normal merge remain delivery obligations.
