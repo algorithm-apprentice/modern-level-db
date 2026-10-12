@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Proposed recursive follow-up to the diagnostic formatter slices in the
+Design accepted in #227. This is a recursive follow-up to the diagnostic formatter slices in the
 [production composition plan](production-function-composition-plan.md).
 Source-read baseline: `bdbb01d`.
 
@@ -105,3 +105,23 @@ Two documentation suggestions are incorporated: explicit bounded-nibble and
 borrowed-lifetime proofs, and the exact anchored selector including the two
 existing TableNativeTest cases. The reviewer performed no edits/builds/tests
 or allocation-failure experiments.
+
+## Original diagnostic characterization
+
+Two public cases execute before diagnostic source/header changes against
+`3e49ab9`: ordered all-256-byte escaping versus a literal 735-character golden,
+and empty/repeated control/NUL/UTF-8 bytes without text interpretation.
+An independent mechanical check of the literal decodes it back to all 256
+ordered byte values; the test oracle itself has no producer switch or hex loop.
+
+The anchored coupled native Windows Debug selection passes 103 unique
+classname/name pairs, both additions included, with no failures/errors/skips.
+Actual suites/counts are DumpFile 21, DumpCommand 6, NativeCommand 3,
+NativeDumpCommand 2, WindowsOutput 3, WalReader 17, WalWriter 10,
+WalIoNative 1, Table 38 and TableNative 2. These are this selection's counts,
+not an older WAL batch or another platform's suite totals.
+Allocation mutation ordering/throws remain inspection-based.
+
+Independent pre-extraction characterization review found no significant issue
+and independently checked the complete literal and 103-case XML, including the
+two additions and two TableNative cases. No edits/builds/tests were performed.
