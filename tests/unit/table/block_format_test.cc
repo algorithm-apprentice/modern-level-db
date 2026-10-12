@@ -196,8 +196,9 @@ TEST(FooterTest, MixedFaultsKeepMagicHandleAndPaddingPriority) {
     ExpectCorruption(DecodeFooter(bad_magic), "table footer has a bad magic number");
 
     auto malformed_metaindex = EncodeFooter({});
-    std::fill_n(malformed_metaindex.begin(), 2 * BlockHandleMaxEncodedSize, std::byte{0x80});
-    ExpectCorruption(DecodeFooter(malformed_metaindex), "block handle offset is malformed");
+    std::fill(malformed_metaindex.begin() + 1,
+              malformed_metaindex.begin() + 2 * BlockHandleMaxEncodedSize, std::byte{0x80});
+    ExpectCorruption(DecodeFooter(malformed_metaindex), "block handle size is malformed");
 
     auto malformed_index = EncodeFooter({});
     std::fill(malformed_index.begin() + 2, malformed_index.begin() + 2 * BlockHandleMaxEncodedSize,
