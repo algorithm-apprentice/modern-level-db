@@ -464,6 +464,14 @@ Status DumpTable(FileSystem& file_system, const std::filesystem::path& path,
     return DumpTableEntries(iterator, output);
 }
 
+Result<ParsedFileName> ParseDiagnosticFileName(std::string_view file_name) {
+    const std::optional<ParsedFileName> parsed = ParseFileName(file_name);
+    if (!parsed.has_value()) {
+        return std::unexpected(Error::InvalidArgument("file name is not canonical"));
+    }
+    return *parsed;
+}
+
 }  // namespace
 
 std::string EscapeDiagnosticBytes(ByteView bytes) {
@@ -494,9 +502,9 @@ Status DumpFile(FileSystem& file_system, const std::filesystem::path& path, Writ
     if (!file_name.has_value()) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 path conversion failure
         return std::unexpected(std::move(file_name).error());  // GCOVR_EXCL_LINE: see PathUtf8
     }
-    const std::optional<ParsedFileName> parsed = ParseFileName(*file_name);
+    Result<ParsedFileName> parsed = ParseDiagnosticFileName(*file_name);
     if (!parsed.has_value()) {
-        return std::unexpected(Error::InvalidArgument("file name is not canonical"));
+        return std::unexpected(std::move(parsed).error());
     }
     const std::string escaped_path = EscapeDiagnosticBytes(AsBytes(*path_text));
     switch (parsed->type) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/5 validated FileType default
