@@ -15,6 +15,146 @@
 namespace modern_leveldb {
 namespace {
 
+TEST(CodingTest, LiteralVarintEmissionKeepsGuardedBytesAndAdmissionCursor) {
+    struct Encoding {
+        std::uint32_t value;
+        std::vector<std::byte> bytes;
+    };
+    const std::array encodings{
+        Encoding{0, {std::byte{0}}},
+        Encoding{127, {std::byte{0x7f}}},
+        Encoding{128, {std::byte{0x80}, std::byte{1}}},
+        Encoding{300, {std::byte{0xac}, std::byte{2}}},
+        Encoding{16384, {std::byte{0x80}, std::byte{0x80}, std::byte{1}}},
+        Encoding{
+            0xffffffffU,
+            {std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0x0f}}},
+    };
+    for (const auto& encoding : encodings) {
+        SCOPED_TRACE(encoding.value);
+        for (std::size_t available = 0; available <= encoding.bytes.size() + 1; ++available) {
+            SCOPED_TRACE(available);
+            std::array<std::byte, 9> storage;
+            storage.fill(std::byte{0xa5});
+            auto expected = storage;
+            MutableByteView output(storage.data() + 1, available);
+            const bool admitted = available >= encoding.bytes.size();
+            if (admitted) {
+                for (std::size_t index = 0; index < encoding.bytes.size(); ++index) {
+                    expected[index + 1] = encoding.bytes[index];
+                }
+            }
+
+            EXPECT_EQ(EncodeVarint32(output, encoding.value), admitted);
+            EXPECT_EQ(storage, expected);
+            const std::size_t consumed = admitted ? encoding.bytes.size() : 0;
+            EXPECT_EQ(output.data(), storage.data() + 1 + consumed);
+            EXPECT_EQ(output.size(), available - consumed);
+        }
+    }
+}
+
+TEST(CodingTest, ScalarAdmissionKeepsTerminalTruncationPriorityAndParentContext) {
+    const auto check = [](auto decode, std::size_t maximum_bytes, std::byte excess_terminal) {
+        std::vector<std::byte> overflow(maximum_bytes, std::byte{0x80});
+        overflow.push_back(std::byte{0});
+        for (std::size_t size = 0; size <= overflow.size(); ++size) {
+            SCOPED_TRACE(size);
+            ByteView input = ByteView(overflow).first(size);
+            const auto result = decode(input);
+            ASSERT_FALSE(result.has_value());
+            EXPECT_EQ(result.error().code(), ErrorCode::Corruption);
+            EXPECT_EQ(result.error().message(),
+                      size < maximum_bytes ? "truncated varint" : "varint overflow");
+            EXPECT_EQ(input.data(), overflow.data());
+            EXPECT_EQ(input.size(), size);
+            EXPECT_TRUE(
+                std::string_view(result.error().location().file_name()).ends_with("coding.cc"));
+            EXPECT_NE(
+                std::string_view(result.error().location().function_name()).find("ConsumeVarint"),
+                std::string_view::npos);
+        }
+
+        std::vector<std::byte> terminal{std::byte{0x81}};
+        for (std::size_t index = 1; index + 1 < maximum_bytes; ++index) {
+            terminal.push_back(std::byte{0x80});
+        }
+        terminal.push_back(excess_terminal);
+        terminal.push_back(std::byte{0x5a});
+        ByteView input = terminal;
+        const auto result = decode(input);
+        ASSERT_TRUE(result.has_value());
+        EXPECT_EQ(*result, 1U);
+        EXPECT_EQ(input.data(), terminal.data() + maximum_bytes);
+        ASSERT_EQ(input.size(), 1U);
+        EXPECT_EQ(input.front(), std::byte{0x5a});
+    };
+    check(ConsumeVarint32, 5, std::byte{0x10});
+    check(ConsumeVarint64, 10, std::byte{0x02});
+}
+
+TEST(CodingTest, LiteralLengthPrefixesKeepFailurePriorityAndBorrowedPayloads) {
+    struct PrefixCase {
+        std::vector<std::byte> bytes;
+        std::string_view error;
+        std::size_t prefix_size;
+        std::size_t payload_size;
+    };
+    const std::array cases{
+        PrefixCase{{}, "truncated varint", 0, 0},
+        PrefixCase{{std::byte{0x80}}, "truncated varint", 0, 0},
+        PrefixCase{{std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0xff},
+                    std::byte{0xff}, std::byte{0}},
+                   "varint overflow",
+                   0,
+                   0},
+        PrefixCase{
+            {std::byte{3}, std::byte{0}, std::byte{0xff}}, "truncated length-prefixed value", 0, 0},
+        PrefixCase{{std::byte{3}, std::byte{0}, std::byte{0xff}, std::byte{0x80}, std::byte{0x5a}},
+                   {},
+                   1,
+                   3},
+        PrefixCase{{std::byte{0}, std::byte{0x5a}}, {}, 1, 0},
+        PrefixCase{{std::byte{0x80}, std::byte{0}, std::byte{0x5a}}, {}, 2, 0},
+        PrefixCase{{std::byte{0x80}, std::byte{0x80}, std::byte{0x80}, std::byte{0x80},
+                    std::byte{0x10}, std::byte{0x5a}},
+                   {},
+                   5,
+                   0},
+    };
+    for (const auto& test : cases) {
+        SCOPED_TRACE(test.bytes.size());
+        const auto original = test.bytes;
+        ByteView input = test.bytes;
+        const auto result = ConsumeLengthPrefixed(input);
+        if (!test.error.empty()) {
+            ASSERT_FALSE(result.has_value());
+            EXPECT_EQ(result.error().code(), ErrorCode::Corruption);
+            EXPECT_EQ(result.error().message(), test.error);
+            EXPECT_EQ(input.data(), test.bytes.data());
+            EXPECT_EQ(input.size(), test.bytes.size());
+            const std::string_view parent = test.error == "truncated length-prefixed value"
+                                                ? "ConsumeLengthPrefixed"
+                                                : "ConsumeVarint";
+            EXPECT_TRUE(
+                std::string_view(result.error().location().file_name()).ends_with("coding.cc"));
+            EXPECT_NE(std::string_view(result.error().location().function_name()).find(parent),
+                      std::string_view::npos);
+        } else {
+            ASSERT_TRUE(result.has_value());
+            EXPECT_EQ(result->data(), test.bytes.data() + test.prefix_size);
+            EXPECT_EQ(result->size(), test.payload_size);
+            const ByteView expected =
+                ByteView(test.bytes).subspan(test.prefix_size, test.payload_size);
+            EXPECT_EQ(AsStringView(*result), AsStringView(expected));
+            EXPECT_EQ(input.data(), result->data() + result->size());
+            ASSERT_EQ(input.size(), 1U);
+            EXPECT_EQ(input.front(), std::byte{0x5a});
+        }
+        EXPECT_EQ(test.bytes, original);
+    }
+}
+
 TEST(CodingTest, EncodesAndDecodesFixedValuesInPreallocatedStorage) {
     std::array<std::byte, 12> storage;
 
