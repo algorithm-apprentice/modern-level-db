@@ -73,25 +73,17 @@ public:
 
         void Next() { node_ = node_->Next(0); }
 
-        void Prev() {
-            node_ = list_->FindLessThan(node_->entry);
-            if (node_ == list_->head_) {
-                node_ = nullptr;
-            }
-        }
+        void Prev() { SetPosition(list_->FindLessThan(node_->entry)); }
 
         void Seek(const Entry& target) { node_ = list_->FindGreaterOrEqual(target, nullptr); }
 
         void SeekToFirst() { node_ = list_->head_->Next(0); }
 
-        void SeekToLast() {
-            node_ = list_->FindLast();
-            if (node_ == list_->head_) {
-                node_ = nullptr;
-            }
-        }
+        void SeekToLast() { SetPosition(list_->FindLast()); }
 
     private:
+        void SetPosition(Node* node) noexcept { node_ = node == list_->head_ ? nullptr : node; }
+
         const SkipList* list_;
         Node* node_ = nullptr;
     };
@@ -231,7 +223,7 @@ private:
 
     [[nodiscard]] Node* FindGreaterOrEqual(const Entry& entry, Node** predecessors) const {
         Node* node = head_;
-        int level = max_height_.load(std::memory_order_relaxed) - 1;
+        int level = CurrentHeight() - 1;
         while (true) {
             Node* next = node->Next(level);
             if (EntryIsAfterNode(entry, next)) {
@@ -248,12 +240,22 @@ private:
         }
     }
 
-    [[nodiscard]] Node* FindLessThan(const Entry& entry) const {
+    [[nodiscard]] bool ReachedUpperBound(Node* next, const Entry* upper_bound) const {
+        if (next == nullptr) {
+            return true;
+        }
+        if (upper_bound == nullptr) {
+            return false;
+        }
+        return compare_(next->entry, *upper_bound) >= 0;
+    }
+
+    [[nodiscard]] Node* FindLastBefore(const Entry* upper_bound) const {
         Node* node = head_;
-        int level = max_height_.load(std::memory_order_relaxed) - 1;
+        int level = CurrentHeight() - 1;
         while (true) {
             Node* next = node->Next(level);
-            if (next == nullptr || compare_(next->entry, entry) >= 0) {
+            if (ReachedUpperBound(next, upper_bound)) {
                 if (level == 0) {
                     return node;
                 }
@@ -264,21 +266,9 @@ private:
         }
     }
 
-    [[nodiscard]] Node* FindLast() const {
-        Node* node = head_;
-        int level = max_height_.load(std::memory_order_relaxed) - 1;
-        while (true) {
-            Node* next = node->Next(level);
-            if (next == nullptr) {
-                if (level == 0) {
-                    return node;
-                }
-                --level;
-            } else {
-                node = next;
-            }
-        }
-    }
+    [[nodiscard]] Node* FindLessThan(const Entry& entry) const { return FindLastBefore(&entry); }
+
+    [[nodiscard]] Node* FindLast() const { return FindLastBefore(nullptr); }
 
     const Compare& compare_;
     Arena& arena_;
