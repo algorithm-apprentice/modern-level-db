@@ -128,6 +128,50 @@ scan must still account for every definition and lambda, including new helpers.
 Final delivery requires exact-head 20/20 CI, 100% changed-code branch coverage,
 actual POSIX/Windows identity evidence and merged-path equality.
 
+## Final implementation ledger
+
+The final scan at `38f146574b6822288d0ebe8c9caabc86f5055331`
+contains 264 definitions and the same three lambdas. The four new definitions
+are:
+
+- Windows system-message append;
+- Windows typed file-error classification;
+- POSIX existing-directory inspection;
+- Windows existing-directory inspection.
+
+The complete session ledger assigns every current entry:
+
+| Disposition | Definitions | Lambdas |
+|---|---:|---:|
+| Reviewed leaf | 211 | 3 |
+| Reviewed composition | 53 | 0 |
+| Unclassified | 0 | 0 |
+
+The three parser recovery nodes are unchanged pure-virtual declarations and do
+not add definitions. `native-platform-final-disposition.json` retains every
+signature, source range, responsibility group, delivery reference and stopping
+reason.
+
+Windows `FileError` now composes message prefix construction, optional system
+text and typed classification while explicitly retaining the original
+`FileError` source location. POSIX and Windows `CreateDirectory` retain path
+validation/native creation and delegate only the already-exists inspection,
+passing caller source locations for conflict errors.
+
+Local Windows Debug and Release pass the five final error/namespace identities.
+The three source/error-priority identities also pass 20 consecutive executions,
+and the complete Windows Debug suite passes all 869 tests. Final POSIX
+source-context behavior and GCC 13 coverage remain Hosted requirements.
+
+## Integrated review
+
+Review confirmed that `errno` and `GetLastError` are captured before any later
+native operation, `PathUtf8` remains single-evaluation inside each error
+message, error message allocations and typed priority are unchanged, and
+existing-directory helpers perform no second path conversion. Source locations
+remain owned by `FileError` or the public `CreateDirectory` caller rather than
+the new leaves.
+
 ## Review focus
 
 Review error source ownership, `GetLastError`/`errno` capture timing, code/message

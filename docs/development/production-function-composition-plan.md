@@ -879,6 +879,25 @@ release. The reviewed head passed all 20 gates with 16/16 changed lines and
 100% diff coverage. Remaining native definitions still require complete
 disposition.
 
+#267 completes scheduling, clock and mapping-budget support. Its final ledger
+covers 31 definitions and three lambdas. SerialExecutor shutdown preserves
+admission closure, stop callbacks, join-before-canceled-owner destruction and
+caller-owned Error source context. Clock cancellation keeps stop-before-duration
+priority, and direct mapping-budget tests prove concurrent slot conservation.
+
+#268 completes mapped-region/view ownership. Its final ledger covers 46
+definitions. POSIX and Windows each use one platform-local movable owner for
+pending rollback and published-reader teardown; POSIX retains best-effort
+`munmap`, while Windows terminates before recycling a slot after failed unmap.
+The reviewed head passed the six POSIX and eleven Windows mapping identities.
+
+#269 completes sequential and copied-positioned read handles plus the complete
+Windows native-operation seam. Its final ledger covers 62 definitions. POSIX
+readers own `ScopedDescriptor` directly, Windows reader transfer constructors
+state their nonthrowing initialization contract, and the N09 OVERLAPPED
+completion/drain order remains unchanged. The reviewed head passed seven POSIX
+and ten Windows read identities.
+
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,
 not the whole dump file.
