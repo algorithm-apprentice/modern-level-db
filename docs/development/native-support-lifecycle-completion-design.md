@@ -99,6 +99,40 @@ support tests. The final selected identity set must exactly match the
 characterized set, and the complete project gates must pass on the reviewed PR
 head.
 
+## Final implementation ledger
+
+The final implementation contains 31 definitions and the original three
+lambdas:
+
+| File | Final definitions | Reviewed responsibility |
+|---|---:|---|
+| `background_executor.h` | 10 | Declarative ownership and polymorphic scheduling boundaries. |
+| `serial_executor.cc` | 8 | Worker start; shutdown composition; queue detachment; stop/wake/join; input validation; admission/notification; wait/dequeue; callback loop. |
+| `clock.h` | 6 | Declarative clock ownership boundary. |
+| `clock.cc` | 3 | Steady-clock query; positive cancellable wait; public stop/duration priority. |
+| `mapped_read_limiter.h` | 4 | Signed-domain construction; atomic admission; balanced release; checked conversion. |
+
+The worker-entry, queue-predicate and clock-predicate lambdas remain
+single-expression leaves. No helper changes allocation timing, mutex ownership,
+notification order, stop observation, error source context, callback destruction
+or atomic ordering.
+
+Selected Windows Debug characterization contains 17 exact identities: five
+clock, three mapping limiter and nine serial executor tests. The characterized
+and final identity sets are equal. The two new concurrency/lifecycle oracles
+also pass 50 consecutive executions. GCC/Werror compiles the modified clock and
+executor objects independently. The complete Windows Debug suite passes all 868
+tests.
+
+## Integrated review
+
+Review rejected two details from the first extraction. Returning the detached
+`std::deque` by value introduced a move that MSVC does not classify as
+`noexcept`, so the final helper fills the destructor's existing local queue by
+reference. Moving the shutdown error into `Enqueue` also changed its captured
+function; the final call passes a `Schedule` source location explicitly and the
+characterization checks the exact code, message, file and calling function.
+
 ## Review focus
 
 Review lock release before every user-owned destructor, stop-before-duration
