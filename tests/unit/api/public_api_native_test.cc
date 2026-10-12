@@ -307,17 +307,40 @@ TEST(PublicDatabaseTest, ReportsOwningDatabaseStateAndRetainedSnapshotRegistrati
 
 TEST(PublicDatabaseTest, DatabaseStateOutlivesItsDatabase) {
     TemporaryDatabaseDirectory directory;
-    DatabaseState saved;
+    Options options = CreatingOptions();
+    options.write_buffer_size = 64U << 10U;
     {
-        Result<Database> opened = Database::Open(CreatingOptions(), directory.path());
+        Result<Database> opened = Database::Open(options, directory.path());
         ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
-        ASSERT_TRUE(opened->Put(AsBytes("a"), AsBytes("1")).has_value());
+        const std::string large(80'000, 'x');
+        ASSERT_TRUE(opened->Put(AsBytes("large"), AsBytes(large)).has_value());
+        ASSERT_TRUE(opened->Put(AsBytes("trigger"), AsBytes("value")).has_value());
+    }
+
+    DatabaseState saved;
+    std::optional<std::size_t> nonempty_level;
+    DatabaseLevelState projected_level;
+    {
+        Result<Database> opened = Database::Open(OpeningOptions(), directory.path());
+        ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
         Result<DatabaseState> state = opened->GetState();
         ASSERT_TRUE(state.has_value()) << state.error().ToString();
         saved = *state;
+        for (std::size_t level = 0; level < state->levels.size(); ++level) {
+            if (state->levels[level].file_count != 0) {
+                nonempty_level = level;
+                projected_level = state->levels[level];
+                break;
+            }
+        }
     }
 
-    EXPECT_EQ(saved.last_sequence, 1U);
+    ASSERT_TRUE(nonempty_level.has_value());
+    EXPECT_GT(projected_level.file_count, 0U);
+    EXPECT_GT(projected_level.file_bytes, 0U);
+    EXPECT_EQ(saved.levels[*nonempty_level].file_count, projected_level.file_count);
+    EXPECT_EQ(saved.levels[*nonempty_level].file_bytes, projected_level.file_bytes);
+    EXPECT_EQ(saved.last_sequence, 2U);
     EXPECT_GT(saved.mutable_memtable_bytes, 0U);
     EXPECT_FALSE(saved.sticky_error.has_value());
 }
