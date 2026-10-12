@@ -2,7 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -13,6 +15,7 @@
 
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
+#include "modern_leveldb/base/hash.h"
 
 namespace modern_leveldb {
 namespace {
@@ -75,12 +78,13 @@ TEST(BloomFilterTest, SmallFilterMatchesItsKeys) {
 }
 
 TEST(BloomFilterTest, ClampsTheProbeCountLikeLevelDb) {
-    constexpr std::array<std::pair<std::uint32_t, unsigned int>, 9> Cases = {{
+    constexpr std::array<std::pair<std::uint32_t, unsigned int>, 10> Cases = {{
         {0, 1},
         {1, 1},
         {2, 1},
         {3, 2},
         {10, 6},
+        {13, 8},
         {43, 29},
         {44, 30},
         {100, 30},
@@ -90,6 +94,41 @@ TEST(BloomFilterTest, ClampsTheProbeCountLikeLevelDb) {
         SCOPED_TRACE(bits_per_key);
         const std::vector<std::byte> filter = BuildFilter(BloomFilterPolicy(bits_per_key), {});
         EXPECT_EQ(std::to_integer<unsigned int>(filter.back()), probes);
+    }
+}
+
+TEST(BloomFilterTest, ProbeProgressionSetsAndRequiresEveryLiteralBit) {
+    constexpr std::uint32_t Seed = 0xbc9f1d34U;
+    const BloomFilterPolicy policy(10);
+    const ByteView key = AsBytes("probe-key");
+    const std::vector<std::byte> filter = BuildFilter(policy, {"probe-key"});
+    ASSERT_EQ(filter.size(), 9U);
+    ASSERT_EQ(std::to_integer<unsigned int>(filter.back()), 6U);
+    const std::uint64_t bits = 64;
+
+    std::array<std::uint64_t, 6> positions{};
+    std::uint32_t hash = Hash32(key, Seed);
+    const std::uint32_t delta = std::rotr(hash, 17);
+    std::vector<std::byte> expected(8, std::byte{0});
+    for (std::size_t probe = 0; probe < positions.size(); ++probe) {
+        const std::uint64_t position = hash % bits;
+        positions[probe] = position;
+        expected[static_cast<std::size_t>(position / 8U)] |=
+            static_cast<std::byte>(1U << (position % 8U));
+        hash += delta;
+    }
+    expected.push_back(std::byte{6});
+    EXPECT_EQ(filter, expected);
+
+    auto sorted = positions;
+    std::ranges::sort(sorted);
+    EXPECT_EQ(std::ranges::unique(sorted).begin(), sorted.end());
+    for (const std::uint64_t position : positions) {
+        std::vector<std::byte> missing = filter;
+        const std::size_t byte = static_cast<std::size_t>(position / 8U);
+        const std::byte mask = static_cast<std::byte>(1U << (position % 8U));
+        missing.at(byte) &= ~mask;
+        EXPECT_FALSE(policy.KeyMayMatch(key, missing));
     }
 }
 

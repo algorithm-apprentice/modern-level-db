@@ -25,6 +25,20 @@ std::byte BitMask(std::uint64_t position) noexcept {
     return static_cast<std::byte>(1U << (position % 8));
 }
 
+std::uint32_t BloomHashDelta(std::uint32_t hash) noexcept { return std::rotr(hash, 17); }
+
+std::uint64_t BloomBitPosition(std::uint32_t hash, std::uint64_t bits) noexcept {
+    return hash % bits;
+}
+
+void SetBloomBit(MutableByteView filter, std::uint64_t position) noexcept {
+    filter[static_cast<std::size_t>(position / 8)] |= BitMask(position);
+}
+
+bool BloomBitIsSet(ByteView filter, std::uint64_t position) noexcept {
+    return (filter[static_cast<std::size_t>(position / 8)] & BitMask(position)) != std::byte{0};
+}
+
 }  // namespace
 
 BloomFilterPolicy::BloomFilterPolicy(std::uint32_t bits_per_key) noexcept
@@ -56,10 +70,10 @@ void BloomFilterPolicy::CreateFilter(std::span<const ByteView> keys,
     const MutableByteView filter = MutableByteView(output).subspan(start, bytes);
     for (const ByteView key : keys) {
         std::uint32_t hash = BloomHash(key);
-        const std::uint32_t delta = std::rotr(hash, 17);
+        const std::uint32_t delta = BloomHashDelta(hash);
         for (std::uint32_t probe = 0; probe < probes_; ++probe) {
-            const std::uint64_t position = hash % bits;
-            filter[static_cast<std::size_t>(position / 8)] |= BitMask(position);
+            const std::uint64_t position = BloomBitPosition(hash, bits);
+            SetBloomBit(filter, position);
             hash += delta;
         }
     }
@@ -77,10 +91,10 @@ bool BloomFilterPolicy::KeyMayMatch(ByteView key, ByteView filter) const noexcep
     }
 
     std::uint32_t hash = BloomHash(key);
-    const std::uint32_t delta = std::rotr(hash, 17);
+    const std::uint32_t delta = BloomHashDelta(hash);
     for (std::uint32_t probe = 0; probe < probes; ++probe) {
-        const std::uint64_t position = hash % bits;
-        if ((filter[static_cast<std::size_t>(position / 8)] & BitMask(position)) == std::byte{0}) {
+        const std::uint64_t position = BloomBitPosition(hash, bits);
+        if (!BloomBitIsSet(filter, position)) {
             return false;
         }
         hash += delta;

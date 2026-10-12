@@ -605,6 +605,7 @@ changed paths verified in main.
 | Complete write queue commit and buffer-generation ownership lifecycle | [Write commit lifecycle](write-commit-lifecycle-composition-design.md) | Delivered in #257 from one locally reviewed larger batch; corrected 114-case original/final parity, exact 40/71/74 topic subsets, complete 61-definition/three-lambda disposition, and actual hosted Windows Debug selected names match the original 114. |
 | Complete trusted WriteBatch and WAL fragment codec lifecycle | [Record codec lifecycle](record-codec-lifecycle-composition-design.md) | Delivered in #258 from one locally reviewed larger batch; corrected 144-case original/final parity, exact 94/121 topic subsets, complete 59-definition disposition, and actual hosted Windows Debug selected names match the original 144. |
 | Complete internal-key, Arena and MemTable ownership lifecycle | [Key/memory lifecycle](key-memory-lifecycle-composition-design.md) | Delivered in #259 from one locally reviewed larger batch; 200-case original/final parity, exact 39/33 topic subsets, complete 115-definition disposition, and actual hosted Windows Debug selected names match the original 200. |
+| Complete Block, Iterator, BlockBuilder and block-format representation lifecycle | [Block representation lifecycle](block-representation-lifecycle-composition-design.md) | Delivered in #260 from one locally reviewed larger batch; corrected 208-case original/final parity, exact 121/133 topic subsets, complete 96-definition disposition, and actual hosted Windows Debug selected names match the original 208. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -810,6 +811,17 @@ does not publish a partial borrowed view. Arena's extracted admission relies on
 the proven cursor invariant and removes an unreachable redundant branch instead
 of adding a test hook or coverage exclusion. Hosted checks and actual Windows
 Debug parity succeeded; broader table/engine/platform files remain open.
+
+#260 reconciles every Block/Iterator/BlockBuilder/block-format definition using
+the positioning, reverse, prefix-builder and read-record deliveries. Its
+fourteen-suite selection contains 208 corrected original/final identities;
+footer and stored-block intermediates are exact original subsets of 121 and
+133. The final ledger covers 96 definitions and removes the only padding
+lambda. Review corrected ownership assertions, GCC-optimized corruption
+mutation, distinct metaindex-before-index fault messages and the documented
+CommitEntry publish-before-restart-validation order. Hosted gates and actual
+Windows Debug parity succeeded. Table, filter, compression and engine layers
+remain separate audit frontiers.
 
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,

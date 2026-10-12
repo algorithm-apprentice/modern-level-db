@@ -76,6 +76,7 @@ private:
     // Returns the start of filter index; index filter_count_ yields the array
     // offset, which ends the last filter.
     [[nodiscard]] std::uint32_t FilterOffset(std::size_t index) const noexcept;
+    [[nodiscard]] bool OffsetsAreValid() const noexcept;
 
     BlockContents contents_;
     BloomFilterPolicy policy_;

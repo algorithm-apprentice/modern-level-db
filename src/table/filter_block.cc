@@ -22,8 +22,40 @@ constexpr std::size_t Fixed32Size = sizeof(std::uint32_t);
 constexpr std::size_t FilterTrailerSize = Fixed32Size + 1;
 constexpr std::uint64_t MaximumBlockSize = std::numeric_limits<std::uint32_t>::max();
 
+enum class FilterLayoutIssue {
+    None,
+    TooShort,
+    UnsupportedRange,
+    MalformedArray,
+};
+
+struct FilterBlockLayout {
+    std::size_t array_offset;
+    std::size_t filter_count;
+};
+
 std::unexpected<Error> BlockTooLarge() {
     return std::unexpected(Error::InvalidArgument("filter block would exceed uint32 size"));
+}
+
+FilterLayoutIssue DecodeFilterLayout(ByteView data, FilterBlockLayout& layout) noexcept {
+    if (data.size() < FilterTrailerSize) {
+        return FilterLayoutIssue::TooShort;
+    }
+    if (std::to_integer<unsigned int>(data.back()) != FilterRangeShift) {
+        return FilterLayoutIssue::UnsupportedRange;
+    }
+    const std::size_t offsets_end = data.size() - FilterTrailerSize;
+    const std::size_t array_offset = DecodeFixed32(data.subspan(offsets_end).first<Fixed32Size>());
+    if (array_offset > offsets_end || (offsets_end - array_offset) % Fixed32Size != 0) {
+        return FilterLayoutIssue::MalformedArray;
+    }
+    const FilterBlockLayout complete{
+        .array_offset = array_offset,
+        .filter_count = (offsets_end - array_offset) / Fixed32Size,
+    };
+    layout = complete;
+    return FilterLayoutIssue::None;
 }
 
 }  // namespace
@@ -100,28 +132,21 @@ Result<FilterBlockReader> FilterBlockReader::Create(std::vector<std::byte> conte
 Result<FilterBlockReader> FilterBlockReader::Create(BlockContents contents,
                                                     BloomFilterPolicy policy) {
     const ByteView data = contents.data();
-    if (data.size() < FilterTrailerSize) {
+    FilterBlockLayout layout;
+    const FilterLayoutIssue issue = DecodeFilterLayout(data, layout);
+    if (issue == FilterLayoutIssue::TooShort) {
         return std::unexpected(Error::Corruption("filter block is too short"));
     }
-    if (std::to_integer<unsigned int>(data.back()) != FilterRangeShift) {
+    if (issue == FilterLayoutIssue::UnsupportedRange) {
         return std::unexpected(Error::Corruption("filter block has an unsupported range size"));
     }
-    const std::size_t offsets_end = data.size() - FilterTrailerSize;
-    const std::size_t array_offset = DecodeFixed32(data.subspan(offsets_end).first<Fixed32Size>());
-    if (array_offset > offsets_end || (offsets_end - array_offset) % Fixed32Size != 0) {
+    if (issue == FilterLayoutIssue::MalformedArray) {
         return std::unexpected(Error::Corruption("filter block offset array is malformed"));
     }
 
-    FilterBlockReader reader(std::move(contents), policy, array_offset,
-                             (offsets_end - array_offset) / Fixed32Size);
-    // Filters start at zero, do not decrease, and end at the array offset.
-    std::uint32_t previous = 0;
-    for (std::size_t index = 0; index <= reader.filter_count_; ++index) {
-        const std::uint32_t offset = reader.FilterOffset(index);
-        if ((index == 0 && offset != 0) || offset < previous) {
-            return std::unexpected(Error::Corruption("filter block offsets are invalid"));
-        }
-        previous = offset;
+    FilterBlockReader reader(std::move(contents), policy, layout.array_offset, layout.filter_count);
+    if (!reader.OffsetsAreValid()) {
+        return std::unexpected(Error::Corruption("filter block offsets are invalid"));
     }
     return reader;
 }
@@ -138,6 +163,19 @@ FilterBlockReader::FilterBlockReader(BlockContents contents, BloomFilterPolicy p
 std::uint32_t FilterBlockReader::FilterOffset(std::size_t index) const noexcept {
     return DecodeFixed32(
         contents_.data().subspan(array_offset_ + Fixed32Size * index).first<Fixed32Size>());
+}
+
+bool FilterBlockReader::OffsetsAreValid() const noexcept {
+    // Filters start at zero, do not decrease, and end at the array offset.
+    std::uint32_t previous = 0;
+    for (std::size_t index = 0; index <= filter_count_; ++index) {
+        const std::uint32_t offset = FilterOffset(index);
+        if ((index == 0 && offset != 0) || offset < previous) {
+            return false;
+        }
+        previous = offset;
+    }
+    return true;
 }
 
 bool FilterBlockReader::KeyMayMatch(std::uint64_t block_offset, ByteView key) const noexcept {
