@@ -363,13 +363,17 @@ struct VersionSet::ManifestRecovery {
             return std::unexpected(
                 Error::Corruption("MANIFEST: " + std::string(version.error().message())));
         }
+        PublishRecoveredCounters(set, selected_number);
+        set.Install(std::make_shared<const Version>(std::move(*version)));
+        return {};
+    }
+
+    void PublishRecoveredCounters(VersionSet& set, std::uint64_t selected_number) {
         set.manifest_file_number_ = std::max(next_file.value(), selected_number + 1);
         set.next_file_number_ = set.manifest_file_number_ + 1;
         set.last_sequence_ = last_sequence.value();
         set.log_number_ = log_number.value();
         set.prev_log_number_ = prev_log_number;
-        set.Install(std::make_shared<const Version>(std::move(*version)));
-        return {};
     }
 
     VersionBuilder builder;
