@@ -4,10 +4,18 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 #include "modern_leveldb/base/bytes.h"
 
 namespace modern_leveldb {
+
+// Requires a seven-bit payload and a shift within the unsigned result width.
+template <typename UInt>
+inline void FoldVarintPayload(UInt& value, unsigned int payload, std::size_t shift) noexcept {
+    static_assert(std::is_unsigned_v<UInt>);
+    value |= static_cast<UInt>(payload) << shift;
+}
 
 // Requires enough output for the canonical encoding and advances past it.
 void EncodeVarint32Trusted(MutableByteView& output, std::uint32_t value) noexcept;
@@ -26,7 +34,7 @@ inline std::uint32_t ConsumeVarint32Trusted(const std::byte*& input) noexcept {
     while (true) {
         const unsigned int byte = std::to_integer<unsigned int>(*input);
         ++input;
-        value |= static_cast<std::uint32_t>(byte & 0x7fU) << shift;
+        FoldVarintPayload(value, byte & 0x7fU, shift);
         if ((byte & 0x80U) == 0U) {
             return value;
         }
