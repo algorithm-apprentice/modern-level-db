@@ -124,6 +124,36 @@ selection. Final selected identities must exactly match the characterized set.
 Run Windows Debug/Release, GCC/Werror owned objects and complete Hosted CI on
 the reviewed PR head.
 
+## Final implementation ledger
+
+The final mapping lifecycle contains 46 definitions and no lambdas:
+
+| Platform | Final definitions | Reviewed responsibility |
+|---|---:|---|
+| POSIX | 21 | Copied fallback, size admission, process budget, one movable mapped-region owner, mapped reader, constructor delegation and random-access admission. |
+| Windows | 25 | Process limiter, copied fallback, size admission, one movable mapped-view owner, mapped reader, section/view/handle transaction, constructor delegation and random-access admission. |
+
+Each owner adds an explicit `noexcept` move constructor, deleted move
+assignment and view/extent accessors. The old `active_` flag and `Commit`
+operation are gone. A moved-from pending owner is inactive because its
+limiter/budget has been transferred; the final reader owns that same object and
+uses a defaulted destructor.
+
+Local Windows Debug and Release both pass the exact 11 characterized mapping
+identities. The Debug selection also passes 20 consecutive executions, and the
+complete Windows Debug suite passes all 868 tests. Final POSIX parity remains a
+Hosted GCC 13 requirement because the local GCC configuration excludes native
+filesystem sources.
+
+## Integrated review
+
+Review confirmed that allocation failure occurs before owner transfer and that
+both final reader constructors are `noexcept` after transfer begins. It also
+kept extent reset explicitly in the unsigned `std::size_t` domain, avoiding an
+implicit signed literal conversion in GCC/Werror builds. Windows fault traces
+remain exact, including section-close failure unmapping before the residual file
+RAII close and fatal unmap occurring before slot release.
+
 ## Review focus
 
 Review move construction before publication, allocation-failure rollback,
