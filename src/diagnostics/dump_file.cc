@@ -222,21 +222,14 @@ std::string FormatWriteBatchEntry(const WriteBatchEntry& entry) {
     return line;
 }
 
-Status FormatWriteBatch(const WalLogicalRecord& record, WritableFile& output,
-                        std::optional<Error>& first) {
-    Result<WriteBatchReader> batch = WriteBatchReader::Open(record.data);
-    if (!batch.has_value()) {
-        return ReportInvalidRecord("WAL", record.offset, batch.error(), output, first);
-    }
+std::string FormatWriteBatchHeader(std::uint64_t offset, const WriteBatchReader& batch) {
+    return "record offset=" + std::to_string(offset) +
+           " sequence=" + std::to_string(batch.sequence()) +
+           " count=" + std::to_string(batch.count());
+}
 
-    std::string header = "record offset=" + std::to_string(record.offset) +
-                         " sequence=" + std::to_string(batch->sequence()) +
-                         " count=" + std::to_string(batch->count());
-    const Status header_status = AppendDiagnosticLine(output, std::move(header));
-    if (!header_status.has_value()) {
-        return header_status;
-    }
-    while (const std::optional<WriteBatchEntry> entry = batch->Next()) {
+Status AppendWriteBatchEntries(WriteBatchReader& batch, WritableFile& output) {
+    while (const std::optional<WriteBatchEntry> entry = batch.Next()) {
         std::string line = FormatWriteBatchEntry(*entry);
         const Status appended = AppendDiagnosticLine(output, std::move(line));
         if (!appended.has_value()) {
@@ -244,6 +237,20 @@ Status FormatWriteBatch(const WalLogicalRecord& record, WritableFile& output,
         }
     }
     return {};
+}
+
+Status FormatWriteBatch(const WalLogicalRecord& record, WritableFile& output,
+                        std::optional<Error>& first) {
+    Result<WriteBatchReader> batch = WriteBatchReader::Open(record.data);
+    if (!batch.has_value()) {
+        return ReportInvalidRecord("WAL", record.offset, batch.error(), output, first);
+    }
+    std::string header = FormatWriteBatchHeader(record.offset, *batch);
+    const Status header_status = AppendDiagnosticLine(output, std::move(header));
+    if (!header_status.has_value()) {
+        return header_status;
+    }
+    return AppendWriteBatchEntries(*batch, output);
 }
 
 Status AppendOptionalNumber(WritableFile& output, std::string_view name,
