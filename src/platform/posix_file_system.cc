@@ -883,9 +883,9 @@ Result<std::unique_ptr<FileLock>> PosixFileSystem::LockFile(const std::filesyste
         return std::unexpected(descriptor.error());
     }
 
-    const Status locked = AcquireKernelLock(descriptor->get(), path);
+    Status locked = AcquireKernelLock(descriptor->get(), path);
     if (!locked.has_value()) {
-        return std::unexpected(locked.error());
+        return std::unexpected(std::move(locked).error());
     }
 
     std::unique_ptr<FileLock> lock = std::make_unique<PosixFileLock>(descriptor->get(), *identity);

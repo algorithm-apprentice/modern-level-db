@@ -1074,7 +1074,7 @@ Result<std::unique_ptr<FileLock>> WindowsFileSystem::LockFile(const std::filesys
     if (!file.has_value()) {
         return std::unexpected(std::move(file).error());
     }
-    const Status locked = AcquireKernelLock(file->get(), path);
+    Status locked = AcquireKernelLock(file->get(), path);
     if (!locked.has_value()) {
         return std::unexpected(std::move(locked).error());
     }
