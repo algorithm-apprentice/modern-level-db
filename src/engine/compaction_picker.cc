@@ -193,6 +193,29 @@ std::optional<InputExpansion> TryExpandInputs(const Version& version,
     return expansion;
 }
 
+void ApplyExpandedInputs(const Version& version, const InternalKeyComparator& comparator,
+                         std::uint32_t level, std::uint64_t target_file_size, Files& inputs,
+                         Files& next_inputs, KeyRange& range, KeyRange& all) {
+    std::optional<InputExpansion> expansion =
+        TryExpandInputs(version, comparator, level, inputs, next_inputs, all, target_file_size);
+    if (!expansion.has_value()) {
+        return;
+    }
+    range = expansion->range;
+    inputs = std::move(expansion->inputs);
+    next_inputs = std::move(expansion->next_inputs);
+    all = range;
+    Widen(comparator, next_inputs, all);
+}
+
+Files CollectGrandparents(const Version& version, const Comparator& user_comparator,
+                          std::uint32_t level, const KeyRange& range) {
+    if (level + 2 >= NumLevels) {
+        return {};
+    }
+    return OverlappingFiles(version, level + 2, user_comparator, range);
+}
+
 // Closes the input range over both levels, then records grandparents to bound
 // the overlap inherited by the output's next compaction.
 Compaction SetupInputs(std::shared_ptr<const Version> version,
@@ -206,20 +229,9 @@ Compaction SetupInputs(std::shared_ptr<const Version> version,
     KeyRange all = range;
     Widen(comparator, next_inputs, all);
 
-    if (auto expansion = TryExpandInputs(*version, comparator, level, inputs, next_inputs, all,
-                                         target_file_size);
-        expansion.has_value()) {
-        range = expansion->range;
-        inputs = std::move(expansion->inputs);
-        next_inputs = std::move(expansion->next_inputs);
-        all = range;
-        Widen(comparator, next_inputs, all);
-    }
-
-    Files grandparents;
-    if (level + 2 < NumLevels) {
-        grandparents = OverlappingFiles(*version, level + 2, user_comparator, all);
-    }
+    ApplyExpandedInputs(*version, comparator, level, target_file_size, inputs, next_inputs, range,
+                        all);
+    Files grandparents = CollectGrandparents(*version, user_comparator, level, all);
     InternalKey compact_pointer = *range.largest;
     Compaction compaction{.level = level,
                           .version = std::move(version),
