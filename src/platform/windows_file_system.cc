@@ -287,6 +287,20 @@ Result<bool> DirectoryIsMissing(const std::filesystem::path& native,
     return false;
 }
 
+Status ExistingDirectoryStatus(const std::filesystem::path& native,
+                               const std::filesystem::path& original,
+                               std::source_location error_location) {
+    const DWORD attributes = ::GetFileAttributesW(native.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        return std::unexpected(FileError("directory attributes", original, ::GetLastError()));
+    }
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        return {};
+    }
+    return std::unexpected(
+        Error::InvalidArgument("an existing file is not a directory", error_location));
+}
+
 Result<std::filesystem::path> ResolveDirectoryHandle(HANDLE handle,
                                                      const std::filesystem::path& original) {
     const DWORD required = ::GetFinalPathNameByHandleW(handle, nullptr, 0, VOLUME_NAME_DOS);
@@ -989,14 +1003,7 @@ Status WindowsFileSystem::CreateDirectory(const std::filesystem::path& path) {
     }
     const DWORD error = ::GetLastError();
     if (error == ERROR_ALREADY_EXISTS) {
-        const DWORD attributes = ::GetFileAttributesW(native->c_str());
-        if (attributes == INVALID_FILE_ATTRIBUTES) {
-            return std::unexpected(FileError("directory attributes", path, ::GetLastError()));
-        }
-        if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
-            return {};
-        }
-        return std::unexpected(Error::InvalidArgument("an existing file is not a directory"));
+        return ExistingDirectoryStatus(*native, path, std::source_location::current());
     }
     return std::unexpected(FileError("create directory", path, error));
 }
