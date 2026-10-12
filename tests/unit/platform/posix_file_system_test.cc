@@ -148,6 +148,17 @@ bool ChildCanAcquireKernelLock(const std::filesystem::path& path) {
     return ::waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
+#if defined(__linux__)
+std::size_t OpenDescriptorCount() {
+    std::size_t count = 0;
+    for (const auto& entry : std::filesystem::directory_iterator("/proc/self/fd")) {
+        static_cast<void>(entry);
+        ++count;
+    }
+    return count;
+}
+#endif
+
 TEST(PosixFileSystemTest, RejectsEmptyAndEmbeddedNullPaths) {
     PosixFileSystem file_system;
     const std::filesystem::path embedded_null(std::string("bad\0path", 8));
@@ -542,20 +553,27 @@ TEST(PosixFileSystemTest, WritableFileRetainsItsFirstIoError) {
     const Status flush = (*writable)->Flush();
     ASSERT_FALSE(flush.has_value());
     EXPECT_EQ(flush.error().code(), ErrorCode::Io);
+    const auto expect_sticky = [&](const Status& status) {
+        ASSERT_FALSE(status.has_value());
+        EXPECT_EQ(status.error().code(), flush.error().code());
+        EXPECT_EQ(status.error().message(), flush.error().message());
+        EXPECT_NE(status.error().message().data(), flush.error().message().data());
+        EXPECT_EQ(std::string_view(status.error().location().file_name()),
+                  std::string_view(flush.error().location().file_name()));
+        EXPECT_EQ(std::string_view(status.error().location().function_name()),
+                  std::string_view(flush.error().location().function_name()));
+        EXPECT_EQ(status.error().location().line(), flush.error().location().line());
+        EXPECT_EQ(status.error().location().column(), flush.error().location().column());
+    };
 
     const Status append = (*writable)->Append(AsBytes("later"));
-    ASSERT_FALSE(append.has_value());
-    EXPECT_EQ(append.error().message(), flush.error().message());
+    expect_sticky(append);
 
     const Status sync = (*writable)->Sync();
-    ASSERT_FALSE(sync.has_value());
-    EXPECT_EQ(sync.error().code(), flush.error().code());
-    EXPECT_EQ(sync.error().message(), flush.error().message());
+    expect_sticky(sync);
 
     const Status close = (*writable)->Close();
-    ASSERT_FALSE(close.has_value());
-    EXPECT_EQ(close.error().code(), flush.error().code());
-    EXPECT_EQ(close.error().message(), flush.error().message());
+    expect_sticky(close);
 
     const std::string_view sticky_file = flush.error().location().file_name();
     const std::string_view sticky_function = flush.error().location().function_name();
@@ -574,8 +592,7 @@ TEST(PosixFileSystemTest, WritableFileRetainsItsFirstIoError) {
     expect_closed((*writable)->Sync(), "sync called after file close", "Sync");
 
     const Status repeated_close = (*writable)->Close();
-    ASSERT_FALSE(repeated_close.has_value());
-    EXPECT_EQ(repeated_close.error().message(), flush.error().message());
+    expect_sticky(repeated_close);
     EXPECT_EQ(std::string_view(repeated_close.error().location().file_name()), sticky_file);
     EXPECT_EQ(std::string_view(repeated_close.error().location().function_name()), sticky_function);
 }
@@ -752,6 +769,9 @@ TEST(PosixFileSystemTest, PreventsDuplicateProcessLocksWithoutDroppingKernelLock
     PosixFileSystem first_file_system;
     PosixFileSystem second_file_system;
     const auto lock_path = directory.path() / "LOCK";
+#if defined(__linux__)
+    const std::size_t descriptors_before = OpenDescriptorCount();
+#endif
 
     auto first = first_file_system.LockFile(lock_path);
     ASSERT_TRUE(first.has_value());
@@ -763,6 +783,9 @@ TEST(PosixFileSystemTest, PreventsDuplicateProcessLocksWithoutDroppingKernelLock
 
     first->reset();
     EXPECT_TRUE(ChildCanAcquireKernelLock(lock_path));
+#if defined(__linux__)
+    EXPECT_EQ(OpenDescriptorCount(), descriptors_before);
+#endif
     auto acquired_after_release = second_file_system.LockFile(lock_path);
     EXPECT_TRUE(acquired_after_release.has_value());
 }
