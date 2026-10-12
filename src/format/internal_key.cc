@@ -18,24 +18,35 @@
 namespace modern_leveldb {
 namespace {
 
-bool TryDecodeInternalKey(ByteView encoded, InternalKeyView& decoded) noexcept {
+enum class InternalKeyDecodeIssue {
+    None,
+    ShortTrailer,
+    UnknownKind,
+};
+
+InternalKeyDecodeIssue DecodeInternalKeyView(ByteView encoded, InternalKeyView& decoded) noexcept {
     if (encoded.size() < InternalKeyTrailerSize) {
-        return false;
+        return InternalKeyDecodeIssue::ShortTrailer;
     }
 
     const std::size_t trailer_offset = encoded.size() - InternalKeyTrailerSize;
     const std::uint64_t trailer = DecodeInternalKeyTrailer(encoded);
     const ValueKind kind = DecodeInternalKeyValueKind(trailer);
     if (!IsValidValueKind(kind)) {
-        return false;
+        return InternalKeyDecodeIssue::UnknownKind;
     }
 
-    decoded = {
+    const InternalKeyView complete{
         .user_key = encoded.first(trailer_offset),
         .sequence = DecodeInternalKeySequence(trailer),
         .kind = kind,
     };
-    return true;
+    decoded = complete;
+    return InternalKeyDecodeIssue::None;
+}
+
+bool TryDecodeInternalKey(ByteView encoded, InternalKeyView& decoded) noexcept {
+    return DecodeInternalKeyView(encoded, decoded) == InternalKeyDecodeIssue::None;
 }
 
 Status ValidateInternalKeyInput(SequenceNumber sequence, ValueKind kind) {
@@ -102,10 +113,11 @@ void EncodeInternalKeyTrusted(MutableByteView& output, ByteView user_key, Sequen
 
 Result<InternalKeyView> ParseInternalKey(ByteView encoded) {
     InternalKeyView decoded;
-    if (!TryDecodeInternalKey(encoded, decoded)) {
-        if (encoded.size() < InternalKeyTrailerSize) {
-            return std::unexpected(Error::Corruption("internal key is shorter than its trailer"));
-        }
+    const InternalKeyDecodeIssue issue = DecodeInternalKeyView(encoded, decoded);
+    if (issue == InternalKeyDecodeIssue::ShortTrailer) {
+        return std::unexpected(Error::Corruption("internal key is shorter than its trailer"));
+    }
+    if (issue == InternalKeyDecodeIssue::UnknownKind) {
         return std::unexpected(Error::Corruption("internal key has an unknown value kind"));
     }
     return decoded;

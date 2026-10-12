@@ -603,6 +603,7 @@ changed paths verified in main.
 | Complete cache-core index, pin, retention, accounting and teardown lifecycle | [Cache lifecycle](cache-lifecycle-composition-design.md) | Delivered in #255 from one locally reviewed larger batch; 35-case original/final parity, exact 28/29 topic subsets, complete core/typed-wrapper disposition, and actual hosted Windows Debug selected names match the original 35. |
 | Complete private-header SkipList layout, publication and search lifecycle | [SkipList lifecycle](skiplist-lifecycle-composition-design.md) | Delivered in #256 from one locally reviewed larger batch; corrected 100-case original/final parity, exact 32-case publication subset, complete 48-definition disposition, and actual hosted Windows Debug selected names match the original 100. |
 | Complete write queue commit and buffer-generation ownership lifecycle | [Write commit lifecycle](write-commit-lifecycle-composition-design.md) | Delivered in #257 from one locally reviewed larger batch; corrected 114-case original/final parity, exact 40/71/74 topic subsets, complete 61-definition/three-lambda disposition, and actual hosted Windows Debug selected names match the original 114. |
+| Complete trusted WriteBatch and WAL fragment codec lifecycle | [Record codec lifecycle](record-codec-lifecycle-composition-design.md) | Delivered in #258 from one locally reviewed larger batch; corrected 144-case original/final parity, exact 94/121 topic subsets, complete 59-definition disposition, and actual hosted Windows Debug selected names match the original 144. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -787,6 +788,17 @@ before TakeOn, lock reacquisition, sequence restoration, WAL-before-MemTable
 visibility and active/immutable owner order all passed independent review and
 hosted gates. DatabaseEngine caller bodies and wider write/recovery files remain
 separate audit frontiers.
+
+#258 completes the trusted format bodies intentionally left open by checked
+record validation and WAL I/O delivery. Its twelve-suite selection contains
+144 corrected original/final identities; trusted batch and fragment-cursor
+intermediates are exact original subsets of 94 and 121. The final ledger covers
+59 definitions with no lambdas. Count commits only after complete record bytes;
+deletion consumes no value; exact-seven-byte block tails may emit empty First;
+cursor state advances before return. Checked validation, checksum/error tuples
+and wal_io recovery remain unchanged boundaries. Hosted checks and actual
+Windows Debug parity succeeded; other format/engine files and whole production
+remain open.
 
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,

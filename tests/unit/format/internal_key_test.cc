@@ -567,6 +567,56 @@ TEST(InternalKeyTest, RejectsTruncatedAndUnknownPersistentKinds) {
     EXPECT_EQ(parsed.error().code(), ErrorCode::Corruption);
 }
 
+TEST(InternalKeyTest, ParseIssuesKeepParentLocationAndPublishOnlyCompleteViews) {
+    for (std::size_t size = 0; size < InternalKeyTrailerSize; ++size) {
+        SCOPED_TRACE(size);
+        const std::vector<std::byte> encoded(size, std::byte{0});
+        const auto parsed = ParseInternalKey(encoded);
+        ASSERT_FALSE(parsed.has_value());
+        EXPECT_EQ(parsed.error().message(), "internal key is shorter than its trailer");
+        EXPECT_TRUE(
+            std::string_view(parsed.error().location().file_name()).ends_with("internal_key.cc"));
+        EXPECT_NE(
+            std::string_view(parsed.error().location().function_name()).find("ParseInternalKey"),
+            std::string_view::npos);
+
+        const auto decoded = InternalKey::Decode(encoded);
+        ASSERT_FALSE(decoded.has_value());
+        EXPECT_EQ(decoded.error().message(), parsed.error().message());
+        EXPECT_EQ(std::string_view(decoded.error().location().file_name()),
+                  std::string_view(parsed.error().location().file_name()));
+        EXPECT_EQ(std::string_view(decoded.error().location().function_name()),
+                  std::string_view(parsed.error().location().function_name()));
+    }
+
+    std::vector<std::byte> unknown(InternalKeyTrailerSize, std::byte{0});
+    unknown[0] = std::byte{2};
+    const auto unknown_parsed = ParseInternalKey(unknown);
+    ASSERT_FALSE(unknown_parsed.has_value());
+    EXPECT_EQ(unknown_parsed.error().message(), "internal key has an unknown value kind");
+    EXPECT_NE(std::string_view(unknown_parsed.error().location().function_name())
+                  .find("ParseInternalKey"),
+              std::string_view::npos);
+    const auto unknown_decoded = InternalKey::Decode(unknown);
+    ASSERT_FALSE(unknown_decoded.has_value());
+    EXPECT_EQ(unknown_decoded.error().message(), unknown_parsed.error().message());
+    EXPECT_EQ(std::string_view(unknown_decoded.error().location().function_name()),
+              std::string_view(unknown_parsed.error().location().function_name()));
+
+    const std::vector<std::byte> valid{
+        std::byte{0x00}, std::byte{0xff}, std::byte{0x00}, std::byte{0xff}, std::byte{0xff},
+        std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0xff},
+    };
+    const auto parsed = ParseInternalKey(valid);
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->user_key.data(), valid.data());
+    EXPECT_EQ(parsed->user_key.size(), 2U);
+    EXPECT_EQ(parsed->user_key[0], std::byte{0x00});
+    EXPECT_EQ(parsed->user_key[1], std::byte{0xff});
+    EXPECT_EQ(parsed->sequence, MaxSequenceNumber);
+    EXPECT_EQ(parsed->kind, ValueKind::Deletion);
+}
+
 TEST(InternalKeyTest, OwningCopiesHaveIndependentStorage) {
     InternalKey original = MakeKey("copy", 99, ValueKind::Value);
     const InternalKey copy = original;

@@ -85,6 +85,34 @@ TEST(ArenaTest, ReturnsLevelDbAlignedStorageAfterUnalignedAllocations) {
     EXPECT_EQ(arena.memory_usage(), BlockCharge(4'096U));
 }
 
+TEST(ArenaTest, ExactPaddedFitStaysInBlockAndOneByteOverUsesDedicatedStorage) {
+    Arena exact_fit;
+    std::byte* exact_prefix = exact_fit.Allocate(1);
+    *exact_prefix = std::byte{0xa5};
+
+    MutableByteView exact = AllocateView(exact_fit, 4'088, true);
+
+    EXPECT_EQ(exact.data(), exact_prefix + 8);
+    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(exact.data()) % Arena::Alignment, 0U);
+    EXPECT_EQ(exact_fit.memory_usage(), BlockCharge(4'096U));
+    EXPECT_EQ(*exact_prefix, std::byte{0xa5});
+
+    Arena one_over;
+    std::byte* over_prefix = one_over.Allocate(1);
+    *over_prefix = std::byte{0x5a};
+
+    MutableByteView over = AllocateView(one_over, 4'089, true);
+
+    EXPECT_NE(over.data(), over_prefix + 8);
+    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(over.data()) % Arena::Alignment, 0U);
+    EXPECT_EQ(one_over.memory_usage(), BlockCharge(4'096U) + BlockCharge(4'089U));
+    EXPECT_EQ(*over_prefix, std::byte{0x5a});
+
+    MutableByteView preserved_current = AllocateView(one_over, 1);
+    EXPECT_EQ(preserved_current.data(), over_prefix + 1);
+    EXPECT_EQ(one_over.memory_usage(), BlockCharge(4'096U) + BlockCharge(4'089U));
+}
+
 TEST(ArenaTest, UsesFourKilobyteBlocksForSmallAllocations) {
     Arena arena;
 
