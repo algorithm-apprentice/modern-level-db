@@ -157,3 +157,24 @@ Independent bounded characterization review found no high-confidence issue in
 the two-file diff, including byte counts, view lifetimes, slot reuse and native
 name ownership. It did not edit files or execute builds/tests; compilation and
 native execution remain unverified at this characterization-only stage.
+
+## Original native evidence and implementation stage
+
+The exact characterization-only head
+7d16db9c0bab001ffe42612819575d1aae556aba passed all 20 checks in run 38179010927.
+Actual Debug test logs contain 766 unique passing Linux cases and 761 unique
+passing macOS cases, including all three required new PosixFileSystemTest names.
+The original POSIX production file is byte-identical to the accepted baseline.
+The focused PosixFileSystemTest/TableTest/RecoveryTest sets contain 82 Linux and
+77 macOS cases; their names are retained for exact implementation comparison.
+These are native CTest log case sets, not JUnit artifacts or local POSIX runs.
+
+After verifying that evidence, separate mapping admission/copied ownership and
+directory traversal/publication topic commits implement the seven-definition
+ledger. Existing 32-bit/fstat/negative-size exclusions move with their original
+conditions; the mmap exclusion and parent pending guard remain unchanged.
+The copied fallback still constructs while PendingMmap is alive; directory
+read errno still precedes explicit close and error construction.
+Formatting, documentation and whitespace checks pass locally.
+Native implementation execution and original/final parity remain pending
+updated CI; Windows compilation is not a substitute for that evidence.
