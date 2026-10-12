@@ -604,6 +604,7 @@ changed paths verified in main.
 | Complete private-header SkipList layout, publication and search lifecycle | [SkipList lifecycle](skiplist-lifecycle-composition-design.md) | Delivered in #256 from one locally reviewed larger batch; corrected 100-case original/final parity, exact 32-case publication subset, complete 48-definition disposition, and actual hosted Windows Debug selected names match the original 100. |
 | Complete write queue commit and buffer-generation ownership lifecycle | [Write commit lifecycle](write-commit-lifecycle-composition-design.md) | Delivered in #257 from one locally reviewed larger batch; corrected 114-case original/final parity, exact 40/71/74 topic subsets, complete 61-definition/three-lambda disposition, and actual hosted Windows Debug selected names match the original 114. |
 | Complete trusted WriteBatch and WAL fragment codec lifecycle | [Record codec lifecycle](record-codec-lifecycle-composition-design.md) | Delivered in #258 from one locally reviewed larger batch; corrected 144-case original/final parity, exact 94/121 topic subsets, complete 59-definition disposition, and actual hosted Windows Debug selected names match the original 144. |
+| Complete internal-key, Arena and MemTable ownership lifecycle | [Key/memory lifecycle](key-memory-lifecycle-composition-design.md) | Delivered in #259 from one locally reviewed larger batch; 200-case original/final parity, exact 39/33 topic subsets, complete 115-definition disposition, and actual hosted Windows Debug selected names match the original 200. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -799,6 +800,16 @@ cursor state advances before return. Checked validation, checksum/error tuples
 and wal_io recovery remain unchanged boundaries. Hosted checks and actual
 Windows Debug parity succeeded; other format/engine files and whole production
 remain open.
+
+#259 closes all current definitions in internal_key, Arena and MemTable while
+reusing the delivered key/lookup/read-record/SkipList ledgers. Its thirteen-suite
+selection contains 200 original/final identities; internal decode and Arena
+intermediates are exact original subsets of 39 and 33. The final ledger covers
+115 definitions. Parse remains the Error/source-location parent; failed decode
+does not publish a partial borrowed view. Arena's extracted admission relies on
+the proven cursor invariant and removes an unreachable redundant branch instead
+of adding a test hook or coverage exclusion. Hosted checks and actual Windows
+Debug parity succeeded; broader table/engine/platform files remain open.
 
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,
