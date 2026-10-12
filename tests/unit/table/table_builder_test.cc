@@ -448,8 +448,38 @@ TEST_F(TableBuilderTest, RejectsFilterBlocksLargerThan4GiB) {
         ASSERT_TRUE(builder->Add(Key("key" + std::to_string(index), 1), {}).has_value());
     }
 
-    ExpectError(builder->Add(Key("key7", 1), {}), ErrorCode::InvalidArgument);
-    ExpectError(builder->Finish(), ErrorCode::InvalidArgument);
+    const std::uint64_t entry_count = builder->entry_count();
+    const std::uint64_t file_size = builder->file_size();
+    const std::vector<std::byte> output = state_->data;
+    const Status failed = builder->Add(Key("key7", 1), {});
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), ErrorCode::InvalidArgument);
+    EXPECT_EQ(failed.error().message(), "filter block would exceed uint32 size");
+    const std::string_view file = failed.error().location().file_name();
+    const std::string_view function = failed.error().location().function_name();
+    EXPECT_EQ(builder->entry_count(), entry_count);
+    EXPECT_EQ(builder->file_size(), file_size);
+    EXPECT_EQ(state_->data, output);
+
+    const Status later = builder->AddTrusted(Key("key8", 1), {});
+    ASSERT_FALSE(later.has_value());
+    EXPECT_EQ(later.error().code(), failed.error().code());
+    EXPECT_EQ(later.error().message(), failed.error().message());
+    EXPECT_EQ(std::string_view(later.error().location().file_name()), file);
+    EXPECT_EQ(std::string_view(later.error().location().function_name()), function);
+    EXPECT_EQ(builder->entry_count(), entry_count);
+    EXPECT_EQ(builder->file_size(), file_size);
+    EXPECT_EQ(state_->data, output);
+
+    const Status finished = builder->Finish();
+    ASSERT_FALSE(finished.has_value());
+    EXPECT_EQ(finished.error().code(), failed.error().code());
+    EXPECT_EQ(finished.error().message(), failed.error().message());
+    EXPECT_EQ(std::string_view(finished.error().location().file_name()), file);
+    EXPECT_EQ(std::string_view(finished.error().location().function_name()), function);
+    EXPECT_EQ(builder->entry_count(), entry_count);
+    EXPECT_EQ(builder->file_size(), file_size);
+    EXPECT_EQ(state_->data, output);
     EXPECT_EQ(state_->close_calls, 1);
 }
 
