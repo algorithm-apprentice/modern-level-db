@@ -14,6 +14,8 @@ semantic disposition while extracting node-layout initialization, insertion
 publication, shared reverse/last search, and iterator sentinel normalization.
 Keep reviewed design, original-source characterization and responsibility-sized
 implementation commits locally, then publish one non-draft PR.
+The design and original characterization are accepted; both production topics
+are implemented locally. Integrated review and delivery remain pending.
 
 Production changes are limited to src/memory/skiplist.h. Arena and MemTable
 production are real owner/caller context but remain unchanged. Tests stay in
@@ -222,3 +224,36 @@ Successful tests do not establish unsupported duplicate insertion, concurrent
 writers, comparator thread safety, allocator failure, physical tower shape,
 lock freedom/fairness, performance, entries outliving Arena, or whole-production
 completion.
+
+## Local implementation evidence
+
+The accepted design is commit `12738b1`. Original-source characterization is
+commit `729af5b`; independent bounded review found no significant issue and
+syntax-checked the new cases with GCC 16.1 Release warnings-as-errors plus
+`-fno-range-for-ext-temps`.
+
+A fresh unchanged-production Windows Debug build froze 100 unique identities:
+
+| Suite | Cases |
+| --- | ---: |
+| SkipListTest | 11 |
+| ArenaTest | 8 |
+| MemTableTest | 13 |
+| LookupTest | 14 |
+| DatabaseTest | 54 |
+
+The production topics remain separate local commits. `d498163` composes
+trailing-link layout, complete node initialization, height preparation and
+release publication; its exact original SkipList/Arena/MemTable subset contains
+32 identities. `65b93f6` composes shared reverse/last search and iterator
+sentinel normalization; the final integrated selection exactly matches all
+original 100 identities, with no failure, error, skip or duplicate.
+
+The complete GCOVR/LCOV/NOLINT annotation multiset in skiplist.h is unchanged.
+A post-change expanded scan reports exactly 49 SkipList definitions, zero
+lambdas and zero recovery nodes, matching the 18 selected/new plus 31 unchanged
+ledger. Local GCC Release warnings-as-errors with
+`-fno-range-for-ext-temps` compiles MemTable, SkipList/MemTable/Lookup tests and
+all DatabaseTest translation units. Documentation validation and `git diff
+--check` pass. Hosted GCC 13 branch coverage, sanitizer/runtime jobs, actual
+Windows Debug identity parity and normal merge remain delivery obligations.
