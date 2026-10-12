@@ -520,46 +520,47 @@ Result<bool> MatchesMappingSize(HANDLE file, std::uint64_t expected_size,
     return size.QuadPart >= 0 && static_cast<std::uint64_t>(size.QuadPart) == expected_size;
 }
 
-class PendingWindowsMapping final {
+class WindowsMappedView final {
 public:
-    PendingWindowsMapping(std::shared_ptr<MappedReadLimiter> limiter,
-                          std::shared_ptr<WindowsFileOperations> operations) noexcept
-        : limiter_(std::move(limiter)), operations_(std::move(operations)) {}
-    PendingWindowsMapping(const PendingWindowsMapping&) = delete;
-    PendingWindowsMapping& operator=(const PendingWindowsMapping&) = delete;
-    ~PendingWindowsMapping() {
-        if (active_) {
-            if (view_ != nullptr && !operations_->Unmap(view_)) {
-                std::terminate();
-            }
-            limiter_->Release();
+    WindowsMappedView(std::shared_ptr<MappedReadLimiter> limiter,
+                      std::shared_ptr<WindowsFileOperations> operations,
+                      std::size_t length) noexcept
+        : limiter_(std::move(limiter)), operations_(std::move(operations)), length_(length) {}
+    WindowsMappedView(const WindowsMappedView&) = delete;
+    WindowsMappedView& operator=(const WindowsMappedView&) = delete;
+    WindowsMappedView(WindowsMappedView&& other) noexcept
+        : limiter_(std::move(other.limiter_)),
+          operations_(std::move(other.operations_)),
+          view_(std::exchange(other.view_, nullptr)),
+          length_(std::exchange(other.length_, 0)) {}
+    WindowsMappedView& operator=(WindowsMappedView&&) = delete;
+    ~WindowsMappedView() {
+        if (limiter_ == nullptr) {
+            return;
         }
-    }
-    void SetView(const void* view) noexcept { view_ = view; }
-    void Commit() noexcept { active_ = false; }
-
-private:
-    const std::shared_ptr<MappedReadLimiter> limiter_;
-    const std::shared_ptr<WindowsFileOperations> operations_;
-    const void* view_ = nullptr;
-    bool active_ = true;
-};
-
-class WindowsMappedRandomAccessFile final : public RandomAccessFile {
-public:
-    WindowsMappedRandomAccessFile(const void* view, std::size_t length,
-                                  std::shared_ptr<MappedReadLimiter> limiter,
-                                  std::shared_ptr<WindowsFileOperations> operations) noexcept
-        : view_(static_cast<const std::byte*>(view)),
-          length_(length),
-          limiter_(std::move(limiter)),
-          operations_(std::move(operations)) {}
-    ~WindowsMappedRandomAccessFile() override {
-        if (!operations_->Unmap(view_)) {
+        if (view_ != nullptr && !operations_->Unmap(view_)) {
             std::terminate();
         }
         limiter_->Release();
     }
+    void SetView(const void* view) noexcept { view_ = view; }
+    [[nodiscard]] const std::byte* data() const noexcept {
+        return static_cast<const std::byte*>(view_);
+    }
+    [[nodiscard]] std::size_t length() const noexcept { return length_; }
+
+private:
+    std::shared_ptr<MappedReadLimiter> limiter_;
+    std::shared_ptr<WindowsFileOperations> operations_;
+    const void* view_ = nullptr;
+    std::size_t length_;
+};
+
+class WindowsMappedRandomAccessFile final : public RandomAccessFile {
+public:
+    explicit WindowsMappedRandomAccessFile(WindowsMappedView&& view) noexcept
+        : view_(std::move(view)) {}
+    ~WindowsMappedRandomAccessFile() override = default;
     Result<std::size_t> Read(std::uint64_t offset, MutableByteView output) const override {
         if (output.empty()) {
             return 0U;
@@ -568,31 +569,28 @@ public:
         if (!request.has_value()) {
             return std::unexpected(std::move(request).error());
         }
-        if (offset >= length_) {
+        if (offset >= view_.length()) {
             return 0U;
         }
         const auto start = static_cast<std::size_t>(offset);
-        const auto count = std::min(static_cast<std::size_t>(*request), length_ - start);
-        std::memcpy(output.data(), view_ + start, count);
+        const auto count = std::min(static_cast<std::size_t>(*request), view_.length() - start);
+        std::memcpy(output.data(), view_.data() + start, count);
         return count;
     }
     std::optional<ByteView> TryReadView(std::uint64_t offset,
                                         std::size_t size) const noexcept override {
-        if (offset > length_) {
+        if (offset > view_.length()) {
             return std::nullopt;
         }
         const auto start = static_cast<std::size_t>(offset);
-        if (size > length_ - start) {
+        if (size > view_.length() - start) {
             return std::nullopt;
         }
-        return ByteView(view_ + start, size);
+        return ByteView(view_.data() + start, size);
     }
 
 private:
-    const std::byte* const view_;
-    const std::size_t length_;
-    const std::shared_ptr<MappedReadLimiter> limiter_;
-    const std::shared_ptr<WindowsFileOperations> operations_;
+    WindowsMappedView view_;
 };
 
 Result<ScopedHandle> OpenMappingSection(HANDLE file, const std::filesystem::path& path,
@@ -604,15 +602,14 @@ Result<ScopedHandle> OpenMappingSection(HANDLE file, const std::filesystem::path
     return section;
 }
 
-Result<const void*> MapSectionView(HANDLE section, PendingWindowsMapping& pending,
-                                   const std::filesystem::path& path,
-                                   const WindowsFileOperations& operations) {
+Status MapSectionView(HANDLE section, WindowsMappedView& pending, const std::filesystem::path& path,
+                      const WindowsFileOperations& operations) {
     const void* view = operations.Map(section);
     if (view == nullptr) {
         return std::unexpected(FileError("map file view", path, ::GetLastError()));
     }
     pending.SetView(view);
-    return view;
+    return {};
 }
 
 Status CloseMappingHandles(ScopedHandle& section, ScopedHandle& file,
@@ -629,25 +626,21 @@ Status CloseMappingHandles(ScopedHandle& section, ScopedHandle& file,
 }
 
 Result<std::unique_ptr<RandomAccessFile>> CreateMappedRandomFile(
-    ScopedHandle& file, PendingWindowsMapping& pending, const std::filesystem::path& path,
-    std::size_t length, const std::shared_ptr<MappedReadLimiter>& limiter,
+    ScopedHandle& file, WindowsMappedView& pending, const std::filesystem::path& path,
     const std::shared_ptr<WindowsFileOperations>& operations) {
     auto section = OpenMappingSection(file.get(), path, operations);
     if (!section.has_value()) {
         return std::unexpected(std::move(section).error());
     }
-    auto view = MapSectionView(section->get(), pending, path, *operations);
-    if (!view.has_value()) {
-        return std::unexpected(std::move(view).error());
+    Status mapped = MapSectionView(section->get(), pending, path, *operations);
+    if (!mapped.has_value()) {
+        return std::unexpected(std::move(mapped).error());
     }
     auto closed = CloseMappingHandles(*section, file, path);
     if (!closed.has_value()) {
         return std::unexpected(std::move(closed).error());
     }
-    auto mapped =
-        std::make_unique<WindowsMappedRandomAccessFile>(*view, length, limiter, operations);
-    pending.Commit();
-    return mapped;
+    return std::make_unique<WindowsMappedRandomAccessFile>(std::move(pending));
 }
 
 class WindowsWritableFile final : public WritableFile {
@@ -881,7 +874,7 @@ Result<std::unique_ptr<RandomAccessFile>> WindowsFileSystem::OpenRandomAccess(
     if (!mmap_limiter_->Acquire()) {
         return OpenCopiedRandomFile(*file, path, operations_);
     }
-    PendingWindowsMapping pending(mmap_limiter_, operations_);
+    WindowsMappedView pending(mmap_limiter_, operations_, *length);
     auto matches = MatchesMappingSize(file->get(), *expected_size, path, *operations_);
     if (!matches.has_value()) {
         return std::unexpected(std::move(matches).error());
@@ -889,7 +882,7 @@ Result<std::unique_ptr<RandomAccessFile>> WindowsFileSystem::OpenRandomAccess(
     if (!*matches) {
         return OpenCopiedRandomFile(*file, path, operations_);
     }
-    return CreateMappedRandomFile(*file, pending, path, *length, mmap_limiter_, operations_);
+    return CreateMappedRandomFile(*file, pending, path, operations_);
 }
 
 Result<std::unique_ptr<WritableFile>> WindowsFileSystem::OpenWritable(
