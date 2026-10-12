@@ -422,6 +422,17 @@ OVERLAPPED PositionedReadOperation(std::uint64_t offset, HANDLE event) noexcept 
     return overlapped;
 }
 
+void RetirePendingRead(HANDLE file, OVERLAPPED& overlapped) noexcept {
+    // Even a failed wait must not let the kernel retain this stack/buffer.
+    if (!HasOverlappedIoCompleted(&overlapped)) {
+        static_cast<void>(::CancelIoEx(file, &overlapped));
+        while (!HasOverlappedIoCompleted(&overlapped)) {
+            DWORD ignored = 0;
+            static_cast<void>(::GetOverlappedResult(file, &overlapped, &ignored, TRUE));
+        }
+    }
+}
+
 class WindowsRandomAccessFile final : public RandomAccessFile {
 public:
     WindowsRandomAccessFile(ScopedHandle file, std::filesystem::path path,
@@ -440,37 +451,43 @@ public:
             return std::unexpected(std::move(event).error());
         }
         OVERLAPPED overlapped = PositionedReadOperation(offset, event->get());
-        if (!operations_->Read(file_.get(), output.data(), *request, nullptr, &overlapped)) {
+        auto requires_completion = BeginRead(output, *request, overlapped);
+        if (!requires_completion.has_value()) {
+            return std::unexpected(std::move(requires_completion).error());
+        }
+        if (!*requires_completion) {
+            return 0U;
+        }
+        return CompleteRead(overlapped);
+    }
+
+private:
+    Result<bool> BeginRead(MutableByteView output, DWORD request, OVERLAPPED& overlapped) const {
+        if (!operations_->Read(file_.get(), output.data(), request, nullptr, &overlapped)) {
             const DWORD error = ::GetLastError();
             if (error == ERROR_HANDLE_EOF) {
-                return 0U;
+                return false;
             }
             if (error != ERROR_IO_PENDING) {
                 return std::unexpected(FileError("positioned read", path_, error));
             }
         }
+        return true;
+    }
+
+    Result<std::size_t> CompleteRead(OVERLAPPED& overlapped) const {
         DWORD read = 0;
         if (!operations_->Complete(file_.get(), &overlapped, &read)) {
             const DWORD error = ::GetLastError();
-            // Even a failed wait must not let the kernel retain this stack/buffer.
-            if (!HasOverlappedIoCompleted(&overlapped)) {
-                static_cast<void>(::CancelIoEx(file_.get(), &overlapped));
-                while (!HasOverlappedIoCompleted(&overlapped)) {
-                    DWORD ignored = 0;
-                    static_cast<void>(
-                        ::GetOverlappedResult(file_.get(), &overlapped, &ignored, TRUE));
-                }
-            }
+            RetirePendingRead(file_.get(), overlapped);
             if (error == ERROR_HANDLE_EOF) {
                 return 0U;
             }
             return std::unexpected(FileError("complete positioned read", path_, error));
         }
-        const std::size_t result = static_cast<std::size_t>(read);
-        return result;
+        return static_cast<std::size_t>(read);
     }
 
-private:
     ScopedHandle file_;
     const std::filesystem::path path_;
     const std::shared_ptr<WindowsFileOperations> operations_;
