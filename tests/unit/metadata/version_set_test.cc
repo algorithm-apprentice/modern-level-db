@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -742,6 +743,74 @@ TEST_F(VersionSetTest, WritesANewManifestAfterRecovery) {
     EXPECT_EQ(reopened->manifest_file_number(), 4U);
 }
 
+TEST_F(VersionSetTest, NewManifestSnapshotPreservesExplicitPerLevelBytesAndOrder) {
+    VersionEdit recovered = Counters(20, 1, 42);
+    recovered.SetComparatorName("leveldb.BytewiseComparator");
+    ASSERT_TRUE(recovered.AddFile(6, File(8, "y", "z")).has_value());
+    ASSERT_TRUE(recovered.AddFile(0, File(4, "m", "q")).has_value());
+    ASSERT_TRUE(recovered.AddFile(3, File(7, "e", "f")).has_value());
+    ASSERT_TRUE(recovered.AddFile(0, File(2, "a", "c")).has_value());
+    ASSERT_TRUE(recovered.AddFile(3, File(6, "b", "c")).has_value());
+    ASSERT_TRUE(recovered.AddCompactPointer(6, Key("zz", 10)).has_value());
+    ASSERT_TRUE(recovered.AddCompactPointer(1, Key("pointer-only", 8)).has_value());
+    ASSERT_TRUE(recovered.AddCompactPointer(3, Key("old", 1)).has_value());
+    ASSERT_TRUE(recovered.AddCompactPointer(3, Key("new", 4)).has_value());
+    WriteDatabase({recovered});
+    auto set = Recover();
+    ASSERT_NE(set, nullptr);
+    const State before = StateOf(*set);
+
+    ASSERT_TRUE(set->LogAndApply(VersionEdit()).has_value());
+
+    EXPECT_EQ(StateOf(*set), before);
+    VersionEdit expected;
+    expected.SetComparatorName("leveldb.BytewiseComparator");
+    ASSERT_TRUE(expected.AddCompactPointer(1, Key("pointer-only", 8)).has_value());
+    ASSERT_TRUE(expected.AddCompactPointer(3, Key("new", 4)).has_value());
+    ASSERT_TRUE(expected.AddCompactPointer(6, Key("zz", 10)).has_value());
+    ASSERT_TRUE(expected.AddFile(0, File(2, "a", "c")).has_value());
+    ASSERT_TRUE(expected.AddFile(0, File(4, "m", "q")).has_value());
+    ASSERT_TRUE(expected.AddFile(3, File(6, "b", "c")).has_value());
+    ASSERT_TRUE(expected.AddFile(3, File(7, "e", "f")).has_value());
+    ASSERT_TRUE(expected.AddFile(6, File(8, "y", "z")).has_value());
+    const auto contents = file_system_.Contents(directory_ / "MANIFEST-000020");
+    ASSERT_TRUE(contents.has_value());
+    WalReader reader(std::make_unique<VectorSequentialFile>(*contents));
+    const WalReadResult snapshot = reader.ReadNext();
+    ASSERT_TRUE(snapshot.has_value());
+    ASSERT_TRUE(snapshot->has_value());
+    const auto* record = std::get_if<WalLogicalRecord>(&**snapshot);
+    ASSERT_NE(record, nullptr);
+    EXPECT_EQ(Materialize(record->data), expected.Encode());
+    const auto decoded = VersionEdit::Decode(record->data);
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_EQ(decoded->comparator_name(), "leveldb.BytewiseComparator");
+    ASSERT_EQ(decoded->compact_pointers().size(), expected.compact_pointers().size());
+    for (std::size_t index = 0; index < expected.compact_pointers().size(); ++index) {
+        EXPECT_EQ(decoded->compact_pointers()[index].level,
+                  expected.compact_pointers()[index].level);
+        EXPECT_EQ(Materialize(decoded->compact_pointers()[index].key.encoded()),
+                  Materialize(expected.compact_pointers()[index].key.encoded()));
+    }
+    ASSERT_EQ(decoded->new_files().size(), expected.new_files().size());
+    for (std::size_t index = 0; index < expected.new_files().size(); ++index) {
+        EXPECT_EQ(decoded->new_files()[index].level, expected.new_files()[index].level);
+        EXPECT_EQ(Summarize(decoded->new_files()[index].file),
+                  Summarize(expected.new_files()[index].file));
+    }
+    VersionEdit runtime = Counters(21, 1, 42);
+    runtime.SetPrevLogNumber(0);
+    const WalReadResult applied = reader.ReadNext();
+    ASSERT_TRUE(applied.has_value());
+    ASSERT_TRUE(applied->has_value());
+    const auto* applied_record = std::get_if<WalLogicalRecord>(&**applied);
+    ASSERT_NE(applied_record, nullptr);
+    EXPECT_EQ(Materialize(applied_record->data), runtime.Encode());
+    const WalReadResult end = reader.ReadNext();
+    ASSERT_TRUE(end.has_value());
+    EXPECT_FALSE(end->has_value());
+}
+
 TEST_F(VersionSetTest, KeepsOrFillsLogNumbers) {
     auto set = Create();
     ASSERT_NE(set, nullptr);
@@ -1412,6 +1481,67 @@ TEST_F(VersionSetTest, ReadPinsReleaseIndependently) {
         EXPECT_EQ(&first.value(), &second.value());
     }
     EXPECT_EQ(&first.value(), set->current_raw());
+}
+
+TEST_F(VersionSetTest, LiveFilesUnionsMixedOwnersPinsAndExpiredVersionsWithoutIo) {
+    auto set = Create();
+    ASSERT_NE(set, nullptr);
+    const std::weak_ptr<const Version> empty = set->current();
+    const std::uint64_t first_number = set->NewFileNumber();
+    const std::uint64_t shared_number = set->NewFileNumber();
+    VersionEdit first;
+    ASSERT_TRUE(first.AddFile(0, File(first_number, "a", "b")).has_value());
+    ASSERT_TRUE(first.AddFile(NumLevels - 1, File(shared_number, "u", "v")).has_value());
+    ASSERT_TRUE(set->LogAndApply(first).has_value());
+    EXPECT_TRUE(empty.expired());
+    std::shared_ptr<const Version> held_first = set->current();
+    const std::weak_ptr<const Version> weak_first = held_first;
+    std::optional<VersionSet::ReadPin> first_pin;
+    first_pin.emplace(set->PinCurrent());
+    std::optional<VersionSet::ReadPin> moved_pin;
+    {
+        VersionSet::ReadPin original = set->PinCurrent();
+        moved_pin.emplace(std::move(original));
+    }
+    const std::uint64_t second_number = set->NewFileNumber();
+    VersionEdit second;
+    ASSERT_TRUE(second.RemoveFile(0, first_number).has_value());
+    ASSERT_TRUE(second.AddFile(3, File(second_number, "d", "e")).has_value());
+    ASSERT_TRUE(set->LogAndApply(second).has_value());
+    std::shared_ptr<const Version> held_second = set->current();
+    const std::weak_ptr<const Version> weak_second = held_second;
+    std::optional<VersionSet::ReadPin> second_pin;
+    second_pin.emplace(set->PinCurrent());
+    const std::uint64_t third_number = set->NewFileNumber();
+    VersionEdit third;
+    ASSERT_TRUE(third.RemoveFile(NumLevels - 1, shared_number).has_value());
+    ASSERT_TRUE(third.AddFile(1, File(third_number, "f", "g")).has_value());
+    ASSERT_TRUE(set->LogAndApply(third).has_value());
+    const auto expect_live = [&](std::initializer_list<std::uint64_t> numbers) {
+        const std::size_t operations = file_system_.operations().size();
+        EXPECT_EQ(set->LiveFiles(), std::set<std::uint64_t>(numbers));
+        EXPECT_EQ(file_system_.operations().size(), operations);
+    };
+
+    expect_live({first_number, shared_number, second_number, third_number});
+    held_first.reset();
+    EXPECT_FALSE(weak_first.expired());
+    held_second.reset();
+    EXPECT_FALSE(weak_second.expired());
+    expect_live({first_number, shared_number, second_number, third_number});
+    first_pin.reset();
+    EXPECT_FALSE(weak_first.expired());
+    expect_live({first_number, shared_number, second_number, third_number});
+    moved_pin.reset();
+    EXPECT_TRUE(weak_first.expired());
+    expect_live({shared_number, second_number, third_number});
+    second_pin.reset();
+    EXPECT_TRUE(weak_second.expired());
+    expect_live({second_number, third_number});
+    const std::weak_ptr<const Version> previous = set->current();
+    ASSERT_TRUE(set->LogAndApply(VersionEdit()).has_value());
+    EXPECT_TRUE(previous.expired());
+    expect_live({second_number, third_number});
 }
 
 TEST_F(VersionSetTest, AllocatesFileNumbersWithinTheLimit) {
