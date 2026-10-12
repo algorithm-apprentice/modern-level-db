@@ -185,13 +185,13 @@ struct TwoBlockTable {
     std::uint64_t second_offset;
 };
 
-TwoBlockTable BadKeyThenValidTable() {
+TwoBlockTable TableWithFirstKey(ByteView first_key) {
     TableFileAssembler table;
-    const BlockHandle bad_key = table.AddBlock(EncodeBlock({{AsBytes("bad"), AsBytes("first")}}));
+    const BlockHandle first = table.AddBlock(EncodeBlock({{first_key, AsBytes("first")}}));
     const InternalKey valid_key = Key(AsBytes("z"), 1);
     const BlockHandle second =
         table.AddBlock(EncodeBlock({{valid_key.encoded(), AsBytes("second")}}));
-    const std::vector<std::byte> first_handle = EncodeHandle(bad_key);
+    const std::vector<std::byte> first_handle = EncodeHandle(first);
     const std::vector<std::byte> second_handle = EncodeHandle(second);
     const InternalKey first_index = Key(AsBytes("m"), MaxSequenceNumber);
     const InternalKey second_index = Key(AsBytes("z"), MaxSequenceNumber);
@@ -636,10 +636,106 @@ TEST(DumpFileTest, ForwardTableDumpDoesNotNeedTheDatabaseComparator) {
     EXPECT_LT(b, a);
 }
 
+TEST(DumpFileTest, EmptyIndexAndReferencedEmptyBlockKeepHeaderReadBoundary) {
+    MemoryFileSystem file_system;
+    const std::filesystem::path empty_path = "000034.ldb";
+    TableFileAssembler empty;
+    const BlockHandle metaindex = empty.AddBlock(EncodeBlock({}));
+    const BlockHandle index = empty.AddBlock(EncodeBlock({}));
+    file_system.Write(empty_path, empty.Finish(metaindex, index));
+    StringOutput empty_output;
+
+    const Status empty_dumped = DumpFile(file_system, empty_path, empty_output);
+
+    ASSERT_TRUE(empty_dumped.has_value());
+    EXPECT_EQ(empty_output.appends(),
+              (std::vector<std::string>{"dump version=1 type=table file='000034.ldb'\n"}));
+    const std::filesystem::path referenced_path = "000035.ldb";
+    const InternalKey index_key = Key(AsBytes("z"), MaxSequenceNumber);
+    file_system.Write(referenced_path,
+                      AssembleSingleDataBlockTable(EncodeBlock({}), index_key.encoded()));
+    const std::vector<std::string> acquisition{
+        "size 000035.ldb",
+        "open_random_access 000035.ldb",
+        "read 000035.ldb",
+        "read 000035.ldb",
+    };
+    const std::size_t start = file_system.operations().size();
+    StringOutput failed_header(0);
+
+    const Status header_failed = DumpFile(file_system, referenced_path, failed_header);
+
+    ASSERT_FALSE(header_failed.has_value());
+    EXPECT_EQ(header_failed.error().code(), ErrorCode::Io);
+    EXPECT_EQ(header_failed.error().message(), "injected output failure");
+    EXPECT_TRUE(failed_header.appends().empty());
+    EXPECT_EQ(std::vector<std::string>(
+                  file_system.operations().begin() + static_cast<std::ptrdiff_t>(start),
+                  file_system.operations().end()),
+              acquisition);
+    const std::size_t before_data = file_system.operations().size();
+    StringOutput referenced_output;
+
+    const Status referenced_dumped = DumpFile(file_system, referenced_path, referenced_output);
+
+    ASSERT_FALSE(referenced_dumped.has_value());
+    EXPECT_EQ(referenced_dumped.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(referenced_dumped.error().message(), "table data block is empty");
+    EXPECT_EQ(referenced_output.appends(),
+              (std::vector<std::string>{"dump version=1 type=table file='000035.ldb'\n"}));
+    std::vector<std::string> with_data = acquisition;
+    with_data.push_back("read 000035.ldb");
+    EXPECT_EQ(std::vector<std::string>(
+                  file_system.operations().begin() + static_cast<std::ptrdiff_t>(before_data),
+                  file_system.operations().end()),
+              with_data);
+}
+
+TEST(DumpFileTest, TableTerminalFailuresPreserveExactVisitedPrefixAndPriority) {
+    for (const bool bad_key : {false, true}) {
+        SCOPED_TRACE(bad_key);
+        for (const bool io_failure : {false, true}) {
+            SCOPED_TRACE(io_failure);
+            MemoryFileSystem file_system;
+            const std::filesystem::path path = "000036.ldb";
+            const InternalKey valid_key = Key(AsBytes("a"), 2);
+            TwoBlockTable table = TableWithFirstKey(bad_key ? AsBytes("bad") : valid_key.encoded());
+            if (!io_failure) {
+                table.contents[static_cast<std::size_t>(table.second_offset)] ^= std::byte{0x01};
+            }
+            file_system.Write(path, std::move(table.contents));
+            if (io_failure) {
+                file_system.FailOperation(file_system.operations().size() + 5,
+                                          Error::Io("second table read failed"));
+            }
+            StringOutput output;
+
+            const Status dumped = DumpFile(file_system, path, output);
+
+            ASSERT_FALSE(dumped.has_value());
+            if (io_failure) {
+                EXPECT_EQ(dumped.error().code(), ErrorCode::Io);
+                EXPECT_EQ(dumped.error().message(), "second table read failed");
+            } else {
+                EXPECT_EQ(dumped.error().code(), ErrorCode::Corruption);
+                EXPECT_EQ(dumped.error().message(), bad_key
+                                                        ? "table entry has a malformed internal key"
+                                                        : "block checksum mismatch");
+            }
+            const std::vector<std::string> expected{
+                "dump version=1 type=table file='000036.ldb'\n",
+                bad_key ? "bad_key encoded='bad' value='first'\n"
+                        : "entry user_key='a' sequence=2 kind=value value='first'\n",
+            };
+            EXPECT_EQ(output.appends(), expected);
+        }
+    }
+}
+
 TEST(DumpFileTest, DumpsBadAndValidTableEntriesAndPrioritizesOutputFailures) {
     MemoryFileSystem file_system;
     const std::filesystem::path path = "000030.ldb";
-    TwoBlockTable table = BadKeyThenValidTable();
+    TwoBlockTable table = TableWithFirstKey(AsBytes("bad"));
     file_system.Write(path, std::move(table.contents));
     StringOutput output;
 
@@ -720,7 +816,7 @@ TEST(DumpFileTest, ReturnsReachableDataBlockChecksumFailures) {
 TEST(DumpFileTest, ReturnsTheFirstCorruptionWhenALaterBlockIsAlsoDamaged) {
     MemoryFileSystem file_system;
     const std::filesystem::path path = "000024.ldb";
-    TwoBlockTable table = BadKeyThenValidTable();
+    TwoBlockTable table = TableWithFirstKey(AsBytes("bad"));
     table.contents[static_cast<std::size_t>(table.second_offset)] ^= std::byte{0x01};
     file_system.Write(path, std::move(table.contents));
     StringOutput output;
@@ -736,7 +832,7 @@ TEST(DumpFileTest, ReturnsTheFirstCorruptionWhenALaterBlockIsAlsoDamaged) {
 TEST(DumpFileTest, LaterIoFailureTakesPrecedenceOverRememberedCorruption) {
     MemoryFileSystem file_system;
     const std::filesystem::path path = "000025.ldb";
-    TwoBlockTable table = BadKeyThenValidTable();
+    TwoBlockTable table = TableWithFirstKey(AsBytes("bad"));
     file_system.Write(path, std::move(table.contents));
     // Size, open, footer, index, and first data reads succeed; the second data read fails.
     file_system.FailOperation(file_system.operations().size() + 5, Error::Io("second read failed"));

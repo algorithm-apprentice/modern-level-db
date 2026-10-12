@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Proposed recursive follow-up to the
+Accepted design #232; implementation pending. Recursive follow-up to the
 [production composition plan](production-function-composition-plan.md).
 Source-read baseline: `a02eb9f`, after record delivery #230.
 
@@ -76,7 +76,7 @@ Add two public characterization cases using existing table assembly and
 MemoryFileSystem/StringOutput, not new production seams:
 
 1. An empty-index table has successful header-only EOF. A referenced empty data
-   block instead returns Corruption `"table data block has no reachable entry"`
+   block instead returns Corruption `"table data block is empty"`
    after its header; keep that distinct. Header failure on that referenced-block
    fixture stops before its data read. Check the exact existing acquisition/read
    prefix, not just output emptiness. Constructor suppression is also inspected.
@@ -129,3 +129,11 @@ It checked existing empty-table tests, assembly helpers, index validation and
 EnterBlock, and confirmed that the referenced-block header-failure fixture
 meaningfully suppresses a data read. No further issue, edits/builds/tests or
 whole-proposal re-review were reported.
+
+Original-production characterization subsequently corrected the exact empty-data
+error text: `ReadDataBlock` rejects an empty decoded block as
+`"table data block is empty"` before `EnterBlock` can reach its
+`"table data block has no reachable entry"` fallback. The initial native run
+failed only that literal assertion; no production change was made. The earlier
+reviews established corruption rather than successful EOF but missed this
+earlier rejection. Retain both the finding and this correction as review limits.
