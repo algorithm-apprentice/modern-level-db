@@ -904,6 +904,12 @@ existing-directory conflict paths now have named stages with original source
 ownership. Every definition/lambda has a reviewed composition or leaf reason;
 the reviewed head passed all 20 gates with 100% changed-code coverage.
 
+#271 closes the complete engine ledger at 331 definitions and 24 lambdas across
+all 32 engine files. Lookup visitor state, opened-table seek positioning and
+background compaction rewrite orchestration now have named owners/stages.
+Every definition/lambda has a reviewed disposition; the reviewed head passed
+all 20 gates with 158 exact selected identities and 100% changed-code coverage.
+
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,
 not the whole dump file.
