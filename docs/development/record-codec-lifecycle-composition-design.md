@@ -15,8 +15,8 @@ incremental WAL fragment cursor stages. Keep reviewed design,
 original-source characterization and two production topics as local commits,
 then publish one non-draft PR.
 The design and corrected original characterization are accepted; both
-production topics are implemented locally. Integrated review and delivery
-remain pending.
+production topics are implemented locally. Integrated review is complete;
+delivery remains pending.
 
 No public API, batch/WAL bytes, sequence policy, checked validation, checksum,
 recovery action, WAL I/O, sticky-error policy, allocation strategy, payload
@@ -294,3 +294,9 @@ production objects and every portable changed/coupled test translation unit.
 Documentation validation and `git diff --check` pass. Hosted GCC 13 branch
 coverage, Windows native execution/name parity and normal merge remain delivery
 obligations.
+
+Independent integrated review found no significant issue across the complete
+diff, 59-definition ledger, tests and checked/I/O caller boundaries. Hosted
+GCC 13 branch coverage, arbitrary allocation failure, forbidden input aliasing,
+cursor retry/concurrency, performance and whole-production behavior remain
+outside this bounded conclusion.
