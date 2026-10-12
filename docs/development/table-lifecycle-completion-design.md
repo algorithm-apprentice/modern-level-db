@@ -14,7 +14,8 @@ compression definition and table lambda a bounded semantic disposition.
 Keep reviewed design, original-source characterization and two production
 topics as local commits, then publish one non-draft PR.
 The design and original characterization are accepted; both production topics
-are implemented locally. Integrated review and delivery remain pending.
+are implemented locally. Integrated review is complete; delivery remains
+pending.
 
 Changed production paths are table.cc/.h and table_builder.cc/.h.
 compression.cc/.h are inspected unchanged. No public API, table bytes, read
@@ -286,3 +287,9 @@ warnings-as-errors with `-fno-range-for-ext-temps` compiles all production,
 ordinary test and separate compression-failure objects. Documentation
 validation and `git diff --check` pass. Hosted GCC 13 branch coverage, Windows
 native execution/name parity and normal merge remain delivery obligations.
+
+Independent integrated review found no significant issue across the complete
+diff, 88 named definitions, two lambdas, baseline grammar-recovery nodes and
+separate compression-failure executable evidence. Hosted coverage, arbitrary
+allocation failure, mapped backing mutation, unsupported builder reuse,
+performance and unrelated production remain outside this bounded conclusion.
