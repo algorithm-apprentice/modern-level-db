@@ -9,6 +9,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <source_location>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -48,10 +49,7 @@ std::string Utf8(std::wstring_view text) {
     return result;
 }
 
-Error FileError(std::string_view operation, const std::filesystem::path& path, DWORD code) {
-    std::string message(operation);
-    message += " '" + PathUtf8(path).value_or("<unrepresentable>") + "' (Win32 " +
-               std::to_string(code) + ")";
+void AppendSystemMessage(std::string& message, DWORD code) {
     std::array<wchar_t, 1'024> text{};
     const DWORD count =
         ::FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, code,
@@ -62,17 +60,28 @@ Error FileError(std::string_view operation, const std::filesystem::path& path, D
             message += ": " + system_text;
         }
     }
+}
+
+Error ClassifyFileError(std::string message, DWORD code, std::source_location location) {
     if (code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND) {
-        return Error::NotFound(std::move(message));
+        return Error::NotFound(std::move(message), location);
     }
     if (code == ERROR_INVALID_NAME || code == ERROR_BAD_PATHNAME ||
         code == ERROR_FILENAME_EXCED_RANGE) {
-        return Error::InvalidArgument(std::move(message));
+        return Error::InvalidArgument(std::move(message), location);
     }
     if (code == ERROR_NOT_SUPPORTED || code == ERROR_CALL_NOT_IMPLEMENTED) {
-        return Error::NotSupported(std::move(message));
+        return Error::NotSupported(std::move(message), location);
     }
-    return Error::Io(std::move(message));
+    return Error::Io(std::move(message), location);
+}
+
+Error FileError(std::string_view operation, const std::filesystem::path& path, DWORD code) {
+    std::string message(operation);
+    message += " '" + PathUtf8(path).value_or("<unrepresentable>") + "' (Win32 " +
+               std::to_string(code) + ")";
+    AppendSystemMessage(message, code);
+    return ClassifyFileError(std::move(message), code, std::source_location::current());
 }
 
 bool DrivePath(std::wstring_view path) noexcept {
@@ -276,6 +285,20 @@ Result<bool> DirectoryIsMissing(const std::filesystem::path& native,
         return std::unexpected(Error::InvalidArgument("database path is not a directory"));
     }
     return false;
+}
+
+Status ExistingDirectoryStatus(const std::filesystem::path& native,
+                               const std::filesystem::path& original,
+                               std::source_location error_location) {
+    const DWORD attributes = ::GetFileAttributesW(native.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        return std::unexpected(FileError("directory attributes", original, ::GetLastError()));
+    }
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        return {};
+    }
+    return std::unexpected(
+        Error::InvalidArgument("an existing file is not a directory", error_location));
 }
 
 Result<std::filesystem::path> ResolveDirectoryHandle(HANDLE handle,
@@ -980,14 +1003,7 @@ Status WindowsFileSystem::CreateDirectory(const std::filesystem::path& path) {
     }
     const DWORD error = ::GetLastError();
     if (error == ERROR_ALREADY_EXISTS) {
-        const DWORD attributes = ::GetFileAttributesW(native->c_str());
-        if (attributes == INVALID_FILE_ATTRIBUTES) {
-            return std::unexpected(FileError("directory attributes", path, ::GetLastError()));
-        }
-        if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
-            return {};
-        }
-        return std::unexpected(Error::InvalidArgument("an existing file is not a directory"));
+        return ExistingDirectoryStatus(*native, path, std::source_location::current());
     }
     return std::unexpected(FileError("create directory", path, error));
 }

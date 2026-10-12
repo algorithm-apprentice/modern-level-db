@@ -994,6 +994,24 @@ TEST(WindowsFileSystemTest, CreatesListsReplacesAndRemovesNames) {
     EXPECT_FALSE(file_system.FileExists(child).value());
 }
 
+TEST(WindowsFileSystemTest, RejectsCreateDirectoryOverExistingFile) {
+    TemporaryDirectory directory;
+    WindowsFileSystem file_system(true);
+    const auto path = directory.path() / "file";
+    WriteFixture(path, "");
+
+    const Status status = file_system.CreateDirectory(path);
+
+    ASSERT_FALSE(status.has_value());
+    EXPECT_EQ(status.error().code(), ErrorCode::InvalidArgument);
+    EXPECT_EQ(status.error().message(), "an existing file is not a directory");
+    EXPECT_TRUE(std::string_view(status.error().location().file_name())
+                    .ends_with("windows_file_system.cc"));
+    EXPECT_NE(std::string_view(status.error().location().function_name())
+                  .find("WindowsFileSystem::CreateDirectory"),
+              std::string_view::npos);
+}
+
 TEST(WindowsFileSystemTest, LocksContendAcrossInstancesAndReleaseThroughRaii) {
     TemporaryDirectory directory;
     WindowsFileSystem first;
@@ -1037,7 +1055,13 @@ TEST(WindowsFileSystemTest, RejectsInvalidPathsAndClassifiesMissingFiles) {
     TemporaryDirectory directory;
     const auto missing = directory.path() / "missing";
     EXPECT_FALSE(file_system.FileExists(missing).value());
-    EXPECT_EQ(file_system.OpenSequential(missing).error().code(), ErrorCode::NotFound);
+    const auto missing_file = file_system.OpenSequential(missing);
+    ASSERT_FALSE(missing_file.has_value());
+    EXPECT_EQ(missing_file.error().code(), ErrorCode::NotFound);
+    EXPECT_TRUE(std::string_view(missing_file.error().location().file_name())
+                    .ends_with("windows_file_system.cc"));
+    EXPECT_NE(std::string_view(missing_file.error().location().function_name()).find("FileError"),
+              std::string_view::npos);
     EXPECT_EQ(file_system.ListDirectory(missing).error().code(), ErrorCode::NotFound);
 }
 

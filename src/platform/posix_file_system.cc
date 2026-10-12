@@ -641,6 +641,19 @@ Result<std::string> NormalizeLockIdentity(const std::filesystem::path& path) {
     return canonical.native();
 }
 
+Status ExistingDirectoryStatus(const std::filesystem::path& path,
+                               std::source_location error_location) {
+    struct stat file_status{};
+    if (::stat(path.c_str(), &file_status) == -1) {
+        return std::unexpected(FileError("stat existing directory", path, errno));
+    }
+    if (S_ISDIR(file_status.st_mode)) {
+        return {};
+    }
+    return std::unexpected(Error::InvalidArgument(
+        "directory path exists and is not a directory: '" + PathText(path) + "'", error_location));
+}
+
 }  // namespace
 
 // GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
@@ -780,15 +793,7 @@ Status PosixFileSystem::CreateDirectory(const std::filesystem::path& path) {
     }
     const int create_error = errno;
     if (create_error == EEXIST) {
-        struct stat file_status{};
-        if (::stat(path.c_str(), &file_status) == -1) {
-            return std::unexpected(FileError("stat existing directory", path, errno));
-        }
-        if (S_ISDIR(file_status.st_mode)) {
-            return {};
-        }
-        return std::unexpected(Error::InvalidArgument(
-            "directory path exists and is not a directory: '" + PathText(path) + "'"));
+        return ExistingDirectoryStatus(path, std::source_location::current());
     }
     return std::unexpected(FileError("create directory", path, create_error));
 }

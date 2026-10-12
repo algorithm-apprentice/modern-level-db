@@ -717,6 +717,27 @@ TEST(PosixFileSystemTest, RejectsCreateDirectoryOverExistingFile) {
 
     ASSERT_FALSE(status.has_value());
     EXPECT_EQ(status.error().code(), ErrorCode::InvalidArgument);
+    EXPECT_EQ(status.error().message(),
+              "directory path exists and is not a directory: '" + path.native() + "'");
+    EXPECT_TRUE(
+        std::string_view(status.error().location().file_name()).ends_with("posix_file_system.cc"));
+    EXPECT_NE(std::string_view(status.error().location().function_name())
+                  .find("PosixFileSystem::CreateDirectory"),
+              std::string_view::npos);
+}
+
+TEST(PosixFileSystemTest, ReportsExistingDirectoryInspectionFailure) {
+    TemporaryDirectory directory;
+    PosixFileSystem file_system;
+    const auto path = directory.path() / "dangling";
+    ASSERT_EQ(::symlink((directory.path() / "missing").c_str(), path.c_str()), 0);
+
+    const Status status = file_system.CreateDirectory(path);
+
+    ASSERT_FALSE(status.has_value());
+    EXPECT_EQ(status.error().code(), ErrorCode::NotFound);
+    EXPECT_TRUE(
+        status.error().message().starts_with("stat existing directory '" + path.native() + "':"));
 }
 
 TEST(PosixFileSystemTest, DirectoryTraversalOwnsNativeChildNamesAndOmitsOnlyDotEntries) {
