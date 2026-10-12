@@ -579,6 +579,8 @@ changed paths verified in main.
 | Recursive snapshot materialization and live-file union | [Snapshot/liveness](metadata-snapshot-liveness-composition-design.md) | Delivered in #225 after accepted #224; 121-case original/final native parity, 37-case snapshot intermediate, and actual hosted Windows Debug selected names match the original 121. |
 | Recursive byte selection and fixed-width escaping | [Diagnostic byte escaping](diagnostic-byte-escape-composition-design.md) | Delivered in #228 after accepted #227; 103-case original/final native parity, 35-case diagnostic intermediate, and actual hosted Windows Debug selected names match the original 103. |
 | Recursive framed-record traversal and logical reporting | [Diagnostic record orchestration](diagnostic-record-orchestration-composition-design.md) | Delivered in #230 after accepted #229; 106-case original/final native parity, separate 38-case framed/reporting intermediates, and actual hosted Windows Debug selected names match the original 106. |
+| Recursive parent-owned table traversal | [Diagnostic table traversal](diagnostic-table-traversal-composition-design.md) | Delivered in #233 after accepted #232; 108-case original/final native parity, 40-case traversal intermediate, and actual hosted Windows Debug selected names match the original 108. |
+| Recursive canonical classification and borrowed type dispatch | [Diagnostic file dispatch](diagnostic-file-dispatch-composition-design.md) | Delivered in #236 after accepted #235; 110-case original/final native parity, 42-case classification intermediate, and actual hosted Windows Debug selected names match the original 110. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -619,9 +621,27 @@ copy behavior remain source-inspected where no supported observer exists.
 The integrated selectors are not pure WAL-suite totals. Both 38-case
 intermediates are diagnostic-only subsets, not alternate 106-case baselines.
 
+#233 adds two table-boundary cases to that same ten-suite selection, producing
+its distinct original/final 108. Original-source execution corrected the
+accepted design's empty-data error literal: ReadDataBlock reports
+`"table data block is empty"` before EnterBlock's later unreachable-entry
+fallback. No production policy was changed to satisfy the mistaken premise.
+Its four-way first-key/terminal-failure matrix and referenced-block header
+failure preserve exact output and error/read boundaries. Parent comparator/
+table/iterator and iteration-local lifetimes remain source-inspected.
+
+#236 adds two classification/dispatch cases to the same selection, yielding
+110, not an interchangeable 108 or metadata total. Exact invalid-name and
+canonical unsupported errors precede every filesystem operation; literal
+nested-path outputs identify all three dumpers, and acquisition beats output
+failure. The tab-containing parent is in-memory evidence, not a real native
+filename-validity claim. Conversion/escape evaluation order and physical
+allocation/move/elision/destruction limits remain explicit in its design.
+
 The selected N01-N09 slices are delivered, not the whole native source files.
-The selected diagnostic record loops are also delivered, not the whole dump file.
-Other recursive frontiers include diagnostic table traversal and
+The selected diagnostic record/table loops and file dispatch are also delivered,
+not the whole dump file.
+Other recursive frontiers include diagnostic
 header/internal-key assemblers, metadata prepared-state publication and recovered-counter
 children, cache table/list/reference operations, deeper block positioning/
 decoding, WAL fragmentation and codec helpers, and remaining engine/native
