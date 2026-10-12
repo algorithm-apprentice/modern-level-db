@@ -116,6 +116,9 @@ Windows fault-operation traces must remain exact. Original Linux/POSIX
 identities come from the unchanged Hosted GCC 13 run for #267; original Windows
 identities are also captured locally before edits.
 
+Original evidence at `c233983dc21929a396058d9dfdb8599310c82fe4` is 11/11
+Windows Debug mapping identities and 6/6 Hosted GCC 13 POSIX mapping identities.
+
 After each platform-specific production commit, run its native mapping
 selection. Final selected identities must exactly match the characterized set.
 Run Windows Debug/Release, GCC/Werror owned objects and complete Hosted CI on
