@@ -41,6 +41,58 @@ std::vector<std::byte> Bytes(std::initializer_list<unsigned int> values) {
 
 std::vector<std::byte> Materialize(ByteView value) { return {value.begin(), value.end()}; }
 
+std::vector<std::byte> Pattern(std::size_t size, unsigned int seed) {
+    std::vector<std::byte> result;
+    result.reserve(size);
+    for (std::size_t index = 0; index < size; ++index) {
+        result.push_back(static_cast<std::byte>((index * 29U + seed) & 0xffU));
+    }
+    return result;
+}
+
+struct LiteralBatchRecord {
+    ValueKind kind;
+    ByteView key;
+    ByteView value;
+};
+
+void ExpectLiteralLengthAndBytes(ByteView encoded, std::size_t& offset, ByteView expected) {
+    if (expected.size() == 127U) {
+        ASSERT_LT(offset, encoded.size());
+        EXPECT_EQ(encoded[offset++], std::byte{0x7f});
+    } else {
+        ASSERT_EQ(expected.size(), 128U);
+        ASSERT_LE(offset + 2U, encoded.size());
+        EXPECT_EQ(encoded[offset++], std::byte{0x80});
+        EXPECT_EQ(encoded[offset++], std::byte{0x01});
+    }
+    ASSERT_LE(offset + expected.size(), encoded.size());
+    EXPECT_TRUE(std::ranges::equal(encoded.subspan(offset, expected.size()), expected));
+    offset += expected.size();
+}
+
+void ExpectLiteralBatch(ByteView encoded, std::initializer_list<LiteralBatchRecord> records) {
+    ASSERT_GE(encoded.size(), WriteBatchHeaderSize);
+    for (std::size_t index = 0; index < sizeof(SequenceNumber); ++index) {
+        EXPECT_EQ(encoded[index], std::byte{0});
+    }
+    EXPECT_EQ(encoded[8], static_cast<std::byte>(records.size()));
+    EXPECT_EQ(encoded[9], std::byte{0});
+    EXPECT_EQ(encoded[10], std::byte{0});
+    EXPECT_EQ(encoded[11], std::byte{0});
+
+    std::size_t offset = WriteBatchHeaderSize;
+    for (const LiteralBatchRecord& record : records) {
+        ASSERT_LT(offset, encoded.size());
+        EXPECT_EQ(encoded[offset++], static_cast<std::byte>(record.kind));
+        ExpectLiteralLengthAndBytes(encoded, offset, record.key);
+        if (record.kind == ValueKind::Value) {
+            ExpectLiteralLengthAndBytes(encoded, offset, record.value);
+        }
+    }
+    EXPECT_EQ(offset, encoded.size());
+}
+
 void MoveAssign(EncodedWriteBatch& destination, EncodedWriteBatch&& source) {
     destination = std::move(source);
 }
@@ -107,6 +159,26 @@ TEST(WriteBatchTest, EncodesEmptyBinaryAndMultiByteLengths) {
     EXPECT_EQ(encoded[WriteBatchHeaderSize + 9U], std::byte{0x01});
 }
 
+TEST(WriteBatchTest, LiteralLengthBoundariesCommitCompleteRecordsAndCounts) {
+    const std::vector<std::byte> key127 = Pattern(127, 3);
+    const std::vector<std::byte> key128 = Pattern(128, 5);
+    const std::vector<std::byte> value127 = Pattern(127, 7);
+    const std::vector<std::byte> value128 = Pattern(128, 11);
+    EncodedWriteBatch batch;
+
+    batch.Put(key127, value128);
+    ExpectLiteralBatch(batch.encoded(), {{ValueKind::Value, key127, value128}});
+
+    batch.Delete(key128);
+    ExpectLiteralBatch(batch.encoded(),
+                       {{ValueKind::Value, key127, value128}, {ValueKind::Deletion, key128, {}}});
+
+    batch.Put(key128, value127);
+    ExpectLiteralBatch(batch.encoded(), {{ValueKind::Value, key127, value128},
+                                         {ValueKind::Deletion, key128, {}},
+                                         {ValueKind::Value, key128, value127}});
+}
+
 TEST(WriteBatchReaderTest, IteratesBorrowedEntriesWithAssignedSequences) {
     EncodedWriteBatch batch;
     batch.SetSequence(100);
@@ -168,6 +240,41 @@ TEST(WriteBatchReaderTest, TrustedReaderUsesAnOwnedBatchWithoutRevalidation) {
     EXPECT_EQ(second->kind, ValueKind::Deletion);
     EXPECT_EQ(second->sequence, 78U);
     EXPECT_FALSE(reader.Next().has_value());
+}
+
+TEST(WriteBatchReaderTest, TrustedMixedRecordsAdvanceConditionallyAndKeepBackingBytes) {
+    const std::vector<std::byte> deleted_key = Pattern(128, 13);
+    const std::vector<std::byte> put_key = Pattern(127, 17);
+    const std::vector<std::byte> put_value = Pattern(128, 19);
+    EncodedWriteBatch batch;
+    batch.SetSequence(900);
+    batch.Delete(deleted_key);
+    batch.Put(put_key, put_value);
+    const std::vector<std::byte> before = Materialize(batch.encoded());
+    WriteBatchReader reader = WriteBatchReader::OpenTrusted(batch);
+
+    const auto deleted = reader.Next();
+    ASSERT_TRUE(deleted.has_value());
+    EXPECT_EQ(deleted->sequence, 900U);
+    EXPECT_EQ(deleted->kind, ValueKind::Deletion);
+    EXPECT_TRUE(std::ranges::equal(deleted->key, deleted_key));
+    EXPECT_TRUE(deleted->value.empty());
+    EXPECT_EQ(deleted->value.data(), nullptr);
+    EXPECT_GE(deleted->key.data(), batch.encoded().data());
+    EXPECT_LT(deleted->key.data(), batch.encoded().data() + batch.encoded().size());
+
+    const auto put = reader.Next();
+    ASSERT_TRUE(put.has_value());
+    EXPECT_EQ(put->sequence, 901U);
+    EXPECT_EQ(put->kind, ValueKind::Value);
+    EXPECT_TRUE(std::ranges::equal(put->key, put_key));
+    EXPECT_TRUE(std::ranges::equal(put->value, put_value));
+    EXPECT_GT(put->key.data(), deleted->key.data());
+    EXPECT_GT(put->value.data(), put->key.data());
+
+    EXPECT_FALSE(reader.Next().has_value());
+    EXPECT_FALSE(reader.Next().has_value());
+    EXPECT_EQ(Materialize(batch.encoded()), before);
 }
 
 TEST(WriteBatchTest, AppendPreservesDestinationSequenceAndSource) {
