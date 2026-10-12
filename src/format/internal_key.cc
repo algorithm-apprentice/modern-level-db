@@ -143,13 +143,17 @@ LookupKey::LookupKey(LookupKey&& source) noexcept
 
 LookupKey& LookupKey::operator=(LookupKey&& source) noexcept {
     if (this != &source) {
-        inline_storage_ = source.inline_storage_;
-        heap_storage_ = std::move(source.heap_storage_);
-        encoded_size_ = source.encoded_size_;
-        internal_key_offset_ = source.internal_key_offset_;
+        TransferStorageFrom(source);
         source.ResetToCanonicalEmpty();
     }
     return *this;
+}
+
+void LookupKey::TransferStorageFrom(LookupKey& source) noexcept {
+    inline_storage_ = source.inline_storage_;
+    heap_storage_ = std::move(source.heap_storage_);
+    encoded_size_ = source.encoded_size_;
+    internal_key_offset_ = source.internal_key_offset_;
 }
 
 ByteView LookupKey::memtable_key() const noexcept { return ByteView(data(), encoded_size_); }
@@ -173,6 +177,10 @@ const std::byte* LookupKey::data() const noexcept {
 
 void LookupKey::ResetToCanonicalEmpty() noexcept {
     heap_storage_.reset();
+    InitializeCanonicalEmpty();
+}
+
+void LookupKey::InitializeCanonicalEmpty() noexcept {
     encoded_size_ = 1U + InternalKeyTrailerSize;
     internal_key_offset_ = 1;
     inline_storage_[0] = static_cast<std::byte>(InternalKeyTrailerSize);
