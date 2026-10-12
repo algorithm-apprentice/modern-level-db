@@ -65,6 +65,22 @@ void ExpectCorruptBlock(std::vector<std::byte> contents) {
     EXPECT_EQ(reader.error().code(), ErrorCode::Corruption);
 }
 
+void ExpectLayoutError(const std::vector<std::byte>& contents, std::string_view message) {
+    const auto check = [&](const Result<FilterBlockReader>& reader) {
+        ASSERT_FALSE(reader.has_value());
+        EXPECT_EQ(reader.error().code(), ErrorCode::Corruption);
+        EXPECT_EQ(reader.error().message(), message);
+        EXPECT_TRUE(
+            std::string_view(reader.error().location().file_name()).ends_with("filter_block.cc"));
+        EXPECT_NE(std::string_view(reader.error().location().function_name())
+                      .find("FilterBlockReader::Create"),
+                  std::string_view::npos);
+    };
+
+    check(FilterBlockReader::Create(contents, BloomFilterPolicy(10)));
+    check(FilterBlockReader::Create(BlockContents::Borrowed(contents), BloomFilterPolicy(10)));
+}
+
 void ExpectInvalidArgument(const Status& status) {
     ASSERT_FALSE(status.has_value());
     EXPECT_EQ(status.error().code(), ErrorCode::InvalidArgument);
@@ -215,6 +231,15 @@ TEST(FilterBlockReaderTest, RejectsMalformedBlocks) {
     ExpectCorruptBlock(RawBlock(filter, {1}, 9));
     ExpectCorruptBlock(RawBlock(filter, {0, 5, 3}, 9));
     ExpectCorruptBlock(RawBlock(filter, {0, 10}, 9));
+}
+
+TEST(FilterBlockReaderTest, LayoutIssuesKeepPriorityMessagesAndParentLocations) {
+    const std::vector<std::byte> filter(9, std::byte{0});
+    ExpectLayoutError(Bytes({0xff}), "filter block is too short");
+    ExpectLayoutError(RawBlock({}, {}, 1, 10), "filter block has an unsupported range size");
+    ExpectLayoutError(RawBlock({}, {}, 1), "filter block offset array is malformed");
+    ExpectLayoutError(RawBlock(filter, {1}, 9), "filter block offsets are invalid");
+    ExpectLayoutError(RawBlock(filter, {0, 5, 3}, 9), "filter block offsets are invalid");
 }
 
 TEST(FilterBlockReaderTest, AcceptsLevelDbLayouts) {
