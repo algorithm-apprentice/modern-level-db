@@ -581,6 +581,9 @@ changed paths verified in main.
 | Recursive framed-record traversal and logical reporting | [Diagnostic record orchestration](diagnostic-record-orchestration-composition-design.md) | Delivered in #230 after accepted #229; 106-case original/final native parity, separate 38-case framed/reporting intermediates, and actual hosted Windows Debug selected names match the original 106. |
 | Recursive parent-owned table traversal | [Diagnostic table traversal](diagnostic-table-traversal-composition-design.md) | Delivered in #233 after accepted #232; 108-case original/final native parity, 40-case traversal intermediate, and actual hosted Windows Debug selected names match the original 108. |
 | Recursive canonical classification and borrowed type dispatch | [Diagnostic file dispatch](diagnostic-file-dispatch-composition-design.md) | Delivered in #236 after accepted #235; 110-case original/final native parity, 42-case classification intermediate, and actual hosted Windows Debug selected names match the original 110. |
+| Recursive recovered-counter accumulation and publication | [Recovered metadata counters](metadata-recovered-counter-composition-design.md) | Delivered in #238 after accepted #237; 123-case original/final native parity, 39-case accumulator intermediate, and actual hosted Windows Debug selected names match the original 123. |
+| Recursive predecessor checkpoint and reverse suffix scans | [Block reverse positioning](block-reverse-positioning-composition-design.md) | Delivered in #241 after accepted #240; 201-case original/final native parity, 42-case predecessor intermediate, and actual hosted Windows Debug selected names match the original 201. |
+| Recursive hash word folding and bounded residual-tail mixing | [Hash word/tail composition](hash-word-tail-composition-design.md) | Delivered in #243 after accepted #242; 96-case original/final native parity, six-case word intermediate, and actual hosted Windows Debug selected names match the original 96 and delivered reverse selection's 201. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -638,12 +641,40 @@ failure. The tab-containing parent is in-memory evidence, not a real native
 filename-validity claim. Conversion/escape evaluation order and physical
 allocation/move/elision/destruction limits remain explicit in its design.
 
+#238 adds two cases to #225's same five-class metadata selection, yielding
+123, not the earlier 121. Explicit previous-log zero resets the current sparse
+counter without reducing the historical bound; decreasing log still wins over
+missing counters, final overlap and an armed later read. The six-definition
+ledger keeps successful counter assignments before Version allocation and
+builder/comparator/pointer/counter order. Failed private replay state and
+physical error-copy/allocation ordering limits remain source-inspected.
+
+#241's thirteen-class selection contains 201 unique original/final identities,
+not #208's narrower 129 or any hash/cache total. Its two public reverse cases
+cover owned empty/binary observations, zero comparator calls, exact corrupted
+state clearing and supported positioning recovery. An explicit found output
+retains successful no-predecessor semantics without adding a new valid guard.
+The 42-case block-only intermediate is a subset, not an alternate baseline;
+borrowed block/comparator and parser-local lifetimes remain source-inspected.
+
+#243's nine-class hash/Bloom/filter/cache/table selection includes the separate
+cache-allocation executable and yields 96, with exactly six HashTest identities
+in its intermediate. Four high-seed zero/high-byte matrices preserve 80 new
+literal prefix outputs plus 39 existing literals, independently cross-checked
+offline without production calls. Guarded real subspans preserve pointer,
+length and storage. They do not certify dead reads, huge physical inputs,
+scalar-copy/elision or a direct Hash32 allocator observer. Actual hosted
+Windows Debug also matches #241's full 201 selected identities, proving that
+the merge context includes its two delivered block cases; the local original/
+final hash runs were on the same older-block baseline. No benchmark policy or
+performance-equivalence claim is inferred from those golden values.
+
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,
 not the whole dump file.
 Other recursive frontiers include diagnostic
-header/internal-key assemblers, metadata prepared-state publication and recovered-counter
-children, cache table/list/reference operations, deeper block positioning/
+header/internal-key assemblers, metadata prepared-state publication and required-counter
+validation, cache table/list/reference operations, deeper block layout/entry
 decoding, WAL fragmentation and codec helpers, and remaining engine/native
 children. This is not an exhaustive
 replacement for the final every-definition audit: all structured dispositions,
