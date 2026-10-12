@@ -331,6 +331,15 @@ struct VersionSet::ManifestRecovery {
     }
 
     Status ValidateCounters() const {
+        Status required = RequireRecoveredCounterFields();
+        if (!required.has_value()) {
+            return required;
+        }
+        const std::uint64_t next = next_file.value();
+        return ValidateRecoveredCounterBounds(next);
+    }
+
+    Status RequireRecoveredCounterFields() const {
         if (!next_file.has_value()) {
             return std::unexpected(Error::Corruption("MANIFEST has no next file number"));
         }
@@ -340,7 +349,10 @@ struct VersionSet::ManifestRecovery {
         if (!last_sequence.has_value()) {
             return std::unexpected(Error::Corruption("MANIFEST has no last sequence"));
         }
-        const std::uint64_t next = next_file.value();
+        return {};
+    }
+
+    Status ValidateRecoveredCounterBounds(std::uint64_t next) const {
         if (next > FileNumberLimit) {
             return std::unexpected(
                 Error::Corruption("MANIFEST's next file number is beyond the file number limit"));
