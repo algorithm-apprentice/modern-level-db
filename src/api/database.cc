@@ -15,14 +15,18 @@
 namespace modern_leveldb {
 namespace {
 
+DatabaseLevelState PublicLevelState(const DatabaseEngineLevelState& state) noexcept {
+    return {
+        .file_count = state.file_count,
+        .file_bytes = state.file_bytes,
+    };
+}
+
 DatabaseState PublicState(DatabaseEngineState state) {
     static_assert(DatabaseLevelCount == NumLevels);
     DatabaseState result;
     for (std::size_t level = 0; level < DatabaseLevelCount; ++level) {
-        result.levels[level] = {
-            .file_count = state.levels[level].file_count,
-            .file_bytes = state.levels[level].file_bytes,
-        };
+        result.levels[level] = PublicLevelState(state.levels[level]);
     }
     result.last_sequence = state.last_sequence;
     result.snapshot_count = state.snapshot_count;
