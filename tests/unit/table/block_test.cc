@@ -228,6 +228,54 @@ TEST(BlockBuilderTest, ResetStartsANewBlock) {
     EXPECT_EQ(Materialize(builder.Finish()), WithRestarts(GoldenEntries(), {0, 18}));
 }
 
+TEST(BlockBuilderTest, BinaryPrefixAndRestartStagesKeepLiteralBlocks) {
+    struct BuilderCase {
+        std::uint32_t interval;
+        std::vector<std::byte> expected;
+    };
+    const std::array cases{
+        BuilderCase{1,
+                    Bytes({0, 0, 1, 0xff, 0, 1, 2, 0, 0,  0xff, 0, 2, 0,  0, 0xff, 0, 1, 1, 1, 0x7f,
+                           0, 0, 0, 0,    4, 0, 0, 0, 10, 0,    0, 0, 15, 0, 0,    0, 4, 0, 0, 0})},
+        BuilderCase{2, Bytes({0, 0, 1, 0xff, 0, 1, 2, 0, 0,  0xff, 0, 2, 0, 0, 0xff, 0,
+                              1, 1, 1, 0x7f, 0, 0, 0, 0, 10, 0,    0, 0, 2, 0, 0,    0})},
+        BuilderCase{3, Bytes({0, 0, 1,    0xff, 0, 1, 2, 0,  0, 0xff, 1, 1, 0, 0xff, 0, 1,
+                              1, 1, 0x7f, 0,    0, 0, 0, 14, 0, 0,    0, 2, 0, 0,    0})},
+    };
+    const std::array keys{std::vector<std::byte>{}, Bytes({0}), Bytes({0, 0xff}), Bytes({1})};
+    const std::array values{Bytes({0xff}), Bytes({0, 0xff}), std::vector<std::byte>{},
+                            Bytes({0x7f})};
+    for (const auto& test : cases) {
+        SCOPED_TRACE(test.interval);
+        BlockBuilder builder(test.interval);
+        for (std::size_t index = 0; index < keys.size(); ++index) {
+            builder.Add(keys[index], values[index]);
+        }
+        EXPECT_FALSE(builder.empty());
+        EXPECT_EQ(builder.CurrentSizeEstimate(), test.expected.size());
+        EXPECT_EQ(Materialize(builder.Finish()), test.expected);
+    }
+}
+
+TEST(BlockBuilderTest, ResetAfterOwnedFinishRestoresLiteralPrefixHistory) {
+    BlockBuilder builder(2);
+    builder.Add(Bytes({0}), Bytes({0xff}));
+    builder.Add(Bytes({0, 0xff}), {});
+    const auto first = Materialize(builder.Finish());
+    const auto first_expected = Bytes({0, 1, 1, 0, 0xff, 1, 1, 0, 0xff, 0, 0, 0, 0, 1, 0, 0, 0});
+    EXPECT_EQ(first, first_expected);
+
+    builder.Reset();
+    EXPECT_TRUE(builder.empty());
+    EXPECT_EQ(builder.CurrentSizeEstimate(), 8U);
+    builder.Add(Bytes({0, 0xff}), Bytes({0x80}));
+    const auto expected = Bytes({0, 2, 1, 0, 0xff, 0x80, 0, 0, 0, 0, 1, 0, 0, 0});
+    EXPECT_FALSE(builder.empty());
+    EXPECT_EQ(builder.CurrentSizeEstimate(), expected.size());
+    EXPECT_EQ(Materialize(builder.Finish()), expected);
+    EXPECT_EQ(first, first_expected);
+}
+
 TEST(BlockTest, AcceptsBuilderBlocks) {
     BlockBuilder builder(16);
 

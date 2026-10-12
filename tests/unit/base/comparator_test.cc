@@ -143,5 +143,59 @@ TEST(ComparatorTest, LeavesAllFFSuccessorUnchanged) {
     EXPECT_EQ(key, (std::vector<std::byte>{std::byte{0xff}, std::byte{0xff}}));
 }
 
+TEST(ComparatorTest, SeparatorBoundariesAndBorrowedLimitsKeepExactBytes) {
+    struct SeparatorCase {
+        std::vector<std::byte> start;
+        std::vector<std::byte> limit;
+        std::vector<std::byte> expected;
+    };
+    const std::array cases{
+        SeparatorCase{{}, {std::byte{0xff}}, {}},
+        SeparatorCase{{std::byte{0x00}}, {}, {std::byte{0x00}}},
+        SeparatorCase{OwnedBytes("ab"), OwnedBytes("abc"), OwnedBytes("ab")},
+        SeparatorCase{OwnedBytes("abc"), OwnedBytes("ab"), OwnedBytes("abc")},
+        SeparatorCase{OwnedBytes("abc"), OwnedBytes("abc"), OwnedBytes("abc")},
+        SeparatorCase{{std::byte{0xfe}, std::byte{0x00}},
+                      {std::byte{0xff}},
+                      {std::byte{0xfe}, std::byte{0x00}}},
+        SeparatorCase{{std::byte{0xfd}, std::byte{0x00}}, {std::byte{0xff}}, {std::byte{0xfe}}},
+        SeparatorCase{{std::byte{0x00}, std::byte{0xff}}, {std::byte{0x03}}, {std::byte{0x01}}},
+    };
+    for (const auto& test : cases) {
+        auto start = test.start;
+        BytewiseComparator().FindShortestSeparator(start, test.limit);
+        EXPECT_EQ(start, test.expected);
+    }
+
+    std::vector<std::byte> start{std::byte{0x01}, std::byte{0x03}, std::byte{0xff}};
+    const ByteView borrowed_limit = ByteView(start).subspan(1);
+    BytewiseComparator().FindShortestSeparator(start, borrowed_limit);
+    EXPECT_EQ(start, (std::vector<std::byte>{std::byte{0x02}}));
+}
+
+TEST(ComparatorTest, SuccessorBoundariesKeepExactFirstIncrementablePrefix) {
+    struct SuccessorCase {
+        std::vector<std::byte> original;
+        std::vector<std::byte> expected;
+    };
+    const std::array cases{
+        SuccessorCase{{}, {}},
+        SuccessorCase{{std::byte{0xff}, std::byte{0xff}}, {std::byte{0xff}, std::byte{0xff}}},
+        SuccessorCase{{std::byte{0xfe}, std::byte{0xff}}, {std::byte{0xff}}},
+        SuccessorCase{{std::byte{0x00}, std::byte{0xff}}, {std::byte{0x01}}},
+        SuccessorCase{{std::byte{0xff}, std::byte{0xfe}, std::byte{0x00}},
+                      {std::byte{0xff}, std::byte{0xff}}},
+        SuccessorCase{{std::byte{0xff}, std::byte{0x00}, std::byte{0xff}},
+                      {std::byte{0xff}, std::byte{0x01}}},
+        SuccessorCase{{std::byte{0x7f}, std::byte{0x00}, std::byte{0xff}}, {std::byte{0x80}}},
+        SuccessorCase{{std::byte{0x80}, std::byte{0xfe}}, {std::byte{0x81}}},
+    };
+    for (const auto& test : cases) {
+        auto key = test.original;
+        BytewiseComparator().FindShortSuccessor(key);
+        EXPECT_EQ(key, test.expected);
+    }
+}
+
 }  // namespace
 }  // namespace modern_leveldb
