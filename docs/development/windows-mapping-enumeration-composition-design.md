@@ -142,3 +142,56 @@ the transaction, error-copy, native-name and cleanup-priority constraints.
 The reviewer did not edit files, execute builds/tests or launch nested agents.
 This is design acceptance evidence, not native implementation verification;
 allocation failures remain inspection-based.
+
+## Original characterization stage
+
+Design accepted in #217, merged as
+7519bdd59e1e93468fbbdc98e0393bb65240eb7f.
+Five new native cases cover hint/budget/observed-size query order, exact mapping
+publication/failure prefixes and slot reuse, owned enumeration names and first
+entry/advance order, admission/Find suppression, and terminal-error priority
+over cleanup failure after partial traversal.
+
+The existing test-local seam records a fixed-capacity native call trace; it
+also scripts names in a reused native buffer and captures closed handle identity.
+No production seam or implementation is changed at this stage.
+Synthetic find handles are closed only by their test-local owner implementation.
+
+Native Windows Debug execution on the unchanged production source passes
+163 unique cases across WindowsFileSystemTest, WindowsFileSystemDeathTest,
+TableTest, RecoveryTest and DatabaseTest, including all five new cases.
+Their JUnit case set is retained for exact final comparison.
+An earlier narrower run passed 109 cases; the final original baseline explicitly
+adds the coupled DatabaseTest suite rather than confusing the two selectors.
+Implementation/native final parity remain pending.
+
+Independent characterization review identified that an initial dot entry could
+not detect accidentally advancing before processing Find's first result.
+The scripted first result is now a non-dot Unicode name explicitly required in
+the output. A narrow independent follow-up found no significant issue and
+confirmed first-result publication, buffer reuse, dot filtering and partial
+traversal before the fourth-Next failure. The unchanged production rerun still
+passes all 163 unique cases. Neither reviewer executed builds/tests.
+
+## Implementation and native parity
+
+Separate mapping and enumeration topic commits implement the definition ledger.
+Mapping keeps the parent pending guard across copied fallback, acquires the slot
+before the matching-size query, and publishes only after ordered acquisition
+handle closing and mapped-owner allocation. Enumeration owns each native child
+before buffer reuse and returns the captured terminal DWORD to its unchanged
+error/close boundary.
+
+The mapping intermediate native selection passes 54 filesystem/death cases.
+Final native Windows Debug JUnit contains exactly the same 163 unique
+classname/name pairs as the unchanged-production baseline, with all five new
+cases and no failures, errors or skips. No production seam/public/benchmark/
+POSIX/coverage-policy changes were introduced.
+Combined independent review and exact-head hosted CI remain required before
+delivery; the local native result is not a claim that hosted CI has completed.
+
+Independent bounded combined review found no significant issue in the three
+changed paths. It verified original/final XML parity and the responsibility,
+error-copy/move, LastError, owner-transfer and cleanup-order constraints.
+It did not edit files or execute builds/tests; allocation/throw paths remain
+inspection-based and hosted CI remains a separate delivery gate.

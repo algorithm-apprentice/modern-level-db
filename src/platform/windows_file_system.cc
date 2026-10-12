@@ -344,6 +344,30 @@ Status CheckDatabaseVolume(const std::filesystem::path& final,
     return CheckNtfsVolume(volume->data(), original, operations);
 }
 
+struct FindCloser {
+    const WindowsFileOperations* operations;
+    void operator()(void* handle) const noexcept {
+        static_cast<void>(operations->CloseFind(handle));
+    }
+};
+
+void AppendDirectoryChild(std::vector<std::filesystem::path>& children,
+                          const WIN32_FIND_DATAW& information) {
+    const std::wstring_view name(information.cFileName);
+    if (name != L"." && name != L"..") {
+        children.emplace_back(name);
+    }
+}
+
+DWORD ReadDirectoryChildren(HANDLE found, WIN32_FIND_DATAW& information,
+                            std::vector<std::filesystem::path>& children,
+                            const WindowsFileOperations& operations) {
+    do {
+        AppendDirectoryChild(children, information);
+    } while (operations.Next(found, &information));
+    return ::GetLastError();
+}
+
 class WindowsSequentialFile final : public SequentialFile {
 public:
     WindowsSequentialFile(ScopedHandle file, std::filesystem::path path,
@@ -431,6 +455,33 @@ private:
     const std::shared_ptr<WindowsFileOperations> operations_;
 };
 
+Result<std::unique_ptr<RandomAccessFile>> OpenCopiedRandomFile(
+    ScopedHandle& file, const std::filesystem::path& path,
+    const std::shared_ptr<WindowsFileOperations>& operations) {
+    return std::make_unique<WindowsRandomAccessFile>(std::move(file), path, operations);
+}
+
+std::optional<std::size_t> MappingLength(std::optional<std::uint64_t> expected_size) {
+    if (!expected_size.has_value() || *expected_size == 0) {
+        return std::nullopt;
+    }
+    if (*expected_size > std::numeric_limits<std::size_t>::max() ||
+        *expected_size > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(*expected_size);
+}
+
+Result<bool> MatchesMappingSize(HANDLE file, std::uint64_t expected_size,
+                                const std::filesystem::path& path,
+                                const WindowsFileOperations& operations) {
+    LARGE_INTEGER size{};
+    if (!operations.Size(file, &size)) {
+        return std::unexpected(FileError("mapped file size", path, ::GetLastError()));
+    }
+    return size.QuadPart >= 0 && static_cast<std::uint64_t>(size.QuadPart) == expected_size;
+}
+
 class PendingWindowsMapping final {
 public:
     PendingWindowsMapping(std::shared_ptr<MappedReadLimiter> limiter,
@@ -508,6 +559,61 @@ private:
     const std::shared_ptr<MappedReadLimiter> limiter_;
     const std::shared_ptr<WindowsFileOperations> operations_;
 };
+
+Result<ScopedHandle> OpenMappingSection(HANDLE file, const std::filesystem::path& path,
+                                        const std::shared_ptr<WindowsFileOperations>& operations) {
+    ScopedHandle section(operations->Mapping(file), operations);
+    if (!section.valid()) {
+        return std::unexpected(FileError("create file mapping", path, ::GetLastError()));
+    }
+    return section;
+}
+
+Result<const void*> MapSectionView(HANDLE section, PendingWindowsMapping& pending,
+                                   const std::filesystem::path& path,
+                                   const WindowsFileOperations& operations) {
+    const void* view = operations.Map(section);
+    if (view == nullptr) {
+        return std::unexpected(FileError("map file view", path, ::GetLastError()));
+    }
+    pending.SetView(view);
+    return view;
+}
+
+Status CloseMappingHandles(ScopedHandle& section, ScopedHandle& file,
+                           const std::filesystem::path& path) {
+    const Status section_closed = CloseHandle(section, path);
+    if (!section_closed.has_value()) {
+        return std::unexpected(section_closed.error());
+    }
+    const Status file_closed = CloseHandle(file, path);
+    if (!file_closed.has_value()) {
+        return std::unexpected(file_closed.error());
+    }
+    return {};
+}
+
+Result<std::unique_ptr<RandomAccessFile>> CreateMappedRandomFile(
+    ScopedHandle& file, PendingWindowsMapping& pending, const std::filesystem::path& path,
+    std::size_t length, const std::shared_ptr<MappedReadLimiter>& limiter,
+    const std::shared_ptr<WindowsFileOperations>& operations) {
+    auto section = OpenMappingSection(file.get(), path, operations);
+    if (!section.has_value()) {
+        return std::unexpected(std::move(section).error());
+    }
+    auto view = MapSectionView(section->get(), pending, path, *operations);
+    if (!view.has_value()) {
+        return std::unexpected(std::move(view).error());
+    }
+    auto closed = CloseMappingHandles(*section, file, path);
+    if (!closed.has_value()) {
+        return std::unexpected(std::move(closed).error());
+    }
+    auto mapped =
+        std::make_unique<WindowsMappedRandomAccessFile>(*view, length, limiter, operations);
+    pending.Commit();
+    return mapped;
+}
 
 class WindowsWritableFile final : public WritableFile {
 public:
@@ -728,54 +834,25 @@ Result<std::unique_ptr<RandomAccessFile>> WindowsFileSystem::OpenRandomAccess(
     if (!file.has_value()) {
         return std::unexpected(std::move(file).error());
     }
-    const auto copied = [&]() -> Result<std::unique_ptr<RandomAccessFile>> {
-        return std::make_unique<WindowsRandomAccessFile>(std::move(*file), path, operations_);
-    };
     if (mmap_limiter_ == nullptr) {
-        return copied();
+        return OpenCopiedRandomFile(*file, path, operations_);
     }
-    if (!expected_size.has_value()) {
-        return copied();
-    }
-    if (*expected_size == 0) {
-        return copied();
-    }
-    if (*expected_size > std::numeric_limits<std::size_t>::max() ||
-        *expected_size > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
-        return copied();
+    const auto length = MappingLength(expected_size);
+    if (!length.has_value()) {
+        return OpenCopiedRandomFile(*file, path, operations_);
     }
     if (!mmap_limiter_->Acquire()) {
-        return copied();
+        return OpenCopiedRandomFile(*file, path, operations_);
     }
     PendingWindowsMapping pending(mmap_limiter_, operations_);
-    LARGE_INTEGER size{};
-    if (!operations_->Size(file->get(), &size)) {
-        return std::unexpected(FileError("mapped file size", path, ::GetLastError()));
+    auto matches = MatchesMappingSize(file->get(), *expected_size, path, *operations_);
+    if (!matches.has_value()) {
+        return std::unexpected(std::move(matches).error());
     }
-    if (size.QuadPart < 0 || static_cast<std::uint64_t>(size.QuadPart) != *expected_size) {
-        return copied();
+    if (!*matches) {
+        return OpenCopiedRandomFile(*file, path, operations_);
     }
-    ScopedHandle section(operations_->Mapping(file->get()), operations_);
-    if (!section.valid()) {
-        return std::unexpected(FileError("create file mapping", path, ::GetLastError()));
-    }
-    const void* view = operations_->Map(section.get());
-    if (view == nullptr) {
-        return std::unexpected(FileError("map file view", path, ::GetLastError()));
-    }
-    pending.SetView(view);
-    const Status section_closed = CloseHandle(section, path);
-    if (!section_closed.has_value()) {
-        return std::unexpected(section_closed.error());
-    }
-    const Status file_closed = CloseHandle(*file, path);
-    if (!file_closed.has_value()) {
-        return std::unexpected(file_closed.error());
-    }
-    auto mapped = std::make_unique<WindowsMappedRandomAccessFile>(
-        view, static_cast<std::size_t>(*expected_size), mmap_limiter_, operations_);
-    pending.Commit();
-    return mapped;
+    return CreateMappedRandomFile(*file, pending, path, *length, mmap_limiter_, operations_);
 }
 
 Result<std::unique_ptr<WritableFile>> WindowsFileSystem::OpenWritable(
@@ -826,21 +903,9 @@ Result<std::vector<std::filesystem::path>> WindowsFileSystem::ListDirectory(
         }
         return std::unexpected(FileError("list directory", path, error));
     }
-    struct FindCloser {
-        const WindowsFileOperations* operations;
-        void operator()(void* handle) const noexcept {
-            static_cast<void>(operations->CloseFind(handle));
-        }
-    };
     std::unique_ptr<void, FindCloser> guard(found, FindCloser{operations_.get()});
     std::vector<std::filesystem::path> result;
-    do {
-        const std::wstring_view name(information.cFileName);
-        if (name != L"." && name != L"..") {
-            result.emplace_back(name);
-        }
-    } while (operations_->Next(found, &information));
-    const DWORD error = ::GetLastError();
+    const DWORD error = ReadDirectoryChildren(found, information, result, *operations_);
     if (error != ERROR_NO_MORE_FILES) {
         return std::unexpected(FileError("list directory", path, error));
     }

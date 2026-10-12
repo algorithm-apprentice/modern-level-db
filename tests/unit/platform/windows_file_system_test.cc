@@ -13,8 +13,10 @@
 #include <latch>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -31,6 +33,8 @@ namespace modern_leveldb {
 namespace {
 
 using test_support::TemporaryDirectory;
+
+enum class NativeCall { Open, Inspect, Size, Mapping, Map, Unmap, Close, Find, Next, CloseFind };
 
 class FaultOperations final : public WindowsFileOperations {
 public:
@@ -52,7 +56,12 @@ public:
     bool fail_mapping = false;
     bool fail_map = false;
     bool fail_unmap = false;
+    bool scripted_enumeration = false;
+    std::optional<std::int64_t> reported_size;
+    DWORD find_error = ERROR_SUCCESS;
+    DWORD find_close_error = ERROR_READ_FAULT;
     unsigned fail_close_call = 0;
+    unsigned fail_next_call = 0;
     UINT forced_drive_type = std::numeric_limits<UINT>::max();
     DWORD maximum_write = MAXDWORD;
     mutable unsigned live_handles = 0;
@@ -61,6 +70,7 @@ public:
     mutable unsigned write_calls = 0;
     mutable unsigned sync_calls = 0;
     mutable unsigned close_calls = 0;
+    mutable unsigned next_calls = 0;
     mutable unsigned live_views = 0;
     mutable unsigned open_calls = 0;
     mutable unsigned inspect_calls = 0;
@@ -71,9 +81,36 @@ public:
     mutable DWORD opened_disposition = 0;
     mutable DWORD opened_flags = 0;
     mutable std::wstring opened_path;
+    mutable std::array<NativeCall, 256> calls{};
+    mutable std::size_t call_count = 0;
+    mutable std::size_t child_index = 0;
+    mutable std::array<wchar_t, 1'024> find_pattern{};
+    mutable HANDLE acquired_file = INVALID_HANDLE_VALUE;
+    mutable HANDLE acquired_section = nullptr;
+    mutable std::array<HANDLE, 256> closed_handles{};
+    static constexpr std::array<std::wstring_view, 5> ScriptedChildren{L"\u03b2", L".", L"..",
+                                                                       L"two words", L"child"};
+
+    void Record(NativeCall call) const noexcept {
+        if (call_count == calls.size()) {
+            std::abort();
+        }
+        calls[call_count++] = call;
+    }
+
+    std::vector<NativeCall> Trace() const {
+        return {calls.begin(), calls.begin() + static_cast<std::ptrdiff_t>(call_count)};
+    }
+
+    void SetChildName(WIN32_FIND_DATAW* information) const noexcept {
+        const auto name = ScriptedChildren[child_index];
+        std::copy(name.begin(), name.end(), information->cFileName);
+        information->cFileName[name.size()] = L'\0';
+    }
 
     HANDLE Open(const wchar_t* path, DWORD access, DWORD share, DWORD disposition,
                 DWORD flags) const noexcept override {
+        Record(NativeCall::Open);
         ++open_calls;
         opened_path = path;
         opened_access = access;
@@ -85,12 +122,14 @@ public:
             return INVALID_HANDLE_VALUE;
         }
         const HANDLE handle = WindowsFileOperations::Open(path, access, share, disposition, flags);
+        acquired_file = handle;
         if (handle != INVALID_HANDLE_VALUE) {
             ++live_handles;
         }
         return handle;
     }
     BOOL Inspect(HANDLE file, BY_HANDLE_FILE_INFORMATION* information) const noexcept override {
+        Record(NativeCall::Inspect);
         ++inspect_calls;
         if (fail_inspect) {
             ::SetLastError(ERROR_READ_FAULT);
@@ -152,24 +191,32 @@ public:
         return WindowsFileOperations::Sync(file);
     }
     BOOL Size(HANDLE file, LARGE_INTEGER* size) const noexcept override {
+        Record(NativeCall::Size);
         if (fail_size) {
             ::SetLastError(ERROR_READ_FAULT);
             return FALSE;
         }
+        if (reported_size.has_value()) {
+            size->QuadPart = *reported_size;
+            return TRUE;
+        }
         return WindowsFileOperations::Size(file, size);
     }
     HANDLE Mapping(HANDLE file) const noexcept override {
+        Record(NativeCall::Mapping);
         if (fail_mapping) {
             ::SetLastError(ERROR_NOT_ENOUGH_MEMORY);
             return nullptr;
         }
         const HANDLE handle = WindowsFileOperations::Mapping(file);
+        acquired_section = handle;
         if (handle != nullptr) {
             ++live_handles;
         }
         return handle;
     }
     void* Map(HANDLE mapping) const noexcept override {
+        Record(NativeCall::Map);
         if (fail_map) {
             ::SetLastError(ERROR_NOT_ENOUGH_MEMORY);
             return nullptr;
@@ -181,6 +228,7 @@ public:
         return view;
     }
     BOOL Unmap(const void* mapping) const noexcept override {
+        Record(NativeCall::Unmap);
         const BOOL unmapped = WindowsFileOperations::Unmap(mapping);
         if (unmapped) {
             --live_views;
@@ -192,6 +240,8 @@ public:
         return unmapped;
     }
     BOOL Close(HANDLE file) const noexcept override {
+        Record(NativeCall::Close);
+        closed_handles[close_calls] = file;
         ++close_calls;
         const BOOL closed = WindowsFileOperations::Close(file);
         if (closed) {
@@ -204,6 +254,23 @@ public:
         return closed;
     }
     HANDLE Find(const wchar_t* pattern, WIN32_FIND_DATAW* information) const noexcept override {
+        Record(NativeCall::Find);
+        const std::wstring_view name(pattern);
+        if (name.size() >= find_pattern.size()) {
+            std::abort();
+        }
+        std::copy(name.begin(), name.end(), find_pattern.begin());
+        find_pattern[name.size()] = L'\0';
+        if (find_error != ERROR_SUCCESS) {
+            ::SetLastError(find_error);
+            return INVALID_HANDLE_VALUE;
+        }
+        if (scripted_enumeration) {
+            ++live_finds;
+            child_index = 0;
+            SetChildName(information);
+            return const_cast<FaultOperations*>(this);
+        }
         const HANDLE handle = WindowsFileOperations::Find(pattern, information);
         if (handle != INVALID_HANDLE_VALUE) {
             ++live_finds;
@@ -211,19 +278,32 @@ public:
         return handle;
     }
     BOOL Next(HANDLE handle, WIN32_FIND_DATAW* information) const noexcept override {
-        if (fail_next) {
+        Record(NativeCall::Next);
+        if (fail_next || ++next_calls == fail_next_call) {
             ::SetLastError(ERROR_READ_FAULT);
             return FALSE;
+        }
+        if (scripted_enumeration) {
+            if (++child_index == ScriptedChildren.size()) {
+                ::SetLastError(ERROR_NO_MORE_FILES);
+                return FALSE;
+            }
+            SetChildName(information);
+            return TRUE;
         }
         return WindowsFileOperations::Next(handle, information);
     }
     BOOL CloseFind(HANDLE handle) const noexcept override {
-        const BOOL closed = WindowsFileOperations::CloseFind(handle);
+        Record(NativeCall::CloseFind);
+        if (scripted_enumeration && handle != this) {
+            std::abort();
+        }
+        const BOOL closed = scripted_enumeration ? TRUE : WindowsFileOperations::CloseFind(handle);
         if (closed) {
             --live_finds;
         }
         if (fail_find_close) {
-            ::SetLastError(ERROR_READ_FAULT);
+            ::SetLastError(find_close_error);
             return FALSE;
         }
         return closed;
@@ -655,6 +735,120 @@ TEST(WindowsFileSystemTest, NativeMappingFailuresReportErrorsAndRollbackAllResou
         auto recovered = filesystem.OpenRandomAccess(path, 3);
         ASSERT_TRUE(recovered.has_value()) << recovered.error().ToString();
         EXPECT_TRUE((*recovered)->TryReadView(0, 3).has_value());
+    }
+}
+
+TEST(WindowsFileSystemTest, MappingAdmissionPreservesNativeQueryAndSlotOrder) {
+    TemporaryDirectory directory;
+    const auto path = directory.path() / "admission";
+    WriteFixture(path, "abc");
+    for (unsigned scenario = 0; scenario != 9; ++scenario) {
+        SCOPED_TRACE(scenario);
+        auto operations = std::make_shared<FaultOperations>();
+        auto limiter = std::make_shared<MappedReadLimiter>(scenario == 4 ? 0 : 1);
+        WindowsFileSystem file_system(false, operations, scenario == 0 ? nullptr : limiter);
+        std::optional<std::uint64_t> expected = 3;
+        if (scenario == 1) {
+            expected.reset();
+        } else if (scenario == 2) {
+            expected = 0;
+        } else if (scenario == 3) {
+            expected = std::numeric_limits<std::uint64_t>::max();
+        }
+        std::unique_ptr<RandomAccessFile> held;
+        if (scenario == 5) {
+            auto mapped = file_system.OpenRandomAccess(path, 3);
+            ASSERT_TRUE(mapped.has_value());
+            held = std::move(*mapped);
+        }
+        if (scenario >= 6) {
+            operations->reported_size = scenario == 6 ? -1 : (scenario == 7 ? 2 : 4);
+        }
+        operations->call_count = 0;
+        auto copied = file_system.OpenRandomAccess(path, expected);
+        ASSERT_TRUE(copied.has_value());
+        EXPECT_FALSE((*copied)->TryReadView(0, 3).has_value());
+        std::vector<NativeCall> calls{NativeCall::Open, NativeCall::Inspect};
+        if (scenario >= 6) {
+            calls.push_back(NativeCall::Size);
+        }
+        EXPECT_EQ(operations->Trace(), calls);
+        std::array<std::byte, 3> bytes{};
+        ASSERT_EQ((*copied)->Read(0, bytes).value(), bytes.size());
+        EXPECT_EQ(AsStringView(bytes), "abc");
+        copied->reset();
+        held.reset();
+        EXPECT_EQ(operations->live_handles, 0U);
+        EXPECT_EQ(operations->live_views, 0U);
+        operations->reported_size.reset();
+        if (scenario != 4) {
+            WindowsFileSystem enabled(false, operations, limiter);
+            auto restored = enabled.OpenRandomAccess(path, 3);
+            ASSERT_TRUE(restored.has_value());
+            EXPECT_TRUE((*restored)->TryReadView(0, 3).has_value());
+        }
+    }
+}
+
+TEST(WindowsFileSystemTest, MappingPublicationAndFailureKeepExactNativePrefixes) {
+    TemporaryDirectory directory;
+    const auto path = directory.path() / "publication";
+    WriteFixture(path, "abc");
+    for (unsigned scenario = 0; scenario != 6; ++scenario) {
+        SCOPED_TRACE(scenario);
+        auto operations = std::make_shared<FaultOperations>();
+        auto limiter = std::make_shared<MappedReadLimiter>(1);
+        WindowsFileSystem file_system(false, operations, limiter);
+        operations->fail_size = scenario == 1;
+        operations->fail_mapping = scenario == 2;
+        operations->fail_map = scenario == 3;
+        operations->fail_close = scenario >= 1 && scenario <= 3;
+        operations->fail_close_call = scenario == 4 ? 1 : (scenario == 5 ? 2 : 0);
+        auto result = file_system.OpenRandomAccess(path, 3);
+        std::vector<NativeCall> expected{NativeCall::Open, NativeCall::Inspect, NativeCall::Size};
+        if (scenario != 1) {
+            expected.push_back(NativeCall::Mapping);
+            if (scenario != 2) {
+                expected.push_back(NativeCall::Map);
+                expected.push_back(NativeCall::Close);
+                if (scenario == 4) {
+                    expected.push_back(NativeCall::Unmap);
+                }
+            }
+        }
+        expected.push_back(NativeCall::Close);
+        if (scenario == 5) {
+            expected.push_back(NativeCall::Unmap);
+        }
+        EXPECT_EQ(operations->Trace(), expected);
+        EXPECT_EQ(operations->live_handles, 0U);
+        if (scenario == 0) {
+            ASSERT_TRUE(result.has_value());
+            EXPECT_EQ(operations->live_views, 1U);
+            EXPECT_EQ(operations->closed_handles[0], operations->acquired_section);
+            EXPECT_EQ(operations->closed_handles[1], operations->acquired_file);
+            EXPECT_EQ(AsStringView(*(*result)->TryReadView(0, 3)), "abc");
+            result->reset();
+        } else {
+            ASSERT_FALSE(result.has_value());
+            EXPECT_EQ(result.error().code(), ErrorCode::Io);
+            const std::array<std::string_view, 5> names{"mapped file size", "create file mapping",
+                                                        "map file view", "close", "close"};
+            const std::array<DWORD, 5> errors{ERROR_READ_FAULT, ERROR_NOT_ENOUGH_MEMORY,
+                                              ERROR_NOT_ENOUGH_MEMORY, ERROR_WRITE_FAULT,
+                                              ERROR_WRITE_FAULT};
+            EXPECT_TRUE(result.error().message().starts_with(names[scenario - 1]));
+            EXPECT_NE(
+                result.error().message().find("Win32 " + std::to_string(errors[scenario - 1])),
+                std::string_view::npos);
+        }
+        EXPECT_EQ(operations->live_views, 0U);
+        operations->fail_size = operations->fail_mapping = operations->fail_map =
+            operations->fail_close = false;
+        operations->fail_close_call = 0;
+        auto restored = file_system.OpenRandomAccess(path, 3);
+        ASSERT_TRUE(restored.has_value());
+        EXPECT_TRUE((*restored)->TryReadView(0, 3).has_value());
     }
 }
 
@@ -1252,6 +1446,91 @@ TEST(WindowsFileSystemTest, EnumerationCloseFailureIsNotSuccessful) {
     ASSERT_FALSE(names.has_value());
     EXPECT_EQ(names.error().code(), ErrorCode::Io);
     EXPECT_EQ(operations->live_finds, 0U);
+}
+
+TEST(WindowsFileSystemTest, EnumerationOwnsNativeNamesBeforeBufferReuse) {
+    TemporaryDirectory directory;
+    auto operations = std::make_shared<FaultOperations>();
+    operations->scripted_enumeration = true;
+    WindowsFileSystem file_system(false, operations);
+    const auto listed = file_system.ListDirectory(directory.path());
+    ASSERT_TRUE(listed.has_value());
+    const std::vector<std::filesystem::path> expected{L"\u03b2", L"two words", L"child"};
+    EXPECT_EQ(*listed, expected);
+    const std::vector<NativeCall> calls{
+        NativeCall::Open, NativeCall::Inspect,  NativeCall::Close, NativeCall::Find,
+        NativeCall::Next, NativeCall::Next,     NativeCall::Next,  NativeCall::Next,
+        NativeCall::Next, NativeCall::CloseFind};
+    EXPECT_EQ(operations->Trace(), calls);
+    EXPECT_EQ(std::wstring_view(operations->find_pattern.data()),
+              (std::filesystem::path(operations->opened_path) / L"*").native());
+    EXPECT_EQ(operations->live_handles, 0U);
+    EXPECT_EQ(operations->live_finds, 0U);
+}
+
+TEST(WindowsFileSystemTest, EnumerationAdmissionAndFindErrorsSuppressLaterStages) {
+    TemporaryDirectory directory;
+    for (unsigned scenario = 0; scenario != 4; ++scenario) {
+        SCOPED_TRACE(scenario);
+        auto operations = std::make_shared<FaultOperations>();
+        operations->scripted_enumeration = true;
+        operations->fail_open = scenario == 0;
+        operations->fail_close = scenario == 1;
+        operations->find_error = scenario == 2 ? ERROR_FILE_NOT_FOUND : ERROR_ACCESS_DENIED;
+        WindowsFileSystem file_system(false, operations);
+        const auto listed = file_system.ListDirectory(directory.path());
+        std::vector<NativeCall> calls{NativeCall::Open};
+        if (scenario != 0) {
+            calls.push_back(NativeCall::Inspect);
+            calls.push_back(NativeCall::Close);
+            if (scenario != 1) {
+                calls.push_back(NativeCall::Find);
+            }
+        }
+        EXPECT_EQ(operations->Trace(), calls);
+        if (scenario == 2) {
+            ASSERT_TRUE(listed.has_value());
+            EXPECT_TRUE(listed->empty());
+        } else {
+            ASSERT_FALSE(listed.has_value());
+            const std::array<std::string_view, 4> names{"open", "close", "", "list directory"};
+            EXPECT_TRUE(listed.error().message().starts_with(names[scenario]));
+            const DWORD error = scenario == 1 ? ERROR_WRITE_FAULT : ERROR_ACCESS_DENIED;
+            EXPECT_NE(listed.error().message().find("Win32 " + std::to_string(error)),
+                      std::string_view::npos);
+        }
+        EXPECT_EQ(operations->live_handles, 0U);
+        EXPECT_EQ(operations->live_finds, 0U);
+    }
+}
+
+TEST(WindowsFileSystemTest, EnumerationReadErrorPrecedesCleanupCloseError) {
+    TemporaryDirectory directory;
+    for (bool fail_next : {true, false}) {
+        SCOPED_TRACE(fail_next);
+        auto operations = std::make_shared<FaultOperations>();
+        operations->scripted_enumeration = true;
+        operations->fail_next_call = fail_next ? 4 : 0;
+        operations->fail_find_close = true;
+        operations->find_close_error = ERROR_WRITE_FAULT;
+        WindowsFileSystem file_system(false, operations);
+        const auto listed = file_system.ListDirectory(directory.path());
+        ASSERT_FALSE(listed.has_value());
+        EXPECT_EQ(listed.error().code(), ErrorCode::Io);
+        const std::string_view name = fail_next ? "list directory" : "close directory enumeration";
+        EXPECT_TRUE(listed.error().message().starts_with(name));
+        const DWORD error = fail_next ? ERROR_READ_FAULT : ERROR_WRITE_FAULT;
+        EXPECT_NE(listed.error().message().find("Win32 " + std::to_string(error)),
+                  std::string_view::npos);
+        std::vector<NativeCall> calls{NativeCall::Open, NativeCall::Inspect, NativeCall::Close,
+                                      NativeCall::Find};
+        calls.insert(calls.end(), fail_next ? 4U : FaultOperations::ScriptedChildren.size(),
+                     NativeCall::Next);
+        calls.push_back(NativeCall::CloseFind);
+        EXPECT_EQ(operations->Trace(), calls);
+        EXPECT_EQ(operations->live_handles, 0U);
+        EXPECT_EQ(operations->live_finds, 0U);
+    }
 }
 
 TEST(WindowsFileSystemTest, CopiedReadHandleSurvivesRemovalAndLocksRecognizeCaseAliases) {
