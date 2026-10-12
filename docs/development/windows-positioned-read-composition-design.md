@@ -154,3 +154,32 @@ initiation meaning and feasible original-source characterization limits.
 Source/tests remain unchanged; the reviewer did not edit files or execute
 builds/tests. Genuine pending cancellation and allocation throws remain
 inspection-based, and characterization still waits for #218 delivery.
+
+## Original characterization stage
+
+Design #220 is accepted; #218 delivered as
+3e9d2310508c795255de5ded54d813bedebbfbd3 before this stage begins.
+Three new public-read cases cover copied/mapped empty/range ordering, seven
+issuance/completion/error/EOF prefixes and primary errors over event-close
+failure, and repeated low/high offset and per-call operation snapshots.
+
+The test-local recorder adds Event/Read/Complete observations, configurable
+native error codes and value snapshots only; it retains no OVERLAPPED pointer.
+The large valid-offset range case injects immediate native EOF rather than
+assuming every real filesystem supports a read near INT64_MAX. Existing real
+sparse-offset, EOF and concurrent cases remain selected.
+Completion observations occur after the real wait and before injected failure;
+they do not claim to execute genuine still-pending cancellation.
+
+Native Windows Debug on unchanged production passes 166 unique cases across
+WindowsFileSystemTest, WindowsFileSystemDeathTest, TableTest, RecoveryTest and
+DatabaseTest, including all three new cases. Their JUnit case set is retained
+for exact implementation comparison. No source or production seam is changed
+at this stage; final implementation execution remains pending.
+
+Independent bounded characterization review found no significant issue,
+verified the original 166-case XML and unchanged production/private header,
+and confirmed that the new snapshots do not retain pointers or fabricate
+pending kernel state. It did not execute builds/tests. Real synchronous versus
+pending outcomes remain environment-dependent; genuine pending retirement
+and allocation throws remain inspection-based.
