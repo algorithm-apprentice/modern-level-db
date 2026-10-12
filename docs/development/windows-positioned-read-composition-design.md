@@ -183,3 +183,20 @@ and confirmed that the new snapshots do not retain pointers or fabricate
 pending kernel state. It did not execute builds/tests. Real synchronous versus
 pending outcomes remain environment-dependent; genuine pending retirement
 and allocation throws remain inspection-based.
+
+## Implementation and native parity
+
+Separate preparation and issuance/completion/retirement topic commits implement
+the eight-definition ledger. Both callers retain their empty-output gate before
+the shared request proof. Copied Read owns the scoped event and encoded operation
+across private child calls; the completion-required local makes the issuance
+boolean meaning explicit. Failed completion captures its original error before
+borrowing that operation for the unchanged retirement protocol.
+
+The preparation intermediate native selection passes 57 filesystem/death cases.
+Final native Windows Debug JUnit has exactly the same 166 unique classname/name
+pairs as the unchanged-production baseline, including all three new cases and
+no failures, errors or skips. The true still-pending kernel path and allocation
+throws remain inspection-based; no native fault interface or policy is added.
+Formatting, whitespace and documentation checks pass locally.
+Independent combined review and exact-head hosted CI remain delivery gates.
