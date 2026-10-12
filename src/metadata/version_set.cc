@@ -156,6 +156,20 @@ Error InManifest(std::uint64_t offset, const Error& error) {
                              std::string(error.message()));
 }
 
+void AddPresentSnapshotPointer(VersionEdit& snapshot, std::uint32_t level,
+                               const std::optional<InternalKey>& pointer) {
+    if (pointer.has_value()) {
+        static_cast<void>(snapshot.AddCompactPointer(level, *pointer));
+    }
+}
+
+void AddSnapshotFiles(VersionEdit& snapshot, std::uint32_t level,
+                      std::span<const Version::File> files) {
+    for (const Version::File& file : files) {
+        static_cast<void>(snapshot.AddFile(level, *file));
+    }
+}
+
 // Records the comparator name, the compact pointers, and every file.
 VersionEdit Snapshot(const Comparator& user_comparator,
                      std::span<const std::optional<InternalKey>, NumLevels> compact_pointers,
@@ -163,12 +177,8 @@ VersionEdit Snapshot(const Comparator& user_comparator,
     VersionEdit snapshot;
     snapshot.SetComparatorName(user_comparator.Name());
     for (std::uint32_t level = 0; level < NumLevels; ++level) {
-        if (compact_pointers[level].has_value()) {
-            static_cast<void>(snapshot.AddCompactPointer(level, *compact_pointers[level]));
-        }
-        for (const Version::File& file : version.files(level)) {
-            static_cast<void>(snapshot.AddFile(level, *file));
-        }
+        AddPresentSnapshotPointer(snapshot, level, compact_pointers[level]);
+        AddSnapshotFiles(snapshot, level, version.files(level));
     }
     return snapshot;
 }
