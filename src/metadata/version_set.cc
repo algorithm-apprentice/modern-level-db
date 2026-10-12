@@ -293,9 +293,23 @@ struct VersionSet::ManifestRecovery {
     }
 
     Status AccumulateCounters(const VersionEdit& edit, std::uint64_t offset) {
+        IncludeAddedFileNumbers(edit);
+        Status log = AccumulateLogNumber(edit, offset);
+        if (!log.has_value()) {
+            return log;
+        }
+        AccumulateSparseCounters(edit);
+        largest_number = std::max({largest_number, log_number.value_or(0), prev_log_number});
+        return {};
+    }
+
+    void IncludeAddedFileNumbers(const VersionEdit& edit) {
         for (const NewFile& added : edit.new_files()) {
             largest_number = std::max(largest_number, added.file.number);
         }
+    }
+
+    Status AccumulateLogNumber(const VersionEdit& edit, std::uint64_t offset) {
         if (edit.log_number().has_value()) {
             if (log_number.has_value() && *edit.log_number() < *log_number) {
                 return std::unexpected(
@@ -303,6 +317,10 @@ struct VersionSet::ManifestRecovery {
             }
             log_number = edit.log_number();
         }
+        return {};
+    }
+
+    void AccumulateSparseCounters(const VersionEdit& edit) {
         if (edit.next_file_number().has_value()) {
             next_file = edit.next_file_number();
         }
@@ -310,8 +328,6 @@ struct VersionSet::ManifestRecovery {
             last_sequence = edit.last_sequence();
         }
         prev_log_number = edit.prev_log_number().value_or(prev_log_number);
-        largest_number = std::max({largest_number, log_number.value_or(0), prev_log_number});
-        return {};
     }
 
     Status ValidateCounters() const {
@@ -347,13 +363,17 @@ struct VersionSet::ManifestRecovery {
             return std::unexpected(
                 Error::Corruption("MANIFEST: " + std::string(version.error().message())));
         }
+        PublishRecoveredCounters(set, selected_number);
+        set.Install(std::make_shared<const Version>(std::move(*version)));
+        return {};
+    }
+
+    void PublishRecoveredCounters(VersionSet& set, std::uint64_t selected_number) {
         set.manifest_file_number_ = std::max(next_file.value(), selected_number + 1);
         set.next_file_number_ = set.manifest_file_number_ + 1;
         set.last_sequence_ = last_sequence.value();
         set.log_number_ = log_number.value();
         set.prev_log_number_ = prev_log_number;
-        set.Install(std::make_shared<const Version>(std::move(*version)));
-        return {};
     }
 
     VersionBuilder builder;
