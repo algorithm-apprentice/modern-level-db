@@ -75,6 +75,10 @@ private:
     bool Record(Status status);
     [[nodiscard]] Status FirstError() const;
     [[nodiscard]] Status AddValid(ByteView internal_key, ByteView value);
+    [[nodiscard]] bool AddFilterKey(ByteView internal_key);
+    void FinishPendingIndexEntry(ByteView next_key);
+    void AppendDataEntry(ByteView internal_key, ByteView value);
+    [[nodiscard]] bool FlushDataBlockIfNeeded();
     void AddPendingIndexEntry();
     void WriteDataBlock();
     void WriteBlock(ByteView contents, BlockHandle& handle);
