@@ -76,12 +76,13 @@ source location/independent ownership, directory-sync ordering, lock contention,
 handle/descriptor release and retry after failed acquisition.
 
 Use deterministic existing seams where available. `/dev/full` supports POSIX
-write failure but not combined sync/close faults; direct POSIX sync/close and
-fcntl nonstandard failures, and Windows LockFileEx/UnlockFileEx noncontention
-branches, remain explicitly inspection-based unless a platform-local production
-seam is independently justified. Do not add broad syscall abstraction solely
-to manufacture coverage. Run actual POSIX and Windows native suites; one
-platform cannot stand in for the other.
+write failure, while Linux `/proc/self/fd` supplies a directory-sync failure
+whose descriptor release can be observed through `/proc`. Combined sync/close
+faults, direct POSIX close and fcntl nonstandard failures, and Windows
+LockFileEx/UnlockFileEx noncontention branches remain explicitly inspection-based
+unless a platform-local production seam is independently justified. Do not add
+broad syscall abstraction solely to manufacture coverage. Run actual POSIX and
+Windows native suites; one platform cannot stand in for the other.
 
 Independent design and implementation review precede one non-draft PR. Exact
 hosted native identities, all CI gates and reviewed-path equality are required.
