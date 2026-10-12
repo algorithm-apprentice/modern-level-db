@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -28,24 +29,39 @@ std::uint32_t BlockChecksum(ByteView contents, std::byte type) noexcept {
     return MaskCrc32c(ExtendCrc32c(Crc32c(contents), ByteView(&type, 1)));
 }
 
+bool StoredBlockChecksumMatches(ByteView stored, std::size_t contents_size,
+                                std::byte type) noexcept {
+    const std::uint32_t checksum = DecodeFixed32(stored.last<sizeof(std::uint32_t)>());
+    return checksum == BlockChecksum(stored.first(contents_size), type);
+}
+
+std::optional<BlockCompression> DecodeCompressionType(std::byte encoded) noexcept {
+    const auto compression = static_cast<BlockCompression>(encoded);
+    switch (compression) {
+        case BlockCompression::None:
+        case BlockCompression::Snappy:
+        case BlockCompression::Zstd:
+            return compression;
+    }
+    return std::nullopt;
+}
+
 Result<StoredBlock> ValidateStoredBlock(ByteView stored) {
     if (stored.size() < BlockTrailerSize) {
         return std::unexpected(Error::Corruption("stored block is shorter than its trailer"));
     }
     const std::size_t contents_size = stored.size() - BlockTrailerSize;
     const std::byte type = stored[contents_size];
-    const std::uint32_t checksum = DecodeFixed32(stored.last<sizeof(std::uint32_t)>());
-    if (checksum != BlockChecksum(stored.first(contents_size), type)) {
+    if (!StoredBlockChecksumMatches(stored, contents_size, type)) {
         return std::unexpected(Error::Corruption("block checksum mismatch"));
     }
-    const auto compression = static_cast<BlockCompression>(type);
-    if (compression != BlockCompression::None && compression != BlockCompression::Snappy &&
-        compression != BlockCompression::Zstd) {
+    const std::optional<BlockCompression> compression = DecodeCompressionType(type);
+    if (!compression.has_value()) {
         return std::unexpected(Error::Corruption("block has an unknown compression type"));
     }
     return StoredBlock{
         .contents = stored.first(contents_size),
-        .compression = compression,
+        .compression = *compression,
     };
 }
 

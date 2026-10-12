@@ -61,7 +61,7 @@ variant visitor, extra backing owner or catch.
 
 BlockContents::data/cacheable and move-only representation remain unchanged.
 
-## Selected eight-definition ledger
+## Selected six-definition ledger
 
 | Definition | Composition or stopping boundary |
 | --- | --- |
@@ -71,8 +71,6 @@ BlockContents::data/cacheable and move-only representation remain unchanged.
 | StoredBlockChecksumMatches | New stored-versus-computed checksum predicate |
 | DecodeCompressionType | New admitted compression representation leaf |
 | ValidateStoredBlock | Trailer/checksum/type/layout proof parent |
-| DecodeStoredBlock(vector) | Validate then retain/move or decompress owned bytes |
-| DecodeStoredBlock(ByteView) | Validate then borrow None or own decompressed bytes |
 
 ## Fifty-six inspected unchanged Block/Iterator definitions
 
@@ -156,7 +154,7 @@ BlockContents::data/cacheable and move-only representation remain unchanged.
 | CurrentSizeEstimate | Complete finished wire-size expression |
 | empty | Test entry-history count |
 
-## Sixteen inspected unchanged block-format definitions
+## Eighteen inspected unchanged block-format definitions
 
 | Definition | Responsibility retained |
 | --- | --- |
@@ -176,8 +174,10 @@ BlockContents::data/cacheable and move-only representation remain unchanged.
 | ConsumeBlockHandle | Transactional offset/size decode and caller commit |
 | EncodeFooter | Ordered handles, zero padding and magic |
 | EncodeBlockTrailer | Type byte and masked checksum |
+| DecodeStoredBlock(vector) | Validate then retain/move None or own decompressed bytes |
+| DecodeStoredBlock(ByteView) | Validate then borrow None or own decompressed bytes |
 
-The eight selected/new definitions plus these 88 unchanged rows yield 96 final
+The six selected/new definitions plus these 90 unchanged rows yield 96 final
 named definitions across the six files. PaddingIsZero removes the only current
 lambda, so the final bounded inventory has zero lambdas. Prior delivered designs
 remain evidence for their rows; this batch reconciles rather than reimplements
@@ -190,7 +190,7 @@ The exact selector now names the real BlockCompressionTest suite and requires
 every selected suite to have nonzero identities. A proposed
 DecodeCompressedContents helper was removed because DecompressBlock already
 owns the complete operation and the wrapper would only rename one call.
-The reconciled inventory is eight selected/new plus 88 unchanged definitions,
+The reconciled inventory is six selected/new plus 90 unchanged definitions,
 96 final and zero lambdas. No tests, builds or production edits were performed
 during this bounded review.
 
