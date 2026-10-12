@@ -49,6 +49,27 @@ Result<StoredBlock> ValidateStoredBlock(ByteView stored) {
     };
 }
 
+Result<Footer> DecodeFooterHandles(ByteView& handles) {
+    const Result<BlockHandle> metaindex = ConsumeBlockHandle(handles);
+    if (!metaindex.has_value()) {
+        return std::unexpected(metaindex.error());
+    }
+    const Result<BlockHandle> index = ConsumeBlockHandle(handles);
+    if (!index.has_value()) {
+        return std::unexpected(index.error());
+    }
+    return Footer{.metaindex = *metaindex, .index = *index};
+}
+
+bool PaddingIsZero(ByteView padding) noexcept {
+    for (const std::byte value : padding) {
+        if (value != std::byte{0}) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 BlockContents BlockContents::Owned(std::vector<std::byte> contents) noexcept {
@@ -98,18 +119,14 @@ Result<Footer> DecodeFooter(std::span<const std::byte, FooterSize> encoded) {
         return std::unexpected(Error::Corruption("table footer has a bad magic number"));
     }
     ByteView handles = encoded.first<FooterHandlesSize>();
-    const Result<BlockHandle> metaindex = ConsumeBlockHandle(handles);
-    if (!metaindex.has_value()) {
-        return std::unexpected(metaindex.error());
+    Result<Footer> footer = DecodeFooterHandles(handles);
+    if (!footer.has_value()) {
+        return std::unexpected(std::move(footer).error());
     }
-    const Result<BlockHandle> index = ConsumeBlockHandle(handles);
-    if (!index.has_value()) {
-        return std::unexpected(index.error());
-    }
-    if (std::ranges::any_of(handles, [](std::byte value) { return value != std::byte{0}; })) {
+    if (!PaddingIsZero(handles)) {
         return std::unexpected(Error::Corruption("table footer has nonzero padding"));
     }
-    return Footer{.metaindex = *metaindex, .index = *index};
+    return *footer;
 }
 
 std::array<std::byte, BlockTrailerSize> EncodeBlockTrailer(ByteView contents,
