@@ -14,6 +14,8 @@ composes Arena alignment/admission/refill policy, and gives every unchanged
 MemTable body a bounded semantic disposition. Keep reviewed design,
 original-source characterization and two production topics as local commits,
 then publish one non-draft PR.
+The design and original characterization are accepted; both production topics
+are implemented locally. Integrated review and delivery remain pending.
 
 Changed production paths are internal_key.cc and arena.cc/.h. internal_key.h and
 memtable.cc/.h are inspected but unchanged. No public API, key bytes/order,
@@ -295,3 +297,45 @@ normal squash delivery.
 Successful tests do not prove arbitrary allocation failure, physical copy/move/
 destruction counts, unsupported zero-size allocation, concurrent Arena writers,
 pins outliving MemTable owners, performance, or whole-production completion.
+
+## Local implementation evidence
+
+The accepted design is commit `1be03ae`. Original-source characterization is
+split before production edits: `c1e6ace` covers decode issue/message/location
+and complete borrowed publication; `9c5bdda` covers exact padded fit and
+one-byte-over dedicated fallback. Independent review found no significant issue.
+
+A fresh unchanged-production Windows Debug build froze 200 unique identities:
+
+| Suite | Cases |
+| --- | ---: |
+| InternalKeyTest | 10 |
+| InternalKeyComparatorTest | 10 |
+| LookupKeyTest | 6 |
+| ArenaTest | 9 |
+| SkipListTest | 11 |
+| MemTableTest | 13 |
+| WriteBatchTest | 9 |
+| TableTest | 38 |
+| TableNativeTest | 2 |
+| TableCacheTest | 7 |
+| LookupTest | 14 |
+| RecoveryTest | 17 |
+| DatabaseTest | 54 |
+
+The production topics remain separate local commits. `1129e49` composes one
+internal decode issue proof, boolean compatibility and Parse parent mapping; its
+four-suite selection is the exact original 39-identity subset. `e729b5d`
+composes Arena padding, invariant-backed admission, strict threshold and refill;
+its Arena/SkipList/MemTable selection is the exact original 33-identity subset.
+The final integrated selection exactly matches all original 200 identities,
+with no failure, error, skip or duplicate.
+
+Complete GCOVR/LCOV/NOLINT annotation multisets are unchanged across all six
+production paths. The expanded final scan reports 115 named definitions, zero
+lambdas and zero recovery nodes, matching the complete ledger. Local GCC
+Release warnings-as-errors with `-fno-range-for-ext-temps` compiles all three
+production objects and every portable changed/coupled test translation unit.
+Documentation validation and `git diff --check` pass. Hosted GCC 13 branch
+coverage, Windows native execution/name parity and normal merge remain delivery
+obligations.
