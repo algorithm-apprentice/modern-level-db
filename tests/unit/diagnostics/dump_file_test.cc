@@ -203,6 +203,127 @@ TwoBlockTable BadKeyThenValidTable() {
     };
 }
 
+std::filesystem::path WriteMixedFramedStream(MemoryFileSystem& file_system, bool manifest) {
+    const std::filesystem::path path = manifest ? "MANIFEST-000032" : "000032.log";
+    const std::vector<std::byte> physical(WalBlockSize - WalHeaderSize, std::byte{'x'});
+    const std::vector<std::byte> malformed = manifest ? Bytes({0xff}) : Bytes({1, 2});
+    VersionEdit edit;
+    edit.SetLogNumber(7);
+    const std::vector<std::byte> valid =
+        manifest ? edit.Encode() : Batch(9, AsBytes("after"), AsBytes("ok"));
+    WriteRecords(file_system, path, {physical, malformed, valid});
+    std::vector<std::byte> corrupted = *file_system.Contents(path);
+    corrupted[0] ^= std::byte{0x01};
+    file_system.Write(path, std::move(corrupted));
+    return path;
+}
+
+std::vector<std::string> MixedFramedLines(bool manifest) {
+    const std::string corruption =
+        "corruption offset=0 dropped_bytes=32768 error='corruption: WAL physical record "
+        "checksum mismatch'\n";
+    if (manifest) {
+        return {
+            "dump version=1 type=manifest file='MANIFEST-000032'\n",
+            corruption,
+            "record_error offset=32768 error='corruption: MANIFEST record at offset 32768 is "
+            "invalid: malformed version edit tag'\n",
+            "record offset=32776\n",
+            "  log_number value=7\n",
+        };
+    }
+    return {
+        "dump version=1 type=log file='000032.log'\n",
+        corruption,
+        "record_error offset=32768 error='corruption: WAL record at offset 32768 is invalid: "
+        "write batch is shorter than its header'\n",
+        "record offset=32777 sequence=9 count=1\n",
+        "  put sequence=9 key='after' value='ok'\n",
+    };
+}
+
+TEST(DumpFileTest, MixedFramedCorruptionPreservesExactReportsAndFirstError) {
+    for (const bool manifest : {false, true}) {
+        SCOPED_TRACE(manifest);
+        MemoryFileSystem file_system;
+        const std::filesystem::path path = WriteMixedFramedStream(file_system, manifest);
+        StringOutput output;
+
+        const Status dumped = DumpFile(file_system, path, output);
+
+        ASSERT_FALSE(dumped.has_value());
+        EXPECT_EQ(dumped.error().code(), ErrorCode::Corruption);
+        EXPECT_EQ(dumped.error().message(), "WAL physical record checksum mismatch");
+        EXPECT_EQ(output.appends(), MixedFramedLines(manifest));
+    }
+}
+
+TEST(DumpFileTest, MixedFramedOutputFailuresPreservePrefixAndSuppressHeaderRead) {
+    for (const bool manifest : {false, true}) {
+        SCOPED_TRACE(manifest);
+        const std::vector<std::string> lines = MixedFramedLines(manifest);
+        for (std::size_t fail_at = 0; fail_at < lines.size(); ++fail_at) {
+            SCOPED_TRACE(fail_at);
+            MemoryFileSystem file_system;
+            const std::filesystem::path path = WriteMixedFramedStream(file_system, manifest);
+            const std::size_t operations = file_system.operations().size();
+            std::size_t reads = 0;
+            file_system.SetOperationHook([&](std::string_view operation) -> Status {
+                if (operation.starts_with("read ")) {
+                    ++reads;
+                }
+                return {};
+            });
+            StringOutput output(fail_at);
+
+            const Status dumped = DumpFile(file_system, path, output);
+
+            file_system.SetOperationHook({});
+            ASSERT_FALSE(dumped.has_value());
+            EXPECT_EQ(dumped.error().code(), ErrorCode::Io);
+            EXPECT_EQ(dumped.error().message(), "injected output failure");
+            EXPECT_EQ(output.appends(),
+                      std::vector<std::string>(
+                          lines.begin(), lines.begin() + static_cast<std::ptrdiff_t>(fail_at)));
+            if (fail_at == 0) {
+                EXPECT_EQ(reads, 0U);
+                ASSERT_EQ(file_system.operations().size(), operations + 1);
+                EXPECT_EQ(file_system.operations()[operations],
+                          "open_sequential " + path.filename().string());
+            }
+        }
+    }
+}
+
+TEST(DumpFileTest, FramedReadFailureAfterCorruptionWinsWithoutNextRecord) {
+    for (const bool manifest : {false, true}) {
+        SCOPED_TRACE(manifest);
+        MemoryFileSystem file_system;
+        const std::filesystem::path path = WriteMixedFramedStream(file_system, manifest);
+        std::size_t reads = 0;
+        file_system.SetOperationHook([&](std::string_view operation) -> Status {
+            if (operation.starts_with("read ")) {
+                ++reads;
+                if (reads == 2) {
+                    return std::unexpected(Error::Io("second framed read failed"));
+                }
+            }
+            return {};
+        });
+        StringOutput output;
+
+        const Status dumped = DumpFile(file_system, path, output);
+
+        file_system.SetOperationHook({});
+        ASSERT_FALSE(dumped.has_value());
+        EXPECT_EQ(dumped.error().code(), ErrorCode::Io);
+        EXPECT_EQ(dumped.error().message(), "second framed read failed");
+        EXPECT_EQ(reads, 2U);
+        const std::vector<std::string> lines = MixedFramedLines(manifest);
+        EXPECT_EQ(output.appends(), std::vector<std::string>(lines.begin(), lines.begin() + 2));
+    }
+}
+
 TEST(DumpFileTest, EscapesEveryByteInOrderAgainstLiteralGoldenText) {
     std::vector<std::byte> input;
     input.reserve(256);

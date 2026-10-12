@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Proposed recursive follow-up to the
+Design accepted in #229. This is a recursive follow-up to the
 [production composition plan](production-function-composition-plan.md).
 Source-read baseline: `e3db807`, after byte-escape delivery #228.
 
@@ -125,3 +125,28 @@ borrowed lvalue/record lifetimes, report-before-remember order, logical
 const-Status copy sites and feasible mixed-corruption/second-read cases.
 Implementation copy/allocation/destruction ordering still requires its own
 review. The reviewer performed no edits/builds/tests or nested delegation.
+
+## Original-production characterization
+
+Three new public cases cover both log/MANIFEST mixed physical-corruption,
+malformed-logical and valid-record streams; all five output failure positions
+for each stream; and second-read I/O failure after a reported corrupt block.
+Explicit golden append vectors fix report boundaries, offsets/type labels,
+valid payload and the exact first physical error. Failure cases fix each
+successful prefix and fatal output/read error priority.
+
+Header-output failure has only the existing sequential open operation and no
+read. No claim is made that later output failure prevents block read-ahead.
+Hooks are cleared before captured counters leave scope. Constructor/destructor,
+allocation interleaving and precise copy observations remain inspection-based.
+
+Diagnostic source/header remain byte-identical to `2be58f9` during the run.
+Native Windows Debug's coupled JUnit contains 106 unique classname/name pairs,
+all three additions, with no failures/errors/skips. DumpFile now has 24 cases;
+the other selected suite counts remain those of the preceding 103-case byte
+batch. This is not the unrelated earlier metadata 106-case selection.
+
+Independent pre-extraction characterization review found no actionable issue
+in either stream fixture or the three cases and independently checked the
+106-case XML. It confirmed explicit goldens, safe hook/counter scope and honest
+read-ahead/copy/allocation limits. No edits/builds/tests were performed.
