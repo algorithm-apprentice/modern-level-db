@@ -262,6 +262,35 @@ Status ProcessEntry(InternalIterator& input, SequenceNumber smallest_snapshot,
     return {};
 }
 
+void AppendCompactionInputs(const Compaction& compaction, TableCache& table_cache,
+                            const InternalKeyComparator& comparator,
+                            std::vector<std::unique_ptr<InternalIterator>>& children) {
+    TableReadOptions options;
+    options.fill_cache = false;
+    for (std::uint32_t which = 0; which < compaction.inputs.size(); ++which) {
+        AppendLevelIterators(compaction.version, compaction.level + which, compaction.inputs[which],
+                             table_cache, comparator, options, children);
+    }
+}
+
+Status RunInputEntries(InternalIterator& input, SequenceNumber smallest_snapshot,
+                       const CompactionHooks& hooks, GrandparentOverlap& grandparents,
+                       BaseLevel& base_level, VisibleHistory& history, Outputs& outputs) {
+    Status moved = input.SeekToFirst();
+    while (moved.has_value() && input.valid()) {
+        Status processed = ProcessEntry(input, smallest_snapshot, hooks, grandparents, base_level,
+                                        history, outputs);
+        if (!processed.has_value()) {
+            return processed;
+        }
+        moved = input.Next();
+    }
+    if (!moved.has_value()) {
+        return std::unexpected(moved.error());
+    }
+    return {};
+}
+
 Result<VersionEdit> FinishCompaction(FileSystem& file_system,
                                      const std::filesystem::path& directory,
                                      const Compaction& compaction, Outputs& outputs) {
@@ -290,13 +319,8 @@ Result<VersionEdit> FinishCompaction(FileSystem& file_system,
 std::unique_ptr<InternalIterator> NewCompactionIterator(const Compaction& compaction,
                                                         TableCache& table_cache,
                                                         const InternalKeyComparator& comparator) {
-    TableReadOptions options;
-    options.fill_cache = false;
     std::vector<std::unique_ptr<InternalIterator>> children;
-    for (std::uint32_t which = 0; which < compaction.inputs.size(); ++which) {
-        AppendLevelIterators(compaction.version, compaction.level + which, compaction.inputs[which],
-                             table_cache, comparator, options, children);
-    }
+    AppendCompactionInputs(compaction, table_cache, comparator, children);
     return NewMergingIterator(comparator, std::move(children));
 }
 
@@ -312,17 +336,10 @@ Result<VersionEdit> RunCompaction(FileSystem& file_system, const std::filesystem
     Outputs outputs(file_system, directory, comparator, options, table_cache, hooks);
     VisibleHistory history(user_comparator);
 
-    Status moved = input.SeekToFirst();
-    while (moved.has_value() && input.valid()) {
-        Status processed = ProcessEntry(input, smallest_snapshot, hooks, grandparents, base_level,
-                                        history, outputs);
-        if (!processed.has_value()) {
-            return std::unexpected(std::move(processed).error());
-        }
-        moved = input.Next();
-    }
-    if (!moved.has_value()) {
-        return std::unexpected(moved.error());
+    Status processed = RunInputEntries(input, smallest_snapshot, hooks, grandparents, base_level,
+                                       history, outputs);
+    if (!processed.has_value()) {
+        return std::unexpected(std::move(processed).error());
     }
     return FinishCompaction(file_system, directory, compaction, outputs);
 }
