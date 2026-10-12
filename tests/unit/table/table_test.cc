@@ -652,6 +652,28 @@ TEST_F(TableTest, ReadsWithoutFillingTheCacheWhenAsked) {
     EXPECT_EQ(state_->read_calls - before, 3);
 }
 
+TEST_F(TableTest, BorrowedMappedDataBlocksNeverEnterTheBlockCache) {
+    BlockCache cache(1 << 20);
+    TableOptions options;
+    options.block_cache = &cache;
+    state_ = std::make_shared<ReadableState>();
+    state_->data = VersionedTable();
+    state_->return_views = true;
+    auto opened = Table::Open(std::make_unique<MemoryRandomAccessFile>(state_), state_->data.size(),
+                              comparator_, options);
+    ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+
+    ExpectValue(Get(**opened, "k", 40), "v30");
+    EXPECT_EQ(cache.total_charge(), 0U);
+    ExpectValue(Get(**opened, "k", 40), "v30");
+    EXPECT_EQ(cache.total_charge(), 0U);
+
+    Table::Iterator iterator(**opened);
+    ASSERT_TRUE(iterator.SeekToFirst().has_value());
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(cache.total_charge(), 0U);
+}
+
 TEST_F(TableTest, KeepsTablesApartInASharedCache) {
     BlockCache cache(1 << 20);
     TableOptions options;

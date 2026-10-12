@@ -69,27 +69,43 @@ Status TableBuilder::AddTrusted(ByteView key, ByteView value) {
 }
 
 Status TableBuilder::AddValid(ByteView key, ByteView value) {
-    if (filter_block_.has_value()) {
-        if (!Record(filter_block_->AddKey(key.first(key.size() - InternalKeyTrailerSize)))) {
-            return FirstError();
-        }
+    if (!AddFilterKey(key)) {
+        return FirstError();
     }
 
+    FinishPendingIndexEntry(key);
+    AppendDataEntry(key, value);
+    if (!FlushDataBlockIfNeeded()) {
+        return FirstError();
+    }
+    return {};
+}
+
+bool TableBuilder::AddFilterKey(ByteView key) {
+    if (!filter_block_.has_value()) {
+        return true;
+    }
+    return Record(filter_block_->AddKey(key.first(key.size() - InternalKeyTrailerSize)));
+}
+
+void TableBuilder::FinishPendingIndexEntry(ByteView next_key) {
     if (pending_index_entry_) {
-        comparator_->FindShortestSeparator(last_key_, key);
+        comparator_->FindShortestSeparator(last_key_, next_key);
         AddPendingIndexEntry();
     }
+}
+
+void TableBuilder::AppendDataEntry(ByteView key, ByteView value) {
     last_key_.assign(key.begin(), key.end());
     ++entry_count_;
     data_block_.Add(key, value);
+}
 
+bool TableBuilder::FlushDataBlockIfNeeded() {
     if (data_block_.CurrentSizeEstimate() >= block_size_) {
         WriteDataBlock();
-        if (first_error_.has_value()) {
-            return FirstError();
-        }
     }
-    return {};
+    return !first_error_.has_value();
 }
 
 Status TableBuilder::Finish() {
