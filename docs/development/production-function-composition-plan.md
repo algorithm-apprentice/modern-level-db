@@ -898,6 +898,12 @@ state their nonthrowing initialization contract, and the N09 OVERLAPPED
 completion/drain order remains unchanged. The reviewed head passed seven POSIX
 and ten Windows read identities.
 
+#270 closes the complete native-platform ledger at 264 definitions and three
+lambdas across all 14 platform files. Windows error construction and both
+existing-directory conflict paths now have named stages with original source
+ownership. Every definition/lambda has a reviewed composition or leaf reason;
+the reviewed head passed all 20 gates with 100% changed-code coverage.
+
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,
 not the whole dump file.

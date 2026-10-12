@@ -158,13 +158,11 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
         InstallTrivialCompaction(*compaction, lock);
         return false;
     }
+    RewriteCompaction(*compaction, lock, outputs);
+    return true;
+}
 
-    const SequenceNumber smallest_snapshot = snapshots_.OldestOr(versions_->last_sequence());
-    const std::unique_ptr<InternalIterator> input =
-        NewCompactionIterator(*compaction, table_cache_, comparator_);
-    CompactionOptions options;
-    options.table_options = policy_.table_options;
-    options.target_file_size = policy_.max_file_size;
+CompactionHooks DatabaseEngine::MakeCompactionHooks(std::vector<std::uint64_t>& outputs) {
     CompactionHooks hooks;
     hooks.new_file_number = [this, &outputs] {
         const std::lock_guard guard(mutex_);
@@ -174,15 +172,27 @@ bool DatabaseEngine::Compact(std::unique_lock<std::mutex>& lock,
         return number;
     };
     hooks.before_entry = [this] { return BeforeCompactionEntry(); };
+    return hooks;
+}
+
+void DatabaseEngine::RewriteCompaction(const Compaction& compaction,
+                                       std::unique_lock<std::mutex>& lock,
+                                       std::vector<std::uint64_t>& outputs) {
+    const SequenceNumber smallest_snapshot = snapshots_.OldestOr(versions_->last_sequence());
+    const std::unique_ptr<InternalIterator> input =
+        NewCompactionIterator(compaction, table_cache_, comparator_);
+    CompactionOptions options;
+    options.table_options = policy_.table_options;
+    options.target_file_size = policy_.max_file_size;
+    CompactionHooks hooks = MakeCompactionHooks(outputs);
     lock.unlock();
     Result<VersionEdit> edit =
-        RunCompaction(*file_system_, directory_, comparator_, options, table_cache_, *compaction,
+        RunCompaction(*file_system_, directory_, comparator_, options, table_cache_, compaction,
                       *input, smallest_snapshot, hooks);
     lock.lock();
     const Status applied =
         ApplyBackgroundEdit(std::move(edit), lock, "the database closed during a compaction");
     FinishCompaction(applied);
-    return true;
 }
 
 void DatabaseEngine::InstallTrivialCompaction(const Compaction& compaction,

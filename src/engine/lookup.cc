@@ -89,6 +89,57 @@ SeekCharge ChargeOf(const Candidate& candidate) {
     return charge;
 }
 
+struct PointLookup {
+    TableCache& table_cache;
+    const LookupKey& key;
+    std::vector<std::byte>& value;
+    std::optional<SeekCharge>& seek;
+    const TableReadOptions& options;
+    std::optional<Candidate> previous;
+    bool decided = false;
+    bool found_value = false;
+
+    Result<bool> Visit(const Candidate& candidate) {
+        if (!seek.has_value() && previous.has_value()) {
+            seek = ChargeOf(*previous);
+        }
+        previous = candidate;
+
+        Result<Decision> decision = SearchFile(table_cache, **candidate.file, key, value, options);
+        if (!decision.has_value()) {
+            return std::unexpected(std::move(decision).error());
+        }
+        if (*decision == Decision::Missing) {
+            return true;
+        }
+        found_value = *decision == Decision::Value;
+        decided = true;
+        return false;
+    }
+
+    [[nodiscard]] bool result() const noexcept { return decided && found_value; }
+};
+
+struct SampledOverlap {
+    std::optional<Candidate> first;
+    std::size_t matches = 0;
+
+    bool Visit(const Candidate& candidate) noexcept {
+        ++matches;
+        if (!first.has_value()) {
+            first = candidate;
+        }
+        return matches < 2;
+    }
+
+    [[nodiscard]] std::optional<SeekCharge> charge() const noexcept {
+        if (matches < 2) {
+            return std::nullopt;
+        }
+        return ChargeOf(*first);
+    }
+};
+
 // Returns the only file of a deeper level that may hold the key: the first one
 // whose largest key is not before it, if its smallest user key is not after the
 // user key.
@@ -208,57 +259,36 @@ Result<bool> LookupValue(const MemTable& memtable, const MemTable* immutable,
         return *decision;
     }
 
-    std::optional<Candidate> previous;
-    bool decided = false;
-    bool found_value = false;
-    const Status visited =
-        ForEachOverlapping(version, comparator, key.user_key(), key.internal_key(),
-                           [&](const Candidate& candidate) -> Result<bool> {
-                               if (!seek.has_value() && previous.has_value()) {
-                                   seek = ChargeOf(*previous);
-                               }
-                               previous = candidate;
-
-                               Result<Decision> decision =
-                                   SearchFile(table_cache, **candidate.file, key, value, options);
-                               if (!decision.has_value()) {
-                                   return std::unexpected(std::move(decision).error());
-                               }
-                               if (*decision == Decision::Missing) {
-                                   return true;
-                               }
-                               found_value = *decision == Decision::Value;
-                               decided = true;
-                               return false;
-                           });
+    PointLookup lookup{
+        .table_cache = table_cache,
+        .key = key,
+        .value = value,
+        .seek = seek,
+        .options = options,
+        .previous = std::nullopt,
+        .decided = false,
+        .found_value = false,
+    };
+    const Status visited = ForEachOverlapping(
+        version, comparator, key.user_key(), key.internal_key(),
+        [&](const Candidate& candidate) -> Result<bool> { return lookup.Visit(candidate); });
     if (!visited.has_value()) {
         return std::unexpected(visited.error());
     }
-    if (decided) {
-        return found_value;
-    }
-    return false;
+    return lookup.result();
 }
 
 std::optional<SeekCharge> SampleCharge(const Version& version,
                                        const InternalKeyComparator& comparator,
                                        ByteView internal_key) {
     const Result<InternalKeyView> parsed = ParseInternalKey(internal_key);
-    std::optional<Candidate> first;
-    std::size_t matches = 0;
+    SampledOverlap sampled;
     static_cast<void>(
         ForEachOverlapping(version, comparator, parsed->user_key, internal_key,
                            [&](const Candidate& candidate) {  // GCOVR_EXCL_LINE: GCC lambda clone
-                               ++matches;
-                               if (!first.has_value()) {
-                                   first = candidate;
-                               }
-                               return matches < 2;
+                               return sampled.Visit(candidate);
                            }));
-    if (matches < 2) {
-        return std::nullopt;
-    }
-    return ChargeOf(*first);
+    return sampled.charge();
 }
 
 }  // namespace modern_leveldb
