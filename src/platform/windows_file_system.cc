@@ -1054,6 +1054,19 @@ Status WindowsFileSystem::SyncDirectory(const std::filesystem::path& path) {
     return CloseHandle(*directory, path);
 }
 
+Status AcquireKernelLock(HANDLE handle, const std::filesystem::path& path) {
+    OVERLAPPED overlapped{};
+    if (::LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, MAXDWORD,
+                     MAXDWORD, &overlapped)) {
+        return {};
+    }
+    const DWORD error = ::GetLastError();
+    if (error == ERROR_LOCK_VIOLATION || error == ERROR_SHARING_VIOLATION) {
+        return std::unexpected(Error::Busy(std::string(FileError("lock", path, error).message())));
+    }
+    return std::unexpected(FileError("lock", path, error));
+}
+
 Result<std::unique_ptr<FileLock>> WindowsFileSystem::LockFile(const std::filesystem::path& path) {
     auto file =
         OpenRegularFile(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -1061,15 +1074,9 @@ Result<std::unique_ptr<FileLock>> WindowsFileSystem::LockFile(const std::filesys
     if (!file.has_value()) {
         return std::unexpected(std::move(file).error());
     }
-    OVERLAPPED overlapped{};
-    if (!::LockFileEx(file->get(), LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, MAXDWORD,
-                      MAXDWORD, &overlapped)) {
-        const DWORD error = ::GetLastError();
-        if (error == ERROR_LOCK_VIOLATION || error == ERROR_SHARING_VIOLATION) {
-            return std::unexpected(
-                Error::Busy(std::string(FileError("lock", path, error).message())));
-        }
-        return std::unexpected(FileError("lock", path, error));
+    const Status locked = AcquireKernelLock(file->get(), path);
+    if (!locked.has_value()) {
+        return std::unexpected(std::move(locked).error());
     }
     return std::make_unique<WindowsFileLock>(std::move(*file));
 }
