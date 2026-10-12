@@ -126,3 +126,34 @@ Review MANIFEST/CURRENT durability and error priority, checked versus trusted
 metadata boundaries, topology owner lifetimes, diagnostic output grammar,
 first-error retention, acquisition-before-output ordering and every ledger
 entry. Reject extractions motivated only by line count.
+
+## Final implementation ledger
+
+Production source remains byte-identical to
+`8731e800eec38a19f5cb10bd44c487e9607aa4fc`. The complete session ledger
+assigns every current entry:
+
+| Disposition | Definitions | Lambdas |
+|---|---:|---:|
+| Reviewed leaf | 176 | 7 |
+| Reviewed composition | 53 | 0 |
+| Unclassified | 0 | 0 |
+
+There are no parser recovery nodes. `metadata-diagnostics-final-disposition.json`
+retains every signature, source range, responsibility group, prior delivery
+reference and stopping reason.
+
+## Integrated review and validation
+
+Review rechecked the largest current functions rather than inheriting old
+“later frontier” labels. `VersionEdit::DecodeField`, `VersionSet::Write`,
+`VersionSet::ApplyPrepared`, `DumpWalRecords`, `DumpTable`,
+`DumpRecognizedFile` and native output write loops are now accepted as named
+domain compositions or bounded algorithms over already separated children.
+
+Fresh Windows Debug and Release selections each pass the same 268 metadata,
+diagnostic, recovery, database, WAL and table identities with no failure,
+error or skip. The immediately preceding #272 exact source revision passed all
+20 hosted gates and the complete Windows Debug suite passed all 869 tests.
+Because this branch changes documentation only, its CI acknowledgements do not
+replace that runtime evidence.
