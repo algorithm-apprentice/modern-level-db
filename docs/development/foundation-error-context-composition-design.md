@@ -2,9 +2,10 @@
 
 ## Status and scope
 
-Proposed recursive follow-up to the production composition plan.
+Implemented recursive follow-up to the production composition plan.
 Source baseline: `5da8f8eb9d13f3b8845fb812251e055ece051a67`.
-Pending lookup #250 uses independent source/test/design paths.
+Design accepted through #252. Lookup #250 uses independent source/test/design
+paths and was delivered during foundation characterization.
 This is not a whole-production completion claim or benchmark task.
 
 Two small production topics may share one non-draft implementation PR:
@@ -145,3 +146,80 @@ actual native callers, contracts, test oracles and twenty-one-definition ledger.
 No significant issue was found. No edits, builds, execution or nested agents
 were performed. Implementation, allocator-failure behavior, hosted runtime and
 whole-production/every-definition completion remain unverified.
+
+## Original-source evidence and implemented topics
+
+Two new public cases plus the full-field test observer were committed as
+`2bd85f5` before production edits. The two changing production paths and three
+inspected unchanged source/headers matched accepted design main
+`28f5fb4129a1e9e24b63724b0ce623539005f7a4` byte-for-byte.
+The freshly built Windows Debug coupled selection measured 166 unique
+identities across eight nonempty classes, with zero failures/errors/skips.
+
+The formatter case covers all seven factory prefixes with three owned message
+forms (empty, five bytes including newline/zero/high byte, and 256 repeated
+bytes). Complete expectations use literal prefixes and raw message input,
+not production ErrorCodeName/ToString. It checks code/message plus exact
+line/column/file/function of the explicit original factory location; the
+existing default-call-site case is also retained.
+
+The sticky case starts with successful empty state, captures a 256-byte Busy
+error, then observes the complete winning context after success and later Io
+failure. Long message addresses distinguish returned owners from the retained
+slot; replacing one returned Error and resetting the slot cannot mutate earlier
+returned copies or the independently held winning Error. No moved-from input
+payload is read and no allocation-failure/count certification is inferred.
+The independent bounded original-case reviewer traced source/contracts/oracles
+and supplied evidence and found no significant issue without edits/execution.
+
+Accepted #250 main `dbee75c526d37cf8a7d0264fcb068d967e3d27ad` was normally
+merged as `e94832e`, preserving original case history. Before production edits,
+a fresh integrated-original build again measured exactly the same 166
+identities and all five foundation source/header paths remained unchanged.
+Earlier original evidence is retained, not overwritten.
+
+Two small production topics implement the four selected definitions:
+
+1. `a710496`: file-local first-failure capture borrows the parent's incoming
+   Status/slot; parent retains original sticky copy/success projection and
+   parameter lifetime, with no native caller or exception-policy change.
+2. `44bdfaa`: parent-owned code-name string invokes private full-message append,
+   preserving its gate, two append calls/order, raw bytes and returned owner.
+
+The unchanged seventeen-definition dispositions remain inspection-based and
+bounded. CRC source/header and TakeTrusted's header are byte-equal to accepted
+main. Error factory signatures/default location, constructor/member order,
+getters and ErrorCodeName remain unchanged. No extra string/Status owner,
+new noexcept, guard/assertion, catch, rollback or annotation is introduced.
+
+### Measured local native identities
+
+Original, integrated-original and final `(classname,name)` sets match exactly,
+with no duplicates or failures/errors/skips: ResultTest 8, ResultInternalTest 2,
+Crc32cTest 16, WindowsFileSystemTest 56, WalWriterTest 10, WalIoNativeTest 1,
+TableBuilderTest 19 and DatabaseTest 54; total 166.
+PosixFileSystemTest is intentionally absent from Windows, not silently
+substituted with source counts or claimed as POSIX runtime proof.
+The first-topic Result/ResultInternal/CRC intermediate is exactly the original
+26-identity subset, not merely the same count.
+
+Persistent evidence: `foundation-context-before.xml/.log`,
+`foundation-context-integrated-before.xml/.log`,
+`foundation-context-after.xml/.log`; first-topic intermediate:
+`foundation-context-capture.xml/.log`.
+All five inspected production source/header annotation full-text multisets
+match accepted main; no new exclusions or quality settings were added.
+Integrated review, authoritative GCC 13 coverage, exact reviewed-head checks
+and actual hosted Windows Debug selected identities remain delivery gates.
+Neither these local runs nor the primitive source disposition certify external
+CRC CPU dispatch, POSIX runtime before/after, physical move/copy/destruction,
+allocation failure, performance or full every-definition completion.
+
+### Independent integrated review
+
+The bounded read-only reviewer traced the four changed paths, supporting source
+and twenty-one-definition disposition against accepted main and both topics.
+No significant issue was found. Supplied identity evidence matches the local
+claims; no edits, builds, execution or nested agents were performed.
+Hosted CI/GCC, POSIX runtime, allocator failure, external CRC dispatch and
+performance remain unverified. This is not final production-wide acceptance.
