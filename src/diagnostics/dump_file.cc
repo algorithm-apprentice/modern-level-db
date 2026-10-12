@@ -116,6 +116,60 @@ Status AppendRecordError(WritableFile& output, std::uint64_t offset, const Error
     return AppendDiagnosticLine(output, std::move(line));
 }
 
+Status ReportInvalidRecord(std::string_view type, std::uint64_t offset, const Error& cause,
+                           WritableFile& output, std::optional<Error>& first) {
+    const Error error = InvalidRecord(type, offset, cause);
+    const Status appended = AppendRecordError(output, offset, error);
+    if (!appended.has_value()) {
+        return appended;
+    }
+    RememberFirst(first, error);
+    return {};
+}
+
+std::string FormatPhysicalCorruption(const WalCorruption& corruption) {
+    return "corruption offset=" + std::to_string(corruption.offset) +
+           " dropped_bytes=" + std::to_string(corruption.dropped_bytes) + " error='" +
+           EscapedError(corruption.error) + "'";
+}
+
+Status ReportPhysicalCorruption(const WalCorruption& corruption, WritableFile& output,
+                                std::optional<Error>& first) {
+    std::string line = FormatPhysicalCorruption(corruption);
+    const Status appended = AppendDiagnosticLine(output, std::move(line));
+    if (!appended.has_value()) {
+        return appended;
+    }
+    RememberFirst(first, corruption.error);
+    return {};
+}
+
+template <typename RecordFormatter>
+Status DumpWalRecords(WalReader& reader, WritableFile& output, RecordFormatter& format_record) {
+    std::optional<Error> first;
+    while (true) {
+        WalReadResult event = reader.ReadNext();
+        if (!event.has_value()) {
+            return std::unexpected(std::move(event).error());
+        }
+        if (!event->has_value()) {
+            return Finish(std::move(first));
+        }
+        if (const auto* corruption = std::get_if<WalCorruption>(&**event)) {
+            Status reported = ReportPhysicalCorruption(*corruption, output, first);
+            if (!reported.has_value()) {
+                return std::unexpected(std::move(reported).error());
+            }
+            continue;
+        }
+        const WalLogicalRecord& record = std::get<WalLogicalRecord>(**event);
+        const Status formatted = format_record(record, output, first);
+        if (!formatted.has_value()) {
+            return formatted;
+        }
+    }
+}
+
 template <typename RecordFormatter>
 Status DumpWalFramed(FileSystem& file_system, const std::filesystem::path& path,
                      std::string_view type, std::string_view escaped_path, WritableFile& output,
@@ -128,34 +182,8 @@ Status DumpWalFramed(FileSystem& file_system, const std::filesystem::path& path,
     if (!header.has_value()) {
         return header;
     }
-
     WalReader reader(std::move(*file));
-    std::optional<Error> first;
-    while (true) {
-        WalReadResult event = reader.ReadNext();
-        if (!event.has_value()) {
-            return std::unexpected(std::move(event).error());
-        }
-        if (!event->has_value()) {
-            return Finish(std::move(first));
-        }
-        if (const auto* corruption = std::get_if<WalCorruption>(&**event)) {
-            std::string line = "corruption offset=" + std::to_string(corruption->offset) +
-                               " dropped_bytes=" + std::to_string(corruption->dropped_bytes) +
-                               " error='" + EscapedError(corruption->error) + "'";
-            const Status appended = AppendDiagnosticLine(output, std::move(line));
-            if (!appended.has_value()) {
-                return appended;
-            }
-            RememberFirst(first, corruption->error);
-            continue;
-        }
-        const WalLogicalRecord& record = std::get<WalLogicalRecord>(**event);
-        const Status formatted = format_record(record, output, first);
-        if (!formatted.has_value()) {
-            return formatted;
-        }
-    }
+    return DumpWalRecords(reader, output, format_record);
 }
 
 void AppendDiagnosticNumberField(std::string& output, std::string_view name, std::uint64_t value) {
@@ -194,27 +222,14 @@ std::string FormatWriteBatchEntry(const WriteBatchEntry& entry) {
     return line;
 }
 
-Status FormatWriteBatch(const WalLogicalRecord& record, WritableFile& output,
-                        std::optional<Error>& first) {
-    Result<WriteBatchReader> batch = WriteBatchReader::Open(record.data);
-    if (!batch.has_value()) {
-        const Error error = InvalidRecord("WAL", record.offset, batch.error());
-        const Status appended = AppendRecordError(output, record.offset, error);
-        if (!appended.has_value()) {
-            return appended;
-        }
-        RememberFirst(first, error);
-        return {};
-    }
+std::string FormatWriteBatchHeader(std::uint64_t offset, const WriteBatchReader& batch) {
+    return "record offset=" + std::to_string(offset) +
+           " sequence=" + std::to_string(batch.sequence()) +
+           " count=" + std::to_string(batch.count());
+}
 
-    std::string header = "record offset=" + std::to_string(record.offset) +
-                         " sequence=" + std::to_string(batch->sequence()) +
-                         " count=" + std::to_string(batch->count());
-    const Status header_status = AppendDiagnosticLine(output, std::move(header));
-    if (!header_status.has_value()) {
-        return header_status;
-    }
-    while (const std::optional<WriteBatchEntry> entry = batch->Next()) {
+Status AppendWriteBatchEntries(WriteBatchReader& batch, WritableFile& output) {
+    while (const std::optional<WriteBatchEntry> entry = batch.Next()) {
         std::string line = FormatWriteBatchEntry(*entry);
         const Status appended = AppendDiagnosticLine(output, std::move(line));
         if (!appended.has_value()) {
@@ -222,6 +237,20 @@ Status FormatWriteBatch(const WalLogicalRecord& record, WritableFile& output,
         }
     }
     return {};
+}
+
+Status FormatWriteBatch(const WalLogicalRecord& record, WritableFile& output,
+                        std::optional<Error>& first) {
+    Result<WriteBatchReader> batch = WriteBatchReader::Open(record.data);
+    if (!batch.has_value()) {
+        return ReportInvalidRecord("WAL", record.offset, batch.error(), output, first);
+    }
+    std::string header = FormatWriteBatchHeader(record.offset, *batch);
+    const Status header_status = AppendDiagnosticLine(output, std::move(header));
+    if (!header_status.has_value()) {
+        return header_status;
+    }
+    return AppendWriteBatchEntries(*batch, output);
 }
 
 Status AppendOptionalNumber(WritableFile& output, std::string_view name,
@@ -342,13 +371,7 @@ Status FormatVersionEdit(const WalLogicalRecord& record, WritableFile& output,
                          std::optional<Error>& first) {
     Result<VersionEdit> edit = VersionEdit::Decode(record.data);
     if (!edit.has_value()) {
-        const Error error = InvalidRecord("MANIFEST", record.offset, edit.error());
-        const Status appended = AppendRecordError(output, record.offset, error);
-        if (!appended.has_value()) {
-            return appended;
-        }
-        RememberFirst(first, error);
-        return {};
+        return ReportInvalidRecord("MANIFEST", record.offset, edit.error(), output, first);
     }
     Status header = AppendDiagnosticLine(output, "record offset=" + std::to_string(record.offset));
     if (!header.has_value()) {
