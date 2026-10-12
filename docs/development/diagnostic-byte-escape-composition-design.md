@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Proposed recursive follow-up to the diagnostic formatter slices in the
+Design accepted in #227. This is a recursive follow-up to the diagnostic formatter slices in the
 [production composition plan](production-function-composition-plan.md).
 Source-read baseline: `bdbb01d`.
 
@@ -105,3 +105,44 @@ Two documentation suggestions are incorporated: explicit bounded-nibble and
 borrowed-lifetime proofs, and the exact anchored selector including the two
 existing TableNativeTest cases. The reviewer performed no edits/builds/tests
 or allocation-failure experiments.
+
+## Original diagnostic characterization
+
+Two public cases execute before diagnostic source/header changes against
+`3e49ab9`: ordered all-256-byte escaping versus a literal 735-character golden,
+and empty/repeated control/NUL/UTF-8 bytes without text interpretation.
+An independent mechanical check of the literal decodes it back to all 256
+ordered byte values; the test oracle itself has no producer switch or hex loop.
+
+The anchored coupled native Windows Debug selection passes 103 unique
+classname/name pairs, both additions included, with no failures/errors/skips.
+Actual suites/counts are DumpFile 21, DumpCommand 6, NativeCommand 3,
+NativeDumpCommand 2, WindowsOutput 3, WalReader 17, WalWriter 10,
+WalIoNative 1, Table 38 and TableNative 2. These are this selection's counts,
+not an older WAL batch or another platform's suite totals.
+Allocation mutation ordering/throws remain inspection-based.
+
+Independent pre-extraction characterization review found no significant issue
+and independently checked the complete literal and 103-case XML, including the
+two additions and two TableNative cases. No edits/builds/tests were performed.
+
+## Implementation and native parity
+
+Separate per-byte-selection and fixed-width-hexadecimal source topics implement
+the three-definition ledger after the characterization commit. The parent
+still owns/reserves the only result buffer. Borrowed children preserve every
+representation branch and the prefix/high/low mutation sequence, with no
+retained reference, new guard, owning buffer, header or output-policy change.
+
+The diagnostic intermediate passes 35 unique native cases. Final coupled
+Windows Debug XML contains exactly the original 103 unique classname/name
+pairs, both additions included, with no failures/errors/skips. Exact mutation
+ordering and allocation throws remain inspection-based. Local formatting,
+documentation and whitespace checks and independent combined review precede
+publication. Exact-head hosted CI remains a merge gate.
+
+Independent combined read-only review found no significant issue in the
+three-path diff, three definitions and caller contracts against `3e49ab9`.
+It independently verified the literal, original/final 103-case identities and
+35-case intermediate XML. No edits/builds/tests, allocation-failure experiments
+or hosted-CI verification were performed by the reviewer.
