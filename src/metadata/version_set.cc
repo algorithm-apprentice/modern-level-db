@@ -58,6 +58,22 @@ Result<std::string> ReadCurrent(FileSystem& file_system, const std::filesystem::
     return ReadCurrentContents(**file);
 }
 
+Status WriteCurrentTemporary(WritableFile& file, ByteView contents) {
+    const Status appended = file.Append(contents);
+    if (!appended.has_value()) {
+        return appended;
+    }
+    const Status synced = file.Sync();
+    if (!synced.has_value()) {
+        return synced;
+    }
+    const Status closed = file.Close();
+    if (!closed.has_value()) {
+        return closed;
+    }
+    return {};
+}
+
 struct SelectedManifest {
     std::uint64_t number;
     std::unique_ptr<SequentialFile> file;
@@ -541,17 +557,9 @@ Status VersionSet::InstallCurrent() const {
         return std::unexpected(std::move(file).error());
     }
     const std::string contents = CurrentFileContents(manifest_file_number_);
-    const Status appended = (*file)->Append(AsBytes(contents));
-    if (!appended.has_value()) {
-        return appended;
-    }
-    const Status synced = (*file)->Sync();
-    if (!synced.has_value()) {
-        return synced;
-    }
-    const Status closed = (*file)->Close();
-    if (!closed.has_value()) {
-        return closed;
+    Status persisted = WriteCurrentTemporary(**file, AsBytes(contents));
+    if (!persisted.has_value()) {
+        return std::unexpected(std::move(persisted).error());
     }
     const Status renamed = file_system_->RenameFile(temporary, CurrentFileName(directory_));
     if (!renamed.has_value()) {
