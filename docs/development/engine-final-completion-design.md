@@ -186,3 +186,54 @@ Review visitor-owned state lifetimes, original metadata addresses, Error move
 boundaries, LevelIterator table/iterator ownership, callback capture lifetimes,
 mutex ownership at every throw, output-number protection and exact
 trivial-versus-rewrite return semantics.
+
+## Final implementation ledger
+
+The final production scan at
+`c14ac6f6dabcab7f604ac0d4d321ee2169ece5e2` reports 322 mechanical
+definitions and 24 lambdas. Adding the same nine manually reconciled deleted
+free-function overloads yields 331 definitions.
+
+The seven new definitions are:
+
+- `PointLookup::Visit` and `PointLookup::result`;
+- `SampledOverlap::Visit` and `SampledOverlap::charge`;
+- `LevelIterator::SeekInOpenFile`;
+- `DatabaseEngine::MakeCompactionHooks`;
+- `DatabaseEngine::RewriteCompaction`.
+
+The complete session ledger assigns every current entry:
+
+| Disposition | Definitions | Lambdas |
+|---|---:|---:|
+| Reviewed leaf | 219 | 24 |
+| Reviewed composition | 112 | 0 |
+| Unclassified | 0 | 0 |
+
+The 15 parser recovery nodes are unchanged. Nine represent the manually listed
+deleted overload definitions; six are default-argument/type-identifier parser
+gaps and add no definitions. `engine-final-disposition.json` retains every
+mechanical and manual definition, lambda, source range, responsibility group,
+delivery reference and stopping reason.
+
+Lookup table traversal now owns charge/decision state in `PointLookup`, while
+sampling owns its distinct infallible state in `SampledOverlap`. Level seek
+keeps file selection/opening in `Seek` and delegates only positioning within an
+opened table. Background compaction separates callback construction and
+unlocked rewrite execution from the trivial-versus-rewrite decision.
+
+## Integrated review and validation
+
+Review confirmed original candidate addresses, charge-before-second-file-error
+timing, value/deletion/missing results, same-table empty detection and next-file
+fallback. Compaction callbacks retain `outputs` only through the synchronous
+rewrite call, allocate while the database lock is held, and acquire `mutex_`
+only when invoked after unlock. A thrown rewrite still reaches
+`BackgroundCall`, which retains the existing relock-before-Aborted policy.
+
+The final Windows Debug selection exactly matches all 158 characterized
+identities with no failure, error or skip. The same 158 identities pass in
+Release. Five representative lookup/seek/compaction race and ordering cases
+pass 20 consecutive executions. The complete Windows Debug suite passes all
+869 tests. Hosted GCC 13 coverage and exact POSIX/Linux execution remain final
+delivery requirements.
