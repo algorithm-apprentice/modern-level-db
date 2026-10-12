@@ -22,22 +22,32 @@ void FoldHashWords(ByteView& input, std::uint32_t& hash) noexcept {
     }
 }
 
+void DecodeHashTail(ByteView input, std::uint32_t& tail) noexcept {
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        tail |= std::to_integer<std::uint32_t>(input[index]) << (index * 8U);
+    }
+}
+
+void MixHashTail(std::uint32_t& hash, std::uint32_t tail) noexcept {
+    hash = (hash + tail) * Multiplier;
+    hash ^= hash >> 24U;
+}
+
+void FoldHashTail(ByteView input, std::uint32_t& hash) noexcept {
+    if (!input.empty()) {
+        std::uint32_t tail = 0;
+        DecodeHashTail(input, tail);
+        MixHashTail(hash, tail);
+    }
+}
+
 }  // namespace
 
 std::uint32_t Hash32(ByteView input, std::uint32_t seed) noexcept {
     std::uint32_t hash = seed ^ (static_cast<std::uint32_t>(input.size()) * Multiplier);
 
     FoldHashWords(input, hash);
-
-    if (!input.empty()) {
-        std::uint32_t tail = 0;
-        for (std::size_t index = 0; index < input.size(); ++index) {
-            tail |= std::to_integer<std::uint32_t>(input[index]) << (index * 8U);
-        }
-        hash = (hash + tail) * Multiplier;
-        hash ^= hash >> 24U;
-    }
-
+    FoldHashTail(input, hash);
     return hash;
 }
 
