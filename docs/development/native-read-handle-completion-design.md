@@ -98,8 +98,15 @@ Before production edits, preserve:
   filesystem and an unlinked pathname.
 
 Original POSIX identities come from the unchanged Hosted GCC 13 run for #268;
-Windows identities are captured locally. The new POSIX test must pass on
-unchanged production before descriptor transfer is edited.
+Windows identities are captured locally. The new POSIX test is committed before
+descriptor transfer; the local WSL image lacks a C++ frontend, so the unchanged
+kernel behavior is checked directly and the exact C++ identity remains a Hosted
+GCC 13 requirement.
+
+Original evidence is 6/6 Hosted POSIX identities and 10/10 local Windows Debug
+identities. The additional POSIX ownership oracle is also checked directly
+against the host kernel: an open reader survives unlink, reads the retained
+bytes and returns the process descriptor count after close.
 
 After each responsibility-sized production commit, run the affected native
 selection. Final identities must exactly match the characterized set. Run
@@ -115,6 +122,40 @@ are named leaves. Public read/open methods are compositions over those leaves.
 
 No runtime assertion, diagnostic conditional compilation, read optimization or
 cross-platform syscall abstraction is introduced.
+
+## Final implementation ledger
+
+All 62 original definitions remain:
+
+| Area | Final definitions | Reviewed responsibility |
+|---|---:|---|
+| POSIX read lifecycle | 21 | Descriptor ownership/opening, request and offset leaves, sequential/copied readers and filesystem publication. |
+| Windows read lifecycle | 22 | Handle ownership, sequential/positioned stages, copied reader and filesystem publication. |
+| Windows native seam | 19 | DWORD request clamp and typed native fault-seam leaves. |
+
+POSIX readers now store `ScopedDescriptor` directly and use defaulted
+destructors. Their path member precedes the descriptor member so reverse member
+destruction still closes the descriptor before destroying the retained path.
+Copied and sequential publication move the owner instead of extracting an
+integer and calling `Release`.
+
+POSIX sequential/random and Windows sequential/random reader constructors make
+their nonthrowing transfer initialization explicit. Exceptions from allocation
+or by-value argument construction still occur before the constructor transfer
+body and leave a live RAII owner to close the resource.
+
+Local Windows Debug and Release both pass the exact 10 characterized identities.
+Four concurrent/pending/stage snapshot identities pass 20 consecutive
+executions, and the complete Windows Debug suite passes all 868 tests. Final
+POSIX compilation and the seventh ownership identity remain Hosted GCC 13
+requirements.
+
+## Integrated review
+
+Review verified allocation and parameter-initialization ordering, exactly-once
+close after moved-from owners, and close-before-path member destruction. The
+Windows N09 state machine and all native call prefixes remain byte-for-byte
+unchanged apart from the constructor exception specification.
 
 ## Review focus
 
