@@ -10,16 +10,24 @@ namespace {
 
 constexpr std::uint32_t Multiplier = 0xc6a4a793U;
 
+void MixHashWord(std::uint32_t& hash, std::uint32_t word) noexcept {
+    hash = (hash + word) * Multiplier;
+    hash ^= hash >> 16U;
+}
+
+void FoldHashWords(ByteView& input, std::uint32_t& hash) noexcept {
+    while (input.size() >= sizeof(std::uint32_t)) {
+        const auto word = ConsumeFixed32(input);
+        MixHashWord(hash, *word);
+    }
+}
+
 }  // namespace
 
 std::uint32_t Hash32(ByteView input, std::uint32_t seed) noexcept {
     std::uint32_t hash = seed ^ (static_cast<std::uint32_t>(input.size()) * Multiplier);
 
-    while (input.size() >= sizeof(std::uint32_t)) {
-        const auto word = ConsumeFixed32(input);
-        hash = (hash + *word) * Multiplier;
-        hash ^= hash >> 16U;
-    }
+    FoldHashWords(input, hash);
 
     if (!input.empty()) {
         std::uint32_t tail = 0;
