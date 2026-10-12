@@ -2,11 +2,13 @@
 
 ## Status and scope
 
-Proposed recursive follow-up to the
+Design accepted in #242; the reviewed local implementation is described below.
+Recursive follow-up to the
 [production composition plan](production-function-composition-plan.md).
 Source-read baseline: `80370f2`, after recovered-counter delivery #238.
-Block reverse implementation #241 is pending on different source/test/design
-paths; no code dependency requires waiting for it.
+Block reverse implementation #241 was pending during design and subsequently
+delivered on different source/test/design paths; no code dependency required
+waiting for it.
 
 Scope is Hash32 and five file-local children in `src/base/hash.cc`,
 existing hash characterization tests and this document. No public header,
@@ -117,3 +119,65 @@ or success-path noexcept proof. The reviewer counted 94 source-declared tests
 in the nine selected classes, four in HashTest; these are navigation estimates,
 not native discovery evidence. New literal fixtures, implementation, selected
 XML identities, allocation observations and performance remain unverified.
+
+## Local implementation evidence
+
+Accepted design merge: `fe9f974e21be81008bb277484f50665920b32c6d`.
+Original hash production was byte-identical to this merge during
+characterization; local original/final coupled runs share that source baseline
+for their other files. Independently delivered block reverse #241 must also
+pass in the actual hosted PR merge context; do not present the local old-block
+run as that integration evidence.
+
+`ce3f84f` adds two public cases before extraction:
+`HighSeedsAndAllTailWidthsMatchLiteralBoundaryVectors` and
+`GuardedSubspansPreserveCallerViewsAndStorage`.
+Four new matrices cover zero/high bytes, seeds ffffffff/80000000 and lengths
+0..19: zero through four complete words and all residual widths. Guarded real
+27-byte storage covers offsets 0..7 and every prefix, matching fixed literals
+and preserving caller pointer/size/whole storage. At the maximum subspan the
+end is byte 26, retaining a trailing guard.
+
+The session offline derivation independently checks the actual 80 new C++
+literals using little-endian struct-unpack and fallthrough tail addition,
+and separately weighted-byte arithmetic with reduce/division. Both also agree
+with all 39 retained existing literals. Neither calls production Hash32;
+agreement is independent algorithm-port arithmetic, not new upstream evidence.
+The bounded characterization reviewer checked the actual literal transcription,
+real subspan bounds, existing source, both references and native log/XML.
+No significant issue was found.
+
+`c8934f8` extracts the full-word fold and its fixed modular transform.
+`96f259c` extracts bounded residual decoding, distinct final mixing and the
+nonempty tail selector. All six definitions follow the responsibility ledger.
+Original and final coupled Windows Debug runs each contain the same 96 unique
+identities with zero failures, errors or skips. Intermediate full-word evidence
+contains exactly the six HashTest identities from that set.
+
+| Class | Original/final identities |
+|---|---:|
+| HashTest | 6 |
+| BloomFilterTest | 10 |
+| FilterBlockTest | 6 |
+| FilterBlockReaderTest | 3 |
+| ShardedLruCacheTest | 19 |
+| CacheAllocationTest | 5 |
+| TableCacheTest | 7 |
+| TableTest | 38 |
+| TableNativeTest | 2 |
+
+Both unit and cache-allocation targets were built; the five allocation cases
+dispatch to their distinct executable. Existing coverage annotation text and
+multiplicity are unchanged; no exclusions or thresholds were added.
+Guard equality does not prove absence of dead/noncontributory out-of-view
+reads. Cache allocation cases do not directly observe Hash32 allocation.
+Huge-input physical size wrap, scalar-copy/elision details, code generation,
+call overhead and performance remain inspection/hosted-gate limits.
+No public header, caller, decoder, benchmark or allocation policy changed.
+Hosted reviewed-head checks and actual selected-name parity remain pending.
+
+The bounded integrated code/evidence reviewer inspected the accepted-baseline
+source/test/design diff, decoder and real caller contracts, and the supplied
+native evidence. No significant issue was found. This read-only review did not
+rerun builds/tests and did not remove the explicit hosted integration,
+allocation-observer, physical-scalar, huge-input or performance limits above.
