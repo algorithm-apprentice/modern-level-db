@@ -608,6 +608,7 @@ changed paths verified in main.
 | Complete Block, Iterator, BlockBuilder and block-format representation lifecycle | [Block representation lifecycle](block-representation-lifecycle-composition-design.md) | Delivered in #260 from one locally reviewed larger batch; corrected 208-case original/final parity, exact 121/133 topic subsets, complete 96-definition disposition, and actual hosted Windows Debug selected names match the original 208. |
 | Complete Bloom and filter-block generation/query lifecycle | [Table filter lifecycle](table-filter-lifecycle-composition-design.md) | Delivered in #261 from one locally reviewed larger batch; 162-case original/final parity, exact 78/144 topic subsets, complete 34-definition disposition, and actual hosted Windows Debug selected names match the original 162. |
 | Complete Table, TableBuilder and compression lifecycle | [Table lifecycle completion](table-lifecycle-completion-design.md) | Delivered in #262 from one locally reviewed larger batch; 154-case original/final parity, exact 116/78 topic subsets, complete 88-definition/two-lambda disposition, and actual hosted Windows Debug selected names match the original 154. |
+| Complete TableCache, snapshot registry and seek-statistics lifecycle | [Read-support lifecycle](read-support-lifecycle-completion-design.md) | Delivered in #263 from one locally reviewed larger batch; 89-case original/final parity, exact 76/58/76 topic subsets, complete 38-definition/one-lambda disposition, and actual hosted Windows Debug selected names match the original 89. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -844,6 +845,15 @@ later builder mutation and all later failures copy the first Error. A transient
 crc32c FetchContent HTTP 504 caused the first fuzz failure; rerunning only
 failed jobs succeeded and all 20 gates passed. Engine/platform/API files remain
 open.
+
+#263 closes TableCache, SnapshotRegistry and SeekStatistics. Its six-suite
+selection contains 89 original/final identities; load, intrusive ownership and
+seek-eligibility intermediates are exact original subsets of 76, 58 and 76.
+The final ledger covers 38 definitions and one sampling lambda. Eviction leaves
+old handles alive while rewritten files reopen independently; registry handles
+remain nonowning; exhausted seeks record only current-version files. Hosted
+checks and actual Windows Debug parity succeeded. Database read orchestration,
+compaction, API and platform files remain open.
 
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,
