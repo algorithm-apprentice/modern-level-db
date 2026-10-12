@@ -884,6 +884,107 @@ TEST(DumpFileTest, PropagatesSequentialReadFailures) {
     EXPECT_EQ(output.text(), "dump version=1 type=log file='000027.log'\n");
 }
 
+TEST(DumpFileTest, RejectsCanonicalAndMalformedNamesBeforeAnyFileOperation) {
+    MemoryFileSystem file_system;
+    file_system.Write("000037.log", {});
+    file_system.FailOperation(0, Error::Io("unconsumed acquisition failure"));
+    const std::vector<std::pair<std::string_view, std::string_view>> cases{
+        {"CURRENT", "file type is not dumpable"},
+        {"LOCK", "file type is not dumpable"},
+        {"000001.dbtmp", "file type is not dumpable"},
+        {"18446744073709551615.dbtmp", "file type is not dumpable"},
+        {"1.log", "file name is not canonical"},
+        {"000000.log", "file name is not canonical"},
+        {"0000001.log", "file name is not canonical"},
+        {"18446744073709551616.log", "file name is not canonical"},
+        {"000001.sst", "file name is not canonical"},
+        {"000001.LOG", "file name is not canonical"},
+        {"MANIFEST-000000", "file name is not canonical"},
+        {"manifest-000001", "file name is not canonical"},
+        {"", "file name is not canonical"},
+        {"parent/000037.log/", "file name is not canonical"},
+    };
+    for (const auto& [name, message] : cases) {
+        SCOPED_TRACE(name);
+        StringOutput output(0);
+
+        const Status rejected = DumpFile(file_system, std::string(name), output);
+
+        ASSERT_FALSE(rejected.has_value());
+        EXPECT_EQ(rejected.error().code(), ErrorCode::InvalidArgument);
+        EXPECT_EQ(rejected.error().message(), message);
+        EXPECT_TRUE(output.appends().empty());
+        EXPECT_TRUE(file_system.operations().empty());
+    }
+    StringOutput output(0);
+
+    const Status acquisition_failed = DumpFile(file_system, "000037.log", output);
+
+    ASSERT_FALSE(acquisition_failed.has_value());
+    EXPECT_EQ(acquisition_failed.error().code(), ErrorCode::Io);
+    EXPECT_EQ(acquisition_failed.error().message(), "unconsumed acquisition failure");
+    EXPECT_TRUE(output.appends().empty());
+    EXPECT_EQ(file_system.operations(), (std::vector<std::string>{"open_sequential 000037.log"}));
+}
+
+TEST(DumpFileTest, DispatchesByCanonicalLeafWithExactNestedPathAndOpenPriority) {
+    MemoryFileSystem file_system;
+    const std::filesystem::path parent(u8"parent'\t\u00e9");
+    const std::filesystem::path log = parent / "000038.log";
+    const std::filesystem::path manifest = parent / "MANIFEST-000039";
+    const std::filesystem::path table = parent / "000040.ldb";
+    WriteRecords(file_system, log, {Batch(9, AsBytes("x"), AsBytes("y"))});
+    VersionEdit edit;
+    edit.SetLogNumber(7);
+    WriteRecords(file_system, manifest, {edit.Encode()});
+    const InternalKey key = Key(AsBytes("q"), 1);
+    file_system.Write(table, AssembleSingleDataBlockTable(
+                                 EncodeBlock({{key.encoded(), AsBytes("v")}}), key.encoded()));
+    const auto verify = [&](const std::filesystem::path& path,
+                            const std::vector<std::string>& expected,
+                            const std::vector<std::string>& acquisition) {
+        SCOPED_TRACE(path.filename().string());
+        StringOutput output;
+
+        const Status dumped = DumpFile(file_system, path, output);
+
+        ASSERT_TRUE(dumped.has_value());
+        EXPECT_EQ(output.appends(), expected);
+        for (std::size_t failure = 0; failure < acquisition.size(); ++failure) {
+            SCOPED_TRACE(failure);
+            const std::size_t start = file_system.operations().size();
+            file_system.FailOperation(start + failure, Error::Io("selected acquisition failed"));
+            StringOutput failed_output(0);
+
+            const Status failed = DumpFile(file_system, path, failed_output);
+
+            ASSERT_FALSE(failed.has_value());
+            EXPECT_EQ(failed.error().code(), ErrorCode::Io);
+            EXPECT_EQ(failed.error().message(), "selected acquisition failed");
+            EXPECT_TRUE(failed_output.appends().empty());
+            const std::vector<std::string> expected_prefix(
+                acquisition.begin(),
+                acquisition.begin() + static_cast<std::ptrdiff_t>(failure + 1));
+            EXPECT_EQ(std::vector<std::string>(
+                          file_system.operations().begin() + static_cast<std::ptrdiff_t>(start),
+                          file_system.operations().end()),
+                      expected_prefix);
+        }
+    };
+    verify(log,
+           {"dump version=1 type=log file='parent\\'\\t\\xc3\\xa9/000038.log'\n",
+            "record offset=0 sequence=9 count=1\n", "  put sequence=9 key='x' value='y'\n"},
+           {"open_sequential 000038.log"});
+    verify(manifest,
+           {"dump version=1 type=manifest file='parent\\'\\t\\xc3\\xa9/MANIFEST-000039'\n",
+            "record offset=0\n", "  log_number value=7\n"},
+           {"open_sequential MANIFEST-000039"});
+    verify(table,
+           {"dump version=1 type=table file='parent\\'\\t\\xc3\\xa9/000040.ldb'\n",
+            "entry user_key='q' sequence=1 kind=value value='v'\n"},
+           {"size 000040.ldb", "open_random_access 000040.ldb"});
+}
+
 TEST(DumpFileTest, RejectsUnsupportedNamesAndPropagatesOutputAndInputFailures) {
     MemoryFileSystem file_system;
     for (const std::string_view name : {"CURRENT", "LOCK", "000001.dbtmp", "1.log", "unknown"}) {
