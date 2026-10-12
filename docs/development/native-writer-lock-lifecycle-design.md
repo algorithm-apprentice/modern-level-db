@@ -14,8 +14,10 @@ interchangeable resource/error policies.
 
 ## POSIX writer
 
-Add `CheckOpen(operation)` to the writer, preserving exact InvalidArgument text
-for Append/Flush/Sync after Close. Append retains sticky-error admission,
+Add `CheckOpen(operation, source_location)` to the writer, preserving exact
+InvalidArgument text and the public caller method's source location for
+Append/Flush/Sync after Close. This remains the first gate, before sticky-error
+admission. Append retains sticky-error admission,
 buffer copy, flush, small remainder buffering and direct WriteAll. Sync retains
 flush before data-only descriptor sync.
 
@@ -23,6 +25,11 @@ Close remains the terminal owner: set close_attempted before exchanging the
 descriptor, flush through the retained raw descriptor, always attempt close,
 prefer flush error, otherwise latch/return close error. Destructor performs only
 best-effort buffered write/close when Close was never attempted.
+
+After a sticky I/O failure and Close, Append/Flush/Sync return their
+operation-specific closed InvalidArgument, while repeated Close returns the
+original sticky Error. Characterization must compare code, complete message,
+source location and independent Error ownership.
 
 ## Windows writer
 
@@ -32,6 +39,23 @@ Sync and Close reuse it without adding a close_attempted policy Windows does not
 currently have. Close still attempts handle close after flush and returns flush
 failure first.
 
+Windows intentionally has no uniform terminal state. Characterize the existing
+matrix rather than imposing POSIX policy: after successful Close a small Append
+may buffer; an empty Flush may succeed; Sync/second Close reach the invalid
+handle and latch/return I/O failure. After a reported close failure, another
+Close attempts the invalid handle again. Preserve exact operation call counts.
+
+## Directory sync
+
+POSIX SyncDirectory opens a directory descriptor, calls
+SyncDescriptor(data_only=false), always attempts CloseDescriptor, returns the
+sync error before close error, and otherwise returns close status.
+
+Windows validates/encodes the path first. Strict mode rejects with NotSupported
+before directory acquisition. Weak mode opens/validates the directory and only
+closes it; it does not claim a strict namespace sync syscall. Preserve path,
+consent, acquisition and close-error priority separately.
+
 ## Native locks
 
 Extract platform-local lock acquisition leaves only where they own syscall/error
@@ -40,14 +64,32 @@ fcntl lock, owner construction and reservation commit stay visible in LockFile.
 Windows OpenRegularFile, LockFileEx, Busy translation and handle transfer stay
 visible. Unlock remains destructor-owned and best effort.
 
+For POSIX teardown, add a child-process acquisition after owner destruction to
+prove kernel lock/descriptor release, plus same-process reacquisition to prove
+registry release. Windows retains its existing child-process proof.
+
 ## Characterization
 
-Before production edits, strengthen native cases for repeated post-Close
-operations, combined flush/close failures, destructor best effort, exact first
-Error copies, lock contention/noncontention errors, handle/descriptor release
-and retry after failed acquisition. Run actual POSIX and Windows native suites;
-one platform cannot stand in for the other.
+Before production edits, strengthen native cases for the platform-specific
+post-Close matrices, destructor best effort, exact first Error copies including
+source location/independent ownership, directory-sync ordering, lock contention,
+handle/descriptor release and retry after failed acquisition.
+
+Use deterministic existing seams where available. `/dev/full` supports POSIX
+write failure but not combined sync/close faults; direct POSIX sync/close and
+fcntl nonstandard failures, and Windows LockFileEx/UnlockFileEx noncontention
+branches, remain explicitly inspection-based unless a platform-local production
+seam is independently justified. Do not add broad syscall abstraction solely
+to manufacture coverage. Run actual POSIX and Windows native suites; one
+platform cannot stand in for the other.
 
 Independent design and implementation review precede one non-draft PR. Exact
 hosted native identities, all CI gates and reviewed-path equality are required.
 This batch is not complete native-platform or production certification.
+
+## Independent design review
+
+Review corrected directory-sync scope, platform-specific post-Close behavior,
+POSIX closed-before-sticky priority, source-location/owner equality, limits of
+current fault seams, and the need for a POSIX child-process kernel-lock release
+oracle. These contracts are incorporated above before production edits.
