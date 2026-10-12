@@ -472,6 +472,29 @@ Result<ParsedFileName> ParseDiagnosticFileName(std::string_view file_name) {
     return *parsed;
 }
 
+Status DumpRecognizedFile(FileSystem& file_system, const std::filesystem::path& path,
+                          const ParsedFileName& parsed, std::string_view escaped_path,
+                          WritableFile& output) {
+    switch (parsed.type) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/5 validated FileType default
+        case FileType::Log:
+            return DumpWalFramed(file_system, path, "log", escaped_path, output, FormatWriteBatch);
+        case FileType::Descriptor:
+            return DumpWalFramed(file_system, path, "manifest", escaped_path, output,
+                                 FormatVersionEdit);
+        case FileType::Table:
+            return DumpTable(file_system, path, escaped_path, output);
+        case FileType::Lock:
+        case FileType::Current:
+        case FileType::Temp:
+            // GCOVR_EXCL_START: ParseFileName returns an exhaustive FileType
+            return std::unexpected(Error::InvalidArgument("file type is not dumpable"));
+            // GCOVR_EXCL_STOP
+    }
+    // GCOVR_EXCL_START: exhaustive switch over validated FileType
+    return std::unexpected(Error::InvalidArgument("file type is not dumpable"));
+    // GCOVR_EXCL_STOP
+}
+
 }  // namespace
 
 std::string EscapeDiagnosticBytes(ByteView bytes) {
@@ -507,24 +530,7 @@ Status DumpFile(FileSystem& file_system, const std::filesystem::path& path, Writ
         return std::unexpected(std::move(parsed).error());
     }
     const std::string escaped_path = EscapeDiagnosticBytes(AsBytes(*path_text));
-    switch (parsed->type) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/5 validated FileType default
-        case FileType::Log:
-            return DumpWalFramed(file_system, path, "log", escaped_path, output, FormatWriteBatch);
-        case FileType::Descriptor:
-            return DumpWalFramed(file_system, path, "manifest", escaped_path, output,
-                                 FormatVersionEdit);
-        case FileType::Table:
-            return DumpTable(file_system, path, escaped_path, output);
-        case FileType::Lock:
-        case FileType::Current:
-        case FileType::Temp:
-            // GCOVR_EXCL_START: ParseFileName returns an exhaustive FileType
-            return std::unexpected(Error::InvalidArgument("file type is not dumpable"));
-            // GCOVR_EXCL_STOP
-    }
-    // GCOVR_EXCL_START: exhaustive switch over validated FileType
-    return std::unexpected(Error::InvalidArgument("file type is not dumpable"));
-    // GCOVR_EXCL_STOP
+    return DumpRecognizedFile(file_system, path, *parsed, escaped_path, output);
 }
 
 }  // namespace modern_leveldb
