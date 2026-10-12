@@ -2,7 +2,8 @@
 
 ## Status and scope
 
-Proposed recursive follow-up to the
+Accepted design #237; implementation complete, hosted delivery pending.
+Recursive follow-up to the
 [production composition plan](production-function-composition-plan.md).
 Source-read baseline: `748bf01`, after diagnostic dispatch delivery #236.
 
@@ -134,3 +135,48 @@ can reach the proposed log check without reading a later physical block.
 No edits, builds, tests or further delegation were performed. Implementation,
 actual case identities/counts, native execution and allocator/destructor
 behavior remain unverified; these source conclusions are not runtime evidence.
+
+## Implementation and native evidence
+
+Characterization `9a691af` precedes production changes.
+`ResetPreviousLogKeepsHistoricalBoundAndLatestSparseCounters` fixes historical
+previous-log 80 after explicit reset to zero: next 80 fails with its exact bound
+error, while next 81 succeeds with manifest 81, allocation 82, sequence 7,
+log 10, previous log zero and empty topology after an empty record.
+`DecreasingLogPrecedesMissingCounterOverlapAndLaterReadFailure` fixes the exact
+offset error and one-block read while next-file is absent, final files overlap
+and a second physical read would fail. Both cases retain input bytes and permit
+only original sequential-open/read operations. The hook is cleared while its
+captured counter is alive, before fatal assertions.
+
+Independent bounded characterization review found no significant issues and
+inspected captured original XML/logs without rerunning tests. The original
+coupled Windows native run has **123 unique cases**, with both additions and
+no failure/error/skip: VersionSet 39, VersionBuilder 12, Version 1, Recovery 17,
+Database 54. These are the prior snapshot batch's same five suites and 121
+cases, plus two new VersionSet cases, not a diagnostic-selector total.
+
+Accumulator topic `e006d52` passes **39 unique VersionSet cases**, all members
+of the original coupled set and no failure/error/skip. Publication topic
+`702a42e` retains the original five assignments before shared Version allocation.
+The final coupled native run has **the same 123 exact classname/name identities**
+as the original and no failure/error/skip.
+Artifacts are `metadata-recovered-before.xml`,
+`metadata-recovered-accumulator.xml` and `metadata-recovered-after.xml`, with
+corresponding build/CTest logs in the session evidence directory.
+The coupled runs build both unit and Windows lock-child executables.
+
+Inspection retains getter/mutation order, const decoded edit ownership,
+private failed state, parent validation/Version Result lifetimes, exact error
+construction and new mutable Status propagation. Scalar publication still
+precedes topology allocation; nothing is moved into a new owner envelope.
+Public output/XML/operation counts do not establish private mutation order,
+physical allocation/move/elision/destruction counts or exception timing.
+Those remain source-inspected. Hosted checks and actual native-name parity
+still gate delivery; unchanged ValidateCounters/prepared publication/retention
+and the final every-definition production audit remain open.
+
+Independent bounded combined review of source, public characterization and this
+record against accepted baseline `46d0915` found no significant issues. It made
+no edits and ran no builds/tests or nested reviews. Local review is not hosted
+execution or physical allocation/destruction observation.
