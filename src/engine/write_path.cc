@@ -17,15 +17,7 @@ namespace {
 constexpr std::size_t MaximumGroupSize = std::size_t{1} << 20U;
 constexpr std::size_t SmallBatchGrowth = std::size_t{128} << 10U;
 
-}  // namespace
-
-void InsertBatch(WriteBatchReader& batch, MemTable& memtable) {
-    while (const std::optional<WriteBatchEntry> entry = batch.Next()) {
-        memtable.Add(entry->sequence, entry->kind, entry->key, entry->value);
-    }
-}
-
-Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log, MemTable& memtable) {
+Status PersistGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log) {
     const Status appended = log.AddRecord(group.encoded());
     if (!appended.has_value()) {
         return appended;
@@ -35,6 +27,22 @@ Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log, Me
         if (!synced.has_value()) {
             return synced;
         }
+    }
+    return {};
+}
+
+}  // namespace
+
+void InsertBatch(WriteBatchReader& batch, MemTable& memtable) {
+    while (const std::optional<WriteBatchEntry> entry = batch.Next()) {
+        memtable.Add(entry->sequence, entry->kind, entry->key, entry->value);
+    }
+}
+
+Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log, MemTable& memtable) {
+    Status persisted = PersistGroup(group, sync, log);
+    if (!persisted.has_value()) {
+        return persisted;
     }
     // A prepared group's keys fit the memtable, and its sequences are unused.
     WriteBatchReader entries = WriteBatchReader::OpenTrusted(group);
@@ -71,30 +79,50 @@ WriteQueue::WriteQueue()
           Error::Aborted("write aborted by an exception while its group committed")))) {}
 // GCOVR_EXCL_STOP
 
+std::size_t WriteQueue::GroupSizeLimit(std::size_t leader_size) noexcept {
+    return leader_size <= SmallBatchGrowth ? leader_size + SmallBatchGrowth : MaximumGroupSize;
+}
+
+bool WriteQueue::CompatibleFollower(const Writer& leader, const Writer& follower) noexcept {
+    if (follower.batch == nullptr) {
+        return false;
+    }
+    return !follower.sync || leader.sync;
+}
+
+bool WriteQueue::TryAddFollowerSize(std::size_t& size, std::size_t follower_size,
+                                    std::size_t maximum_size) noexcept {
+    size += follower_size;
+    return size <= maximum_size;
+}
+
+void WriteQueue::AppendFollowerBatch(EncodedWriteBatch*& group, EncodedWriteBatch& leader_batch,
+                                     const EncodedWriteBatch& follower_batch) {
+    if (group == &leader_batch) {
+        // Whatever sequence the leader holds, scratch starts from zero.
+        group_.Clear();
+        group_.Append(leader_batch);
+        group = &group_;
+    }
+    group->Append(follower_batch);
+}
+
 WriteQueue::Group WriteQueue::BuildGroup(Writer& leader) {
     EncodedWriteBatch* group = leader.batch;
     std::size_t size = leader.batch->encoded().size();
-    const std::size_t maximum_size =
-        size <= SmallBatchGrowth ? size + SmallBatchGrowth : MaximumGroupSize;
+    const std::size_t maximum_size = GroupSizeLimit(size);
     Writer* last = &leader;
     for (auto next = std::next(writers_.begin()); next != writers_.end(); ++next) {
         Writer* follower = *next;
         // A forced writer prepares on its own, and a group that does not sync must
         // not take a write that asks for a sync.
-        if (follower->batch == nullptr || (follower->sync && !leader.sync)) {
+        if (!CompatibleFollower(leader, *follower)) {
             break;
         }
-        size += follower->batch->encoded().size();
-        if (size > maximum_size) {
+        if (!TryAddFollowerSize(size, follower->batch->encoded().size(), maximum_size)) {
             break;
         }
-        if (group == leader.batch) {
-            // Whatever sequence the leader holds, scratch starts from zero.
-            group_.Clear();
-            group_.Append(*leader.batch);
-            group = &group_;
-        }
-        group->Append(*follower->batch);
+        AppendFollowerBatch(group, *leader.batch, *follower->batch);
         last = follower;
     }
     return {.batch = group, .last = last};

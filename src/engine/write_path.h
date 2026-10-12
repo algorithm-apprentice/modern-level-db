@@ -112,6 +112,13 @@ private:
     template <typename Prepare, typename Commit>
     [[nodiscard]] Status Run(std::unique_lock<std::mutex>& lock, EncodedWriteBatch* batch,
                              bool sync, Prepare& prepare, Commit& commit);
+    [[nodiscard]] static std::size_t GroupSizeLimit(std::size_t leader_size) noexcept;
+    [[nodiscard]] static bool CompatibleFollower(const Writer& leader,
+                                                 const Writer& follower) noexcept;
+    [[nodiscard]] static bool TryAddFollowerSize(std::size_t& size, std::size_t follower_size,
+                                                 std::size_t maximum_size) noexcept;
+    void AppendFollowerBatch(EncodedWriteBatch*& group, EncodedWriteBatch& leader_batch,
+                             const EncodedWriteBatch& follower_batch);
     // Uses the leader directly until the first admitted follower requires group_
     // and returns the selected batch with the group's last writer.
     [[nodiscard]] Group BuildGroup(Writer& leader);
