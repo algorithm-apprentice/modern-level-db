@@ -38,6 +38,16 @@ bool TryDecodeInternalKey(ByteView encoded, InternalKeyView& decoded) noexcept {
     return true;
 }
 
+Status ValidateInternalKeyInput(SequenceNumber sequence, ValueKind kind) {
+    if (sequence > MaxSequenceNumber) {
+        return std::unexpected(Error::InvalidArgument("internal key sequence exceeds 56 bits"));
+    }
+    if (!IsValidValueKind(kind)) {
+        return std::unexpected(Error::InvalidArgument("internal key value kind is unsupported"));
+    }
+    return {};
+}
+
 std::vector<std::byte> EncodeUnchecked(ByteView user_key, SequenceNumber sequence, ValueKind kind) {
     std::vector<std::byte> encoded;
     encoded.reserve(user_key.size() + InternalKeyTrailerSize);
@@ -191,11 +201,9 @@ void LookupKey::InitializeCanonicalEmpty() noexcept {
 
 Result<InternalKey> InternalKey::Create(ByteView user_key, SequenceNumber sequence,
                                         ValueKind kind) {
-    if (sequence > MaxSequenceNumber) {
-        return std::unexpected(Error::InvalidArgument("internal key sequence exceeds 56 bits"));
-    }
-    if (!IsValidValueKind(kind)) {
-        return std::unexpected(Error::InvalidArgument("internal key value kind is unsupported"));
+    Status valid = ValidateInternalKeyInput(sequence, kind);
+    if (!valid.has_value()) {
+        return std::unexpected(std::move(valid).error());
     }
     return InternalKey(EncodeUnchecked(user_key, sequence, kind));
 }
