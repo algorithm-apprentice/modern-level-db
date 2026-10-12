@@ -2,7 +2,8 @@
 
 ## Status and scope
 
-Accepted design #232; implementation pending. Recursive follow-up to the
+Accepted design #232; implementation complete, hosted delivery pending.
+Recursive follow-up to the
 [production composition plan](production-function-composition-plan.md).
 Source-read baseline: `a02eb9f`, after record delivery #230.
 
@@ -137,3 +138,49 @@ error text: `ReadDataBlock` rejects an empty decoded block as
 failed only that literal assertion; no production change was made. The earlier
 reviews established corruption rather than successful EOF but missed this
 earlier rejection. Retain both the finding and this correction as review limits.
+
+## Implementation and native evidence
+
+Characterization commit `2c64fd4` precedes production changes. It generalizes
+the existing two-block assembler with a borrowed first key, retaining the three
+old callers' exact `"bad"` bytes. A local owned valid InternalKey supplies the
+new valid-first fixture. Literal outputs and errors do not call production
+formatters. Independent bounded characterization review found no significant
+issues; it did not edit, build or run tests.
+
+Two public additions are
+`EmptyIndexAndReferencedEmptyBlockKeepHeaderReadBoundary` and
+`TableTerminalFailuresPreserveExactVisitedPrefixAndPriority`.
+The referenced fixture fixes the four-operation acquisition prefix at header
+failure and the fifth operation as the first data read. Its terminal matrix
+covers all four documented first-key/second-block failure combinations.
+The corrected original-source coupled Windows native run has **108 unique
+cases**, no failure/error/skip. DumpFile has 26, DumpCommand 6, NativeCommand 3,
+NativeDumpCommand 2, WindowsOutput 3, WalReader 17, WalWriter 10, WalIoNative 1,
+Table 38 and TableNative 2. The preceding record batch's 106 used these same ten
+classes; the two new public cases account for the difference.
+
+Commit `529ac89` extracts parent-owned traversal and terminal classification.
+Its diagnostic-only intermediate selection has **40 unique cases**, no
+failure/error/skip, all members of the original coupled set.
+Commit `91c6659` extracts conditional visited-entry formatting.
+The final coupled native run has the **same 108 exact classname/name identities**
+as the corrected original-source run and no failure/error/skip.
+Artifacts are `diagnostic-table-before.xml`, `diagnostic-table-boundary.xml`
+and `diagnostic-table-after.xml` with corresponding build/CTest logs in the
+session evidence directory.
+
+Source inspection preserves comparator construction after file acquisition,
+table/options/iterator ownership, header-before-iterator ordering, conditional
+getters and default line construction followed by assignment. Parsed Result,
+line and const appended Status remain in the loop across Next. Existing
+header/append const-Status failures retain their logical copy sites; terminal
+fatal progress moves explicitly from a borrowed reference. Allocation,
+physical copy/elision and destructor equivalence remain inspection-based,
+not claimed from XML, output or memory-I/O counts. These cases do not certify
+the rest of this file, whole-file validity or the recursive production frontier.
+
+Independent bounded combined review of source, characterization and this record
+against accepted-design baseline `a5a0880` found no significant issues. It made
+no edits and ran no builds/tests. Hosted checks and actual Windows Debug test-name
+parity still gate normal delivery; they are not claimed by this local review.
