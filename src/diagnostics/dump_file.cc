@@ -396,6 +396,37 @@ std::string FormatBadTableEntry(ByteView encoded_key, ByteView value) {
     return line;
 }
 
+Status FinishDiagnosticTable(Status& progress, std::optional<Error>& first) {
+    if (!progress.has_value()) {
+        if (progress.error().code() != ErrorCode::Corruption) {
+            return std::move(progress);
+        }
+        RememberFirst(first, progress.error());
+    }
+    return Finish(std::move(first));
+}
+
+Status DumpTableEntries(Table::Iterator& iterator, WritableFile& output) {
+    std::optional<Error> first;
+    Status moved = iterator.SeekToFirst();
+    while (moved.has_value() && iterator.valid()) {
+        const Result<InternalKeyView> parsed = ParseInternalKey(iterator.key());
+        std::string line;
+        if (!parsed.has_value()) {
+            line = FormatBadTableEntry(iterator.key(), iterator.value());
+            RememberFirst(first, Error::Corruption("table entry has a malformed internal key"));
+        } else {
+            line = FormatTableEntry(*parsed, iterator.value());
+        }
+        const Status appended = AppendDiagnosticLine(output, std::move(line));
+        if (!appended.has_value()) {
+            return appended;
+        }
+        moved = iterator.Next();
+    }
+    return FinishDiagnosticTable(moved, first);
+}
+
 Status DumpTable(FileSystem& file_system, const std::filesystem::path& path,
                  std::string_view escaped_path, WritableFile& output) {
     // Diagnostic traversal uses arbitrary bytewise keys and no cache population.
@@ -424,30 +455,7 @@ Status DumpTable(FileSystem& file_system, const std::filesystem::path& path,
     TableReadOptions options;
     options.fill_cache = false;
     Table::Iterator iterator(**table, options);
-    std::optional<Error> first;
-    Status moved = iterator.SeekToFirst();
-    while (moved.has_value() && iterator.valid()) {
-        const Result<InternalKeyView> parsed = ParseInternalKey(iterator.key());
-        std::string line;
-        if (!parsed.has_value()) {
-            line = FormatBadTableEntry(iterator.key(), iterator.value());
-            RememberFirst(first, Error::Corruption("table entry has a malformed internal key"));
-        } else {
-            line = FormatTableEntry(*parsed, iterator.value());
-        }
-        const Status appended = AppendDiagnosticLine(output, std::move(line));
-        if (!appended.has_value()) {
-            return appended;
-        }
-        moved = iterator.Next();
-    }
-    if (!moved.has_value()) {
-        if (moved.error().code() != ErrorCode::Corruption) {
-            return moved;
-        }
-        RememberFirst(first, moved.error());
-    }
-    return Finish(std::move(first));
+    return DumpTableEntries(iterator, output);
 }
 
 }  // namespace
