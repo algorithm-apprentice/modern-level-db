@@ -172,3 +172,20 @@ the output. A narrow independent follow-up found no significant issue and
 confirmed first-result publication, buffer reuse, dot filtering and partial
 traversal before the fourth-Next failure. The unchanged production rerun still
 passes all 163 unique cases. Neither reviewer executed builds/tests.
+
+## Implementation and native parity
+
+Separate mapping and enumeration topic commits implement the definition ledger.
+Mapping keeps the parent pending guard across copied fallback, acquires the slot
+before the matching-size query, and publishes only after ordered acquisition
+handle closing and mapped-owner allocation. Enumeration owns each native child
+before buffer reuse and returns the captured terminal DWORD to its unchanged
+error/close boundary.
+
+The mapping intermediate native selection passes 54 filesystem/death cases.
+Final native Windows Debug JUnit contains exactly the same 163 unique
+classname/name pairs as the unchanged-production baseline, with all five new
+cases and no failures, errors or skips. No production seam/public/benchmark/
+POSIX/coverage-policy changes were introduced.
+Combined independent review and exact-head hosted CI remain required before
+delivery; the local native result is not a claim that hosted CI has completed.
