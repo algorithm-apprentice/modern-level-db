@@ -2,11 +2,13 @@
 
 ## Status and scope
 
-Proposed recursive follow-up to the
+Accepted design #240; implementation complete, hosted delivery pending.
+Recursive follow-up to the
 [production composition plan](production-function-composition-plan.md).
-Source-read baseline: `dde6969`. Recovered-counter implementation #238 is
-pending on different source/test/design paths; this design has no dependency on
-its counter changes.
+Source-read baseline: `dde6969`. Recovered-counter implementation #238 was
+pending during design on different source/test/design paths; this batch has no
+dependency on its counter changes. It delivered before original block
+characterization at accepted baseline `80370f2`.
 
 Scope is Block::Iterator Prev/SeekToLast and three private children in
 `src/table/block.cc`, directly dependent private declarations in block.h,
@@ -126,3 +128,51 @@ are acknowledged rather than claimed to preserve physical move counts.
 No edits, builds, tests or further delegation occurred. Private declarations,
 implementation equivalence, native identities/counts and hosted parity remain
 unverified at this design review.
+
+## Implementation and native evidence
+
+Characterization `353a170` precedes production edits.
+`ReverseEmptyAndBinaryEntriesKeepExactOwnedObservationsWithoutComparison`
+fixes literal empty/binary prefix-compressed keys and values, two complete
+reverse passes across restarts, successful beginning, cleared views and
+forward/backward direction changes. Observations own their strings before
+movement and RecordingComparator sees no comparisons.
+`ReverseFailuresClearViewsAndSupportedPositioningRestoresReachableEntries`
+fixes malformed predecessor reconstruction, earlier out-of-range restart and
+malformed final suffix. Each repeated case returns the exact corruption,
+clears key/value and supported positioning restores its reachable entry.
+No unsupported calls or fabricated spans are used.
+
+Independent bounded characterization review found no significant issues and
+inspected captured original XML/logs without rerunning tests.
+The original coupled Windows native run has **201 unique cases** with both
+additions, all thirteen classes nonempty and no failure/error/skip:
+BlockBuilder 5, Block 10, BlockIterator 26, BlockModel 1, Table 38, TableNative 2,
+TableBuilder 19, DbIterator 8, DbIteratorSampling 4, MergingIterator 8,
+LevelIterator 8, Compaction 18 and Database 54.
+This selector differs from the older block-positioning batch's 129; those
+numbers are not interchangeable.
+
+Predecessor topic `455cb7f` passes **42 unique cases** in the four block classes,
+all members of the original coupled set and no failure/error/skip.
+Final suffix topic `17df680` retains the const sought parent through scanning.
+The final coupled native run has **the same 201 exact classname/name identities**
+and no failure/error/skip.
+Artifacts are `block-reverse-before.xml`, `block-reverse-predecessor.xml` and
+`block-reverse-after.xml`, with corresponding build/CTest logs in the session
+evidence directory. Coupled runs build unit and Windows lock-child executables.
+
+Coverage annotation text/multiplicity matches original source exactly.
+Inspection preserves the explicit false found outcome, restart/index/error
+mutation order, original scan predicates, parent/iteration const-Status failure
+copies and backing/comparator/iterator owners. Prev has no new valid-position
+guard or positioning reset. New mutable search Status and boolean boundaries
+are explicit; physical allocation/move/elision/destructor equivalence remains
+inspection-based, not established by copied observations or XML counts.
+Hosted checks/native-name parity still gate delivery. Decoder/layout and
+remaining whole-file/every-definition recursive frontiers remain open.
+
+Independent bounded combined review against accepted baseline `80370f2` found
+no significant issues. It made no edits and ran no builds/tests or nested
+reviews. Hosted execution and physical resource/move observations are not
+established by this local review.
