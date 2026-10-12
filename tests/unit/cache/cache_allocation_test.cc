@@ -356,6 +356,66 @@ TEST(CacheAllocationTest, OverflowRejectionDoesNotAllocatePreparedBucketGrowth) 
     EXPECT_EQ(cache.total_charge(), 3U);
 }
 
+TEST(CacheAllocationTest, ReplacementKeepsTheNextDistinctInsertAtTheGrowthBoundary) {
+    ShardedLruCache<int> cache(16 * 16);
+    const auto keys = KeysForShard(0, 5);
+    std::vector<ShardedLruCache<int>::Handle> originals;
+    originals.reserve(4);
+    for (std::size_t index = 0; index < 4; ++index) {
+        auto inserted = cache.Insert(
+            AsBytes(keys[index]), std::make_unique<const int>(static_cast<int>(index)), index + 1);
+        ASSERT_TRUE(inserted.has_value());
+        originals.push_back(std::move(*inserted));
+    }
+    ASSERT_EQ(cache.total_charge(), 10U);
+
+    std::optional<ShardedLruCache<int>::Handle> replacement;
+    AllocationSnapshot replacement_allocations;
+    {
+        auto value = std::make_unique<const int>(20);
+        AllocationSession session(replacement_allocations);
+        auto inserted = cache.Insert(AsBytes(keys[1]), std::move(value), 5);
+        if (inserted.has_value()) {
+            replacement.emplace(std::move(*inserted));
+        }
+    }
+
+    ASSERT_TRUE(replacement.has_value());
+    EXPECT_EQ(replacement_allocations.calls, 1U);
+    EXPECT_EQ(*originals[1], 1);
+    EXPECT_EQ(**replacement, 20);
+    EXPECT_EQ(cache.total_charge(), 13U);
+
+    bool growth_failed = false;
+    AllocationSnapshot growth_allocations;
+    {
+        auto value = std::make_unique<const int>(4);
+        AllocationSession session(growth_allocations, 1);
+        try {
+            static_cast<void>(cache.Insert(AsBytes(keys[4]), std::move(value), 6));
+        } catch (const std::bad_alloc&) {
+            growth_failed = true;
+        }
+    }
+
+    EXPECT_TRUE(growth_failed);
+    EXPECT_EQ(growth_allocations.calls, 1U);
+    EXPECT_FALSE(cache.Lookup(AsBytes(keys[4])).has_value());
+    EXPECT_EQ(cache.total_charge(), 13U);
+    for (std::size_t index = 0; index < originals.size(); ++index) {
+        auto found = cache.Lookup(AsBytes(keys[index]));
+        ASSERT_TRUE(found.has_value());
+        EXPECT_EQ(**found, index == 1 ? 20 : static_cast<int>(index));
+        EXPECT_EQ(*originals[index], static_cast<int>(index));
+    }
+
+    auto fifth = cache.Insert(AsBytes(keys[4]), std::make_unique<const int>(4), 6);
+
+    ASSERT_TRUE(fifth.has_value());
+    EXPECT_EQ(**fifth, 4);
+    EXPECT_EQ(cache.total_charge(), 19U);
+}
+
 TEST(CacheAllocationTest, VariableSizeEntryUsesUnsizedDeallocation) {
     ShardedLruCache<int> cache(16);
     std::optional<ShardedLruCache<int>::Handle> inserted;
