@@ -916,11 +916,18 @@ separates per-level representation from complete public state ownership. The
 reviewed head passed all 20 gates with 23 exact public identities and 100%
 changed-code coverage.
 
-The final metadata/diagnostics audit reconciles every current definition and
-lambda in those two domains against the previously delivered slices and finds
-no remaining production extraction. Native, engine and public API ledgers are
-closed above. The only remaining ordered task is the production-wide
-current-revision audit across all domains and newly introduced helpers.
+#273 closes the complete metadata/diagnostics ledger at 229 definitions and
+seven lambdas. Current source already consists of reviewed domain compositions
+and bounded leaves, so the delivered audit changes documentation only. Fresh
+Debug/Release selections contain 268 passing identities.
+
+The final current-tree audit covers 120 production files, 1,541 reconciled
+definitions and 37 lambdas. All entries have a reviewed composition or leaf
+reason, all 29 parser recovery nodes are reconciled, and zero entries remain
+unclassified. Fresh Windows Debug and Release each pass 869/869 tests.
+The production recursive-composition goal is complete at
+`a9d3f380126a31fe40fe7a7516c2e0c565fdbe43`; see
+[Production current-tree final audit](production-current-final-audit.md).
 
 The detailed sections below remain historical design/contract records rather
 than an open worklist. Benchmarks remain outside scope.
