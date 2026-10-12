@@ -38,6 +38,16 @@ bool TryDecodeInternalKey(ByteView encoded, InternalKeyView& decoded) noexcept {
     return true;
 }
 
+Status ValidateInternalKeyInput(SequenceNumber sequence, ValueKind kind) {
+    if (sequence > MaxSequenceNumber) {
+        return std::unexpected(Error::InvalidArgument("internal key sequence exceeds 56 bits"));
+    }
+    if (!IsValidValueKind(kind)) {
+        return std::unexpected(Error::InvalidArgument("internal key value kind is unsupported"));
+    }
+    return {};
+}
+
 std::vector<std::byte> EncodeUnchecked(ByteView user_key, SequenceNumber sequence, ValueKind kind) {
     std::vector<std::byte> encoded;
     encoded.reserve(user_key.size() + InternalKeyTrailerSize);
@@ -80,6 +90,16 @@ void CommitSeparatorBeforeLimit(const InternalKeyComparator& comparator,
 
 }  // namespace
 
+void EncodeInternalKeyTrusted(MutableByteView& output, ByteView user_key, SequenceNumber sequence,
+                              ValueKind kind) noexcept {
+    std::ranges::copy(user_key, output.begin());
+    output = output.subspan(user_key.size());
+    EncodeFixed64(
+        std::span<std::byte, InternalKeyTrailerSize>(output.data(), InternalKeyTrailerSize),
+        PackInternalKeyTrailer(sequence, kind));
+    output = output.subspan(InternalKeyTrailerSize);
+}
+
 Result<InternalKeyView> ParseInternalKey(ByteView encoded) {
     InternalKeyView decoded;
     if (!TryDecodeInternalKey(encoded, decoded)) {
@@ -105,20 +125,20 @@ LookupKey LookupKey::CreateTrusted(ByteView user_key, SequenceNumber sequence) {
     const std::size_t encoded_size = prefix_size + internal_key_size;
 
     LookupKey result;
-    if (encoded_size > InlineCapacity) {
-        result.heap_storage_ = std::make_unique<std::byte[]>(encoded_size);
-    }
-    result.encoded_size_ = encoded_size;
-    result.internal_key_offset_ = prefix_size;
+    result.PrepareStorage(encoded_size, prefix_size);
 
     MutableByteView output(result.data(), encoded_size);
     EncodeVarint32Trusted(output, encoded_internal_key_size);
-    std::ranges::copy(user_key, output.begin());
-    output = output.subspan(user_key.size());
-    EncodeFixed64(
-        std::span<std::byte, InternalKeyTrailerSize>(output.data(), InternalKeyTrailerSize),
-        PackInternalKeyTrailer(sequence, SeekValueKind));
+    EncodeInternalKeyTrusted(output, user_key, sequence, SeekValueKind);
     return result;
+}
+
+void LookupKey::PrepareStorage(std::size_t encoded_size, std::size_t prefix_size) {
+    if (encoded_size > InlineCapacity) {
+        heap_storage_ = std::make_unique<std::byte[]>(encoded_size);
+    }
+    encoded_size_ = encoded_size;
+    internal_key_offset_ = prefix_size;
 }
 
 LookupKey::LookupKey() noexcept { ResetToCanonicalEmpty(); }
@@ -133,13 +153,17 @@ LookupKey::LookupKey(LookupKey&& source) noexcept
 
 LookupKey& LookupKey::operator=(LookupKey&& source) noexcept {
     if (this != &source) {
-        inline_storage_ = source.inline_storage_;
-        heap_storage_ = std::move(source.heap_storage_);
-        encoded_size_ = source.encoded_size_;
-        internal_key_offset_ = source.internal_key_offset_;
+        TransferStorageFrom(source);
         source.ResetToCanonicalEmpty();
     }
     return *this;
+}
+
+void LookupKey::TransferStorageFrom(LookupKey& source) noexcept {
+    inline_storage_ = source.inline_storage_;
+    heap_storage_ = std::move(source.heap_storage_);
+    encoded_size_ = source.encoded_size_;
+    internal_key_offset_ = source.internal_key_offset_;
 }
 
 ByteView LookupKey::memtable_key() const noexcept { return ByteView(data(), encoded_size_); }
@@ -163,6 +187,10 @@ const std::byte* LookupKey::data() const noexcept {
 
 void LookupKey::ResetToCanonicalEmpty() noexcept {
     heap_storage_.reset();
+    InitializeCanonicalEmpty();
+}
+
+void LookupKey::InitializeCanonicalEmpty() noexcept {
     encoded_size_ = 1U + InternalKeyTrailerSize;
     internal_key_offset_ = 1;
     inline_storage_[0] = static_cast<std::byte>(InternalKeyTrailerSize);
@@ -173,11 +201,9 @@ void LookupKey::ResetToCanonicalEmpty() noexcept {
 
 Result<InternalKey> InternalKey::Create(ByteView user_key, SequenceNumber sequence,
                                         ValueKind kind) {
-    if (sequence > MaxSequenceNumber) {
-        return std::unexpected(Error::InvalidArgument("internal key sequence exceeds 56 bits"));
-    }
-    if (!IsValidValueKind(kind)) {
-        return std::unexpected(Error::InvalidArgument("internal key value kind is unsupported"));
+    Status valid = ValidateInternalKeyInput(sequence, kind);
+    if (!valid.has_value()) {
+        return std::unexpected(std::move(valid).error());
     }
     return InternalKey(EncodeUnchecked(user_key, sequence, kind));
 }
