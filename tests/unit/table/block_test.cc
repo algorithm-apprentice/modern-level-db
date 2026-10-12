@@ -432,6 +432,100 @@ TEST(BlockIteratorTest, SeekReusesOnlyTheCurrentForwardCheckpoint) {
     EXPECT_EQ(comparator.comparisons, (Comparisons{{"d", "b"}, {"a", "b"}, {"b", "b"}}));
 }
 
+TEST(BlockIteratorTest, ReverseEmptyAndBinaryEntriesKeepExactOwnedObservationsWithoutComparison) {
+    constexpr std::string_view BinaryPrefix("a\0", 2);
+    constexpr std::string_view BinarySuffix("\xff", 1);
+    constexpr std::string_view BinaryValue("v\0\xff", 3);
+    const auto first = EntryBytes(0, "", "zero");
+    const auto second = EntryBytes(0, BinaryPrefix, "first");
+    const auto third = EntryBytes(2, BinarySuffix, BinaryValue);
+    const auto last = EntryBytes(0, "z", "last");
+    const auto last_offset =
+        static_cast<std::uint32_t>(first.size() + second.size() + third.size());
+    const Block block =
+        MakeBlock(WithRestarts(Concat({first, second, third, last}), {0, last_offset}));
+    const RecordingComparator comparator;
+    Block::Iterator iterator(block, comparator);
+    const std::vector<std::pair<std::string, std::string>> expected{
+        {"z", "last"},
+        {std::string("a\0\xff", 3), std::string("v\0\xff", 3)},
+        {std::string("a\0", 2), "first"},
+        {"", "zero"},
+    };
+
+    for (int pass = 0; pass < 2; ++pass) {
+        SCOPED_TRACE(pass);
+        ExpectOk(iterator.SeekToLast());
+        std::vector<std::pair<std::string, std::string>> observed;
+        for (std::size_t entry = 0; entry < expected.size(); ++entry) {
+            ASSERT_TRUE(iterator.valid());
+            observed.emplace_back(AsStringView(iterator.key()), AsStringView(iterator.value()));
+            ExpectOk(iterator.Prev());
+        }
+        EXPECT_EQ(observed, expected);
+        EXPECT_FALSE(iterator.valid());
+        EXPECT_TRUE(iterator.key().empty());
+        EXPECT_TRUE(iterator.value().empty());
+    }
+    ExpectOk(iterator.SeekToFirst());
+    ExpectAt(iterator, "", "zero");
+    ExpectOk(iterator.Next());
+    ExpectAt(iterator, BinaryPrefix, "first");
+    ExpectOk(iterator.Prev());
+    ExpectAt(iterator, "", "zero");
+    ExpectOk(iterator.Next());
+    ExpectAt(iterator, BinaryPrefix, "first");
+    EXPECT_TRUE(comparator.comparisons.empty());
+}
+
+TEST(BlockIteratorTest, ReverseFailuresClearViewsAndSupportedPositioningRestoresReachableEntries) {
+    const auto first = EntryBytes(0, "a", "1");
+    const auto malformed = EntryBytes(2, "", "");
+    const auto last = EntryBytes(0, "z", "last");
+    const auto last_offset = static_cast<std::uint32_t>(first.size() + malformed.size());
+    struct Case {
+        std::vector<std::byte> contents;
+        bool predecessor;
+        std::string_view restored_key;
+        std::string_view restored_value;
+    };
+    const std::vector<Case> cases{
+        {WithRestarts(Concat({first, malformed, last}), {0, last_offset}), true, "z", "last"},
+        {WithRestarts(last, {static_cast<std::uint32_t>(last.size() + 1), 0}), true, "z", "last"},
+        {WithRestarts(Concat({first, Bytes({0x80})}), {0}), false, "a", "1"},
+    };
+    for (const Case& fixture : cases) {
+        SCOPED_TRACE(fixture.contents.size());
+        const Block block = MakeBlock(fixture.contents);
+        const RecordingComparator comparator;
+        Block::Iterator iterator(block, comparator);
+        for (int pass = 0; pass < 2; ++pass) {
+            SCOPED_TRACE(pass);
+            Status failed;
+            if (fixture.predecessor) {
+                ExpectOk(iterator.SeekToLast());
+                ExpectAt(iterator, "z", "last");
+                failed = iterator.Prev();
+            } else {
+                failed = iterator.SeekToLast();
+            }
+            ASSERT_FALSE(failed.has_value());
+            EXPECT_EQ(failed.error().code(), ErrorCode::Corruption);
+            EXPECT_EQ(failed.error().message(), "bad entry in block");
+            EXPECT_FALSE(iterator.valid());
+            EXPECT_TRUE(iterator.key().empty());
+            EXPECT_TRUE(iterator.value().empty());
+            if (fixture.predecessor) {
+                ExpectOk(iterator.SeekToLast());
+            } else {
+                ExpectOk(iterator.SeekToFirst());
+            }
+            ExpectAt(iterator, fixture.restored_key, fixture.restored_value);
+        }
+        EXPECT_TRUE(comparator.comparisons.empty());
+    }
+}
+
 TEST(BlockIteratorTest, ChangesDirectionAcrossRestartPoints) {
     const Block block = MakeBlock(BuildGoldenBlock());
     Block::Iterator iterator(block, BytewiseComparator());
