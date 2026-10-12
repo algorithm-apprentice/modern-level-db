@@ -606,6 +606,7 @@ changed paths verified in main.
 | Complete trusted WriteBatch and WAL fragment codec lifecycle | [Record codec lifecycle](record-codec-lifecycle-composition-design.md) | Delivered in #258 from one locally reviewed larger batch; corrected 144-case original/final parity, exact 94/121 topic subsets, complete 59-definition disposition, and actual hosted Windows Debug selected names match the original 144. |
 | Complete internal-key, Arena and MemTable ownership lifecycle | [Key/memory lifecycle](key-memory-lifecycle-composition-design.md) | Delivered in #259 from one locally reviewed larger batch; 200-case original/final parity, exact 39/33 topic subsets, complete 115-definition disposition, and actual hosted Windows Debug selected names match the original 200. |
 | Complete Block, Iterator, BlockBuilder and block-format representation lifecycle | [Block representation lifecycle](block-representation-lifecycle-composition-design.md) | Delivered in #260 from one locally reviewed larger batch; corrected 208-case original/final parity, exact 121/133 topic subsets, complete 96-definition disposition, and actual hosted Windows Debug selected names match the original 208. |
+| Complete Bloom and filter-block generation/query lifecycle | [Table filter lifecycle](table-filter-lifecycle-composition-design.md) | Delivered in #261 from one locally reviewed larger batch; 162-case original/final parity, exact 78/144 topic subsets, complete 34-definition disposition, and actual hosted Windows Debug selected names match the original 162. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -822,6 +823,16 @@ mutation, distinct metaindex-before-index fault messages and the documented
 CommitEntry publish-before-restart-validation order. Hosted gates and actual
 Windows Debug parity succeeded. Table, filter, compression and engine layers
 remain separate audit frontiers.
+
+#261 closes every Bloom and FilterBlock definition. Its ten-suite selection
+contains 162 original/final identities; Bloom and filter-layout intermediates
+are exact original subsets of 78 and 144. The final ledger covers 34
+definitions. Shared probe math preserves generated 64-bit and admitted
+eight-bit domains plus the exact integer 69/100 probe policy. Layout issues keep
+short/range/array/topology priority and parent-owned Error source locations
+through owned and borrowed entrypoints. Hosted checks succeeded after retrying
+a transient GitHub GraphQL 504; actual Windows Debug identities matched.
+Table/TableBuilder/compression and broader engine/platform files remain open.
 
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,
