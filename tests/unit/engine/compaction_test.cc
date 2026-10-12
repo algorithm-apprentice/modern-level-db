@@ -644,6 +644,10 @@ TEST(CompactionTest, RejectsAKeyThatIsNotAnInternalKey) {
     EXPECT_EQ(edit.error().code(), ErrorCode::Corruption);
     // The output that the compaction began stays for obsolete-file cleanup.
     EXPECT_TRUE(harness.file_system.Contents(harness.directory / "000100.ldb").has_value());
+    const auto& operations = harness.file_system.operations();
+    EXPECT_EQ(std::ranges::find(operations, "sync 000100.ldb"), operations.end());
+    EXPECT_EQ(std::ranges::find(operations, "open_random_access 000100.ldb"), operations.end());
+    EXPECT_EQ(std::ranges::find(operations, "sync_directory db"), operations.end());
 }
 
 TEST(CompactionTest, StopsBeforeWritingARealCorruptTableEntry) {
