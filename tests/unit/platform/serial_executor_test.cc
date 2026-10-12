@@ -196,6 +196,9 @@ TEST(SerialExecutorTest, DestructorRunsStopCallbacksWithoutQueueLock) {
     std::latch callback_registered(1);
     std::latch callback_finished(1);
     std::atomic<int> callback_error_code = -1;
+    std::string callback_error_message;
+    std::string callback_error_file;
+    std::string callback_error_function;
     auto executor = std::make_unique<SerialExecutor>();
     SerialExecutor* executor_pointer = executor.get();
 
@@ -205,6 +208,9 @@ TEST(SerialExecutorTest, DestructorRunsStopCallbacksWithoutQueueLock) {
             if (!status.has_value()) {
                 callback_error_code.store(static_cast<int>(status.error().code()),
                                           std::memory_order_relaxed);
+                callback_error_message = status.error().message();
+                callback_error_file = status.error().location().file_name();
+                callback_error_function = status.error().location().function_name();
             }
             callback_finished.count_down();
         });
@@ -218,6 +224,9 @@ TEST(SerialExecutorTest, DestructorRunsStopCallbacksWithoutQueueLock) {
 
     EXPECT_EQ(callback_error_code.load(std::memory_order_relaxed),
               static_cast<int>(ErrorCode::Aborted));
+    EXPECT_EQ(callback_error_message, "background executor is shut down");
+    EXPECT_TRUE(callback_error_file.ends_with("serial_executor.cc"));
+    EXPECT_NE(callback_error_function.find("SerialExecutor::Schedule"), std::string::npos);
 }
 
 TEST(SerialExecutorTest, DestructorRunsCanceledTaskCleanupWithoutQueueLock) {
@@ -249,6 +258,34 @@ TEST(SerialExecutorTest, DestructorRunsCanceledTaskCleanupWithoutQueueLock) {
 
     EXPECT_EQ(cleanup_error_code.load(std::memory_order_relaxed),
               static_cast<int>(ErrorCode::Aborted));
+}
+
+TEST(SerialExecutorTest, DestructorDestroysCanceledTasksAfterRunningTaskFinishes) {
+    std::latch running(1);
+    std::atomic<bool> running_finished = false;
+    std::atomic<bool> cleanup_saw_finished = false;
+    auto executor = std::make_unique<SerialExecutor>();
+
+    ASSERT_TRUE(executor->Schedule([&](std::stop_token stop_token) {
+        running.count_down();
+        while (!stop_token.stop_requested()) {
+            std::this_thread::yield();
+        }
+        running_finished.store(true, std::memory_order_relaxed);
+    }));
+    running.wait();
+
+    auto cleanup = std::shared_ptr<int>(new int(1), [&](int* value) {
+        delete value;
+        cleanup_saw_finished.store(running_finished.load(std::memory_order_relaxed),
+                                   std::memory_order_relaxed);
+    });
+    ASSERT_TRUE(executor->Schedule([cleanup](std::stop_token) {}));
+    cleanup.reset();
+
+    executor.reset();
+
+    EXPECT_TRUE(cleanup_saw_finished.load(std::memory_order_relaxed));
 }
 
 }  // namespace

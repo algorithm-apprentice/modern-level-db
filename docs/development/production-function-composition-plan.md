@@ -855,6 +855,30 @@ remain nonowning; exhausted seeks record only current-version files. Hosted
 checks and actual Windows Debug parity succeeded. Database read orchestration,
 compaction, API and platform files remain open.
 
+#264 closes the compaction selection and execution lifecycle. Its selected
+suite contains 137 original/final identities, and the manual ledger covers 42
+definitions plus two lambdas. Input assembly, per-entry execution, initial
+size/seek selection, level-zero closure, expansion replacement and grandparent
+collection now have named responsibility boundaries. Parse corruption blocks
+finalization immediately, iterator-child ordering remains stable, and Hosted
+GCC 13 resolves the local GCC 16 optional-vector warning as a baseline
+toolchain difference.
+
+#265 starts the complete native-platform audit with POSIX and Windows writable,
+lock and close lifecycles. POSIX open-state checks preserve caller source
+locations and closed-before-sticky priority; Windows buffering retains its
+platform-specific close behavior. Exact Error ownership, child-process kernel
+lock release and descriptor cleanup remain characterized separately by
+platform.
+
+#266 completes native directory-sync and kernel-lock acquisition stages. POSIX
+always closes the directory descriptor and returns a sync error before a close
+error; POSIX and Windows lock acquisition retain their native Busy/I/O mapping.
+A Linux procfs characterization proves sync-error propagation and descriptor
+release. The reviewed head passed all 20 gates with 16/16 changed lines and
+100% diff coverage. Remaining native definitions still require complete
+disposition.
+
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,
 not the whole dump file.

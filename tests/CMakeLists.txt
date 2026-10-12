@@ -60,6 +60,7 @@ add_executable(
   unit/platform/crash_observation_test.cc
   unit/platform/reference_directory_test.cc
   unit/platform/file_system_test.cc
+  unit/platform/mapped_read_limiter_test.cc
   unit/platform/serial_executor_test.cc
   unit/table/block_format_test.cc
   unit/table/block_test.cc

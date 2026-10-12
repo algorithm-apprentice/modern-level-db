@@ -6,6 +6,19 @@
 #include <stop_token>
 
 namespace modern_leveldb {
+namespace {
+
+bool WaitForDuration(Clock::Duration duration, std::stop_token stop_token) {
+    // No shared state is protected here. The stop-token wait overload installs
+    // the wake-up callback; this local mutex only participates in its wait protocol.
+    std::mutex mutex;
+    std::condition_variable_any condition;
+    std::unique_lock lock(mutex);
+    condition.wait_for(lock, stop_token, duration, [] { return false; });
+    return !stop_token.stop_requested();
+}
+
+}  // namespace
 
 Clock::TimePoint SystemClock::Now() const noexcept { return std::chrono::steady_clock::now(); }
 
@@ -16,14 +29,7 @@ bool SystemClock::SleepFor(Duration duration, std::stop_token stop_token) {
     if (duration <= Duration::zero()) {
         return true;
     }
-
-    // No shared state is protected here. The stop-token wait overload installs
-    // the wake-up callback; this local mutex only participates in its wait protocol.
-    std::mutex mutex;
-    std::condition_variable_any condition;
-    std::unique_lock lock(mutex);
-    condition.wait_for(lock, stop_token, duration, [] { return false; });
-    return !stop_token.stop_requested();
+    return WaitForDuration(duration, stop_token);
 }
 
 }  // namespace modern_leveldb
