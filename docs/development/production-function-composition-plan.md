@@ -549,8 +549,53 @@ reverse sampling additionally measures exact period counts.
 The same 105 iterator/compaction/database cases pass before/after with exact
 JUnit parity; merge direction alone passes eight cases. Independent combined
 review found no significant issue and directly confirmed both artifacts without
-running tests. Exact-head CI remains required before delivery. Other source,
-sampling, bulk positioning and block iterator frontiers stay open.
+running tests. Delivery completed in #207 after all 20 exact-head checks
+succeeded. A subsequent CI-coverage characterization adds the malformed-key
+reverse-reposition boundary; the delivered integrated selection contains 106
+cases. This does not change the recorded 105-case original/final comparison.
+Other source, sampling, bulk positioning and deeper block iterator frontiers
+stay open.
+
+### Recent delivery reconciliation
+
+These records reconcile completed module slices, not completed files or a
+production-wide atomic-responsibility certification. Their detailed designs
+retain definition-level ledgers, original-source characterization and limits.
+All delivered implementations below received independent combined review,
+passed all 20 exact reviewed-head checks, and were normally merged with reviewed
+changed paths verified in main.
+
+| Bounded slice | Detailed design | Delivery and focused evidence |
+|---|---|---|
+| W01/W02 physical recovery and logical transitions | [WAL reader transitions](wal-reader-transition-composition-design.md) | Delivered in #204; corrected integrated selector covers 73 WalReaderTest/WalWriterTest/WalIoNativeTest cases, not the earlier incomplete 49-case selection. |
+| I03/I04 checkpoint positioning and entry validation | [Block positioning](block-positioning-composition-design.md) | Delivered in #208 after accepted #206; 129-case original/final parity, with a 25-case seek intermediate selection. |
+| Recursive WAL append/block-fill progress | [WAL progress](wal-block-progress-composition-design.md) | Delivered in #211 after accepted #210; 148-case original/final parity, with an 11-case writer/native intermediate selection. |
+| N01/N02/N05 native path and shared regular opening | [Native opening](native-path-opening-composition-design.md) | Delivered in #212 after accepted #209; 121-case original/final parity, with a 46-case path intermediate selection. |
+| N03/N04 directory resolution and storage admission | [Native directory admission](native-directory-admission-composition-design.md) | Delivered in #214 after accepted #213; 120-case original/final parity, with a 49-case resolution intermediate selection. |
+| N06 and POSIX portion of N08 | [POSIX mapping/directory](posix-mapping-directory-composition-design.md) | Delivered in #216 after accepted #215; actual native CI logs have identical original/final Linux 766 and macOS 761 unique case sets, including focused 82/77-case sets. |
+
+For #216, local Windows builds were not used as POSIX runtime evidence.
+The reviewed characterization-only draft first ran unchanged production on
+Linux/macOS; production topics were added afterward. Original run 38179010927
+and implementation run 38191108865 establish exact native case-set parity.
+The draft became ready only after implementation review, native comparison and
+all 20 reviewed-head checks succeeded; it is now merged, not a pending draft.
+Case counts from native CTest logs are not represented as JUnit artifacts.
+
+Windows N07 and the Windows portion of N08 have an accepted
+[mapping/enumeration design](windows-mapping-enumeration-composition-design.md)
+in #217. Implementation #218 has independent combined review and local native
+163-case original/final parity, including five new characterization cases;
+hosted exact-head CI/delivery remains pending at this record.
+Do not treat design-only acknowledgement jobs as native execution.
+
+Windows N09 remains open. Other recursive frontiers include diagnostic escaping
+and record orchestration, runtime metadata/CURRENT helpers, cache table/list/
+reference operations, deeper block positioning/decoding, WAL fragmentation and
+codec helpers, and remaining engine/native children. This is not an exhaustive
+replacement for the final every-definition audit: all structured dispositions,
+new helpers, private-header bodies and lambdas still participate. Benchmarks
+remain outside scope.
 
 ### MANIFEST recovery
 
