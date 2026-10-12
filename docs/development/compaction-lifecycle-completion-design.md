@@ -106,11 +106,31 @@ the cases. Use small picker, iterator-assembly and input-loop production commits
 then integrated review of every definition and both lambdas.
 
 One non-draft PR must pass exact-head hosted checks, GCC 13 branch coverage and
-actual Windows Debug original-name parity before normal merge. This design is
-not yet accepted and does not certify engine/platform/API completion.
+actual Windows Debug original-name parity before normal merge. This design and implementation are independently reviewed. Delivery remains
+pending and this batch does not certify engine/platform/API completion.
 
 ## Independent design review
 
 Independent review corrected the definition count, lambda migration, complete
 loop-error contract and discriminating iterator-order characterization above.
 No production edits or tests were performed during this design review.
+
+## Local implementation evidence
+
+Original-source characterization commit `b9c767f` strengthens malformed-key
+finalization suppression. The unchanged/final selected compaction/picker/
+iterator/table-builder/lookup/database set contains exactly 137 identities.
+
+Production topics are `1df6b3a` (input-source assembly and complete execution
+loop), `fcad7e2` (initial size/seek selection and level-0 closure), and
+`cf28535` (optional expansion owner replacement and grandparent collection).
+Final identities exactly match original.
+
+The mechanical scanner reports 40 definitions and two lambdas because it still
+classifies the two deleted header overloads as declarations; the complete manual
+ledger is 42 definitions and two lambdas. GCC Release Werror compiles picker and
+both changed test objects; compaction.cc remains blocked by the documented
+pre-existing GCC16 optional-vector `maybe-uninitialized` diagnostic that also
+occurs on baseline. Hosted GCC13 remains authoritative.
+
+Independent integrated review found no significant issue.
