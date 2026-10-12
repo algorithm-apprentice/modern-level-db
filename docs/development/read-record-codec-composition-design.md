@@ -7,6 +7,8 @@ Source baseline: `b8d49fa3c02fd03a4713fc8ad4a7f6be38b6f22c`.
 Foundation #253 is delivered. This is a related, larger delivery batch:
 scalar codecs, block record decoding/layout admission, and MemTable lookup.
 Benchmark code and unrelated iterator algorithms are excluded.
+The design and original characterization are accepted; all three production
+topics are implemented locally. Integrated review and delivery remain pending.
 
 Keep reviewable topic commits locally, then publish one non-draft PR containing
 the reviewed design, original-source characterization, implementation topics,
@@ -197,3 +199,52 @@ GCC 13 branch coverage and portable/Release builds, and actual Windows Debug
 logs must match the frozen integrated test names before normal squash delivery.
 Ordinary successful cases do not prove allocator failure, physical copy/elision/
 destruction counts, dead-read behavior, performance, or whole-source completion.
+
+## Local implementation evidence
+
+The accepted design is commit `d35382e`. Original-source characterization is
+split into three reviewable commits before any production edit:
+`6759bab` for scalar cursor/diagnostic transactions, `e8f74a7` for block
+header/payload/footer admission, and `7166491` for MemTable decisions and
+stable packed-record views. Independent bounded review found no significant
+case issue.
+
+A fresh unchanged-production Windows Debug build, including the native lock
+child, froze 296 unique selected identities in 18 nonempty suites:
+
+| Suite | Cases |
+| --- | ---: |
+| BytesTest | 5 |
+| CodingTest | 26 |
+| DatabaseTest | 54 |
+| LookupTest | 14 |
+| RecoveryTest | 17 |
+| TableCacheTest | 7 |
+| InternalKeyTest | 9 |
+| LookupKeyTest | 6 |
+| InternalKeyComparatorTest | 10 |
+| WriteBatchTest | 8 |
+| MemTableTest | 13 |
+| VersionEditTest | 22 |
+| BlockTest | 13 |
+| BlockBuilderTest | 7 |
+| BlockIteratorTest | 26 |
+| TableBuilderTest | 19 |
+| TableTest | 38 |
+| TableNativeTest | 2 |
+
+The production topics remain separate local commits:
+`4e37a99` composes scalar byte emission/admission and the three-caller
+compatible payload fold; `1731037` composes block header, payload and restart
+array admission; `d52f605` composes MemTable user matching and record
+classification. Their targeted Windows Debug selections preserve exact
+original subsets: 99 identities across eight suites for scalar codecs,
+197 across ten suites for block decoding, and 131 across eight suites for
+MemTable lookup. The final integrated selection is exactly the original
+296 identities, with no failure, error, skip, or duplicate identity.
+
+The complete GCOVR/LCOV/NOLINT annotation multisets are unchanged in coding.cc,
+coding_internal.h, block.cc, block.h, and memtable.cc. Documentation validation
+and `git diff --check` pass. These are local behavioral/composition gates only;
+portable/Release compilers, authoritative branch coverage, hosted Windows
+identity parity, and normal merge remain delivery obligations.
