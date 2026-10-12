@@ -584,6 +584,8 @@ changed paths verified in main.
 | Recursive recovered-counter accumulation and publication | [Recovered metadata counters](metadata-recovered-counter-composition-design.md) | Delivered in #238 after accepted #237; 123-case original/final native parity, 39-case accumulator intermediate, and actual hosted Windows Debug selected names match the original 123. |
 | Recursive predecessor checkpoint and reverse suffix scans | [Block reverse positioning](block-reverse-positioning-composition-design.md) | Delivered in #241 after accepted #240; 201-case original/final native parity, 42-case predecessor intermediate, and actual hosted Windows Debug selected names match the original 201. |
 | Recursive hash word folding and bounded residual-tail mixing | [Hash word/tail composition](hash-word-tail-composition-design.md) | Delivered in #243 after accepted #242; 96-case original/final native parity, six-case word intermediate, and actual hosted Windows Debug selected names match the original 96 and delivered reverse selection's 201. |
+| Recursive byte/trailer comparison, checked shortening and prefix-block stages | [Key comparison/shortening](key-comparison-shortening-composition-design.md) | Delivered in #245 after accepted #244; 238-case original/final native parity, two 35-case foundation intermediates, and actual hosted Windows Debug selected names match the original 238. |
+| Recursive required-field proof and parent-owned prepared publication | [Prepared metadata publication](metadata-prepared-publication-composition-design.md) | Delivered in #248 after accepted #247; 125-case original/final native parity, two 41-case VersionSet intermediates, and actual hosted Windows Debug selected names match the original 125. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -669,12 +671,46 @@ the merge context includes its two delivered block cases; the local original/
 final hash runs were on the same older-block baseline. No benchmark policy or
 performance-equivalence claim is inferred from those golden values.
 
+#245's seventeen-class selection contains 238 unique original/final identities,
+not a hash/cache or metadata baseline. Six original public cases cover normalized
+comparison/user-order magnitude, shortening boundaries/callback order/throws,
+borrowed limits and complete literal prefix/restart blocks with Reset history.
+Both 35-case intermediates are exactly the original foundation subset.
+SharedPrefixLength has two real callers; InternalKey shortening still appends
+the max-seek trailer only after strict eligibility and publishes only after its
+full-key limit comparison. BlockBuilder retains parent key-delta lifetime and
+header/payload/history/restart order. Pure scalar argument sampling and physical
+copy/allocation/evaluation-count limits remain explicit in the scoped design.
+
+The first #245 GCC 13 coverage run exposed an admission-branch gap despite
+1,186 executions: the compound condition had 75% (3/4), not 100% branch coverage.
+A reverse start/limit boundary row was first executed and independently reviewed
+on original production, then normally cherry-picked into the published branch.
+The comparator's conditional separator guarantee permits this input; no new
+precondition was imposed. Corrected coverage has 1,187 hits and 100% (4/4).
+No production algorithm, gate threshold, exclusion or published history rewrite
+was used to obtain the successful corrected exact-head checks.
+
+#248 adds two cases to the same five-class metadata selection used by #238,
+yielding 125 rather than 123. The six-row presence/bounds/topology matrix
+preserves exact first-error priority. Successful/failed recovered-MANIFEST
+publication observes the original snapshot, duplicate staged pointers and
+captured edit counters, while live next/sequence advance under the mutex.
+The raw pin is acquired during unlocked CURRENT temporary sync, retained only
+after successful publication and destroyed under the same synchronization.
+Failure keeps original topology and a sticky exact error without later I/O.
+Weak probes and owned summaries do not accidentally retain old versions.
+Both 41-case intermediates match the original VersionSet subset exactly;
+allocator-failure, physical-copy and general concurrent-writer claims are not
+inferred. WritePrepared's visible relock/exception policy and ReleaseRead remain
+unchanged, and real replay/staging callers share compact-pointer assignment.
+
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,
 not the whole dump file.
 Other recursive frontiers include diagnostic
-header/internal-key assemblers, metadata prepared-state publication and required-counter
-validation, cache table/list/reference operations, deeper block layout/entry
+header/internal-key assemblers, remaining metadata write/release children,
+cache table/list/reference operations, deeper block layout/entry
 decoding, WAL fragmentation and codec helpers, and remaining engine/native
 children. This is not an exhaustive
 replacement for the final every-definition audit: all structured dispositions,
