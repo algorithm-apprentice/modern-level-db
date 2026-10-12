@@ -117,6 +117,24 @@ struct DirectoryCloser {
 
 using ScopedDirectory = std::unique_ptr<DIR, DirectoryCloser>;
 
+void AppendDirectoryChild(std::vector<std::filesystem::path>& children, const dirent& entry) {
+    const std::string name(entry.d_name);
+    if (name != "." && name != "..") {
+        children.emplace_back(name);
+    }
+}
+
+int ReadDirectoryChildren(DIR* directory, std::vector<std::filesystem::path>& children) {
+    while (true) {
+        errno = 0;
+        dirent* entry = ::readdir(directory);
+        if (entry == nullptr) {
+            return errno;
+        }
+        AppendDirectoryChild(children, *entry);
+    }
+}
+
 int OpenFlagsWithCloseOnExec(int flags) {
 #if defined(O_CLOEXEC)
     return flags | O_CLOEXEC;
@@ -260,6 +278,48 @@ private:
     const int descriptor_;
     const std::filesystem::path path_;
 };
+
+Result<std::unique_ptr<RandomAccessFile>> OpenCopiedRandomFile(ScopedDescriptor& descriptor,
+                                                               const std::filesystem::path& path) {
+    std::unique_ptr<RandomAccessFile> file =
+        std::make_unique<PosixRandomAccessFile>(descriptor.get(), path);
+    (void)descriptor.Release();
+    return file;
+}
+
+bool MatchesMappingSize(int descriptor, std::uint64_t expected_size) {
+    struct stat file_status{};
+    // GCOVR_EXCL_START: needs an injected fstat failure after a successful open
+    if (::fstat(descriptor, &file_status) == -1) {
+        return false;
+    }
+    // GCOVR_EXCL_STOP
+    // GCOVR_EXCL_START: regular files have nonnegative sizes
+    if (file_status.st_size < 0) {
+        return false;
+    }
+    // GCOVR_EXCL_STOP
+    return static_cast<std::uint64_t>(file_status.st_size) == expected_size;
+}
+
+std::optional<std::size_t> MappingLength(int descriptor,
+                                         std::optional<std::uint64_t> expected_size) {
+    if (!expected_size.has_value()) {
+        return std::nullopt;
+    }
+    if (*expected_size == 0) {
+        return std::nullopt;
+    }
+    // GCOVR_EXCL_START: needs 32-bit POSIX
+    if (*expected_size > std::numeric_limits<std::size_t>::max()) {
+        return std::nullopt;
+    }
+    // GCOVR_EXCL_STOP
+    if (!MatchesMappingSize(descriptor, *expected_size)) {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(*expected_size);
+}
 
 }  // namespace
 
@@ -601,54 +661,26 @@ Result<std::unique_ptr<RandomAccessFile>> PosixFileSystem::OpenRandomAccess(
     if (!descriptor.has_value()) {
         return std::unexpected(descriptor.error());
     }
-    const auto copied = [&]() -> Result<std::unique_ptr<RandomAccessFile>> {
-        std::unique_ptr<RandomAccessFile> file =
-            std::make_unique<PosixRandomAccessFile>(descriptor->get(), path);
-        (void)descriptor->Release();
-        return file;
-    };
     if (mmap_budget_ == nullptr) {
-        return copied();
+        return OpenCopiedRandomFile(*descriptor, path);
     }
-    if (!expected_size.has_value()) {
-        return copied();
+    const auto length = MappingLength(descriptor->get(), expected_size);
+    if (!length.has_value()) {
+        return OpenCopiedRandomFile(*descriptor, path);
     }
-    if (*expected_size == 0) {
-        return copied();
-    }
-    // GCOVR_EXCL_START: needs 32-bit POSIX
-    if (*expected_size > std::numeric_limits<std::size_t>::max()) {
-        return copied();
-    }
-    // GCOVR_EXCL_STOP
-    struct stat file_status{};
-    // GCOVR_EXCL_START: needs an injected fstat failure after a successful open
-    if (::fstat(descriptor->get(), &file_status) == -1) {
-        return copied();
-    }
-    // GCOVR_EXCL_STOP
-    // GCOVR_EXCL_START: regular files have nonnegative sizes
-    if (file_status.st_size < 0) {
-        return copied();
-    }
-    // GCOVR_EXCL_STOP
-    if (static_cast<std::uint64_t>(file_status.st_size) != *expected_size) {
-        return copied();
-    }
-    const std::size_t length = static_cast<std::size_t>(*expected_size);
     if (!mmap_budget_->Acquire()) {
-        return copied();
+        return OpenCopiedRandomFile(*descriptor, path);
     }
-    PendingMmap pending(mmap_budget_, length);
-    void* const mapping = ::mmap(nullptr, length, PROT_READ, MAP_SHARED, descriptor->get(), 0);
+    PendingMmap pending(mmap_budget_, *length);
+    void* const mapping = ::mmap(nullptr, *length, PROT_READ, MAP_SHARED, descriptor->get(), 0);
     // GCOVR_EXCL_START: needs a resource-dependent real mmap failure
     if (mapping == MAP_FAILED) {
-        return copied();
+        return OpenCopiedRandomFile(*descriptor, path);
     }
     // GCOVR_EXCL_STOP
     pending.SetMapping(mapping);
     std::unique_ptr<RandomAccessFile> file =
-        std::make_unique<PosixMmapRandomAccessFile>(mapping, length, mmap_budget_);
+        std::make_unique<PosixMmapRandomAccessFile>(mapping, *length, mmap_budget_);
     pending.Commit();
     return file;
 }
@@ -704,19 +736,7 @@ Result<std::vector<std::filesystem::path>> PosixFileSystem::ListDirectory(
     }
 
     std::vector<std::filesystem::path> children;
-    int read_error = 0;
-    while (true) {
-        errno = 0;
-        dirent* entry = ::readdir(directory.get());
-        if (entry == nullptr) {
-            read_error = errno;
-            break;
-        }
-        const std::string name(entry->d_name);
-        if (name != "." && name != "..") {
-            children.emplace_back(name);
-        }
-    }
+    const int read_error = ReadDirectoryChildren(directory.get(), children);
     DIR* raw_directory = directory.release();
     const int close_result = ::closedir(raw_directory);
     if (read_error != 0) {

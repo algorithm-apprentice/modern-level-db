@@ -19,6 +19,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -371,6 +372,86 @@ TEST(PosixFileSystemTest, MappedFileRemainsReadableAfterUnlink) {
     EXPECT_EQ(AsStringView(*view), "mapped contents");
 }
 
+TEST(PosixFileSystemTest, MappingGuardsKeepCopiedReadersAliveWithoutConsumingTheOnlySlot) {
+    TemporaryDirectory directory;
+    const auto path = directory.path() / "guarded";
+    WriteFixture(path, AsBytes("abcdef"));
+    const auto budget = std::make_shared<MappedReadLimiter>(1);
+    PosixFileSystem file_system(budget);
+    const std::array<std::optional<std::uint64_t>, 4> hints{std::nullopt, 0, 5, 7};
+    std::vector<std::unique_ptr<RandomAccessFile>> copies;
+    for (const auto hint : hints) {
+        auto opened = file_system.OpenRandomAccess(path, hint);
+        ASSERT_TRUE(opened.has_value());
+        EXPECT_FALSE((*opened)->TryReadView(0, 6).has_value());
+        std::array<std::byte, 6> bytes{};
+        const auto read = (*opened)->Read(0, bytes);
+        ASSERT_TRUE(read.has_value());
+        EXPECT_EQ(*read, bytes.size());
+        EXPECT_EQ(AsStringView(bytes), "abcdef");
+        copies.push_back(std::move(*opened));
+    }
+    auto occupying = file_system.OpenRandomAccess(path, 6);
+    ASSERT_TRUE(occupying.has_value());
+    ASSERT_TRUE((*occupying)->TryReadView(0, 6).has_value());
+    auto exhausted = file_system.OpenRandomAccess(path, 6);
+    ASSERT_TRUE(exhausted.has_value());
+    EXPECT_FALSE((*exhausted)->TryReadView(0, 6).has_value());
+    occupying->reset();
+    std::array<std::byte, 6> bytes{};
+    const auto read = (*exhausted)->Read(0, bytes);
+    ASSERT_TRUE(read.has_value());
+    EXPECT_EQ(*read, bytes.size());
+    EXPECT_EQ(AsStringView(bytes), "abcdef");
+    EXPECT_FALSE((*exhausted)->TryReadView(0, 6).has_value());
+    auto reused = file_system.OpenRandomAccess(path, 6);
+    ASSERT_TRUE(reused.has_value());
+    const auto view = (*reused)->TryReadView(0, 6);
+    ASSERT_TRUE(view.has_value());
+    EXPECT_EQ(AsStringView(*view), "abcdef");
+    EXPECT_EQ(copies.size(), hints.size());
+}
+
+TEST(PosixFileSystemTest, CopiedAndMappedOwnersOutliveTheirOriginatingFilesystem) {
+    TemporaryDirectory directory;
+    const auto path = directory.path() / "retained";
+    WriteFixture(path, AsBytes("retained bytes"));
+    const auto budget = std::make_shared<MappedReadLimiter>(1);
+    std::unique_ptr<RandomAccessFile> mapped;
+    std::unique_ptr<RandomAccessFile> copied;
+    {
+        PosixFileSystem file_system(budget);
+        auto first = file_system.OpenRandomAccess(path, 14);
+        ASSERT_TRUE(first.has_value());
+        mapped = std::move(*first);
+        auto fallback = file_system.OpenRandomAccess(path, 14);
+        ASSERT_TRUE(fallback.has_value());
+        copied = std::move(*fallback);
+        EXPECT_FALSE(copied->TryReadView(0, 14).has_value());
+    }
+    const auto view = mapped->TryReadView(0, 14);
+    ASSERT_TRUE(view.has_value());
+    ASSERT_TRUE(std::filesystem::remove(path));
+    EXPECT_EQ(AsStringView(*view), "retained bytes");
+    std::array<std::byte, 14> output{};
+    const auto read = copied->Read(0, output);
+    ASSERT_TRUE(read.has_value());
+    EXPECT_EQ(*read, output.size());
+    EXPECT_EQ(AsStringView(output), "retained bytes");
+
+    WriteFixture(path, AsBytes("replacement"));
+    PosixFileSystem later(budget);
+    auto while_retained = later.OpenRandomAccess(path, 11);
+    ASSERT_TRUE(while_retained.has_value());
+    EXPECT_FALSE((*while_retained)->TryReadView(0, 11).has_value());
+    mapped.reset();
+    auto reused = later.OpenRandomAccess(path, 11);
+    ASSERT_TRUE(reused.has_value());
+    const auto replacement = (*reused)->TryReadView(0, 11);
+    ASSERT_TRUE(replacement.has_value());
+    EXPECT_EQ(AsStringView(*replacement), "replacement");
+}
+
 TEST(PosixFileSystemTest, BuffersFlushesSyncsAndAppendsWrites) {
     TemporaryDirectory directory;
     PosixFileSystem file_system;
@@ -540,6 +621,42 @@ TEST(PosixFileSystemTest, RejectsCreateDirectoryOverExistingFile) {
 
     ASSERT_FALSE(status.has_value());
     EXPECT_EQ(status.error().code(), ErrorCode::InvalidArgument);
+}
+
+TEST(PosixFileSystemTest, DirectoryTraversalOwnsNativeChildNamesAndOmitsOnlyDotEntries) {
+    TemporaryDirectory directory;
+    PosixFileSystem file_system;
+    std::set<std::filesystem::path> expected{"file", ".hidden", "with space", "subdir", "alias"};
+    for (const auto& name : {"file", ".hidden", "with space"}) {
+        WriteFixture(directory.path() / name, AsBytes("content"));
+    }
+#if defined(__linux__)
+    const std::filesystem::path raw_name{std::string("raw-\xff", 5)};
+    WriteFixture(directory.path() / raw_name, AsBytes("raw"));
+    expected.insert(raw_name);
+#endif
+    ASSERT_TRUE(std::filesystem::create_directory(directory.path() / "subdir"));
+    std::filesystem::create_symlink("file", directory.path() / "alias");
+    auto retained = file_system.ListDirectory(directory.path());
+    ASSERT_TRUE(retained.has_value());
+    const std::set<std::filesystem::path> retained_names(retained->begin(), retained->end());
+    EXPECT_EQ(retained_names, expected);
+    EXPECT_EQ(retained->size(), expected.size());
+    for (int repeat = 0; repeat < 128; ++repeat) {
+        const auto children = file_system.ListDirectory(directory.path());
+        ASSERT_TRUE(children.has_value());
+        EXPECT_EQ(std::set<std::filesystem::path>(children->begin(), children->end()), expected);
+        EXPECT_EQ(children->size(), expected.size());
+    }
+    EXPECT_EQ(std::set<std::filesystem::path>(retained->begin(), retained->end()), retained_names);
+    for (const auto& invalid : {directory.path() / "absent", directory.path() / "file"}) {
+        const auto failed = file_system.ListDirectory(invalid);
+        ASSERT_FALSE(failed.has_value());
+        EXPECT_EQ(failed.error().code(), ErrorCode::NotFound);
+        EXPECT_TRUE(
+            failed.error().message().starts_with("open directory '" + invalid.native() + "'"));
+    }
+    EXPECT_EQ(file_system.ListDirectory({}).error().code(), ErrorCode::InvalidArgument);
 }
 
 TEST(PosixFileSystemTest, ReportsMissingPaths) {

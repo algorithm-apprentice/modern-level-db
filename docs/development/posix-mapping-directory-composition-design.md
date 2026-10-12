@@ -139,3 +139,49 @@ characterization. It did not edit files or execute builds/tests.
 Allocation/syscall failure paths retain their inspection-based limits, and
 repeated enumeration is only a leak regression exercise, not proof of leak
 freedom. Native unchanged-production execution remains mandatory before extraction.
+
+## Characterization stage
+
+Accepted design #215 merged after all 20 exact-head checks succeeded.
+Three characterization cases are authored against unchanged production at
+28847703ab4f8bb072b2242e27a5b50b7b1c2ac3: retained guard/exhaustion fallbacks,
+copied/mapped owners outliving the filesystem with unlink/replacement/slot reuse,
+and native-name ownership with exact dot omission and typed directory failures.
+The non-UTF-8 filename control is Linux-only; the same directory case executes
+its ordinary/dot-prefix/space/subdirectory/symlink controls on both native hosts.
+No production extraction has been performed and no local POSIX execution is
+claimed. Native characterization CI results and required case names must be
+verified before adding source commits to the implementation PR.
+
+Independent bounded characterization review found no high-confidence issue in
+the two-file diff, including byte counts, view lifetimes, slot reuse and native
+name ownership. It did not edit files or execute builds/tests; compilation and
+native execution remain unverified at this characterization-only stage.
+
+## Original native evidence and implementation stage
+
+The exact characterization-only head
+7d16db9c0bab001ffe42612819575d1aae556aba passed all 20 checks in run 38179010927.
+Actual Debug test logs contain 766 unique passing Linux cases and 761 unique
+passing macOS cases, including all three required new PosixFileSystemTest names.
+The original POSIX production file is byte-identical to the accepted baseline.
+The focused PosixFileSystemTest/TableTest/RecoveryTest sets contain 82 Linux and
+77 macOS cases; their names are retained for exact implementation comparison.
+These are native CTest log case sets, not JUnit artifacts or local POSIX runs.
+
+After verifying that evidence, separate mapping admission/copied ownership and
+directory traversal/publication topic commits implement the seven-definition
+ledger. Existing 32-bit/fstat/negative-size exclusions move with their original
+conditions; the mmap exclusion and parent pending guard remain unchanged.
+The copied fallback still constructs while PendingMmap is alive; directory
+read errno still precedes explicit close and error construction.
+Formatting, documentation and whitespace checks pass locally.
+Native implementation execution and original/final parity remain pending
+updated CI; Windows compilation is not a substitute for that evidence.
+
+Independent bounded implementation review found no significant issue in the
+three changed paths and independently verified original native execution,
+focused case sets and characterization-before-extraction commit order.
+It did not edit files or execute builds/tests. Allocation/syscall failures remain
+inspection-based; updated native execution and exact before/after case parity
+are still required before making the draft ready or merging.
