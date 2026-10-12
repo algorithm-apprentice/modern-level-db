@@ -5,8 +5,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <source_location>
 #include <span>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "base/coding_internal.h"
@@ -57,16 +59,24 @@ template <typename UInt>
     return value;
 }
 
+void EmitVarintByte(MutableByteView& output, std::byte byte) noexcept {
+    output.front() = byte;
+    output = output.subspan(1);
+}
+
+template <typename UInt>
+void EmitVarintContinuation(MutableByteView& output, UInt& value) noexcept {
+    EmitVarintByte(output, static_cast<std::byte>((value & 0x7fU) | 0x80U));
+    value >>= VarintPayloadBits;
+}
+
 template <typename UInt>
 void EncodeVarintTrusted(MutableByteView& output, UInt value) noexcept {
     static_assert(std::is_unsigned_v<UInt>);
     while (value >= 0x80U) {
-        output.front() = static_cast<std::byte>((value & 0x7fU) | 0x80U);
-        output = output.subspan(1);
-        value >>= VarintPayloadBits;
+        EmitVarintContinuation(output, value);
     }
-    output.front() = static_cast<std::byte>(value);
-    output = output.subspan(1);
+    EmitVarintByte(output, static_cast<std::byte>(value));
 }
 
 template <typename UInt>
@@ -93,6 +103,15 @@ void AppendVarint(std::vector<std::byte>& output, UInt value) {
     AppendVarintWithSize(output, value, VarintLength(value));
 }
 
+[[nodiscard]] Result<unsigned int> ReadVarintByte(
+    ByteView input, std::size_t index,
+    std::source_location location = std::source_location::current()) {
+    if (index >= input.size()) {
+        return std::unexpected(Error::Corruption("truncated varint", location));
+    }
+    return std::to_integer<unsigned int>(input[index]);
+}
+
 template <typename UInt>
 [[nodiscard]] Result<UInt> ConsumeVarint(ByteView& input) {
     static_assert(std::is_unsigned_v<UInt>);
@@ -102,18 +121,18 @@ template <typename UInt>
 
     UInt value = 0;
     for (std::size_t index = 0; index < MaxBytes; ++index) {
-        if (index >= input.size()) {
-            return std::unexpected(Error::Corruption("truncated varint"));
+        Result<unsigned int> byte = ReadVarintByte(input, index);
+        if (!byte.has_value()) {
+            return std::unexpected(std::move(byte).error());
         }
 
-        const auto byte = std::to_integer<unsigned int>(input[index]);
-        const auto payload = byte & 0x7fU;
+        const auto payload = *byte & 0x7fU;
         const std::size_t shift = index * VarintPayloadBits;
 
         // This decoder accepts excess terminal payload bits by truncating them
         // to the unsigned result width; continuation past the maximum byte count is an error.
-        value |= static_cast<UInt>(payload) << shift;
-        if ((byte & 0x80U) == 0U) {
+        FoldVarintPayload(value, payload, shift);
+        if ((*byte & 0x80U) == 0U) {
             input = input.subspan(index + 1U);
             return value;
         }
@@ -124,6 +143,15 @@ template <typename UInt>
     }
 
     return std::unexpected(Error::Corruption("invalid varint"));
+}
+
+[[nodiscard]] Status ValidateLengthPrefixedPayload(
+    ByteView remaining, std::uint32_t length,
+    std::source_location location = std::source_location::current()) {
+    if (remaining.size() < length) {
+        return std::unexpected(Error::Corruption("truncated length-prefixed value", location));
+    }
+    return {};
 }
 
 }  // namespace
@@ -202,8 +230,9 @@ Result<ByteView> ConsumeLengthPrefixed(ByteView& input) {
     if (!length.has_value()) {
         return std::unexpected(length.error());
     }
-    if (remaining.size() < *length) {
-        return std::unexpected(Error::Corruption("truncated length-prefixed value"));
+    Status admitted = ValidateLengthPrefixedPayload(remaining, *length);
+    if (!admitted.has_value()) {
+        return std::unexpected(std::move(admitted).error());
     }
 
     const ByteView value = remaining.first(*length);

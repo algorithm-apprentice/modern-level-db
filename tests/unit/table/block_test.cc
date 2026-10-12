@@ -179,6 +179,125 @@ void ExpectAt(const Block::Iterator& iterator, std::string_view key, std::string
     EXPECT_EQ(AsStringView(iterator.value()), value);
 }
 
+TEST(BlockTest, LiteralHeaderPathsKeepBorrowedValuesAcrossBackingMoves) {
+    const std::array entries{
+        Bytes({0, 1, 1, 'a', 0xff}),
+        Bytes({0x80, 0, 0x81, 0, 0x81, 0, 'a', 0xff}),
+        Bytes({0x80, 0x80, 0x80, 0x80, 0x10, 0x81, 0x80, 0x80, 0x80, 0x10, 0x81, 0x80, 0x80, 0x80,
+               0x10, 'a', 0xff}),
+    };
+    for (const auto& entry : entries) {
+        const auto bytes = Concat({entry, Bytes({0, 0, 0, 0, 1, 0, 0, 0})});
+        for (const bool owned : {false, true}) {
+            SCOPED_TRACE(entry.size());
+            SCOPED_TRACE(owned);
+            auto block =
+                owned ? Block::Create(bytes) : Block::Create(BlockContents::Borrowed(bytes));
+            ASSERT_TRUE(block.has_value());
+            EXPECT_EQ(block->cacheable(), owned);
+            ByteView retained_value;
+            std::size_t visits = 0;
+            const Status validated =
+                block->ValidateEntries([&](ByteView key, ByteView value) -> Status {
+                    ++visits;
+                    EXPECT_EQ(AsStringView(key), "a");
+                    EXPECT_EQ(Materialize(value), Bytes({0xff}));
+                    retained_value = value;
+                    return {};
+                });
+            ASSERT_TRUE(validated.has_value());
+            EXPECT_EQ(visits, 1U);
+            if (!owned) {
+                EXPECT_EQ(retained_value.data(), bytes.data() + entry.size() - 1);
+            }
+
+            Block moved(std::move(*block));
+            Block::Iterator iterator(moved, BytewiseComparator());
+            ASSERT_TRUE(iterator.SeekToFirst().has_value());
+            ASSERT_TRUE(iterator.valid());
+            EXPECT_EQ(AsStringView(iterator.key()), "a");
+            EXPECT_EQ(iterator.value().data(), retained_value.data());
+            EXPECT_EQ(Materialize(retained_value), Bytes({0xff}));
+            EXPECT_TRUE(iterator.Next().has_value());
+            EXPECT_FALSE(iterator.valid());
+        }
+    }
+}
+
+TEST(BlockTest, LiteralHeaderAndPayloadFailuresDoNotPublishVisitorEntries) {
+    const auto complete = Bytes({0x80, 0x80, 0x80, 0x80, 0x10, 0x81, 0x80, 0x80, 0x80, 0x10, 0x81,
+                                 0x80, 0x80, 0x80, 0x10, 'a', 0xff});
+    std::vector<std::vector<std::byte>> malformed{
+        Bytes({0, 1, 1}),
+        Bytes({0, 1, 1, 'a'}),
+        Bytes({0, 0xff, 0xff, 0xff, 0xff, 0x0f, 1}),
+        Bytes({0, 1, 0xff, 0xff, 0xff, 0xff, 0x0f}),
+        Bytes({0x80, 0x80, 0x80, 0x80, 0x80, 0, 1, 1, 'a', 0xff}),
+    };
+    for (std::size_t size = 1; size < complete.size(); ++size) {
+        malformed.emplace_back(complete.begin(),
+                               complete.begin() + static_cast<std::ptrdiff_t>(size));
+    }
+    for (const auto& entry : malformed) {
+        SCOPED_TRACE(entry.size());
+        auto block = Block::Create(Concat({entry, Bytes({0, 0, 0, 0, 1, 0, 0, 0})}));
+        ASSERT_TRUE(block.has_value());
+        std::size_t visits = 0;
+        const Status validated = block->ValidateEntries([&](ByteView, ByteView) -> Status {
+            ++visits;
+            return {};
+        });
+        ASSERT_FALSE(validated.has_value());
+        EXPECT_EQ(validated.error().code(), ErrorCode::Corruption);
+        EXPECT_EQ(validated.error().message(), "block entry is malformed");
+        EXPECT_EQ(visits, 0U);
+    }
+}
+
+TEST(BlockTest, LiteralFooterAdmissionKeepsPriorityAndLazyZeroCountTopology) {
+    const auto footer = Bytes({1, 0, 0, 0});
+    for (std::size_t size = 0; size < footer.size(); ++size) {
+        const auto block = Block::Create(std::vector<std::byte>(
+            footer.begin(), footer.begin() + static_cast<std::ptrdiff_t>(size)));
+        ASSERT_FALSE(block.has_value());
+        EXPECT_EQ(block.error().code(), ErrorCode::Corruption);
+        EXPECT_EQ(block.error().message(), "block is too short");
+        EXPECT_TRUE(std::string_view(block.error().location().file_name()).ends_with("block.cc"));
+        EXPECT_NE(std::string_view(block.error().location().function_name()).find("Create"),
+                  std::string_view::npos);
+    }
+    for (const auto& bytes : {footer, Bytes({0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff})}) {
+        const auto block = Block::Create(bytes);
+        ASSERT_FALSE(block.has_value());
+        EXPECT_EQ(block.error().code(), ErrorCode::Corruption);
+        EXPECT_EQ(block.error().message(), "block restart count is invalid");
+        EXPECT_NE(std::string_view(block.error().location().function_name()).find("Create"),
+                  std::string_view::npos);
+    }
+    for (const auto& bytes : {Bytes({0, 0, 0, 0}), Bytes({0xff, 0, 0, 0, 0})}) {
+        const auto block = Block::Create(bytes);
+        ASSERT_TRUE(block.has_value());
+        EXPECT_TRUE(block->empty());
+        std::size_t visits = 0;
+        const auto validated = block->ValidateEntries([&](ByteView, ByteView) -> Status {
+            ++visits;
+            return {};
+        });
+        ASSERT_FALSE(validated.has_value());
+        EXPECT_EQ(validated.error().message(), "block restart points are invalid");
+        EXPECT_EQ(visits, 0U);
+    }
+    const auto canonical_empty = Block::Create(Bytes({0, 0, 0, 0, 1, 0, 0, 0}));
+    ASSERT_TRUE(canonical_empty.has_value());
+    EXPECT_TRUE(canonical_empty->empty());
+    EXPECT_TRUE(canonical_empty
+                    ->ValidateEntries([](ByteView, ByteView) -> Status {
+                        ADD_FAILURE() << "An empty block must not visit entries";
+                        return {};
+                    })
+                    .has_value());
+}
+
 TEST(BlockBuilderTest, EncodesPrefixCompressedEntriesAndRestarts) {
     EXPECT_EQ(BuildGoldenBlock(), WithRestarts(GoldenEntries(), {0, 18}));
 }

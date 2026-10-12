@@ -257,6 +257,109 @@ TEST(MemTableTest, SupportsBinaryKeysValuesAndComparatorEquality) {
     EXPECT_EQ(AsStringView(folded.value), "value");
 }
 
+TEST(MemTableTest, BinarySnapshotDecisionsKeepEmptyDeletionAndLowerBoundMissesDistinct) {
+    const std::array key{std::byte{0}, std::byte{0xff}, std::byte{0x10}};
+    const std::array value{std::byte{0xff}, std::byte{0}, std::byte{0x80}};
+    MemTable table(BytewiseComparator());
+    table.Add(7, ValueKind::Value, key, value);
+    table.Add(9, ValueKind::Deletion, key, AsBytes("ignored-delete-bytes"));
+    table.Add(11, ValueKind::Value, key, {});
+    table.Add(0, ValueKind::Value, {}, {});
+    struct Snapshot {
+        SequenceNumber sequence;
+        MemTableLookupKind kind;
+        bool has_payload;
+    };
+    constexpr std::array snapshots{
+        Snapshot{6, MemTableLookupKind::Missing, false},
+        Snapshot{7, MemTableLookupKind::Value, true},
+        Snapshot{8, MemTableLookupKind::Value, true},
+        Snapshot{9, MemTableLookupKind::Deletion, false},
+        Snapshot{10, MemTableLookupKind::Deletion, false},
+        Snapshot{11, MemTableLookupKind::Value, false},
+        Snapshot{MaxSequenceNumber, MemTableLookupKind::Value, false},
+    };
+    for (const auto& snapshot : snapshots) {
+        SCOPED_TRACE(snapshot.sequence);
+        const auto found = table.Lookup(MakeLookup(key, snapshot.sequence));
+        ASSERT_EQ(found.kind, snapshot.kind);
+        if (snapshot.has_payload) {
+            EXPECT_TRUE(std::ranges::equal(found.value, value));
+        } else {
+            EXPECT_TRUE(found.value.empty());
+        }
+        if (snapshot.kind == MemTableLookupKind::Value) {
+            EXPECT_NE(found.value.data(), nullptr);
+        } else {
+            EXPECT_EQ(found.value.data(), nullptr);
+        }
+    }
+    for (const auto& absent :
+         {std::vector{std::byte{0}, std::byte{0xfe}}, std::vector{std::byte{0xff}}}) {
+        const auto found = table.Lookup(MakeLookup(absent, MaxSequenceNumber));
+        EXPECT_EQ(found.kind, MemTableLookupKind::Missing);
+        EXPECT_EQ(found.value.data(), nullptr);
+    }
+    const auto empty = table.Lookup(MakeLookup(ByteView{}, 0));
+    EXPECT_EQ(empty.kind, MemTableLookupKind::Value);
+    EXPECT_TRUE(empty.value.empty());
+    EXPECT_NE(empty.value.data(), nullptr);
+
+    CaseInsensitiveComparator comparator;
+    MemTable folded(comparator);
+    folded.Add(3, ValueKind::Value, AsBytes("KeY"), {});
+    const auto equivalent = folded.Lookup(MakeLookup("kEy", 3));
+    EXPECT_EQ(equivalent.kind, MemTableLookupKind::Value);
+    EXPECT_NE(equivalent.value.data(), nullptr);
+    EXPECT_EQ(folded.Lookup(MakeLookup("j", 3)).kind, MemTableLookupKind::Missing);
+}
+
+TEST(MemTableTest, MultibyteRecordPrefixesKeepArenaViewsAfterLaterInsertionsAndSeeks) {
+    MemTable table(BytewiseComparator());
+    constexpr std::array<std::size_t, 5> key_sizes{119, 120, 190, 191, 512};
+    constexpr std::array<std::size_t, 4> value_sizes{0, 127, 128, 256};
+    std::vector<MemTableLookup> retained;
+    std::vector<std::vector<std::byte>> expected;
+    for (const std::size_t key_size : key_sizes) {
+        const std::vector key(key_size, std::byte{0x7f});
+        for (std::size_t index = 0; index < value_sizes.size(); ++index) {
+            std::vector<std::byte> value;
+            for (std::size_t offset = 0; offset < value_sizes[index]; ++offset) {
+                value.push_back(offset % 2 == 0 ? std::byte{0} : std::byte{0xff});
+            }
+            table.Add(index + 1, ValueKind::Value, key, value);
+            expected.push_back(std::move(value));
+        }
+        for (std::size_t index = 0; index < value_sizes.size(); ++index) {
+            const auto found = table.Lookup(MakeLookup(key, index + 1));
+            ASSERT_EQ(found.kind, MemTableLookupKind::Value);
+            EXPECT_NE(found.value.data(), nullptr);
+            EXPECT_TRUE(std::ranges::equal(found.value,
+                                           expected[expected.size() - value_sizes.size() + index]));
+            retained.push_back(found);
+        }
+    }
+    const std::vector replacement(8192, std::byte{0x80});
+    for (const std::size_t key_size : key_sizes) {
+        const std::vector key(key_size, std::byte{0x7f});
+        table.Add(5, ValueKind::Value, key, replacement);
+        EXPECT_TRUE(std::ranges::equal(table.Lookup(MakeLookup(key, 5)).value, replacement));
+    }
+    MemTable::Iterator iterator(table);
+    iterator.SeekToFirst();
+    ASSERT_TRUE(iterator.valid());
+    iterator.SeekToLast();
+    ASSERT_TRUE(iterator.valid());
+    for (std::size_t index = 0; index < retained.size(); ++index) {
+        SCOPED_TRACE(index);
+        EXPECT_TRUE(std::ranges::equal(retained[index].value, expected[index]));
+        const std::vector key(key_sizes[index / value_sizes.size()], std::byte{0x7f});
+        const auto old = table.Lookup(MakeLookup(key, index % value_sizes.size() + 1));
+        EXPECT_EQ(old.value.data(), retained[index].value.data());
+        EXPECT_TRUE(std::ranges::equal(old.value, expected[index]));
+    }
+}
+
 TEST(MemTableTest, IteratorUsesInternalKeyOrderAndPreservesStoredDeletionBytes) {
     MemTable table{BytewiseComparator()};
     table.Add(2, ValueKind::Value, AsBytes("b"), AsBytes("b2"));

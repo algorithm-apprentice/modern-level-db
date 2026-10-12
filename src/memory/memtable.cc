@@ -22,6 +22,26 @@ struct MemTableEntryView {
     ByteView value;
 };
 
+bool MatchesMemTableUserKey(const Comparator& comparator, ByteView internal_key,
+                            ByteView user_key) noexcept {
+    const ByteView candidate_user_key =
+        internal_key.first(internal_key.size() - InternalKeyTrailerSize);
+    return comparator.Compare(candidate_user_key, user_key) == 0;
+}
+
+MemTableLookup ClassifyMemTableEntry(const MemTableEntryView& entry) noexcept {
+    if (DecodeInternalKeyValueKind(entry.internal_key) == ValueKind::Deletion) {
+        return {
+            .kind = MemTableLookupKind::Deletion,
+            .value = {},
+        };
+    }
+    return {
+        .kind = MemTableLookupKind::Value,
+        .value = entry.value,
+    };
+}
+
 ByteView DecodeMemTableInternalKey(const std::byte* entry) noexcept {
     return ConsumeLengthPrefixedTrusted(entry);
 }
@@ -93,22 +113,11 @@ MemTableLookup MemTable::Lookup(const LookupKey& key) const {
     }
 
     const MemTableEntryView entry = DecodeMemTableEntry(iterator.entry());
-    const ByteView candidate_user_key =
-        entry.internal_key.first(entry.internal_key.size() - InternalKeyTrailerSize);
-    if (entry_comparator_.user_comparator().Compare(candidate_user_key, key.user_key()) != 0) {
+    if (!MatchesMemTableUserKey(entry_comparator_.user_comparator(), entry.internal_key,
+                                key.user_key())) {
         return {};
     }
-
-    if (DecodeInternalKeyValueKind(entry.internal_key) == ValueKind::Deletion) {
-        return {
-            .kind = MemTableLookupKind::Deletion,
-            .value = {},
-        };
-    }
-    return {
-        .kind = MemTableLookupKind::Value,
-        .value = entry.value,
-    };
+    return ClassifyMemTableEntry(entry);
 }
 
 int MemTable::EntryComparator::operator()(const std::byte* left,

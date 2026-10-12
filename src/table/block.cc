@@ -4,10 +4,12 @@
 #include <cstdint>
 #include <expected>
 #include <limits>
+#include <source_location>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "base/coding_internal.h"
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
@@ -26,12 +28,48 @@ const std::byte* DecodeVarint32(const std::byte* input, const std::byte* limit,
             return nullptr;
         }
         const unsigned int byte = std::to_integer<unsigned int>(*input++);
-        value |= static_cast<std::uint32_t>(byte & 0x7fU) << (index * 7U);
+        FoldVarintPayload(value, byte & 0x7fU, index * 7U);
         if ((byte & 0x80U) == 0U) {
             return input;
         }
     }
     return nullptr;
+}
+
+bool DecodeEntryHeader(const std::byte*& input, const std::byte* limit, std::uint32_t& shared,
+                       std::uint32_t& non_shared, std::uint32_t& value_size) noexcept {
+    if ((shared | non_shared | value_size) < 128U) {
+        input += 3;
+        return true;
+    }
+    input = DecodeVarint32(input, limit, shared);
+    if (input == nullptr) {
+        return false;
+    }
+    input = DecodeVarint32(input, limit, non_shared);
+    if (input == nullptr) {
+        return false;
+    }
+    input = DecodeVarint32(input, limit, value_size);
+    return input != nullptr;
+}
+
+bool HasEntryPayload(const std::byte* input, const std::byte* limit, std::uint32_t non_shared,
+                     std::uint32_t value_size) noexcept {
+    const std::size_t remaining = static_cast<std::size_t>(limit - input);
+    return std::uint64_t{non_shared} + value_size <= remaining;
+}
+
+Result<std::size_t> ReadRestartCount(
+    ByteView data, std::source_location location = std::source_location::current()) {
+    if (data.size() < Fixed32Size) {
+        return std::unexpected(Error::Corruption("block is too short", location));
+    }
+    const std::size_t restart_count = DecodeFixed32(data.last<Fixed32Size>());
+    if (restart_count > (data.size() - Fixed32Size) / Fixed32Size) {
+        return std::unexpected(Error::Corruption("block restart count is invalid", location));
+    }
+    return restart_count;
 }
 
 ByteView StringBytes(const std::string& value) noexcept {
@@ -50,18 +88,10 @@ const std::byte* Block::DecodeEntry(const std::byte* input, const std::byte* lim
     std::uint32_t shared = std::to_integer<unsigned int>(input[0]);
     std::uint32_t non_shared = std::to_integer<unsigned int>(input[1]);
     std::uint32_t value_size = std::to_integer<unsigned int>(input[2]);
-    if ((shared | non_shared | value_size) < 128U) {
-        input += 3;
-    } else {
-        if ((input = DecodeVarint32(input, limit, shared)) == nullptr ||
-            (input = DecodeVarint32(input, limit, non_shared)) == nullptr ||
-            (input = DecodeVarint32(input, limit, value_size)) == nullptr) {
-            return nullptr;
-        }
+    if (!DecodeEntryHeader(input, limit, shared, non_shared, value_size)) {
+        return nullptr;
     }
-
-    const std::size_t remaining = static_cast<std::size_t>(limit - input);
-    if (std::uint64_t{non_shared} + value_size > remaining) {
+    if (!HasEntryPayload(input, limit, non_shared, value_size)) {
         return nullptr;
     }
     entry = {
@@ -113,15 +143,12 @@ Result<Block> Block::Create(std::vector<std::byte> contents) {
 
 Result<Block> Block::Create(BlockContents contents) {
     const ByteView data = contents.data();
-    if (data.size() < Fixed32Size) {
-        return std::unexpected(Error::Corruption("block is too short"));
+    Result<std::size_t> restart_count = ReadRestartCount(data);
+    if (!restart_count.has_value()) {
+        return std::unexpected(std::move(restart_count).error());
     }
-    const std::size_t restart_count = DecodeFixed32(data.last<Fixed32Size>());
-    if (restart_count > (data.size() - Fixed32Size) / Fixed32Size) {
-        return std::unexpected(Error::Corruption("block restart count is invalid"));
-    }
-    const std::size_t entries_end = data.size() - Fixed32Size * (restart_count + 1);
-    return Block(std::move(contents), entries_end, restart_count);
+    const std::size_t entries_end = data.size() - Fixed32Size * (*restart_count + 1);
+    return Block(std::move(contents), entries_end, *restart_count);
 }
 
 // GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
