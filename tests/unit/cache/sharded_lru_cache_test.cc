@@ -66,6 +66,24 @@ std::vector<std::string> KeysForShard(std::size_t shard, std::size_t count) {
     return keys;
 }
 
+std::vector<std::string> KeysForShardInDistinctBuckets(std::size_t shard,
+                                                       std::size_t excluded_bucket,
+                                                       std::size_t count) {
+    std::array<bool, 8> used{};
+    used[excluded_bucket] = true;
+    std::vector<std::string> keys;
+    for (std::uint64_t candidate = 0; keys.size() < count; ++candidate) {
+        const std::string key = "bucket-key-" + std::to_string(candidate);
+        const std::uint32_t hash = Hash32(AsBytes(key), 0U);
+        const std::size_t bucket = hash & 7U;
+        if ((hash >> 28U) == shard && !used[bucket]) {
+            used[bucket] = true;
+            keys.push_back(key);
+        }
+    }
+    return keys;
+}
+
 std::array<std::string, 16> OneKeyPerShard() {
     std::array<std::string, 16> keys;
     std::array<bool, 16> found{};
@@ -184,6 +202,60 @@ TEST(ShardedLruCacheTest, DistinguishesDifferentKeysWithTheSameHash) {
     EXPECT_TRUE(cache.Lookup(AsBytes(Second)).has_value());
 }
 
+TEST(ShardedLruCacheTest, CollisionGrowthKeepsReplacementAndRemainingMappings) {
+    constexpr std::string_view First = "collision-3728";
+    constexpr std::string_view Second = "collision-161100";
+    const std::uint32_t collision_hash = Hash32(AsBytes(First), 0U);
+    ASSERT_EQ(collision_hash, Hash32(AsBytes(Second), 0U));
+    const auto others =
+        KeysForShardInDistinctBuckets(collision_hash >> 28U, collision_hash & 7U, 3);
+    Cache cache(16 * 128);
+    auto first = cache.Insert(AsBytes(First), std::make_unique<const int>(1), 1);
+    auto second = cache.Insert(AsBytes(Second), std::make_unique<const int>(2), 2);
+    auto third = cache.Insert(AsBytes(others[0]), std::make_unique<const int>(3), 3);
+    auto fourth = cache.Insert(AsBytes(others[1]), std::make_unique<const int>(4), 4);
+    ASSERT_TRUE(first.has_value());
+    ASSERT_TRUE(second.has_value());
+    ASSERT_TRUE(third.has_value());
+    ASSERT_TRUE(fourth.has_value());
+    ASSERT_EQ(cache.total_charge(), 10U);
+
+    auto replacement = cache.Insert(AsBytes(Second), std::make_unique<const int>(20), 5);
+    auto fifth = cache.Insert(AsBytes(others[2]), std::make_unique<const int>(6), 6);
+
+    ASSERT_TRUE(replacement.has_value());
+    ASSERT_TRUE(fifth.has_value());
+    EXPECT_EQ(**second, 2);
+    EXPECT_EQ(**replacement, 20);
+    EXPECT_EQ(cache.total_charge(), 19U);
+    struct Expected {
+        ByteView key;
+        int value;
+    };
+    const std::array expected{
+        Expected{AsBytes(First), 1},     Expected{AsBytes(Second), 20},
+        Expected{AsBytes(others[0]), 3}, Expected{AsBytes(others[1]), 4},
+        Expected{AsBytes(others[2]), 6},
+    };
+    for (const auto& entry : expected) {
+        auto found = cache.Lookup(entry.key);
+        ASSERT_TRUE(found.has_value());
+        EXPECT_EQ(**found, entry.value);
+    }
+
+    cache.Erase(AsBytes(Second));
+
+    EXPECT_FALSE(cache.Lookup(AsBytes(Second)).has_value());
+    EXPECT_EQ(**second, 2);
+    EXPECT_EQ(**replacement, 20);
+    EXPECT_EQ(cache.total_charge(), 14U);
+    for (const std::size_t index : {0U, 2U, 3U, 4U}) {
+        auto found = cache.Lookup(expected[index].key);
+        ASSERT_TRUE(found.has_value());
+        EXPECT_EQ(**found, expected[index].value);
+    }
+}
+
 TEST(ShardedLruCacheTest, MoveAssignmentReleasesThePreviousPin) {
     Cache cache(16);
     const auto keys = KeysForShard(0, 3);
@@ -260,6 +332,41 @@ TEST(ShardedLruCacheTest, PinnedEntriesMayExceedCapacity) {
     EXPECT_TRUE(cache.Lookup(AsBytes(keys[1])).has_value());
     EXPECT_TRUE(cache.Lookup(AsBytes(keys[2])).has_value());
     second.reset();
+}
+
+TEST(ShardedLruCacheTest, OnlyTheLastDuplicatePinReturnsAnEntryToLru) {
+    Cache cache(32);
+    const auto keys = KeysForShard(0, 4);
+    std::optional<Handle> first =
+        cache.Insert(AsBytes(keys[0]), std::make_unique<const int>(1), 1).value();
+    std::optional<Handle> duplicate = cache.Lookup(AsBytes(keys[0]));
+    std::optional<Handle> older =
+        cache.Insert(AsBytes(keys[1]), std::make_unique<const int>(2), 1).value();
+    ASSERT_TRUE(duplicate.has_value());
+
+    first.reset();
+    auto temporary = cache.Insert(AsBytes(keys[2]), std::make_unique<const int>(3), 1);
+
+    ASSERT_TRUE(temporary.has_value());
+    EXPECT_TRUE(cache.Lookup(AsBytes(keys[0])).has_value());
+    EXPECT_TRUE(cache.Lookup(AsBytes(keys[1])).has_value());
+    EXPECT_TRUE(cache.Lookup(AsBytes(keys[2])).has_value());
+    EXPECT_EQ(cache.total_charge(), 3U);
+
+    cache.Erase(AsBytes(keys[2]));
+    EXPECT_FALSE(cache.Lookup(AsBytes(keys[2])).has_value());
+    EXPECT_EQ(**temporary, 3);
+    EXPECT_EQ(cache.total_charge(), 2U);
+    older.reset();
+    duplicate.reset();
+
+    auto newest = cache.Insert(AsBytes(keys[3]), std::make_unique<const int>(4), 1);
+
+    ASSERT_TRUE(newest.has_value());
+    EXPECT_TRUE(cache.Lookup(AsBytes(keys[0])).has_value());
+    EXPECT_FALSE(cache.Lookup(AsBytes(keys[1])).has_value());
+    EXPECT_TRUE(cache.Lookup(AsBytes(keys[3])).has_value());
+    EXPECT_EQ(cache.total_charge(), 2U);
 }
 
 TEST(ShardedLruCacheTest, ZeroCapacityDoesNotRetainEntries) {
@@ -436,6 +543,37 @@ TEST(ShardedLruCacheTest, DestroysEvictedValuesOutsideShardLock) {
     EXPECT_TRUE(deleter_ran.load(std::memory_order_relaxed));
     EXPECT_FALSE(cache.Lookup(AsBytes(keys[1])).has_value());
     EXPECT_EQ((*second)->value, 2);
+}
+
+TEST(ShardedLruCacheTest, LastErasedPinReclaimsOutsideItsShardLock) {
+    CallbackCache cache(160);
+    const auto keys = KeysForShard(0, 2);
+    bool deleter_ran = false;
+    std::optional<CallbackCache::Handle> erased =
+        cache
+            .Insert(AsBytes(keys[0]),
+                    std::make_unique<const CallbackValue>(1,
+                                                          [&] {
+                                                              cache.Erase(AsBytes(keys[1]));
+                                                              deleter_ran = true;
+                                                          }),
+                    1)
+            .value();
+    auto retained = cache.Insert(
+        AsBytes(keys[1]), std::make_unique<const CallbackValue>(2, std::function<void()>{}), 1);
+    ASSERT_TRUE(retained.has_value());
+
+    cache.Erase(AsBytes(keys[0]));
+    EXPECT_FALSE(deleter_ran);
+    EXPECT_FALSE(cache.Lookup(AsBytes(keys[0])).has_value());
+    EXPECT_TRUE(cache.Lookup(AsBytes(keys[1])).has_value());
+
+    erased.reset();
+
+    EXPECT_TRUE(deleter_ran);
+    EXPECT_FALSE(cache.Lookup(AsBytes(keys[1])).has_value());
+    EXPECT_EQ((*retained)->value, 2);
+    EXPECT_EQ(cache.total_charge(), 0U);
 }
 
 TEST(ShardedLruCacheTest, ReplacementReclamationCanEraseTheNewMappingBeforePinReturn) {

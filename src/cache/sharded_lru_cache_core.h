@@ -73,6 +73,7 @@ private:
               hash(entry_hash) {}
 
         [[nodiscard]] ByteView key() const noexcept;
+        [[nodiscard]] bool Matches(ByteView key, std::uint32_t hash) const noexcept;
 
         const void* value;
         ValueDeleter deleter;
@@ -107,7 +108,10 @@ private:
 
     private:
         [[nodiscard]] Entry** FindPointer(ByteView key, std::uint32_t hash) noexcept;
+        [[nodiscard]] static std::unique_ptr<Entry*[]> PrepareGrowth(std::uint32_t growth_length);
+        Entry* LinkEntry(PreparedInsert prepared, Entry* entry) noexcept;
         [[nodiscard]] static std::unique_ptr<Entry*[]> AllocateBuckets(std::uint32_t length);
+        static void RehashChain(Entry* entry, Entry** buckets, std::uint32_t length) noexcept;
         void RehashInto(std::unique_ptr<Entry*[]> buckets, std::uint32_t length) noexcept;
 
         std::uint32_t length_ = 0;
@@ -137,8 +141,11 @@ private:
     using PendingEntry = std::unique_ptr<Entry, void (*)(Entry*) noexcept>;
 
     [[nodiscard]] static std::size_t ShardIndex(std::uint32_t hash) noexcept;
+    [[nodiscard]] static std::size_t ShardCapacity(std::size_t capacity) noexcept;
+    [[nodiscard]] static bool TryAddCharge(std::size_t& total, std::size_t charge) noexcept;
     [[nodiscard]] static PendingEntry CreateEntry(ByteView key, PendingValue value,
                                                   std::size_t charge);
+    static void CopyEntryKey(Entry& entry, ByteView key);
     [[nodiscard]] static bool CanAdmit(const Shard& shard, const Entry& entry,
                                        HandleTable::PreparedInsert prepared) noexcept;
     static void CommitAdmission(Shard& shard, Entry& entry, HandleTable::PreparedInsert prepared,
@@ -146,12 +153,19 @@ private:
     static void DeleteEntry(Entry* entry) noexcept;
     static void Remove(Entry& entry) noexcept;
     static void Append(Entry& list, Entry& entry) noexcept;
+    static void MoveToList(Entry& list, Entry& entry) noexcept;
     static void Ref(Shard& shard, Entry& entry) noexcept;
     static void Unref(Shard& shard, Entry& entry, Entry*& retired) noexcept;
+    [[nodiscard]] static Entry* LookupAndRef(Shard& shard, ByteView key,
+                                             std::uint32_t hash) noexcept;
+    static void EraseMapping(Shard& shard, ByteView key, std::uint32_t hash,
+                             Entry*& retired) noexcept;
     static void FinishErase(Shard& shard, Entry* entry, Entry*& retired) noexcept;
+    static void EvictOldest(Shard& shard, Entry*& retired) noexcept;
     static void Evict(Shard& shard, Entry*& retired) noexcept;
     static void Retire(Entry& entry, Entry*& retired) noexcept;
     static void DeleteRetired(Entry* retired) noexcept;
+    static void DestroyShard(Shard& shard, Entry*& retired) noexcept;
     void Initialize(std::size_t capacity) noexcept;
     void Destroy() noexcept;
     void Release(Entry& entry) noexcept;

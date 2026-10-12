@@ -586,6 +586,9 @@ changed paths verified in main.
 | Recursive hash word folding and bounded residual-tail mixing | [Hash word/tail composition](hash-word-tail-composition-design.md) | Delivered in #243 after accepted #242; 96-case original/final native parity, six-case word intermediate, and actual hosted Windows Debug selected names match the original 96 and delivered reverse selection's 201. |
 | Recursive byte/trailer comparison, checked shortening and prefix-block stages | [Key comparison/shortening](key-comparison-shortening-composition-design.md) | Delivered in #245 after accepted #244; 238-case original/final native parity, two 35-case foundation intermediates, and actual hosted Windows Debug selected names match the original 238. |
 | Recursive required-field proof and parent-owned prepared publication | [Prepared metadata publication](metadata-prepared-publication-composition-design.md) | Delivered in #248 after accepted #247; 125-case original/final native parity, two 41-case VersionSet intermediates, and actual hosted Windows Debug selected names match the original 125. |
+| Recursive lookup storage lifecycle and shared trusted key emission | [Lookup storage/encoding](lookup-key-storage-encoding-composition-design.md) | Delivered in #250 after accepted #249; corrected 151-case original/final native parity, 36-case foundation intermediates, and actual hosted Windows Debug selected names match the original 151. |
+| Recursive sticky-error capture and parent-owned diagnostic formatting | [Foundation error context](foundation-error-context-composition-design.md) | Delivered in #253 after accepted #252; 166-case original/final native parity, 26-case foundation intermediate, and actual hosted Windows Debug selected names match the original 166. |
+| Recursive scalar/read-record codecs, block admission and MemTable lookup | [Read-record codecs](read-record-codec-composition-design.md) | Delivered in #254 from one locally reviewed larger batch; corrected 296-case original/final native parity, exact 99/197/131 topic subsets, and actual hosted Windows Debug selected names match the original 296. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -705,6 +708,37 @@ allocator-failure, physical-copy and general concurrent-writer claims are not
 inferred. WritePrepared's visible relock/exception policy and ReleaseRead remain
 unchanged, and real replay/staging callers share compact-pointer assignment.
 
+#250's nine-class lookup/internal-key/MemTable/table selection contains
+151 corrected original/final identities. Its first published head exposed a
+portable GCC/Release warning in a guarded test vector, not a production defect.
+The literal leading/trailing guard construction was corrected and reviewed
+first on unchanged production, then normally cherry-picked; no warning or
+coverage gate was weakened. The two 36-case intermediates are exact original
+foundation subsets. Lookup storage ownership, canonical moved-from state,
+actual shared trusted internal-key emission and construction error priority
+remain bounded scope, not whole-file certification.
+
+#253's Result/CRC/native writer/table/database selection contains 166 unique
+original/final Windows identities. The shared first-failure child borrows the
+parent Status and optional slot; Error::ToString retains its parent string and
+appends the optional complete message through a private child. The 26-case
+intermediate is the Result/CRC subset. Existing Error factory locations,
+native resource transactions and the four CRC primitives remain unchanged;
+ordinary execution does not prove allocation failure or physical copy counts.
+
+#254 is the first delivery under the owner's larger-batch policy: one accepted
+local design, three original-source test commits, three production topic
+commits, integrated evidence and one published implementation PR. Its 18-suite
+selection contains 296 identities. Independent review found signed iterator
+offsets in two new block tests; the correction was proven first on unchanged
+production and then cherry-picked. Scalar, block and MemTable intermediates are
+exact original subsets of 99, 197 and 131 identities. All six changed
+production/test translation units compile locally with GCC Release warnings as
+errors; the attempted full local GCC 16 target remains blocked by an unrelated
+pre-existing compaction diagnostic, while hosted GCC 13 gates all succeeded.
+This batch certifies only its eighteen selected/new definitions and bounded
+codec disposition, not the complete block, MemTable, coding or production tree.
+
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,
 not the whole dump file.
@@ -790,11 +824,16 @@ snapshot, or mapped backing lifetime. Locks stay visible at boundaries; no
 callback abstraction hides unlock/relock, publication, or failure recording.
 Keep status errors distinct from exceptions and preserve first-error priority.
 
-Design is reviewed by an independent persona before a design-only PR is
-published/merged under the existing delivery contract. Implementation receives
-a separate review after its focused characterization passes. Review findings
-and publication status are recorded honestly; local review is not GitHub
-approval, and a draft worklist is not implemented work.
+Design is reviewed by an independent persona before production edits.
+Related responsibility-sized topics may retain the accepted design,
+original-source characterization, implementation and integrated evidence as
+small local commits, then publish one coherent non-draft implementation PR to
+amortize CI. A separate design-only PR is optional when independent scheduling
+or early owner review makes it useful, not a mandatory gate for every batch.
+Implementation still receives a separate integrated review after focused
+characterization passes. Review findings and publication status are recorded
+honestly; local review is not GitHub approval, and a draft worklist is not
+implemented work.
 
 ### Local design review
 

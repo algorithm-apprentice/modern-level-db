@@ -17,6 +17,14 @@ ByteView ShardedLruCacheCore::Entry::key() const noexcept {
     return ByteView(bytes, key_length);
 }
 
+bool ShardedLruCacheCore::Entry::Matches(ByteView candidate_key,
+                                         std::uint32_t candidate_hash) const noexcept {
+    if (hash != candidate_hash) {
+        return false;
+    }
+    return std::ranges::equal(key(), candidate_key);
+}
+
 // GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
 ShardedLruCacheCore::Pin::Pin(ShardedLruCacheCore& cache, Entry& entry) noexcept
     : cache_(&cache), entry_(&entry) {}
@@ -54,7 +62,7 @@ ShardedLruCacheCore::HandleTable::HandleTable() : length_(4), buckets_(AllocateB
 ShardedLruCacheCore::Entry* ShardedLruCacheCore::HandleTable::Lookup(
     ByteView key, std::uint32_t hash) const noexcept {
     Entry* entry = buckets_[hash & (length_ - 1U)];
-    while (entry != nullptr && (entry->hash != hash || !std::ranges::equal(entry->key(), key))) {
+    while (entry != nullptr && !entry->Matches(key, hash)) {
         entry = entry->next_hash;
     }
     return entry;
@@ -73,21 +81,30 @@ ShardedLruCacheCore::HandleTable::PreparedInsert ShardedLruCacheCore::HandleTabl
 
 ShardedLruCacheCore::Entry* ShardedLruCacheCore::HandleTable::CommitInsert(PreparedInsert prepared,
                                                                            Entry* entry) {
-    std::unique_ptr<Entry*[]> growth;
     const std::uint32_t growth_length = prepared.needs_growth ? length_ * 2U : 0U;
+    std::unique_ptr<Entry*[]> growth = PrepareGrowth(growth_length);
+    Entry* replaced = LinkEntry(prepared, entry);
     if (prepared.needs_growth) {
-        growth = AllocateBuckets(growth_length);
+        RehashInto(std::move(growth), growth_length);
     }
+    return replaced;
+}
 
+std::unique_ptr<ShardedLruCacheCore::Entry*[]> ShardedLruCacheCore::HandleTable::PrepareGrowth(
+    std::uint32_t growth_length) {
+    if (growth_length == 0) {
+        return {};
+    }
+    return AllocateBuckets(growth_length);
+}
+
+ShardedLruCacheCore::Entry* ShardedLruCacheCore::HandleTable::LinkEntry(PreparedInsert prepared,
+                                                                        Entry* entry) noexcept {
     Entry* replaced = prepared.existing;
     entry->next_hash = replaced == nullptr ? nullptr : replaced->next_hash;
     *prepared.position = entry;
     if (replaced == nullptr) {
         ++elements_;
-    }
-
-    if (prepared.needs_growth) {
-        RehashInto(std::move(growth), growth_length);
     }
     return replaced;
 }
@@ -107,8 +124,7 @@ ShardedLruCacheCore::Entry* ShardedLruCacheCore::HandleTable::Remove(ByteView ke
 ShardedLruCacheCore::Entry** ShardedLruCacheCore::HandleTable::FindPointer(
     ByteView key, std::uint32_t hash) noexcept {
     Entry** position = &buckets_[hash & (length_ - 1U)];
-    while (*position != nullptr &&
-           ((*position)->hash != hash || !std::ranges::equal((*position)->key(), key))) {
+    while (*position != nullptr && !(*position)->Matches(key, hash)) {
         position = &(*position)->next_hash;
     }
     return position;
@@ -123,17 +139,21 @@ std::unique_ptr<ShardedLruCacheCore::Entry*[]> ShardedLruCacheCore::HandleTable:
     return buckets;
 }
 
+void ShardedLruCacheCore::HandleTable::RehashChain(Entry* entry, Entry** buckets,
+                                                   std::uint32_t length) noexcept {
+    while (entry != nullptr) {
+        Entry* next = entry->next_hash;
+        Entry** position = &buckets[entry->hash & (length - 1U)];
+        entry->next_hash = *position;
+        *position = entry;
+        entry = next;
+    }
+}
+
 void ShardedLruCacheCore::HandleTable::RehashInto(std::unique_ptr<Entry*[]> buckets,
                                                   std::uint32_t length) noexcept {
     for (std::uint32_t index = 0; index < length_; ++index) {
-        Entry* entry = buckets_[index];
-        while (entry != nullptr) {
-            Entry* next = entry->next_hash;
-            Entry** position = &buckets[entry->hash & (length - 1U)];
-            entry->next_hash = *position;
-            *position = entry;
-            entry = next;
-        }
+        RehashChain(buckets_[index], buckets.get(), length);
     }
     buckets_ = std::move(buckets);
     length_ = length;
@@ -158,8 +178,7 @@ ShardedLruCacheCore::~ShardedLruCacheCore() { Destroy(); }
 // GCOVR_EXCL_STOP
 
 void ShardedLruCacheCore::Initialize(std::size_t capacity) noexcept {
-    const std::size_t shard_capacity =
-        capacity / ShardCount + (capacity % ShardCount != 0U ? 1U : 0U);
+    const std::size_t shard_capacity = ShardCapacity(capacity);
     for (Shard& shard : shards_) {
         shard.capacity = shard_capacity;
     }
@@ -168,13 +187,7 @@ void ShardedLruCacheCore::Initialize(std::size_t capacity) noexcept {
 void ShardedLruCacheCore::Destroy() noexcept {
     Entry* retired = nullptr;
     for (Shard& shard : shards_) {
-        for (Entry* entry = shard.lru.next; entry != &shard.lru;) {
-            Entry* next = entry->next;
-            entry->in_cache = false;
-            Unref(shard, *entry, retired);
-            entry = next;
-        }
-        shard.usage = 0;
+        DestroyShard(shard, retired);
     }
     DeleteRetired(retired);
 }
@@ -222,11 +235,10 @@ std::optional<ShardedLruCacheCore::Pin> ShardedLruCacheCore::Lookup(ByteView key
     const std::uint32_t hash = Hash32(key, 0U);
     Shard& shard = shards_[ShardIndex(hash)];
     std::lock_guard lock(shard.mutex);
-    Entry* entry = shard.table.Lookup(key, hash);
+    Entry* entry = LookupAndRef(shard, key, hash);
     if (entry == nullptr) {
         return std::nullopt;
     }
-    Ref(shard, *entry);
     return Pin(*this, *entry);
 }
 
@@ -236,7 +248,7 @@ void ShardedLruCacheCore::Erase(ByteView key) {
     Entry* retired = nullptr;
     {
         std::lock_guard lock(shard.mutex);
-        FinishErase(shard, shard.table.Remove(key, hash), retired);
+        EraseMapping(shard, key, hash, retired);
     }
     DeleteRetired(retired);
 }
@@ -245,10 +257,9 @@ std::size_t ShardedLruCacheCore::total_charge() const {
     std::size_t total = 0;
     for (const Shard& shard : shards_) {
         std::lock_guard lock(shard.mutex);
-        if (shard.usage > std::numeric_limits<std::size_t>::max() - total) {
+        if (!TryAddCharge(total, shard.usage)) {
             return std::numeric_limits<std::size_t>::max();
         }
-        total += shard.usage;
     }
     return total;
 }
@@ -261,6 +272,18 @@ std::size_t ShardedLruCacheCore::ShardIndex(std::uint32_t hash) noexcept {
     return hash >> (32U - ShardBits);
 }
 
+std::size_t ShardedLruCacheCore::ShardCapacity(std::size_t capacity) noexcept {
+    return capacity / ShardCount + (capacity % ShardCount != 0U ? 1U : 0U);
+}
+
+bool ShardedLruCacheCore::TryAddCharge(std::size_t& total, std::size_t charge) noexcept {
+    if (charge > std::numeric_limits<std::size_t>::max() - total) {
+        return false;
+    }
+    total += charge;
+    return true;
+}
+
 ShardedLruCacheCore::PendingEntry ShardedLruCacheCore::CreateEntry(ByteView key, PendingValue value,
                                                                    std::size_t charge) {
     void* storage = ::operator new(sizeof(Entry) + key.size());
@@ -269,8 +292,12 @@ ShardedLruCacheCore::PendingEntry ShardedLruCacheCore::CreateEntry(ByteView key,
                       Hash32(key, 0U));
     PendingEntry owned(entry, &DeleteEntry);
     static_cast<void>(value.release());
-    std::ranges::copy(key, reinterpret_cast<std::byte*>(entry) + sizeof(Entry));
+    CopyEntryKey(*entry, key);
     return owned;
+}
+
+void ShardedLruCacheCore::CopyEntryKey(Entry& entry, ByteView key) {
+    std::ranges::copy(key, reinterpret_cast<std::byte*>(&entry) + sizeof(Entry));
 }
 
 void ShardedLruCacheCore::DeleteEntry(Entry* entry) noexcept {
@@ -293,10 +320,14 @@ void ShardedLruCacheCore::Append(Entry& list, Entry& entry) noexcept {
     entry.next->previous = &entry;
 }
 
+void ShardedLruCacheCore::MoveToList(Entry& list, Entry& entry) noexcept {
+    Remove(entry);
+    Append(list, entry);
+}
+
 void ShardedLruCacheCore::Ref(Shard& shard, Entry& entry) noexcept {
     if (entry.refs == 1) {
-        Remove(entry);
-        Append(shard.in_use, entry);
+        MoveToList(shard.in_use, entry);
     }
     ++entry.refs;
 }
@@ -308,9 +339,22 @@ void ShardedLruCacheCore::Unref(Shard& shard, Entry& entry, Entry*& retired) noe
     } else if (entry.in_cache && entry.refs == 1) {
         // Releasing the last external pin makes the entry evictable again;
         // it becomes most recently used rather than keeping its insertion age.
-        Remove(entry);
-        Append(shard.lru, entry);
+        MoveToList(shard.lru, entry);
     }
+}
+
+ShardedLruCacheCore::Entry* ShardedLruCacheCore::LookupAndRef(Shard& shard, ByteView key,
+                                                              std::uint32_t hash) noexcept {
+    Entry* entry = shard.table.Lookup(key, hash);
+    if (entry != nullptr) {
+        Ref(shard, *entry);
+    }
+    return entry;
+}
+
+void ShardedLruCacheCore::EraseMapping(Shard& shard, ByteView key, std::uint32_t hash,
+                                       Entry*& retired) noexcept {
+    FinishErase(shard, shard.table.Remove(key, hash), retired);
 }
 
 void ShardedLruCacheCore::FinishErase(Shard& shard, Entry* entry, Entry*& retired) noexcept {
@@ -323,11 +367,14 @@ void ShardedLruCacheCore::FinishErase(Shard& shard, Entry* entry, Entry*& retire
     Unref(shard, *entry, retired);
 }
 
+void ShardedLruCacheCore::EvictOldest(Shard& shard, Entry*& retired) noexcept {
+    Entry* entry = shard.lru.next;
+    EraseMapping(shard, entry->key(), entry->hash, retired);
+}
+
 void ShardedLruCacheCore::Evict(Shard& shard, Entry*& retired) noexcept {
     while (shard.usage > shard.capacity && shard.lru.next != &shard.lru) {
-        Entry* entry = shard.lru.next;
-        static_cast<void>(shard.table.Remove(entry->key(), entry->hash));
-        FinishErase(shard, entry, retired);
+        EvictOldest(shard, retired);
     }
 }
 
@@ -343,6 +390,16 @@ void ShardedLruCacheCore::DeleteRetired(Entry* retired) noexcept {
         DeleteEntry(retired);
         retired = next;
     }
+}
+
+void ShardedLruCacheCore::DestroyShard(Shard& shard, Entry*& retired) noexcept {
+    for (Entry* entry = shard.lru.next; entry != &shard.lru;) {
+        Entry* next = entry->next;
+        entry->in_cache = false;
+        Unref(shard, *entry, retired);
+        entry = next;
+    }
+    shard.usage = 0;
 }
 
 void ShardedLruCacheCore::Release(Entry& entry) noexcept {
