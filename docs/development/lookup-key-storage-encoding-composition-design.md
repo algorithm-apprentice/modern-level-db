@@ -2,9 +2,10 @@
 
 ## Status and scope
 
-Proposed recursive follow-up to delivered key comparison/shortening #245.
+Implemented recursive follow-up to delivered key comparison/shortening #245.
 Source baseline: `7e7b060b2e4bd169f8458cfe9ac052bb13e28c7b`.
-Pending metadata publication #248 has independent source/test/design paths;
+Design accepted through #249. Metadata publication #248 has independent
+source/test/design paths and was delivered while original cases were developed;
 it is not a semantic prerequisite. No benchmark work is included.
 
 Three small production topics may share one non-draft implementation PR:
@@ -97,7 +98,8 @@ observations, not general allocator-failure certification.
 
 InternalKey::Create keeps encoding/ownership in the parent and calls
 ValidateInternalKeyInput(sequence, kind) first. Retain a mutable local Status
-and return it on failure; do not extend it into a boolean compound expression.
+and move its error into the parent's Result on failure; do not extend it into
+a boolean compound expression.
 The file-local child performs the original sequence > MaxSequenceNumber
 boundary first, then unsupported kind, preserving both complete error literals.
 Do not merge with checked LookupKey::Create's differently worded error through
@@ -173,3 +175,83 @@ actual shared byte-emission callers and supporting contracts/test oracles.
 No significant issue was found. No edits, execution or nested agents were
 performed. Proposed implementation, allocation behavior, physical instruction
 counts, hosted identities and every-definition completion remain unverified.
+
+## Original-source cases and implemented topics
+
+Three public cases and the test-only complete-view observer were committed as
+`851b868` before production edits. All three scoped production paths were
+byte-equal to accepted design baseline `e29bebc549e5ea6fb6394b81ce94a7c46973fb67`.
+The original freshly built native selection measured 151 unique identities
+across all nine requested classes, with zero failures/errors/skips.
+The bounded independent original-case reviewer traced original source,
+contracts, literal/layout/move/error oracles and supplied XML/logs, and found
+no significant issue. No edits, builds, execution or nested agents were used.
+
+The literal seek matrix has 14 rows at the seven planned lengths and two
+sequence boundaries. Complete expectations use explicit varint/trailer
+literals plus guarded patterned user bytes, not production encoding calls.
+The four-size move case covers constructor transfer, all 16 assignment
+combinations and self assignment, exact canonical source bytes, pointer
+transfer/relocation and reacquired complete views. Its owned pre-move bytes
+are a behavioral transfer oracle, not an independent wire encoder; the separate
+literal case supplies that evidence. Construction admission checks four invalid
+combinations with exact sequence-before-kind priority and four literal valid
+boundary encodings. Saved pointer values are compared, never dereferenced after
+their borrowed views become invalid.
+
+After #248 passed all exact-head checks and actual hosted original-name proof,
+its accepted main `8cb8bceaef0342fdac2b68bc1ee5d6c17c765466` was integrated by
+normal merge `9d26438`; original case commit/history was not rewritten.
+All three scoped production paths still matched the original key baseline.
+A fresh integrated-original build measured exactly the same 151 identities
+before any key production edits, while preserving the earlier XML/logs.
+
+Three small production topics follow that evidence:
+
+1. `9d1a0b5`: shared internal-key emitter with two actual callers; lookup
+   backing storage preparation. Parent allocation/layout/prefix/owner and
+   MemTable's saved entry/value cursor remain visible.
+2. `3cf8559`: assignment's complete four-member transfer before source reset,
+   self guard and original move-constructor initializers; reset releases heap
+   before the coupled canonical inline layout/prefix/trailer child.
+3. `d959b96`: ordered sequence/kind construction admission. Parent mutable
+   Status remains live through encoding; its failed error is moved into the
+   Result<InternalKey>, since the two return types are distinct.
+
+The internal header supplies the trusted emitter contract and private member
+declarations. Only now-unused MemTable algorithm/span includes were removed.
+The documented final unused LookupKey cursor advance is intentional; no
+public representation changes. EncodeUnchecked, parser policy, public checked
+lookup admission and comparison/shortening logic remain unchanged.
+No generic layout bag, extra encoding owner, vector resize/zero-fill strategy,
+new guard/assertion, error label parameter or annotation was introduced.
+
+### Measured local native identities
+
+Original, integrated-original and final nine-class native sets match exactly:
+InternalKeyTest 9, InternalKeyComparatorTest 10, LookupKeyTest 6,
+MemTableTest 11, TableTest 38, TableNativeTest 2, TableCacheTest 7,
+LookupTest 14 and DatabaseTest 54; total 151 unique identities.
+There are zero failures/errors/skips, and all three added names are present.
+After each of the first two production topics the four-class intermediate is
+exactly the original 36-identity subset, not merely an equal count.
+All three production source/header annotation full-text multisets match
+accepted main, including empty sets, without new exclusions.
+
+Persistent evidence: `lookup-storage-before.xml/.log`,
+`lookup-storage-integrated-before.xml/.log`, `lookup-storage-after.xml/.log`;
+intermediates: `lookup-storage-encoding.xml/.log` and
+`lookup-storage-move.xml/.log`. Older module totals are not substituted.
+Ordinary successful native execution is not allocation-failure, hypothetical
+copy/elision, benchmark or every-definition certification.
+Integrated review, authoritative GCC 13 diff-branch coverage, all exact-head
+CI checks and actual hosted selected-name parity remain delivery gates.
+
+### Independent integrated review
+
+The bounded read-only reviewer independently traced the five scoped paths
+against accepted main through all three production topics and evidence.
+No significant issue was found. No edits, builds, execution or nested agents
+were performed. Source and supplied identity evidence do not certify the whole
+file, allocator-failure behavior or performance. Hosted CI, actual hosted
+selected-case parity and authoritative GCC 13 coverage remain pending.
