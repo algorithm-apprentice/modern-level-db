@@ -640,11 +640,19 @@ void VersionSet::ReserveInstall() {
 }
 
 void VersionSet::InstallPrepared(std::shared_ptr<const Version> version) noexcept {
+    RetainPinnedCurrent();
+    std::erase_if(versions_,
+                  [](const std::weak_ptr<const Version>& held) { return held.expired(); });
+    RegisterCurrentVersion(version);
+}
+
+void VersionSet::RetainPinnedCurrent() noexcept {
     if (current_ != nullptr && current_->read_pins_ != 0) {
         read_pinned_versions_.push_back(current_);
     }
-    std::erase_if(versions_,
-                  [](const std::weak_ptr<const Version>& held) { return held.expired(); });
+}
+
+void VersionSet::RegisterCurrentVersion(std::shared_ptr<const Version>& version) noexcept {
     versions_.emplace_back(version);
     current_ = std::move(version);
 }

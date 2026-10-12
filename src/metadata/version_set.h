@@ -141,6 +141,8 @@ private:
     [[nodiscard]] Status InstallCurrent() const;
     void ReserveInstall();
     void InstallPrepared(std::shared_ptr<const Version> version) noexcept;
+    void RetainPinnedCurrent() noexcept;
+    void RegisterCurrentVersion(std::shared_ptr<const Version>& version) noexcept;
     void ReleaseRead(const Version& version) noexcept;
     void Install(std::shared_ptr<const Version> version);
 
