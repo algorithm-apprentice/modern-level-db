@@ -46,6 +46,8 @@ private:
         const Version::File* file;
     };
 
+    [[nodiscard]] bool ShouldRecord(const Version& version, const Version& current,
+                                    const FileMetadata& file) const noexcept;
     [[nodiscard]] bool IsRecordedFor(const Version& version) const noexcept;
 
     std::optional<Recorded> recorded_;
