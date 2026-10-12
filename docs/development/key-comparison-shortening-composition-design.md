@@ -2,7 +2,8 @@
 
 ## Status and scope
 
-Proposed recursive follow-up to the production composition plan.
+Design accepted in #244; local implementation evidence follows below.
+Recursive follow-up to the production composition plan.
 Source-read baseline: `9a01cafd87a983fecaad7cc4aff6561e3cc2525c`, after
 block reverse #241. Pending hash #243 uses independent source/test/design
 paths and is not a code prerequisite.
@@ -210,3 +211,119 @@ the current binaries were last built on the independent hash branch, without
 baseline. Implementation, hosted checks, coverage and performance remain
 future gates; no edits/builds/native execution or nested agents were performed
 by this reviewer.
+
+## Local implementation evidence
+
+Accepted design merge: `ea8c06516b68a96bab8732c7820d731371fd6265`.
+This includes independently delivered hash #243. The five selected production
+source/header paths were byte-identical to this merge before characterization.
+Fresh native builds included both the unit and Windows lock-child targets;
+stale 230/31 discovery was not used as the original baseline.
+
+`02ecae4` adds the six planned public cases on unchanged production:
+`SeparatorBoundariesAndBorrowedLimitsKeepExactBytes`,
+`SuccessorBoundariesKeepExactFirstIncrementablePrefix`,
+`ShorteningPoliciesKeepCallbacksAndDelayedPublication`,
+`MalformedAndThrowingShortenersKeepOriginalOwners`,
+`BinaryPrefixAndRestartStagesKeepLiteralBlocks`, and
+`ResetAfterOwnedFinishRestoresLiteralPrefixHistory`.
+The bounded independent characterization reviewer checked actual source,
+literals, callback/magnitude/throw/alias/reset boundaries and supplied native
+log/XML. No significant issue was found; no native rerun was claimed.
+
+The comparator recorder uses fixed four-call storage, exact total call count
+and bounded eight-byte snapshots with full observed lengths. Every actual
+recorded key has at most six bytes, checked by assertions outside noexcept.
+Compare records without allocation and returns -17/0/17; new direct internal
+comparisons distinguish magnitude passthrough from descending-trailer -1.
+Candidate matrices distinguish size rejection, one eligibility call, a second
+complete internal upper-bound call, equal maximum-seek rejection and same-user
+older-limit acceptance. The expected maximum-seek trailer is literal
+01/ff/ff/ff/ff/ff/ff/ff, not produced by the changed helper.
+Throwing shorteners first mutate only their local candidate, then throw;
+the original full key remains unchanged and only the shortener was called.
+
+Builder literal full blocks are independently assembled: intervals 1/2/3
+produce sizes 40/32/31, with stored restart offsets 4/10/15, 10, and 14,
+respectively, after the implicit zero. Reset preserves the owned first
+17-byte copy and emits a literal 14-byte new block without stale sharing.
+All calls use sorted keys, valid intervals and Reset before reuse after Finish.
+The borrowed separator limit is never read after original storage shrinks.
+
+`922602e` implements normalized prefix/length and descending-trailer
+comparisons. `96d00a5` implements typed optional byte-successor selection,
+shared prefix scanning, checked internal eligibility/trailer/bounded commit.
+`ed221f6` implements builder header/payload/history/restart children.
+Both intermediate runs contain exactly the 35 foundation identities from the
+original coupled set. Original/final coupled runs contain exactly the same
+238 unique identities, all passing, with zero errors/failures/skips:
+
+| Class | Original/final identities |
+|---|---:|
+| ComparatorTest | 13 |
+| InternalKeyTest | 8 |
+| InternalKeyComparatorTest | 10 |
+| LookupKeyTest | 4 |
+| BlockBuilderTest | 7 |
+| BlockTest | 10 |
+| BlockIteratorTest | 26 |
+| BlockModelTest | 1 |
+| TableTest | 38 |
+| TableNativeTest | 2 |
+| TableBuilderTest | 19 |
+| DbIteratorTest | 8 |
+| DbIteratorSamplingTest | 4 |
+| MergingIteratorTest | 8 |
+| LevelIteratorTest | 8 |
+| CompactionTest | 18 |
+| DatabaseTest | 54 |
+
+All 24 selected definitions follow the ledger. SharedPrefixLength has both
+real callers, without changing existing CopyLookupValue. Added private builder
+declarations describe only their owning state; no comparator/public header
+changed. Selected source/header coverage annotation text/multiplicity is
+unchanged, with no exclusions or thresholds added.
+AppendEntryHeader receives value.size() as a scalar argument, sampled before
+its first header write rather than within the old third write. This pure
+fixed-span size observation cannot allocate or invoke a user callback; the
+ordered header writes and subsequent parent key_delta acquisition remain
+unchanged. Extra scalar/span/optional copies and evaluation positions are not
+claimed physically identical. Existing throw/reset contracts remain; tests
+do not provide an allocation-failure observer for builder inserts.
+Hosted reviewed-head checks, actual selected-name parity and performance
+acknowledgements remain pending; the production-wide audit is not complete.
+
+The bounded independent integrated code reviewer inspected the accepted-baseline
+source/header/test/design scope and reported no significant issue. This is a
+local read-only review, not GitHub approval or a new native execution, and does
+not remove the recorded hosted, allocation-observer or physical-scalar limits.
+
+### Authoritative coverage correction
+
+The first published head c3b736e failed GCC 13 diff coverage in run 38209177658:
+98% overall, with only comparator.cc line 36 missing branch coverage.
+The saved XML reports 1186 hits and 75% (3/4) for SeparatorSuccessor's compound
+admission. The missing branch is start_byte == ff, not a production behavior
+failure or a reason to alter the byte policy/threshold/exclusion.
+
+A separate local original-source branch based on the accepted design, with
+only the original characterization commit applied, first adds the literal
+start ff/00, limit fe, unchanged ff/00 row. All five selected production paths
+remain byte-identical to the accepted source; its freshly built 35 foundation
+cases pass. The bounded independent reviewer confirms the missing first-false
+branch and exact original output, contrasting the already-covered second-false
+fe/00 -> ff case. The public contract's conditional ordering guarantee is not
+a start < limit caller precondition.
+
+`ade34bc` ports that independently reviewed test-only row normally onto the
+published branch, without rewriting history or changing production.
+The final coupled rerun still contains exactly the original 238 identities,
+all passing, and the separate original-source 35 are exactly its foundation
+subset. No new test identity is added by extending the existing matrix.
+Post-correction authoritative coverage is still a new-head gate, not inferred
+from Windows native success or the branch argument.
+
+The separate bounded final changed-scope reviewer inspected this test-only
+addition and correction record against the first published head, with saved
+original/final/coverage evidence. No significant issue was found; no new
+native execution or restored GCC coverage was claimed by that reviewer.

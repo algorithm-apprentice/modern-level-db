@@ -41,6 +41,12 @@ public:
     [[nodiscard]] bool empty() const noexcept { return entries_since_restart_ == 0; }
 
 private:
+    void BeginRestart();
+    void AppendEntryHeader(std::size_t shared, std::size_t non_shared, std::size_t value_size);
+    void AppendEntryPayload(ByteView key_delta, ByteView value);
+    void CommitEntryHistory(std::size_t shared, ByteView key_delta);
+    void AppendRestarts();
+
     std::uint32_t restart_interval_;
     // Zero only before the first entry, because every Add increments it after
     // any restart.

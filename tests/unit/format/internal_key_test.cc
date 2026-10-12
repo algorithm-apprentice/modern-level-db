@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <limits>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -64,6 +65,74 @@ public:
 
     void FindShortSuccessor(std::vector<std::byte>&) const override {}
 };
+
+struct ShorteningCall {
+    char operation = '\0';
+    std::array<std::byte, 8> left{};
+    std::array<std::byte, 8> right{};
+    std::size_t left_size = 0;
+    std::size_t right_size = 0;
+};
+
+class RecordingShortener final : public Comparator {
+public:
+    explicit RecordingShortener(std::string_view candidate, bool throws = false)
+        : candidate_(candidate), throws_(throws) {}
+
+    int Compare(ByteView left, ByteView right) const noexcept override {
+        Record('C', left, right);
+        return 17 * BytewiseComparator().Compare(left, right);
+    }
+
+    std::string_view Name() const noexcept override { return "test.RecordingShortener"; }
+
+    void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const override {
+        Record('S', start, limit);
+        Shorten(start);
+    }
+
+    void FindShortSuccessor(std::vector<std::byte>& key) const override {
+        Record('U', key, {});
+        Shorten(key);
+    }
+
+    mutable std::array<ShorteningCall, 4> calls{};
+    mutable std::size_t call_count = 0;
+
+private:
+    void Record(char operation, ByteView left, ByteView right) const noexcept {
+        const std::size_t index = call_count++;
+        if (index < calls.size()) {
+            auto& call = calls[index];
+            call.operation = operation;
+            call.left_size = left.size();
+            call.right_size = right.size();
+            std::copy_n(left.begin(), std::min(left.size(), call.left.size()), call.left.begin());
+            std::copy_n(right.begin(), std::min(right.size(), call.right.size()),
+                        call.right.begin());
+        }
+    }
+
+    void Shorten(std::vector<std::byte>& key) const {
+        const ByteView candidate = AsBytes(candidate_);
+        key.assign(candidate.begin(), candidate.end());
+        if (throws_) {
+            throw std::runtime_error("shortener failed");
+        }
+    }
+
+    std::string_view candidate_;
+    bool throws_;
+};
+
+void ExpectShorteningCall(const ShorteningCall& call, char operation, std::string_view left,
+                          std::string_view right = {}) {
+    EXPECT_EQ(call.operation, operation);
+    ASSERT_LE(call.left_size, call.left.size());
+    ASSERT_LE(call.right_size, call.right.size());
+    EXPECT_EQ(AsStringView(ByteView(call.left).first(call.left_size)), left);
+    EXPECT_EQ(AsStringView(ByteView(call.right).first(call.right_size)), right);
+}
 
 static_assert(std::is_constructible_v<InternalKeyComparator, TestComparator&>);
 static_assert(!std::is_constructible_v<InternalKeyComparator, TestComparator&&>);
@@ -489,6 +558,114 @@ TEST(InternalKeyComparatorTest, LeavesMalformedKeysUnchangedWhenShortening) {
     comparator.FindShortSuccessor(malformed);
     ASSERT_EQ(malformed.size(), 1U);
     EXPECT_EQ(malformed.front(), std::byte{'x'});
+}
+
+TEST(InternalKeyComparatorTest, ShorteningPoliciesKeepCallbacksAndDelayedPublication) {
+    struct CandidateCase {
+        std::string_view candidate;
+        std::string_view limit;
+        SequenceNumber limit_sequence;
+        bool separator_changes;
+        bool successor_changes;
+        std::size_t separator_compares;
+        std::size_t successor_compares;
+    };
+    const std::array cases{
+        CandidateCase{"abcd", "z", 100, false, false, 0, 0},
+        CandidateCase{"abcdef", "z", 100, false, false, 0, 0},
+        CandidateCase{"ab", "z", 100, false, false, 1, 1},
+        CandidateCase{"bc", "bb", 100, false, true, 2, 1},
+        CandidateCase{"bb", "bb", MaxSequenceNumber, false, true, 2, 1},
+        CandidateCase{"bb", "bb", 100, true, true, 2, 1},
+        CandidateCase{"b", "c", 100, true, true, 2, 1},
+    };
+    const auto original = Encoded("abcd", 100, ValueKind::Value);
+    const auto trailer = Bytes({0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff});
+    for (const auto& test : cases) {
+        SCOPED_TRACE(test.candidate);
+        SCOPED_TRACE(test.limit_sequence);
+        const auto limit = Encoded(test.limit, test.limit_sequence, ValueKind::Value);
+        const ByteView candidate = AsBytes(test.candidate);
+        std::vector<std::byte> expected(candidate.begin(), candidate.end());
+        expected.insert(expected.end(), trailer.begin(), trailer.end());
+
+        const RecordingShortener separator_user(test.candidate);
+        const InternalKeyComparator separator(separator_user);
+        auto start = original;
+        separator.FindShortestSeparator(start, limit);
+        EXPECT_EQ(start, test.separator_changes ? expected : original);
+        ASSERT_EQ(separator_user.call_count, 1 + test.separator_compares);
+        ExpectShorteningCall(separator_user.calls[0], 'S', "abcd", test.limit);
+        if (test.separator_compares != 0) {
+            ExpectShorteningCall(separator_user.calls[1], 'C', "abcd", test.candidate);
+        }
+        if (test.separator_compares == 2) {
+            ExpectShorteningCall(separator_user.calls[2], 'C', test.candidate, test.limit);
+        }
+
+        const RecordingShortener successor_user(test.candidate);
+        const InternalKeyComparator successor(successor_user);
+        auto key = original;
+        successor.FindShortSuccessor(key);
+        EXPECT_EQ(key, test.successor_changes ? expected : original);
+        ASSERT_EQ(successor_user.call_count, 1 + test.successor_compares);
+        ExpectShorteningCall(successor_user.calls[0], 'U', "abcd");
+        if (test.successor_compares != 0) {
+            ExpectShorteningCall(successor_user.calls[1], 'C', "abcd", test.candidate);
+        }
+    }
+
+    const RecordingShortener user("");
+    const InternalKeyComparator comparator(user);
+    const auto a = Encoded("a", 9, ValueKind::Value);
+    const auto b = Encoded("b", 1, ValueKind::Value);
+    const auto older_a = Encoded("a", 8, ValueKind::Value);
+    EXPECT_EQ(comparator.Compare(a, b), -17);
+    EXPECT_EQ(comparator.Compare(b, a), 17);
+    EXPECT_EQ(comparator.Compare(a, older_a), -1);
+    ASSERT_EQ(user.call_count, 3U);
+    ExpectShorteningCall(user.calls[0], 'C', "a", "b");
+    ExpectShorteningCall(user.calls[1], 'C', "b", "a");
+    ExpectShorteningCall(user.calls[2], 'C', "a", "a");
+}
+
+TEST(InternalKeyComparatorTest, MalformedAndThrowingShortenersKeepOriginalOwners) {
+    const auto original = Encoded("abcd", 100, ValueKind::Value);
+    const auto limit = Encoded("z", 100, ValueKind::Value);
+    const std::array malformed{
+        std::vector<std::byte>{},
+        Bytes({0xff}),
+        Bytes({0x02, 0, 0, 0, 0, 0, 0, 0}),
+    };
+    for (const auto& bad : malformed) {
+        const RecordingShortener user("b");
+        const InternalKeyComparator comparator(user);
+        auto start = bad;
+        comparator.FindShortestSeparator(start, limit);
+        EXPECT_EQ(start, bad);
+        comparator.FindShortSuccessor(start);
+        EXPECT_EQ(start, bad);
+        start = original;
+        comparator.FindShortestSeparator(start, bad);
+        EXPECT_EQ(start, original);
+        EXPECT_EQ(user.call_count, 0U);
+    }
+
+    const RecordingShortener separator_user("b", true);
+    const InternalKeyComparator separator(separator_user);
+    auto start = original;
+    EXPECT_THROW(separator.FindShortestSeparator(start, limit), std::runtime_error);
+    EXPECT_EQ(start, original);
+    ASSERT_EQ(separator_user.call_count, 1U);
+    ExpectShorteningCall(separator_user.calls[0], 'S', "abcd", "z");
+
+    const RecordingShortener successor_user("b", true);
+    const InternalKeyComparator successor(successor_user);
+    auto key = original;
+    EXPECT_THROW(successor.FindShortSuccessor(key), std::runtime_error);
+    EXPECT_EQ(key, original);
+    ASSERT_EQ(successor_user.call_count, 1U);
+    ExpectShorteningCall(successor_user.calls[0], 'U', "abcd");
 }
 
 }  // namespace

@@ -46,6 +46,38 @@ std::vector<std::byte> EncodeUnchecked(ByteView user_key, SequenceNumber sequenc
     return encoded;
 }
 
+int CompareDescendingTrailers(ByteView left, ByteView right) noexcept {
+    const std::uint64_t left_trailer = DecodeFixed64(left.last<InternalKeyTrailerSize>());
+    const std::uint64_t right_trailer = DecodeFixed64(right.last<InternalKeyTrailerSize>());
+    if (left_trailer > right_trailer) {
+        return -1;
+    }
+    if (left_trailer < right_trailer) {
+        return 1;
+    }
+    return 0;
+}
+
+bool IsShorterAndGreaterUserKey(const Comparator& comparator, ByteView original,
+                                ByteView candidate) noexcept {
+    if (candidate.size() >= original.size()) {
+        return false;
+    }
+    return comparator.Compare(original, candidate) < 0;
+}
+
+void AppendMaxSeekTrailer(std::vector<std::byte>& key) {
+    AppendFixed64(key, PackInternalKeyTrailer(MaxSequenceNumber, SeekValueKind));
+}
+
+void CommitSeparatorBeforeLimit(const InternalKeyComparator& comparator,
+                                std::vector<std::byte>& start, std::vector<std::byte>& candidate,
+                                ByteView limit) {
+    if (comparator.Compare(candidate, limit) < 0) {
+        start = std::move(candidate);
+    }
+}
+
 }  // namespace
 
 Result<InternalKeyView> ParseInternalKey(ByteView encoded) {
@@ -177,15 +209,7 @@ int InternalKeyComparator::Compare(ByteView left, ByteView right) const noexcept
     if (user_order != 0) {
         return user_order;
     }
-    const std::uint64_t left_trailer = DecodeFixed64(left.last<InternalKeyTrailerSize>());
-    const std::uint64_t right_trailer = DecodeFixed64(right.last<InternalKeyTrailerSize>());
-    if (left_trailer > right_trailer) {
-        return -1;
-    }
-    if (left_trailer < right_trailer) {
-        return 1;
-    }
-    return 0;
+    return CompareDescendingTrailers(left, right);
 }
 
 std::string_view InternalKeyComparator::Name() const noexcept {
@@ -202,15 +226,12 @@ void InternalKeyComparator::FindShortestSeparator(std::vector<std::byte>& start,
 
     std::vector<std::byte> shortened(start_key.user_key.begin(), start_key.user_key.end());
     user_comparator_.FindShortestSeparator(shortened, limit_key.user_key);
-    if (shortened.size() >= start_key.user_key.size() ||
-        user_comparator_.Compare(start_key.user_key, shortened) >= 0) {
+    if (!IsShorterAndGreaterUserKey(user_comparator_, start_key.user_key, shortened)) {
         return;
     }
 
-    AppendFixed64(shortened, PackInternalKeyTrailer(MaxSequenceNumber, SeekValueKind));
-    if (Compare(shortened, limit) < 0) {
-        start = std::move(shortened);
-    }
+    AppendMaxSeekTrailer(shortened);
+    CommitSeparatorBeforeLimit(*this, start, shortened, limit);
 }
 
 void InternalKeyComparator::FindShortSuccessor(std::vector<std::byte>& key) const {
@@ -221,12 +242,11 @@ void InternalKeyComparator::FindShortSuccessor(std::vector<std::byte>& key) cons
 
     std::vector<std::byte> successor(decoded.user_key.begin(), decoded.user_key.end());
     user_comparator_.FindShortSuccessor(successor);
-    if (successor.size() >= decoded.user_key.size() ||
-        user_comparator_.Compare(decoded.user_key, successor) >= 0) {
+    if (!IsShorterAndGreaterUserKey(user_comparator_, decoded.user_key, successor)) {
         return;
     }
 
-    AppendFixed64(successor, PackInternalKeyTrailer(MaxSequenceNumber, SeekValueKind));
+    AppendMaxSeekTrailer(successor);
     key = std::move(successor);
 }
 
