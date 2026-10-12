@@ -80,6 +80,16 @@ void CommitSeparatorBeforeLimit(const InternalKeyComparator& comparator,
 
 }  // namespace
 
+void EncodeInternalKeyTrusted(MutableByteView& output, ByteView user_key, SequenceNumber sequence,
+                              ValueKind kind) noexcept {
+    std::ranges::copy(user_key, output.begin());
+    output = output.subspan(user_key.size());
+    EncodeFixed64(
+        std::span<std::byte, InternalKeyTrailerSize>(output.data(), InternalKeyTrailerSize),
+        PackInternalKeyTrailer(sequence, kind));
+    output = output.subspan(InternalKeyTrailerSize);
+}
+
 Result<InternalKeyView> ParseInternalKey(ByteView encoded) {
     InternalKeyView decoded;
     if (!TryDecodeInternalKey(encoded, decoded)) {
@@ -105,20 +115,20 @@ LookupKey LookupKey::CreateTrusted(ByteView user_key, SequenceNumber sequence) {
     const std::size_t encoded_size = prefix_size + internal_key_size;
 
     LookupKey result;
-    if (encoded_size > InlineCapacity) {
-        result.heap_storage_ = std::make_unique<std::byte[]>(encoded_size);
-    }
-    result.encoded_size_ = encoded_size;
-    result.internal_key_offset_ = prefix_size;
+    result.PrepareStorage(encoded_size, prefix_size);
 
     MutableByteView output(result.data(), encoded_size);
     EncodeVarint32Trusted(output, encoded_internal_key_size);
-    std::ranges::copy(user_key, output.begin());
-    output = output.subspan(user_key.size());
-    EncodeFixed64(
-        std::span<std::byte, InternalKeyTrailerSize>(output.data(), InternalKeyTrailerSize),
-        PackInternalKeyTrailer(sequence, SeekValueKind));
+    EncodeInternalKeyTrusted(output, user_key, sequence, SeekValueKind);
     return result;
+}
+
+void LookupKey::PrepareStorage(std::size_t encoded_size, std::size_t prefix_size) {
+    if (encoded_size > InlineCapacity) {
+        heap_storage_ = std::make_unique<std::byte[]>(encoded_size);
+    }
+    encoded_size_ = encoded_size;
+    internal_key_offset_ = prefix_size;
 }
 
 LookupKey::LookupKey() noexcept { ResetToCanonicalEmpty(); }

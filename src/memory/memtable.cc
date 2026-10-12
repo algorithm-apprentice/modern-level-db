@@ -1,9 +1,7 @@
 #include "memory/memtable.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <span>
 #include <vector>
 
 #include "base/coding_internal.h"
@@ -50,12 +48,7 @@ const std::byte* EncodeMemTableEntry(Arena& arena, SequenceNumber sequence, Valu
     const std::size_t internal_key_size = key.size() + InternalKeyTrailerSize;
     EncodeVarint32Trusted(output, static_cast<std::uint32_t>(internal_key_size));
 
-    std::ranges::copy(key, output.begin());
-    output = output.subspan(key.size());
-    EncodeFixed64(
-        std::span<std::byte, InternalKeyTrailerSize>(output.data(), InternalKeyTrailerSize),
-        PackInternalKeyTrailer(sequence, kind));
-    output = output.subspan(InternalKeyTrailerSize);
+    EncodeInternalKeyTrusted(output, key, sequence, kind);
 
     EncodeLengthPrefixedTrusted(output, value);
     return entry;
