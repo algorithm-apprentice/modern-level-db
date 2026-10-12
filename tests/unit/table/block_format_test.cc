@@ -333,7 +333,7 @@ TEST(StoredBlockTest, OwningAndBorrowedPathsKeepValidationPriorityAndMessages) {
 
     const std::vector<std::byte> unknown = StoredBlock(Bytes({'x'}), 3);
     std::vector<std::byte> bad_checksum = unknown;
-    bad_checksum.front() ^= std::byte{0x01};
+    bad_checksum.at(0) ^= std::byte{0x01};
     ExpectCorruption(DecodeStoredBlock(bad_checksum), "block checksum mismatch");
     ExpectCorruption(DecodeStoredBlock(ByteView(bad_checksum)), "block checksum mismatch");
     ExpectCorruption(DecodeStoredBlock(unknown), "block has an unknown compression type");
