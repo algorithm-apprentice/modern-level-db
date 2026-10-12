@@ -82,14 +82,18 @@ public:
 
     [[nodiscard]] std::string ToString() const {
         std::string text(ErrorCodeName(code_));
-        if (!message_.empty()) {
-            text.append(": ");
-            text.append(message_);
-        }
+        AppendMessageIfPresent(text);
         return text;
     }
 
 private:
+    void AppendMessageIfPresent(std::string& text) const {
+        if (!message_.empty()) {
+            text.append(": ");
+            text.append(message_);
+        }
+    }
+
     Error(ErrorCode code, std::string message, std::source_location location)
         : code_(code), message_(std::move(message)), location_(location) {}
 
