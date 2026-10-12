@@ -122,10 +122,7 @@ private:
         }
 
         [[nodiscard]] Link& LinkAt(int level) const noexcept {
-            auto* base = reinterpret_cast<std::byte*>(const_cast<Node*>(this));
-            std::byte* address =
-                base + LinksOffset() + static_cast<std::size_t>(level) * sizeof(Link);
-            return *std::launder(reinterpret_cast<Link*>(address));
+            return *std::launder(LinkAddress(*const_cast<Node*>(this), level));
         }
 
         const Entry entry;
@@ -145,39 +142,65 @@ private:
         return (sizeof(Node) + alignof(Link) - 1U) & ~(alignof(Link) - 1U);
     }
 
-    void InsertAfterSearch(Entry entry, std::array<Node*, MaxHeight>& predecessors) {
-        const int height = RandomHeight();
-        const int current_height = max_height_.load(std::memory_order_relaxed);
-        if (height > current_height) {
-            for (int level = current_height; level < height; ++level) {
-                predecessors[static_cast<std::size_t>(level)] = head_;
-            }
-        }
+    [[nodiscard]] static Link* LinkAddress(Node& node, int level) noexcept {
+        auto* base = reinterpret_cast<std::byte*>(&node);
+        std::byte* address = base + LinksOffset() + static_cast<std::size_t>(level) * sizeof(Link);
+        return reinterpret_cast<Link*>(address);
+    }
 
-        Node* node = NewNode(entry, height);
+    [[nodiscard]] static constexpr std::size_t NodeStorageSize(int height) noexcept {
+        return LinksOffset() + sizeof(Link) * static_cast<std::size_t>(height);
+    }
+
+    static void InitializeLinks(Node& node, int height) {
+        for (int level = 0; level < height; ++level) {
+            static_cast<void>(std::construct_at(LinkAddress(node, level), nullptr));
+        }
+    }
+
+    [[nodiscard]] int CurrentHeight() const noexcept {
+        return max_height_.load(std::memory_order_relaxed);
+    }
+
+    void PreparePredecessorsForHeight(std::array<Node*, MaxHeight>& predecessors,
+                                      int current_height, int height) const noexcept {
+        for (int level = current_height; level < height; ++level) {
+            predecessors[static_cast<std::size_t>(level)] = head_;
+        }
+    }
+
+    void PublishHeightIfNeeded(int height, int current_height) noexcept {
         if (height > current_height) {
             // Height is only a search hint. A reader seeing the higher level before
             // its first link is published finds the initialized null head link and descends.
             max_height_.store(height, std::memory_order_relaxed);
         }
+    }
+
+    static void LinkNodeAtLevel(Node& node, Node& predecessor, int level) noexcept {
+        node.SetNextRelaxed(level, predecessor.NextRelaxed(level));
+        // Release-publication pairs with readers' acquire loads: the key and
+        // outgoing link are initialized before the node becomes reachable.
+        predecessor.SetNext(level, &node);
+    }
+
+    void InsertAfterSearch(Entry entry, std::array<Node*, MaxHeight>& predecessors) {
+        const int height = RandomHeight();
+        const int current_height = CurrentHeight();
+        PreparePredecessorsForHeight(predecessors, current_height, height);
+
+        Node* node = NewNode(entry, height);
+        PublishHeightIfNeeded(height, current_height);
         for (int level = 0; level < height; ++level) {
             Node* predecessor = predecessors[static_cast<std::size_t>(level)];
-            node->SetNextRelaxed(level, predecessor->NextRelaxed(level));
-            // Release-publication pairs with readers' acquire loads: the key and
-            // outgoing link are initialized before the node becomes reachable.
-            predecessor->SetNext(level, node);
+            LinkNodeAtLevel(*node, *predecessor, level);
         }
     }
 
     [[nodiscard]] Node* NewNode(Entry entry, int height) {
-        std::byte* storage =
-            arena_.AllocateAligned(LinksOffset() + sizeof(Link) * static_cast<std::size_t>(height));
+        std::byte* storage = arena_.AllocateAligned(NodeStorageSize(height));
         Node* node = std::construct_at(reinterpret_cast<Node*>(storage), entry);
-        for (int level = 0; level < height; ++level) {
-            std::byte* address =
-                storage + LinksOffset() + static_cast<std::size_t>(level) * sizeof(Link);
-            (void)std::construct_at(reinterpret_cast<Link*>(address), nullptr);
-        }
+        InitializeLinks(*node, height);
         return node;
     }
 
