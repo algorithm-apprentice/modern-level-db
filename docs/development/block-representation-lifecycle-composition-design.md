@@ -13,8 +13,8 @@ unchanged Block/Iterator/BlockBuilder body a bounded semantic disposition.
 Keep reviewed design, original-source characterization and the block-format
 production topic as local commits, then publish one non-draft PR.
 The design and corrected original characterization are accepted; both
-production topics are implemented locally. Integrated review and delivery
-remain pending.
+production topics are implemented locally. Integrated review is complete;
+delivery remains pending.
 
 Changed production path is block_format.cc. Its header and all Block/
 BlockBuilder source/headers are inspected but unchanged. No public API,
@@ -129,7 +129,7 @@ BlockContents::data/cacheable and move-only representation remain unchanged.
 | Iterator::RestartKey | Decode one restart entry and borrow full key |
 | Iterator::SeekToRestartPoint | Publish restart coordinates/key/value |
 | Iterator::ParseNextEntry | Decode next entry and compute key/physical end |
-| Iterator::CommitEntry | Validate key size/restart then publish reconstructed state |
+| Iterator::CommitEntry | Publish reconstructed coordinates/key/value, then validate restart advancement; corruption invalidates the published state |
 | Iterator::AdvanceRestartIndex | Validate and advance crossed restart |
 | Iterator::Corruption | Install first corruption and invalidate |
 | Iterator::AcceptsKeySize | Enforce Internal versus Arbitrary key domain |
@@ -253,6 +253,10 @@ compressed source release. Local GCC Release then found an optimized
 vector::front null-dereference warning in the new corruption fixture. The
 correction was proven on unchanged production as `f4a9ad4` with exact 208-name
 parity and GCC object success, then normally cherry-picked as `a06e9a2`.
+Integrated review later found that metaindex/index mixed faults expected the
+same message and therefore did not prove decode order. The metaindex size versus
+index offset correction was proven on unchanged production as `2ba086a` with
+exact parity/GCC success and cherry-picked as `8637ed6`.
 
 The corrected unchanged-production Windows Debug selection contains 208
 identities:
@@ -289,3 +293,10 @@ warnings-as-errors with `-fno-range-for-ext-temps` compiles all changed/coupled
 objects. Documentation validation and `git diff --check` pass. Hosted GCC 13
 branch coverage, Windows native execution/name parity and normal merge remain
 delivery obligations.
+
+Initial integrated review found the ambiguous footer-priority oracle and the
+incorrect CommitEntry ledger order. After the unchanged-source correction,
+final parity and focused GCC verification, a separate focused review found no
+remaining significant issue. Hosted coverage, arbitrary allocation failure,
+borrowed mutation, unsupported iterator domains, performance and
+whole-production behavior remain outside this bounded conclusion.
