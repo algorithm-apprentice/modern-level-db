@@ -151,6 +151,9 @@ TEST(ComparatorTest, SeparatorBoundariesAndBorrowedLimitsKeepExactBytes) {
     };
     const std::array cases{
         SeparatorCase{{}, {std::byte{0xff}}, {}},
+        SeparatorCase{{std::byte{0xff}, std::byte{0x00}},
+                      {std::byte{0xfe}},
+                      {std::byte{0xff}, std::byte{0x00}}},
         SeparatorCase{{std::byte{0x00}}, {}, {std::byte{0x00}}},
         SeparatorCase{OwnedBytes("ab"), OwnedBytes("abc"), OwnedBytes("ab")},
         SeparatorCase{OwnedBytes("abc"), OwnedBytes("ab"), OwnedBytes("abc")},
