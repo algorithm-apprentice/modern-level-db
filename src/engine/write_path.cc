@@ -79,6 +79,11 @@ WriteQueue::WriteQueue()
           Error::Aborted("write aborted by an exception while its group committed")))) {}
 // GCOVR_EXCL_STOP
 
+void WriteQueue::WaitForTurn(std::unique_lock<std::mutex>& lock, Writer& writer) {
+    writers_.push_back(&writer);
+    writer.woken.wait(lock, [&] { return writer.done || writers_.front() == &writer; });
+}
+
 std::size_t WriteQueue::GroupSizeLimit(std::size_t leader_size) noexcept {
     return leader_size <= SmallBatchGrowth ? leader_size + SmallBatchGrowth : MaximumGroupSize;
 }
@@ -134,14 +139,23 @@ void WriteQueue::Complete(const Writer& leader, const Writer* last,
         Writer* ready = writers_.front();
         writers_.pop_front();
         if (ready != &leader) {
-            ready->result = result;
-            ready->done = true;
-            ready->woken.notify_one();
+            PublishFollowerResult(*ready, result);
         }
         if (ready == last) {
             break;
         }
     }
+    WakeNextWriter();
+}
+
+void WriteQueue::PublishFollowerResult(Writer& writer,
+                                       const std::shared_ptr<const Status>& result) noexcept {
+    writer.result = result;
+    writer.done = true;
+    writer.woken.notify_one();
+}
+
+void WriteQueue::WakeNextWriter() noexcept {
     if (!writers_.empty()) {
         writers_.front()->woken.notify_one();
     }

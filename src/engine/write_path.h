@@ -112,6 +112,16 @@ private:
     template <typename Prepare, typename Commit>
     [[nodiscard]] Status Run(std::unique_lock<std::mutex>& lock, EncodedWriteBatch* batch,
                              bool sync, Prepare& prepare, Commit& commit);
+    void WaitForTurn(std::unique_lock<std::mutex>& lock, Writer& writer);
+    template <typename Commit>
+    static void CommitRestoringSequence(Status& result, std::unique_lock<std::mutex>& lock,
+                                        EncodedWriteBatch& batch, bool sync, Commit& commit);
+    template <typename Commit>
+    [[nodiscard]] Status CommitSingleWriter(std::unique_lock<std::mutex>& lock, Writer& leader,
+                                            const Group& group, LeaderGuard& guard, Commit& commit);
+    template <typename Commit>
+    [[nodiscard]] Status CommitWriterGroup(std::unique_lock<std::mutex>& lock, Writer& leader,
+                                           const Group& group, LeaderGuard& guard, Commit& commit);
     [[nodiscard]] static std::size_t GroupSizeLimit(std::size_t leader_size) noexcept;
     [[nodiscard]] static bool CompatibleFollower(const Writer& leader,
                                                  const Writer& follower) noexcept;
@@ -126,6 +136,9 @@ private:
     // and wakes the next writer.
     void Complete(const Writer& leader, const Writer* last,
                   const std::shared_ptr<const Status>& result) noexcept;
+    static void PublishFollowerResult(Writer& writer,
+                                      const std::shared_ptr<const Status>& result) noexcept;
+    void WakeNextWriter() noexcept;
 
     std::deque<Writer*> writers_;
     EncodedWriteBatch group_;
@@ -154,8 +167,7 @@ Status WriteQueue::Run(std::unique_lock<std::mutex>& lock, EncodedWriteBatch* ba
                        Prepare& prepare, Commit& commit) {
     static_assert(std::is_nothrow_move_assignable_v<Status>);
     Writer writer{.batch = batch, .sync = sync};
-    writers_.push_back(&writer);
-    writer.woken.wait(lock, [&] { return writer.done || writers_.front() == &writer; });
+    WaitForTurn(lock, writer);
     if (writer.done) {
         return *writer.result;
     }
@@ -171,27 +183,39 @@ Status WriteQueue::Run(std::unique_lock<std::mutex>& lock, EncodedWriteBatch* ba
 
     const Group group = BuildGroup(writer);
     if (group.last == &writer) {
-        guard.TakeOn(group.last);
-        Status result;
-        {
-            SequenceGuard restore(*group.batch);
-            result = commit(lock, *group.batch, writer.sync);
-        }
-        guard.Dismiss();
-        Complete(writer, group.last, nullptr);
-        return result;
+        return CommitSingleWriter(lock, writer, group, guard, commit);
     }
+    return CommitWriterGroup(lock, writer, group, guard, commit);
+}
 
+template <typename Commit>
+void WriteQueue::CommitRestoringSequence(Status& result, std::unique_lock<std::mutex>& lock,
+                                         EncodedWriteBatch& batch, bool sync, Commit& commit) {
+    SequenceGuard restore(batch);
+    result = commit(lock, batch, sync);
+}
+
+template <typename Commit>
+Status WriteQueue::CommitSingleWriter(std::unique_lock<std::mutex>& lock, Writer& leader,
+                                      const Group& group, LeaderGuard& guard, Commit& commit) {
+    guard.TakeOn(group.last);
+    Status result;
+    CommitRestoringSequence(result, lock, *group.batch, leader.sync, commit);
+    guard.Dismiss();
+    Complete(leader, group.last, nullptr);
+    return result;
+}
+
+template <typename Commit>
+Status WriteQueue::CommitWriterGroup(std::unique_lock<std::mutex>& lock, Writer& leader,
+                                     const Group& group, LeaderGuard& guard, Commit& commit) {
     // Allocate before commit so every taken-on writer receives a status without
     // an allocation after the group may have reached the WAL.
     const auto result = std::make_shared<Status>();
     guard.TakeOn(group.last);
-    {
-        SequenceGuard restore(*group.batch);
-        *result = commit(lock, *group.batch, writer.sync);
-    }
+    CommitRestoringSequence(*result, lock, *group.batch, leader.sync, commit);
     guard.Dismiss();
-    Complete(writer, group.last, result);
+    Complete(leader, group.last, result);
     return *result;
 }
 // GCOVR_EXCL_STOP
