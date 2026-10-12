@@ -31,6 +31,36 @@ constexpr std::array<char, 16> HexDigits{
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 };
 
+void AppendEscapedDiagnosticByte(std::string& escaped, std::byte value) {
+    const unsigned int byte = std::to_integer<unsigned int>(value);
+    switch (byte) {
+        case '\'':
+            escaped += "\\'";
+            break;
+        case '\\':
+            escaped += "\\\\";
+            break;
+        case '\n':
+            escaped += "\\n";
+            break;
+        case '\r':
+            escaped += "\\r";
+            break;
+        case '\t':
+            escaped += "\\t";
+            break;
+        default:
+            if (byte >= 0x20U && byte <= 0x7eU) {
+                escaped.push_back(static_cast<char>(byte));
+            } else {
+                escaped += "\\x";
+                escaped.push_back(HexDigits[byte >> 4U]);
+                escaped.push_back(HexDigits[byte & 0x0fU]);
+            }
+            break;
+    }
+}
+
 std::string EscapedError(const Error& error) {
     const std::string text = error.ToString();
     return EscapeDiagnosticBytes(AsBytes(text));
@@ -399,33 +429,7 @@ std::string EscapeDiagnosticBytes(ByteView bytes) {
     std::string escaped;
     escaped.reserve(bytes.size());
     for (const std::byte value : bytes) {
-        const unsigned int byte = std::to_integer<unsigned int>(value);
-        switch (byte) {
-            case '\'':
-                escaped += "\\'";
-                break;
-            case '\\':
-                escaped += "\\\\";
-                break;
-            case '\n':
-                escaped += "\\n";
-                break;
-            case '\r':
-                escaped += "\\r";
-                break;
-            case '\t':
-                escaped += "\\t";
-                break;
-            default:
-                if (byte >= 0x20U && byte <= 0x7eU) {
-                    escaped.push_back(static_cast<char>(byte));
-                } else {
-                    escaped += "\\x";
-                    escaped.push_back(HexDigits[byte >> 4U]);
-                    escaped.push_back(HexDigits[byte & 0x0fU]);
-                }
-                break;
-        }
+        AppendEscapedDiagnosticByte(escaped, value);
     }
     return escaped;
 }
