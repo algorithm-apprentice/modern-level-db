@@ -212,6 +212,10 @@ Status Block::Iterator::SeekToLast() {
     if (!sought.has_value()) {
         return sought;
     }
+    return ScanToLastEntry();
+}
+
+Status Block::Iterator::ScanToLastEntry() {
     do {
         const Status parsed = ParseNextEntry();
         if (!parsed.has_value()) {
