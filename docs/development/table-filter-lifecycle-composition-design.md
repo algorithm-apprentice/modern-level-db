@@ -15,7 +15,8 @@ bounded semantic disposition. Keep reviewed design, original-source
 characterization and two production topics as local commits, then publish one
 non-draft PR.
 The design and original characterization are accepted; both production topics
-are implemented locally. Integrated review and delivery remain pending.
+are implemented locally. Integrated review is complete; delivery remains
+pending.
 
 No public API, Bloom bytes/probe count/false-positive policy, filter range,
 offset-array format, builder overflow policy, block ownership/cacheability,
@@ -231,3 +232,9 @@ objects and every portable changed/coupled test translation unit.
 Documentation validation and `git diff --check` pass. Hosted GCC 13 branch
 coverage, Windows native execution/name parity and normal merge remain delivery
 obligations.
+
+Independent integrated review found no significant issue across the complete
+diff and 34-definition ledger. Hosted GCC 13 branch coverage, allocation
+failure, borrowed-backing mutation, unsupported builder reuse, statistical
+behavior beyond existing cases, performance and unrelated production remain
+outside this bounded conclusion.
