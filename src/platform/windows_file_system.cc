@@ -344,6 +344,30 @@ Status CheckDatabaseVolume(const std::filesystem::path& final,
     return CheckNtfsVolume(volume->data(), original, operations);
 }
 
+struct FindCloser {
+    const WindowsFileOperations* operations;
+    void operator()(void* handle) const noexcept {
+        static_cast<void>(operations->CloseFind(handle));
+    }
+};
+
+void AppendDirectoryChild(std::vector<std::filesystem::path>& children,
+                          const WIN32_FIND_DATAW& information) {
+    const std::wstring_view name(information.cFileName);
+    if (name != L"." && name != L"..") {
+        children.emplace_back(name);
+    }
+}
+
+DWORD ReadDirectoryChildren(HANDLE found, WIN32_FIND_DATAW& information,
+                            std::vector<std::filesystem::path>& children,
+                            const WindowsFileOperations& operations) {
+    do {
+        AppendDirectoryChild(children, information);
+    } while (operations.Next(found, &information));
+    return ::GetLastError();
+}
+
 class WindowsSequentialFile final : public SequentialFile {
 public:
     WindowsSequentialFile(ScopedHandle file, std::filesystem::path path,
@@ -879,21 +903,9 @@ Result<std::vector<std::filesystem::path>> WindowsFileSystem::ListDirectory(
         }
         return std::unexpected(FileError("list directory", path, error));
     }
-    struct FindCloser {
-        const WindowsFileOperations* operations;
-        void operator()(void* handle) const noexcept {
-            static_cast<void>(operations->CloseFind(handle));
-        }
-    };
     std::unique_ptr<void, FindCloser> guard(found, FindCloser{operations_.get()});
     std::vector<std::filesystem::path> result;
-    do {
-        const std::wstring_view name(information.cFileName);
-        if (name != L"." && name != L"..") {
-            result.emplace_back(name);
-        }
-    } while (operations_->Next(found, &information));
-    const DWORD error = ::GetLastError();
+    const DWORD error = ReadDirectoryChildren(found, information, result, *operations_);
     if (error != ERROR_NO_MORE_FILES) {
         return std::unexpected(FileError("list directory", path, error));
     }
