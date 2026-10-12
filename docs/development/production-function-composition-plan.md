@@ -910,17 +910,20 @@ background compaction rewrite orchestration now have named owners/stages.
 Every definition/lambda has a reviewed disposition; the reviewed head passed
 all 20 gates with 158 exact selected identities and 100% changed-code coverage.
 
-The selected N01-N09 slices are delivered, not the whole native source files.
-The selected diagnostic record/table loops and file dispatch are also delivered,
-not the whole dump file.
-Other recursive frontiers include diagnostic
-header/internal-key assemblers, remaining metadata write/release children,
-cache table/list/reference operations, deeper block layout/entry
-decoding, WAL fragmentation and codec helpers, and remaining engine/native
-children. This is not an exhaustive
-replacement for the final every-definition audit: all structured dispositions,
-new helpers, private-header bodies and lambdas still participate. Benchmarks
-remain outside scope.
+#272 closes the complete public API lifecycle ledger at 71 definitions and one
+lambda across 11 source/public-header files. One level-state projection leaf
+separates per-level representation from complete public state ownership. The
+reviewed head passed all 20 gates with 23 exact public identities and 100%
+changed-code coverage.
+
+The final metadata/diagnostics audit reconciles every current definition and
+lambda in those two domains against the previously delivered slices and finds
+no remaining production extraction. Native, engine and public API ledgers are
+closed above. The only remaining ordered task is the production-wide
+current-revision audit across all domains and newly introduced helpers.
+
+The detailed sections below remain historical design/contract records rather
+than an open worklist. Benchmarks remain outside scope.
 
 ### MANIFEST recovery
 
