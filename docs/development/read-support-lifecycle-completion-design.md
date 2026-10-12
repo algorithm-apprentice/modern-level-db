@@ -14,7 +14,8 @@ definition and sampling lambda a bounded semantic disposition. Keep reviewed
 design, original-source characterization and three production topics as local
 commits, then publish one non-draft PR.
 The design and original characterization are accepted; all three production
-topics are implemented locally. Integrated review and delivery remain pending.
+topics are implemented locally. Integrated review is complete; delivery remains
+pending.
 
 No public API, cache key, table open/read order, snapshot ordering, metadata seek
 budget, sampling sequence, compaction scheduling, owner lifetime, mutex policy,
@@ -198,3 +199,8 @@ definitions, one lambda and zero recovery nodes. Local GCC Release
 warnings-as-errors with `-fno-range-for-ext-temps` compiles all changed/coupled
 objects. Documentation and whitespace checks pass; hosted GCC 13 coverage,
 Windows native identity parity and normal merge remain delivery obligations.
+
+Independent integrated review found no significant issue across the complete
+diff, 38 named definitions and sampling lambda. The stated unsupported
+single-flight/allocation/invalid-handle/concurrency/performance cases remain
+outside this bounded conclusion.
