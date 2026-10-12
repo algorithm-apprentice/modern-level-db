@@ -532,7 +532,7 @@ public:
         : limiter_(std::move(other.limiter_)),
           operations_(std::move(other.operations_)),
           view_(std::exchange(other.view_, nullptr)),
-          length_(std::exchange(other.length_, 0)) {}
+          length_(std::exchange(other.length_, std::size_t{0})) {}
     WindowsMappedView& operator=(WindowsMappedView&&) = delete;
     ~WindowsMappedView() {
         if (limiter_ == nullptr) {

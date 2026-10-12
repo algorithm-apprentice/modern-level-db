@@ -342,7 +342,7 @@ public:
     PosixMappedRegion(PosixMappedRegion&& other) noexcept
         : budget_(std::move(other.budget_)),
           mapping_(std::exchange(other.mapping_, MAP_FAILED)),
-          length_(std::exchange(other.length_, 0)) {}
+          length_(std::exchange(other.length_, std::size_t{0})) {}
     PosixMappedRegion& operator=(PosixMappedRegion&&) = delete;
 
     ~PosixMappedRegion() {
