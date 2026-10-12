@@ -200,3 +200,11 @@ no failures, errors or skips. The true still-pending kernel path and allocation
 throws remain inspection-based; no native fault interface or policy is added.
 Formatting, whitespace and documentation checks pass locally.
 Independent combined review and exact-head hosted CI remain delivery gates.
+
+Independent bounded combined implementation review found no significant issue
+in the three changed paths and verified both native XML case sets.
+It confirmed guards/order, pre-issue operation construction, parent-owned
+lifetimes, explicit completion decision, moved error propagation and retained
+primary-error/retirement policy. No edits or builds/tests were performed by
+the reviewer. Hosted CI remains separate; genuine pending cancellation and
+allocation exceptions remain inspection-based.
