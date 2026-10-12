@@ -578,6 +578,7 @@ changed paths verified in main.
 | Recursive CURRENT I/O and runtime validation | [CURRENT/runtime validation](metadata-current-validation-composition-design.md) | Delivered in #223 after accepted #222; 119-case original/final native parity, separate 35-case read/proof intermediates, and actual hosted Windows Debug selected names match the original 119. |
 | Recursive snapshot materialization and live-file union | [Snapshot/liveness](metadata-snapshot-liveness-composition-design.md) | Delivered in #225 after accepted #224; 121-case original/final native parity, 37-case snapshot intermediate, and actual hosted Windows Debug selected names match the original 121. |
 | Recursive byte selection and fixed-width escaping | [Diagnostic byte escaping](diagnostic-byte-escape-composition-design.md) | Delivered in #228 after accepted #227; 103-case original/final native parity, 35-case diagnostic intermediate, and actual hosted Windows Debug selected names match the original 103. |
+| Recursive framed-record traversal and logical reporting | [Diagnostic record orchestration](diagnostic-record-orchestration-composition-design.md) | Delivered in #230 after accepted #229; 106-case original/final native parity, separate 38-case framed/reporting intermediates, and actual hosted Windows Debug selected names match the original 106. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -609,8 +610,18 @@ Its 103 and 35 counts are not metadata or older WAL batch totals.
 Allocation/copy/destruction or growth/mutation observations remain
 inspection-based where the detailed designs explicitly say so.
 
+#230 adds three mixed framed-stream cases to #228's same ten diagnostic/WAL/
+table/native-output suites, giving its distinct original/final 106 cases.
+The literal fixtures cover physical then logical corruption, every successful
+output prefix before injected failure, header-before-read suppression and fatal
+later read priority. Reporter/decoded-record ownership and allocation/physical
+copy behavior remain source-inspected where no supported observer exists.
+The integrated selectors are not pure WAL-suite totals. Both 38-case
+intermediates are diagnostic-only subsets, not alternate 106-case baselines.
+
 The selected N01-N09 slices are delivered, not the whole native source files.
-Other recursive frontiers include diagnostic record/table traversal and
+The selected diagnostic record loops are also delivered, not the whole dump file.
+Other recursive frontiers include diagnostic table traversal and
 header/internal-key assemblers, metadata prepared-state publication and recovered-counter
 children, cache table/list/reference operations, deeper block positioning/
 decoding, WAL fragmentation and codec helpers, and remaining engine/native
