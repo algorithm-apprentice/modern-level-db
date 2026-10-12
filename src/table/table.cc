@@ -90,6 +90,19 @@ Result<Block> ReadBlock(const RandomAccessFile& file, std::uint64_t blocks_end,
 // Decodes an index value, which Open validated.
 BlockHandle IndexHandle(ByteView value) { return TakeTrusted(ConsumeBlockHandle(value)); }
 
+std::array<std::byte, 2 * sizeof(std::uint64_t)> BlockCacheKey(
+    std::uint64_t cache_id, std::uint64_t block_offset) noexcept {
+    std::array<std::byte, 2 * sizeof(std::uint64_t)> key{};
+    EncodeFixed64(std::span(key).first<sizeof(std::uint64_t)>(), cache_id);
+    EncodeFixed64(std::span(key).last<sizeof(std::uint64_t)>(), block_offset);
+    return key;
+}
+
+bool CanCacheDataBlock(const BlockCache* cache, const TableReadOptions& options,
+                       const Block& block) noexcept {
+    return cache != nullptr && options.fill_cache && block.cacheable();
+}
+
 // Checks that the index values are handles of blocks before the footer that
 // follow one another without overlapping, so that an offset identifies a block
 // in the block cache.
@@ -336,8 +349,7 @@ Result<Table::BlockReference> Table::ReadDataBlock(BlockHandle handle,
                                                    const TableReadOptions& options) const {
     std::array<std::byte, 2 * sizeof(std::uint64_t)> cache_key{};
     if (block_cache_ != nullptr) {
-        EncodeFixed64(std::span(cache_key).first<sizeof(std::uint64_t)>(), cache_id_);
-        EncodeFixed64(std::span(cache_key).last<sizeof(std::uint64_t)>(), handle.offset);
+        cache_key = BlockCacheKey(cache_id_, handle.offset);
         std::optional<BlockCache::Handle> cached = block_cache_->Lookup(cache_key);
         if (cached.has_value()) {
             return BlockReference(std::move(*cached));
@@ -352,7 +364,7 @@ Result<Table::BlockReference> Table::ReadDataBlock(BlockHandle handle,
         return std::unexpected(Error::Corruption("table data block is empty"));
     }
     auto owned = std::make_unique<const Block>(std::move(*block));
-    if (block_cache_ != nullptr && options.fill_cache && owned->cacheable()) {
+    if (CanCacheDataBlock(block_cache_, options, *owned)) {
         const std::size_t charge = owned->size();
         return BlockReference(
             TakeTrusted(block_cache_->Insert(cache_key, std::move(owned), charge)));
