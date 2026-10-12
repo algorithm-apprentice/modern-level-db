@@ -34,7 +34,21 @@ namespace {
 
 using test_support::TemporaryDirectory;
 
-enum class NativeCall { Open, Inspect, Size, Mapping, Map, Unmap, Close, Find, Next, CloseFind };
+enum class NativeCall {
+    Open,
+    Inspect,
+    Size,
+    Mapping,
+    Map,
+    Unmap,
+    Close,
+    Find,
+    Next,
+    CloseFind,
+    Event,
+    Read,
+    Complete
+};
 
 class FaultOperations final : public WindowsFileOperations {
 public:
@@ -60,6 +74,8 @@ public:
     std::optional<std::int64_t> reported_size;
     DWORD find_error = ERROR_SUCCESS;
     DWORD find_close_error = ERROR_READ_FAULT;
+    DWORD read_error = ERROR_READ_FAULT;
+    DWORD complete_error = ERROR_CRC;
     unsigned fail_close_call = 0;
     unsigned fail_next_call = 0;
     UINT forced_drive_type = std::numeric_limits<UINT>::max();
@@ -88,6 +104,12 @@ public:
     mutable HANDLE acquired_file = INVALID_HANDLE_VALUE;
     mutable HANDLE acquired_section = nullptr;
     mutable std::array<HANDLE, 256> closed_handles{};
+    mutable HANDLE read_event = nullptr;
+    mutable OVERLAPPED read_operation{};
+    mutable DWORD read_request = 0;
+    mutable bool null_positioned_count = false;
+    mutable bool completion_was_terminal = false;
+    mutable bool closed_completed_event = false;
     static constexpr std::array<std::wstring_view, 5> ScriptedChildren{L"\u03b2", L".", L"..",
                                                                        L"two words", L"child"};
 
@@ -138,11 +160,15 @@ public:
         return WindowsFileOperations::Inspect(file, information);
     }
     HANDLE Event() const noexcept override {
+        Record(NativeCall::Event);
+        completion_was_terminal = false;
+        closed_completed_event = false;
         if (fail_event) {
             ::SetLastError(ERROR_NOT_ENOUGH_MEMORY);
             return nullptr;
         }
         const HANDLE event = WindowsFileOperations::Event();
+        read_event = event;
         if (event != nullptr) {
             ++live_handles;
         }
@@ -150,8 +176,14 @@ public:
     }
     BOOL Read(HANDLE file, void* output, DWORD size, DWORD* read,
               OVERLAPPED* overlapped) const noexcept override {
+        Record(NativeCall::Read);
+        if (overlapped != nullptr) {
+            read_operation = *overlapped;
+            read_request = size;
+            null_positioned_count = read == nullptr;
+        }
         if (fail_read) {
-            ::SetLastError(ERROR_READ_FAULT);
+            ::SetLastError(read_error);
             return FALSE;
         }
         const BOOL result = WindowsFileOperations::Read(file, output, size, read, overlapped);
@@ -162,10 +194,12 @@ public:
         return result;
     }
     BOOL Complete(HANDLE file, OVERLAPPED* overlapped, DWORD* read) const noexcept override {
+        Record(NativeCall::Complete);
         ++completed_reads;
         const BOOL completed = WindowsFileOperations::Complete(file, overlapped, read);
+        completion_was_terminal = HasOverlappedIoCompleted(overlapped);
         if (fail_complete) {
-            ::SetLastError(ERROR_CRC);
+            ::SetLastError(complete_error);
             return FALSE;
         }
         return completed;
@@ -241,6 +275,9 @@ public:
     }
     BOOL Close(HANDLE file) const noexcept override {
         Record(NativeCall::Close);
+        if (file == read_event) {
+            closed_completed_event = completion_was_terminal;
+        }
         closed_handles[close_calls] = file;
         ++close_calls;
         const BOOL closed = WindowsFileOperations::Close(file);
@@ -1404,6 +1441,160 @@ TEST(WindowsFileSystemTest, EventAndReadFailureDoNotLeakPerReadResources) {
     operations->fail_read = true;
     EXPECT_EQ((*file)->Read(0, output).error().code(), ErrorCode::Io);
     EXPECT_EQ(operations->live_handles, 1U);
+}
+
+TEST(WindowsFileSystemTest, PositionedReadRangeGuardsMatchCopiedAndMappedOwners) {
+    TemporaryDirectory directory;
+    const auto path = directory.path() / "range";
+    WriteFixture(path, "abc");
+    constexpr auto MaximumOffset =
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    for (bool mapped : {false, true}) {
+        SCOPED_TRACE(mapped);
+        auto operations = std::make_shared<FaultOperations>();
+        WindowsFileSystem file_system(false, operations,
+                                      mapped ? std::make_shared<MappedReadLimiter>(1) : nullptr);
+        auto file = file_system.OpenRandomAccess(path, 3);
+        ASSERT_TRUE(file.has_value());
+        ASSERT_EQ((*file)->TryReadView(0, 3).has_value(), mapped);
+        operations->call_count = 0;
+        EXPECT_EQ((*file)->Read(std::numeric_limits<std::uint64_t>::max(), {}).value(), 0U);
+        EXPECT_TRUE(operations->Trace().empty());
+        std::array<std::byte, 2> bytes{};
+        for (auto offset : {MaximumOffset - 1, std::numeric_limits<std::uint64_t>::max()}) {
+            const auto invalid = (*file)->Read(offset, bytes);
+            ASSERT_FALSE(invalid.has_value());
+            EXPECT_EQ(invalid.error().code(), ErrorCode::InvalidArgument);
+            EXPECT_EQ(invalid.error().message(), "read range exceeds signed 64-bit offsets");
+            EXPECT_TRUE(operations->Trace().empty());
+        }
+        operations->fail_read = true;
+        operations->read_error = ERROR_HANDLE_EOF;
+        EXPECT_EQ((*file)->Read(MaximumOffset - 1, MutableByteView(bytes).first(1)).value(), 0U);
+        if (mapped) {
+            EXPECT_TRUE(operations->Trace().empty());
+        } else {
+            const std::vector<NativeCall> expected{NativeCall::Event, NativeCall::Read,
+                                                   NativeCall::Close};
+            EXPECT_EQ(operations->Trace(), expected);
+            EXPECT_EQ(operations->read_operation.Offset, static_cast<DWORD>(MaximumOffset - 1));
+            EXPECT_EQ(operations->read_operation.OffsetHigh,
+                      static_cast<DWORD>((MaximumOffset - 1) >> 32U));
+            EXPECT_EQ(operations->read_request, 1U);
+        }
+    }
+}
+
+TEST(WindowsFileSystemTest, PositionedReadStagesPreservePrefixesAndPrimaryErrors) {
+    TemporaryDirectory directory;
+    const auto path = directory.path() / "stages";
+    WriteFixture(path, "content");
+    for (unsigned scenario = 0; scenario != 7; ++scenario) {
+        SCOPED_TRACE(scenario);
+        auto operations = std::make_shared<FaultOperations>();
+        WindowsFileSystem file_system(false, operations, nullptr);
+        auto file = file_system.OpenRandomAccess(path);
+        ASSERT_TRUE(file.has_value());
+        operations->call_count = 0;
+        operations->force_pending = scenario == 1;
+        operations->fail_read = scenario == 2 || scenario == 3;
+        operations->read_error = scenario == 2 ? ERROR_HANDLE_EOF : ERROR_READ_FAULT;
+        operations->fail_event = scenario == 4;
+        operations->fail_complete = scenario == 5 || scenario == 6;
+        operations->complete_error = scenario == 5 ? ERROR_HANDLE_EOF : ERROR_CRC;
+        operations->fail_close = scenario == 3 || scenario == 6;
+        std::array<std::byte, 3> bytes{};
+        const auto read = (*file)->Read(1, bytes);
+        std::vector<NativeCall> expected{NativeCall::Event};
+        if (scenario != 4) {
+            expected.push_back(NativeCall::Read);
+            if (scenario != 2 && scenario != 3) {
+                expected.push_back(NativeCall::Complete);
+            }
+            expected.push_back(NativeCall::Close);
+            EXPECT_EQ(operations->read_request, bytes.size());
+            EXPECT_TRUE(operations->null_positioned_count);
+            EXPECT_EQ(operations->read_operation.Offset, 1U);
+            EXPECT_EQ(operations->read_operation.OffsetHigh, 0U);
+            EXPECT_EQ(operations->read_operation.Internal, 0U);
+            EXPECT_EQ(operations->read_operation.InternalHigh, 0U);
+            EXPECT_NE(operations->read_event, nullptr);
+            EXPECT_EQ(operations->read_operation.hEvent, operations->read_event);
+            EXPECT_EQ(operations->closed_handles[0], operations->read_event);
+        }
+        EXPECT_EQ(operations->Trace(), expected);
+        EXPECT_EQ(operations->live_handles, 1U);
+        if (scenario == 3 || scenario == 4 || scenario == 6) {
+            ASSERT_FALSE(read.has_value());
+            EXPECT_EQ(read.error().code(), ErrorCode::Io);
+            const std::string_view name =
+                scenario == 3 ? "positioned read"
+                              : (scenario == 4 ? "create read event" : "complete positioned read");
+            const DWORD error = scenario == 3
+                                    ? ERROR_READ_FAULT
+                                    : (scenario == 4 ? ERROR_NOT_ENOUGH_MEMORY : ERROR_CRC);
+            EXPECT_TRUE(read.error().message().starts_with(name));
+            EXPECT_NE(read.error().message().find("Win32 " + std::to_string(error)),
+                      std::string_view::npos);
+        } else {
+            ASSERT_TRUE(read.has_value());
+            EXPECT_EQ(*read, scenario == 2 || scenario == 5 ? 0U : bytes.size());
+            if (scenario <= 1) {
+                EXPECT_EQ(AsStringView(bytes), "ont");
+            }
+        }
+        if (scenario == 0 || scenario == 1 || scenario >= 5) {
+            EXPECT_TRUE(operations->completion_was_terminal);
+            EXPECT_TRUE(operations->closed_completed_event);
+        } else {
+            EXPECT_EQ(operations->completed_reads, 0U);
+        }
+        operations->fail_close = false;
+        file->reset();
+        EXPECT_EQ(operations->live_handles, 0U);
+    }
+}
+
+TEST(WindowsFileSystemTest, RepeatedPositionedReadsSnapshotPerCallOperationFields) {
+    TemporaryDirectory directory;
+    const auto path = directory.path() / "repeat";
+    const std::string data = "abcdefghi";
+    WriteFixture(path, data);
+    auto operations = std::make_shared<FaultOperations>();
+    operations->force_pending = true;
+    WindowsFileSystem file_system(false, operations, nullptr);
+    auto file = file_system.OpenRandomAccess(path);
+    ASSERT_TRUE(file.has_value());
+    constexpr auto HighOffset = (std::uint64_t{1} << 32U) + 7U;
+    for (auto offset : {std::uint64_t{2}, std::uint64_t{0}, HighOffset, std::uint64_t{4}}) {
+        SCOPED_TRACE(offset);
+        operations->call_count = 0;
+        operations->fail_read = offset == HighOffset;
+        operations->read_error = ERROR_HANDLE_EOF;
+        std::array<std::byte, 3> bytes{};
+        const auto read = (*file)->Read(offset, bytes);
+        ASSERT_TRUE(read.has_value());
+        EXPECT_EQ(operations->read_operation.Offset, static_cast<DWORD>(offset));
+        EXPECT_EQ(operations->read_operation.OffsetHigh, static_cast<DWORD>(offset >> 32U));
+        EXPECT_EQ(operations->read_operation.Internal, 0U);
+        EXPECT_EQ(operations->read_operation.InternalHigh, 0U);
+        EXPECT_EQ(operations->read_request, bytes.size());
+        EXPECT_TRUE(operations->null_positioned_count);
+        EXPECT_EQ(operations->read_operation.hEvent, operations->read_event);
+        std::vector<NativeCall> expected{NativeCall::Event, NativeCall::Read};
+        if (offset == HighOffset) {
+            EXPECT_EQ(*read, 0U);
+        } else {
+            expected.push_back(NativeCall::Complete);
+            EXPECT_EQ(*read, bytes.size());
+            EXPECT_EQ(AsStringView(bytes), std::string_view(data).substr(
+                                               static_cast<std::size_t>(offset), bytes.size()));
+            EXPECT_TRUE(operations->closed_completed_event);
+        }
+        expected.push_back(NativeCall::Close);
+        EXPECT_EQ(operations->Trace(), expected);
+        EXPECT_EQ(operations->live_handles, 1U);
+    }
 }
 
 TEST(WindowsFileSystemTest, FailedEnumerationDoesNotReturnPartialSuccess) {

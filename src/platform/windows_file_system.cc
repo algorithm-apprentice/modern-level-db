@@ -395,6 +395,44 @@ private:
     const std::shared_ptr<WindowsFileOperations> operations_;
 };
 
+Result<DWORD> PositionedReadRequest(std::uint64_t offset, std::size_t size) {
+    constexpr auto MaximumOffset =
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    const DWORD request = WindowsIoRequestSize(size);
+    if (offset > MaximumOffset || request > MaximumOffset - offset) {
+        return std::unexpected(Error::InvalidArgument("read range exceeds signed 64-bit offsets"));
+    }
+    return request;
+}
+
+Result<ScopedHandle> OpenReadEvent(const std::filesystem::path& path,
+                                   const std::shared_ptr<WindowsFileOperations>& operations) {
+    ScopedHandle event(operations->Event(), operations);
+    if (!event.valid()) {
+        return std::unexpected(FileError("create read event", path, ::GetLastError()));
+    }
+    return event;
+}
+
+OVERLAPPED PositionedReadOperation(std::uint64_t offset, HANDLE event) noexcept {
+    OVERLAPPED overlapped{};
+    overlapped.Offset = static_cast<DWORD>(offset);
+    overlapped.OffsetHigh = static_cast<DWORD>(offset >> 32U);
+    overlapped.hEvent = event;
+    return overlapped;
+}
+
+void RetirePendingRead(HANDLE file, OVERLAPPED& overlapped) noexcept {
+    // Even a failed wait must not let the kernel retain this stack/buffer.
+    if (!HasOverlappedIoCompleted(&overlapped)) {
+        static_cast<void>(::CancelIoEx(file, &overlapped));
+        while (!HasOverlappedIoCompleted(&overlapped)) {
+            DWORD ignored = 0;
+            static_cast<void>(::GetOverlappedResult(file, &overlapped, &ignored, TRUE));
+        }
+    }
+}
+
 class WindowsRandomAccessFile final : public RandomAccessFile {
 public:
     WindowsRandomAccessFile(ScopedHandle file, std::filesystem::path path,
@@ -404,52 +442,52 @@ public:
         if (output.empty()) {
             return 0U;
         }
-        constexpr auto MaximumOffset =
-            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-        const DWORD request = WindowsIoRequestSize(output.size());
-        if (offset > MaximumOffset || request > MaximumOffset - offset) {
-            return std::unexpected(
-                Error::InvalidArgument("read range exceeds signed 64-bit offsets"));
+        auto request = PositionedReadRequest(offset, output.size());
+        if (!request.has_value()) {
+            return std::unexpected(std::move(request).error());
         }
-        ScopedHandle event(operations_->Event(), operations_);
-        if (!event.valid()) {
-            return std::unexpected(FileError("create read event", path_, ::GetLastError()));
+        auto event = OpenReadEvent(path_, operations_);
+        if (!event.has_value()) {
+            return std::unexpected(std::move(event).error());
         }
-        OVERLAPPED overlapped{};
-        overlapped.Offset = static_cast<DWORD>(offset);
-        overlapped.OffsetHigh = static_cast<DWORD>(offset >> 32U);
-        overlapped.hEvent = event.get();
+        OVERLAPPED overlapped = PositionedReadOperation(offset, event->get());
+        auto requires_completion = BeginRead(output, *request, overlapped);
+        if (!requires_completion.has_value()) {
+            return std::unexpected(std::move(requires_completion).error());
+        }
+        if (!*requires_completion) {
+            return 0U;
+        }
+        return CompleteRead(overlapped);
+    }
+
+private:
+    Result<bool> BeginRead(MutableByteView output, DWORD request, OVERLAPPED& overlapped) const {
         if (!operations_->Read(file_.get(), output.data(), request, nullptr, &overlapped)) {
             const DWORD error = ::GetLastError();
             if (error == ERROR_HANDLE_EOF) {
-                return 0U;
+                return false;
             }
             if (error != ERROR_IO_PENDING) {
                 return std::unexpected(FileError("positioned read", path_, error));
             }
         }
+        return true;
+    }
+
+    Result<std::size_t> CompleteRead(OVERLAPPED& overlapped) const {
         DWORD read = 0;
         if (!operations_->Complete(file_.get(), &overlapped, &read)) {
             const DWORD error = ::GetLastError();
-            // Even a failed wait must not let the kernel retain this stack/buffer.
-            if (!HasOverlappedIoCompleted(&overlapped)) {
-                static_cast<void>(::CancelIoEx(file_.get(), &overlapped));
-                while (!HasOverlappedIoCompleted(&overlapped)) {
-                    DWORD ignored = 0;
-                    static_cast<void>(
-                        ::GetOverlappedResult(file_.get(), &overlapped, &ignored, TRUE));
-                }
-            }
+            RetirePendingRead(file_.get(), overlapped);
             if (error == ERROR_HANDLE_EOF) {
                 return 0U;
             }
             return std::unexpected(FileError("complete positioned read", path_, error));
         }
-        const std::size_t result = static_cast<std::size_t>(read);
-        return result;
+        return static_cast<std::size_t>(read);
     }
 
-private:
     ScopedHandle file_;
     const std::filesystem::path path_;
     const std::shared_ptr<WindowsFileOperations> operations_;
@@ -526,18 +564,15 @@ public:
         if (output.empty()) {
             return 0U;
         }
-        constexpr auto MaximumOffset =
-            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-        const DWORD request = WindowsIoRequestSize(output.size());
-        if (offset > MaximumOffset || request > MaximumOffset - offset) {
-            return std::unexpected(
-                Error::InvalidArgument("read range exceeds signed 64-bit offsets"));
+        auto request = PositionedReadRequest(offset, output.size());
+        if (!request.has_value()) {
+            return std::unexpected(std::move(request).error());
         }
         if (offset >= length_) {
             return 0U;
         }
         const auto start = static_cast<std::size_t>(offset);
-        const auto count = std::min(static_cast<std::size_t>(request), length_ - start);
+        const auto count = std::min(static_cast<std::size_t>(*request), length_ - start);
         std::memcpy(output.data(), view_ + start, count);
         return count;
     }

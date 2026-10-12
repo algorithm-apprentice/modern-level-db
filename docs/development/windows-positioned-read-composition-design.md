@@ -154,3 +154,57 @@ initiation meaning and feasible original-source characterization limits.
 Source/tests remain unchanged; the reviewer did not edit files or execute
 builds/tests. Genuine pending cancellation and allocation throws remain
 inspection-based, and characterization still waits for #218 delivery.
+
+## Original characterization stage
+
+Design #220 is accepted; #218 delivered as
+3e9d2310508c795255de5ded54d813bedebbfbd3 before this stage begins.
+Three new public-read cases cover copied/mapped empty/range ordering, seven
+issuance/completion/error/EOF prefixes and primary errors over event-close
+failure, and repeated low/high offset and per-call operation snapshots.
+
+The test-local recorder adds Event/Read/Complete observations, configurable
+native error codes and value snapshots only; it retains no OVERLAPPED pointer.
+The large valid-offset range case injects immediate native EOF rather than
+assuming every real filesystem supports a read near INT64_MAX. Existing real
+sparse-offset, EOF and concurrent cases remain selected.
+Completion observations occur after the real wait and before injected failure;
+they do not claim to execute genuine still-pending cancellation.
+
+Native Windows Debug on unchanged production passes 166 unique cases across
+WindowsFileSystemTest, WindowsFileSystemDeathTest, TableTest, RecoveryTest and
+DatabaseTest, including all three new cases. Their JUnit case set is retained
+for exact implementation comparison. No source or production seam is changed
+at this stage; final implementation execution remains pending.
+
+Independent bounded characterization review found no significant issue,
+verified the original 166-case XML and unchanged production/private header,
+and confirmed that the new snapshots do not retain pointers or fabricate
+pending kernel state. It did not execute builds/tests. Real synchronous versus
+pending outcomes remain environment-dependent; genuine pending retirement
+and allocation throws remain inspection-based.
+
+## Implementation and native parity
+
+Separate preparation and issuance/completion/retirement topic commits implement
+the eight-definition ledger. Both callers retain their empty-output gate before
+the shared request proof. Copied Read owns the scoped event and encoded operation
+across private child calls; the completion-required local makes the issuance
+boolean meaning explicit. Failed completion captures its original error before
+borrowing that operation for the unchanged retirement protocol.
+
+The preparation intermediate native selection passes 57 filesystem/death cases.
+Final native Windows Debug JUnit has exactly the same 166 unique classname/name
+pairs as the unchanged-production baseline, including all three new cases and
+no failures, errors or skips. The true still-pending kernel path and allocation
+throws remain inspection-based; no native fault interface or policy is added.
+Formatting, whitespace and documentation checks pass locally.
+Independent combined review and exact-head hosted CI remain delivery gates.
+
+Independent bounded combined implementation review found no significant issue
+in the three changed paths and verified both native XML case sets.
+It confirmed guards/order, pre-issue operation construction, parent-owned
+lifetimes, explicit completion decision, moved error propagation and retained
+primary-error/retirement policy. No edits or builds/tests were performed by
+the reviewer. Hosted CI remains separate; genuine pending cancellation and
+allocation exceptions remain inspection-based.
