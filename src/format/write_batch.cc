@@ -58,6 +58,43 @@ Status ValidateBatchRecords(ByteView remaining, std::uint32_t count) {
     return {};
 }
 
+struct TrustedBatchRecord {
+    ValueKind kind;
+    ByteView key;
+    ByteView value;
+};
+
+TrustedBatchRecord DecodeTrustedBatchRecord(ByteView& remaining) noexcept {
+    const ValueKind kind = ConsumeValueKindTrusted(remaining);
+    const ByteView key = ConsumeLengthPrefixedTrusted(remaining);
+    ByteView value;
+    if (kind == ValueKind::Value) {
+        value = ConsumeLengthPrefixedTrusted(remaining);
+    }
+    return {
+        .kind = kind,
+        .key = key,
+        .value = value,
+    };
+}
+
+std::size_t EncodedRecordSize(ValueKind kind, ByteView key, ByteView value) noexcept {
+    const auto key_length = static_cast<std::uint32_t>(key.size());
+    const auto value_length = static_cast<std::uint32_t>(value.size());
+    return 1 + VarintLength(key_length) + key.size() +
+           (kind == ValueKind::Value ? VarintLength(value_length) + value.size() : 0);
+}
+
+void EncodeTrustedBatchRecord(MutableByteView& output, ValueKind kind, ByteView key,
+                              ByteView value) noexcept {
+    output.front() = static_cast<std::byte>(kind);
+    output = output.subspan(1);
+    EncodeLengthPrefixedTrusted(output, key);
+    if (kind == ValueKind::Value) {
+        EncodeLengthPrefixedTrusted(output, value);
+    }
+}
+
 }  // namespace
 
 Result<WriteBatchReader> WriteBatchReader::Open(ByteView encoded) {
@@ -89,18 +126,12 @@ std::optional<WriteBatchEntry> WriteBatchReader::Next() noexcept {
         return std::nullopt;
     }
 
-    const ValueKind kind = ConsumeValueKindTrusted(remaining_);
-    const ByteView key = ConsumeLengthPrefixedTrusted(remaining_);
-    ByteView value;
-    if (kind == ValueKind::Value) {
-        value = ConsumeLengthPrefixedTrusted(remaining_);
-    }
-
+    const TrustedBatchRecord record = DecodeTrustedBatchRecord(remaining_);
     const WriteBatchEntry entry{
         .sequence = sequence_ + index_,
-        .kind = kind,
-        .key = key,
-        .value = value,
+        .kind = record.kind,
+        .key = record.key,
+        .value = record.value,
     };
     ++index_;
     return entry;
@@ -125,13 +156,9 @@ EncodedWriteBatch& EncodedWriteBatch::operator=(EncodedWriteBatch&& source) {
 
 void EncodedWriteBatch::Put(ByteView key, ByteView value) {
     AppendRecord(ValueKind::Value, key, value);
-    SetCount(count() + 1U);
 }
 
-void EncodedWriteBatch::Delete(ByteView key) {
-    AppendRecord(ValueKind::Deletion, key, {});
-    SetCount(count() + 1U);
-}
+void EncodedWriteBatch::Delete(ByteView key) { AppendRecord(ValueKind::Deletion, key, {}); }
 
 void EncodedWriteBatch::Append(const EncodedWriteBatch& source) {
     const std::uint32_t source_count = source.count();
@@ -144,23 +171,13 @@ void EncodedWriteBatch::Append(const EncodedWriteBatch& source) {
 }
 
 void EncodedWriteBatch::AppendRecord(ValueKind kind, ByteView key, ByteView value) {
-    const auto key_length = static_cast<std::uint32_t>(key.size());
-    const auto value_length = static_cast<std::uint32_t>(value.size());
-
-    const std::size_t record_size =
-        1 + VarintLength(key_length) + key.size() +
-        (kind == ValueKind::Value ? VarintLength(value_length) + value.size() : 0);
-
+    const std::size_t record_size = EncodedRecordSize(kind, key, value);
     const std::size_t old_size = encoded_.size();
     encoded_.resize(old_size + record_size);
     MutableByteView output =
         AsWritableBytes(std::span<char>(encoded_.data() + old_size, encoded_.size() - old_size));
-    output.front() = static_cast<std::byte>(kind);
-    output = output.subspan(1);
-    EncodeLengthPrefixedTrusted(output, key);
-    if (kind == ValueKind::Value) {
-        EncodeLengthPrefixedTrusted(output, value);
-    }
+    EncodeTrustedBatchRecord(output, kind, key, value);
+    SetCount(count() + 1U);
 }
 
 void EncodedWriteBatch::SetSequence(SequenceNumber sequence) noexcept {

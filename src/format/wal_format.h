@@ -54,6 +54,10 @@ public:
                ByteView logical_record) noexcept
             : block_offset_(&block_offset), type_crc_(&type_crc), remaining_(logical_record) {}
 
+        [[nodiscard]] std::size_t TakePadding() noexcept;
+        [[nodiscard]] std::size_t FragmentPayloadSize() const noexcept;
+        void Advance(std::size_t fragment_size, bool end) noexcept;
+
         std::size_t* block_offset_;
         const std::array<std::uint32_t, 4>* type_crc_;
         ByteView remaining_;

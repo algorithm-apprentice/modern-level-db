@@ -168,6 +168,56 @@ TEST(WalFragmenterTest, PreservesExactSevenByteLevelDbBoundaryBehavior) {
     EXPECT_EQ(fragmenter.block_offset(), WalHeaderSize + 3U);
 }
 
+TEST(WalFragmenterTest, CursorProgressesFromEmptyFirstThroughMiddleAndLast) {
+    const std::vector<std::byte> logical_record = Pattern((WalBlockSize - WalHeaderSize) + 1U);
+    WalFragmenter fragmenter(WalBlockSize - WalHeaderSize);
+    auto cursor = fragmenter.Fragment(logical_record);
+
+    const auto first = cursor.Next();
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(first->padding_before, 0U);
+    EXPECT_EQ(first->header[4], std::byte{0});
+    EXPECT_EQ(first->header[5], std::byte{0});
+    EXPECT_EQ(first->header[6], static_cast<std::byte>(WalRecordType::First));
+    EXPECT_TRUE(first->payload.empty());
+    EXPECT_EQ(fragmenter.block_offset(), 0U);
+
+    const auto middle = cursor.Next();
+    ASSERT_TRUE(middle.has_value());
+    EXPECT_EQ(middle->padding_before, 0U);
+    EXPECT_EQ(middle->header[4], std::byte{0xf9});
+    EXPECT_EQ(middle->header[5], std::byte{0x7f});
+    EXPECT_EQ(middle->header[6], static_cast<std::byte>(WalRecordType::Middle));
+    EXPECT_EQ(middle->payload.size(), WalBlockSize - WalHeaderSize);
+    EXPECT_EQ(middle->payload.data(), logical_record.data());
+    EXPECT_EQ(fragmenter.block_offset(), 0U);
+
+    const auto last = cursor.Next();
+    ASSERT_TRUE(last.has_value());
+    EXPECT_EQ(last->padding_before, 0U);
+    EXPECT_EQ(last->header[4], std::byte{1});
+    EXPECT_EQ(last->header[5], std::byte{0});
+    EXPECT_EQ(last->header[6], static_cast<std::byte>(WalRecordType::Last));
+    EXPECT_EQ(last->payload.size(), 1U);
+    EXPECT_EQ(last->payload.data(), logical_record.data() + middle->payload.size());
+    EXPECT_EQ(fragmenter.block_offset(), WalHeaderSize + 1U);
+
+    EXPECT_FALSE(cursor.Next().has_value());
+    EXPECT_FALSE(cursor.Next().has_value());
+    EXPECT_EQ(fragmenter.block_offset(), WalHeaderSize + 1U);
+
+    const std::array physical{
+        PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::First), {}),
+        PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Middle), middle->payload),
+        PhysicalRecord(static_cast<std::uint8_t>(WalRecordType::Last), last->payload),
+    };
+    std::vector<std::byte> expected;
+    for (const auto& record : physical) {
+        expected.insert(expected.end(), record.begin(), record.end());
+    }
+    EXPECT_EQ(Materialize({*first, *middle, *last}), expected);
+}
+
 TEST(WalFragmenterTest, NormalizesExactlyFullBlockToZeroOffset) {
     const std::vector<std::byte> logical_record = Pattern(WalBlockSize - WalHeaderSize);
     WalFragmenter fragmenter;
