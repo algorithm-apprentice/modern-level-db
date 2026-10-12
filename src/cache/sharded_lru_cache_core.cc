@@ -242,11 +242,10 @@ std::optional<ShardedLruCacheCore::Pin> ShardedLruCacheCore::Lookup(ByteView key
     const std::uint32_t hash = Hash32(key, 0U);
     Shard& shard = shards_[ShardIndex(hash)];
     std::lock_guard lock(shard.mutex);
-    Entry* entry = shard.table.Lookup(key, hash);
+    Entry* entry = LookupAndRef(shard, key, hash);
     if (entry == nullptr) {
         return std::nullopt;
     }
-    Ref(shard, *entry);
     return Pin(*this, *entry);
 }
 
@@ -256,7 +255,7 @@ void ShardedLruCacheCore::Erase(ByteView key) {
     Entry* retired = nullptr;
     {
         std::lock_guard lock(shard.mutex);
-        FinishErase(shard, shard.table.Remove(key, hash), retired);
+        EraseMapping(shard, key, hash, retired);
     }
     DeleteRetired(retired);
 }
@@ -313,10 +312,14 @@ void ShardedLruCacheCore::Append(Entry& list, Entry& entry) noexcept {
     entry.next->previous = &entry;
 }
 
+void ShardedLruCacheCore::MoveToList(Entry& list, Entry& entry) noexcept {
+    Remove(entry);
+    Append(list, entry);
+}
+
 void ShardedLruCacheCore::Ref(Shard& shard, Entry& entry) noexcept {
     if (entry.refs == 1) {
-        Remove(entry);
-        Append(shard.in_use, entry);
+        MoveToList(shard.in_use, entry);
     }
     ++entry.refs;
 }
@@ -328,9 +331,22 @@ void ShardedLruCacheCore::Unref(Shard& shard, Entry& entry, Entry*& retired) noe
     } else if (entry.in_cache && entry.refs == 1) {
         // Releasing the last external pin makes the entry evictable again;
         // it becomes most recently used rather than keeping its insertion age.
-        Remove(entry);
-        Append(shard.lru, entry);
+        MoveToList(shard.lru, entry);
     }
+}
+
+ShardedLruCacheCore::Entry* ShardedLruCacheCore::LookupAndRef(Shard& shard, ByteView key,
+                                                              std::uint32_t hash) noexcept {
+    Entry* entry = shard.table.Lookup(key, hash);
+    if (entry != nullptr) {
+        Ref(shard, *entry);
+    }
+    return entry;
+}
+
+void ShardedLruCacheCore::EraseMapping(Shard& shard, ByteView key, std::uint32_t hash,
+                                       Entry*& retired) noexcept {
+    FinishErase(shard, shard.table.Remove(key, hash), retired);
 }
 
 void ShardedLruCacheCore::FinishErase(Shard& shard, Entry* entry, Entry*& retired) noexcept {
@@ -343,11 +359,14 @@ void ShardedLruCacheCore::FinishErase(Shard& shard, Entry* entry, Entry*& retire
     Unref(shard, *entry, retired);
 }
 
+void ShardedLruCacheCore::EvictOldest(Shard& shard, Entry*& retired) noexcept {
+    Entry* entry = shard.lru.next;
+    EraseMapping(shard, entry->key(), entry->hash, retired);
+}
+
 void ShardedLruCacheCore::Evict(Shard& shard, Entry*& retired) noexcept {
     while (shard.usage > shard.capacity && shard.lru.next != &shard.lru) {
-        Entry* entry = shard.lru.next;
-        static_cast<void>(shard.table.Remove(entry->key(), entry->hash));
-        FinishErase(shard, entry, retired);
+        EvictOldest(shard, retired);
     }
 }
 

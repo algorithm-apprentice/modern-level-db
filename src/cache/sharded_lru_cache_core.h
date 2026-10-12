@@ -150,9 +150,15 @@ private:
     static void DeleteEntry(Entry* entry) noexcept;
     static void Remove(Entry& entry) noexcept;
     static void Append(Entry& list, Entry& entry) noexcept;
+    static void MoveToList(Entry& list, Entry& entry) noexcept;
     static void Ref(Shard& shard, Entry& entry) noexcept;
     static void Unref(Shard& shard, Entry& entry, Entry*& retired) noexcept;
+    [[nodiscard]] static Entry* LookupAndRef(Shard& shard, ByteView key,
+                                             std::uint32_t hash) noexcept;
+    static void EraseMapping(Shard& shard, ByteView key, std::uint32_t hash,
+                             Entry*& retired) noexcept;
     static void FinishErase(Shard& shard, Entry* entry, Entry*& retired) noexcept;
+    static void EvictOldest(Shard& shard, Entry*& retired) noexcept;
     static void Evict(Shard& shard, Entry*& retired) noexcept;
     static void Retire(Entry& entry, Entry*& retired) noexcept;
     static void DeleteRetired(Entry* retired) noexcept;
