@@ -8,7 +8,8 @@ Foundation #253 is delivered. This is a related, larger delivery batch:
 scalar codecs, block record decoding/layout admission, and MemTable lookup.
 Benchmark code and unrelated iterator algorithms are excluded.
 The design and original characterization are accepted; all three production
-topics are implemented locally. Integrated review and delivery remain pending.
+topics are implemented locally. Integrated review is complete; delivery remains
+pending.
 
 Keep reviewable topic commits locally, then publish one non-draft PR containing
 the reviewed design, original-source characterization, implementation topics,
@@ -248,3 +249,18 @@ coding_internal.h, block.cc, block.h, and memtable.cc. Documentation validation
 and `git diff --check` pass. These are local behavioral/composition gates only;
 portable/Release compilers, authoritative branch coverage, hosted Windows
 identity parity, and normal merge remain delivery obligations.
+
+Initial integrated review found one portability defect only in the new block
+characterization: two bounded size_t values were added directly to vector
+iterators, triggering GCC/Clang `-Wsign-conversion -Werror`. The correction was
+first committed as `6454ccc` on unchanged production, where all 296 identities
+again matched the original set, then normally cherry-picked as `9f8cf08`.
+Corrected final Windows Debug results exactly match that corrected original set.
+
+A local GCC Release configuration with the project warning set and
+warnings-as-errors compiled all six changed production/test translation-unit
+objects. Its attempted full unit target reached an unrelated pre-existing
+GCC 16 `maybe-uninitialized` diagnostic in engine/compaction.cc; no unrelated
+source was changed to bypass it. GCC 13 hosted coverage and portable/Release
+jobs remain authoritative. Independent integrated review reported no other
+significant finding.
