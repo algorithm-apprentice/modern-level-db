@@ -14,6 +14,9 @@ disposition while extracting complete trusted batch record decode/emission and
 incremental WAL fragment cursor stages. Keep reviewed design,
 original-source characterization and two production topics as local commits,
 then publish one non-draft PR.
+The design and corrected original characterization are accepted; both
+production topics are implemented locally. Integrated review and delivery
+remain pending.
 
 No public API, batch/WAL bytes, sequence policy, checked validation, checksum,
 recovery action, WAL I/O, sticky-error policy, allocation strategy, payload
@@ -248,3 +251,46 @@ squash delivery.
 Successful tests do not prove arbitrary allocation failure, unsupported input
 aliasing, cursor retry after I/O failure, concurrent cursors, physical copy/
 move/destruction counts, performance, or whole-production completion.
+
+## Local implementation evidence
+
+The accepted design is commit `5b07f0b`. Original-source characterization is
+split before production edits: `e01a09e` covers literal trusted batch commit/
+cursor boundaries; `715c7ce` covers incremental WAL fragment progress.
+Independent review found that the first batch test verified record bodies only
+after all mutations; the corrected unchanged-production case now parses the
+complete literal batch after every Put/Delete before the next mutation.
+
+A fresh corrected unchanged-production Windows Debug build froze 144 identities:
+
+| Suite | Cases |
+| --- | ---: |
+| WriteBatchTest | 9 |
+| WriteBatchReaderTest | 10 |
+| WalFormatTest | 1 |
+| WalFragmenterTest | 9 |
+| WalDecoderTest | 12 |
+| InsertBatchTest | 2 |
+| CommitGroupTest | 2 |
+| WalWriterTest | 10 |
+| WalReaderTest | 17 |
+| WalIoNativeTest | 1 |
+| RecoveryTest | 17 |
+| DatabaseTest | 54 |
+
+The production topics remain separate local commits. `b79137a` composes trusted
+record decode, exact sizing/emission and count commit; its six-suite selection
+is the exact original 94-identity subset. `1a487b5` composes short-tail padding,
+payload selection, type choice, cursor advance and fragment construction; its
+eight-suite selection is the exact original 121-identity subset. The final
+integrated selection exactly matches all original 144 identities, with no
+failure, error, skip or duplicate.
+
+Complete GCOVR/LCOV/NOLINT annotation multisets are unchanged across all four
+owned production paths. The expanded final scan reports 59 named definitions,
+zero lambdas and zero recovery nodes, matching the complete ledger. Local GCC
+Release warnings-as-errors with `-fno-range-for-ext-temps` compiles both
+production objects and every portable changed/coupled test translation unit.
+Documentation validation and `git diff --check` pass. Hosted GCC 13 branch
+coverage, Windows native execution/name parity and normal merge remain delivery
+obligations.
