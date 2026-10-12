@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
+#include <optional>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -71,6 +72,13 @@ template <typename T>
 void ExpectError(const Result<T>& result, ErrorCode code) {
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code(), code) << result.error().ToString();
+}
+
+template <typename T>
+void ExpectCorruption(const Result<T>& result, std::string_view message) {
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(result.error().message(), message);
 }
 
 TEST(BlockHandleTest, EncodesOffsetThenSize) {
@@ -179,6 +187,27 @@ TEST(FooterTest, RejectsNonzeroPadding) {
     encoded[2 * BlockHandleMaxEncodedSize - 1] = std::byte{0x01};
 
     ExpectError(DecodeFooter(encoded), ErrorCode::Corruption);
+}
+
+TEST(FooterTest, MixedFaultsKeepMagicHandleAndPaddingPriority) {
+    auto bad_magic = EncodeFooter({});
+    std::fill_n(bad_magic.begin(), 2 * BlockHandleMaxEncodedSize, std::byte{0x80});
+    bad_magic.back() ^= std::byte{0x01};
+    ExpectCorruption(DecodeFooter(bad_magic), "table footer has a bad magic number");
+
+    auto malformed_metaindex = EncodeFooter({});
+    std::fill(malformed_metaindex.begin() + 1,
+              malformed_metaindex.begin() + 2 * BlockHandleMaxEncodedSize, std::byte{0x80});
+    ExpectCorruption(DecodeFooter(malformed_metaindex), "block handle size is malformed");
+
+    auto malformed_index = EncodeFooter({});
+    std::fill(malformed_index.begin() + 2, malformed_index.begin() + 2 * BlockHandleMaxEncodedSize,
+              std::byte{0x80});
+    ExpectCorruption(DecodeFooter(malformed_index), "block handle offset is malformed");
+
+    auto nonzero_padding = EncodeFooter({});
+    nonzero_padding[4] = std::byte{0x01};
+    ExpectCorruption(DecodeFooter(nonzero_padding), "table footer has nonzero padding");
 }
 
 TEST(BlockTrailerTest, StoresTypeNoneAndTheMaskedChecksum) {
@@ -295,6 +324,50 @@ TEST(StoredBlockTest, RejectsUnknownTypes) {
 
     ExpectError(DecodeStoredBlock(StoredBlock(contents, 3)), ErrorCode::Corruption);
     ExpectError(DecodeStoredBlock(StoredBlock(contents, 0xff)), ErrorCode::Corruption);
+}
+
+TEST(StoredBlockTest, OwningAndBorrowedPathsKeepValidationPriorityAndMessages) {
+    const std::vector<std::byte> short_input(4, std::byte{0});
+    ExpectCorruption(DecodeStoredBlock(short_input), "stored block is shorter than its trailer");
+    ExpectCorruption(DecodeStoredBlock(ByteView(short_input)),
+                     "stored block is shorter than its trailer");
+
+    const std::vector<std::byte> unknown = StoredBlock(Bytes({'x'}), 3);
+    std::vector<std::byte> bad_checksum = unknown;
+    bad_checksum.at(0) ^= std::byte{0x01};
+    ExpectCorruption(DecodeStoredBlock(bad_checksum), "block checksum mismatch");
+    ExpectCorruption(DecodeStoredBlock(ByteView(bad_checksum)), "block checksum mismatch");
+    ExpectCorruption(DecodeStoredBlock(unknown), "block has an unknown compression type");
+    ExpectCorruption(DecodeStoredBlock(ByteView(unknown)), "block has an unknown compression type");
+}
+
+TEST(StoredBlockTest, BorrowedCompressedInputProducesOwnedContentsPastSourceLifetime) {
+    const std::vector<std::byte> snappy = Bytes({0x05, 0x10, 'h', 'e', 'l', 'l', 'o'});
+    const std::vector<std::byte> zstd = Bytes({0x28, 0xb5, 0x2f, 0xfd, 0x24, 0x05, 0x29, 0x00, 0x00,
+                                               'h', 'e', 'l', 'l', 'o', 0xa3, 0x6d, 0x9f, 0x88});
+    std::optional<BlockContents> decoded_snappy;
+    std::optional<BlockContents> decoded_zstd;
+    {
+        const std::vector<std::byte> stored = StoredBlock(snappy, 1);
+        auto decoded = DecodeStoredBlock(ByteView(stored));
+        ASSERT_TRUE(decoded.has_value()) << decoded.error().ToString();
+        ASSERT_TRUE(decoded->cacheable());
+        decoded_snappy.emplace(std::move(*decoded));
+    }
+    {
+        const std::vector<std::byte> stored = StoredBlock(zstd, 2);
+        auto decoded = DecodeStoredBlock(ByteView(stored));
+        ASSERT_TRUE(decoded.has_value()) << decoded.error().ToString();
+        ASSERT_TRUE(decoded->cacheable());
+        decoded_zstd.emplace(std::move(*decoded));
+    }
+
+    ASSERT_TRUE(decoded_snappy.has_value());
+    ASSERT_TRUE(decoded_zstd.has_value());
+    EXPECT_EQ(Materialize(decoded_snappy->data()), Bytes({'h', 'e', 'l', 'l', 'o'}));
+    EXPECT_EQ(Materialize(decoded_zstd->data()), Bytes({'h', 'e', 'l', 'l', 'o'}));
+    EXPECT_TRUE(decoded_snappy->cacheable());
+    EXPECT_TRUE(decoded_zstd->cacheable());
 }
 
 }  // namespace
