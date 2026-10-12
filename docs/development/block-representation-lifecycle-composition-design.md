@@ -12,6 +12,9 @@ This batch closes the remaining stored-block/footer composition and gives every
 unchanged Block/Iterator/BlockBuilder body a bounded semantic disposition.
 Keep reviewed design, original-source characterization and the block-format
 production topic as local commits, then publish one non-draft PR.
+The design and corrected original characterization are accepted; both
+production topics are implemented locally. Integrated review and delivery
+remain pending.
 
 Changed production path is block_format.cc. Its header and all Block/
 BlockBuilder source/headers are inspected but unchanged. No public API,
@@ -241,3 +244,48 @@ actual Windows Debug original-name parity before normal squash delivery.
 Successful tests do not prove arbitrary allocation failure, borrowed storage
 mutation, unsupported iterator domains, physical copy/move/destruction counts,
 performance, or whole-production completion.
+
+## Local implementation evidence
+
+The accepted design is commit `f6b5e2e`. Original-source characterization is
+commit `5983c3d`; independent review required fatal ownership assertions before
+compressed source release. Local GCC Release then found an optimized
+vector::front null-dereference warning in the new corruption fixture. The
+correction was proven on unchanged production as `f4a9ad4` with exact 208-name
+parity and GCC object success, then normally cherry-picked as `a06e9a2`.
+
+The corrected unchanged-production Windows Debug selection contains 208
+identities:
+
+| Suite | Cases |
+| --- | ---: |
+| BlockHandleTest | 4 |
+| FooterTest | 6 |
+| BlockTrailerTest | 2 |
+| StoredBlockTest | 9 |
+| BlockCompressionTest | 7 |
+| BlockTest | 13 |
+| BlockBuilderTest | 7 |
+| BlockIteratorTest | 26 |
+| TableBuilderTest | 19 |
+| TableTest | 38 |
+| TableNativeTest | 2 |
+| TableCacheTest | 7 |
+| LookupTest | 14 |
+| DatabaseTest | 54 |
+
+The production topics remain separate commits. `b455121` composes footer handle
+decode and zero-padding proof; its five-suite selection is the exact original
+121-identity subset. `b5ee138` composes stored checksum and compression
+admission while reconciling DecodeStoredBlock overloads as unchanged; its
+eight-suite selection is the exact original 133-identity subset. Corrected final
+results exactly match all original 208 identities, with no failure, error, skip
+or duplicate.
+
+Complete GCOVR/LCOV/NOLINT annotation multisets are unchanged across all six
+production paths. The corrected final scan reports 96 definitions, zero lambdas
+and zero recovery nodes, matching the complete ledger. Local GCC Release
+warnings-as-errors with `-fno-range-for-ext-temps` compiles all changed/coupled
+objects. Documentation validation and `git diff --check` pass. Hosted GCC 13
+branch coverage, Windows native execution/name parity and normal merge remain
+delivery obligations.
