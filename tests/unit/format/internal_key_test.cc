@@ -330,12 +330,11 @@ TEST(LookupKeyTest, LiteralPrefixAndTrailerBoundariesPreserveGuardedCallerBytes)
         for (const SequenceNumber sequence : {SequenceNumber{0}, MaxSequenceNumber}) {
             SCOPED_TRACE(layout.user_size);
             SCOPED_TRACE(sequence);
-            std::vector<std::byte> guarded(layout.user_size + 2);
-            guarded.front() = std::byte{0xa5};
-            guarded.back() = std::byte{0x5a};
+            std::vector<std::byte> guarded{std::byte{0xa5}};
             for (std::size_t index = 0; index < layout.user_size; ++index) {
-                guarded[index + 1] = pattern[index % pattern.size()];
+                guarded.push_back(pattern[index % pattern.size()]);
             }
+            guarded.push_back(std::byte{0x5a});
             const std::vector<std::byte> before = guarded;
             const ByteView user = ByteView(guarded).subspan(1, layout.user_size);
             const std::vector<std::byte> trailer =
