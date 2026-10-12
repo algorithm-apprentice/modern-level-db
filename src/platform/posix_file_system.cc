@@ -332,49 +332,49 @@ std::shared_ptr<MappedReadLimiter> ProcessMmapBudget() {
     return budget;
 }
 
-class PendingMmap final {
+class PosixMappedRegion final {
 public:
-    PendingMmap(std::shared_ptr<MappedReadLimiter> budget, std::size_t length) noexcept
+    PosixMappedRegion(std::shared_ptr<MappedReadLimiter> budget, std::size_t length) noexcept
         : budget_(std::move(budget)), length_(length) {}
 
-    PendingMmap(const PendingMmap&) = delete;
-    PendingMmap& operator=(const PendingMmap&) = delete;
+    PosixMappedRegion(const PosixMappedRegion&) = delete;
+    PosixMappedRegion& operator=(const PosixMappedRegion&) = delete;
+    PosixMappedRegion(PosixMappedRegion&& other) noexcept
+        : budget_(std::move(other.budget_)),
+          mapping_(std::exchange(other.mapping_, MAP_FAILED)),
+          length_(std::exchange(other.length_, 0)) {}
+    PosixMappedRegion& operator=(PosixMappedRegion&&) = delete;
 
-    ~PendingMmap() {
-        // GCOVR_EXCL_START: cleanup runs only after mmap or allocation failure
-        if (!active_) {
+    ~PosixMappedRegion() {
+        if (budget_ == nullptr) {
             return;
         }
-        if (mapping_ != MAP_FAILED) {
+        if (mapping_ != MAP_FAILED) {  // GCOVR_EXCL_BR_WITHOUT_HIT: mmap failure needs OS pressure
             (void)::munmap(mapping_, length_);
         }
         budget_->Release();
-        // GCOVR_EXCL_STOP
     }
 
     void SetMapping(void* mapping) noexcept { mapping_ = mapping; }
 
-    void Commit() noexcept { active_ = false; }
+    [[nodiscard]] const std::byte* data() const noexcept {
+        return static_cast<const std::byte*>(mapping_);
+    }
+
+    [[nodiscard]] std::size_t length() const noexcept { return length_; }
 
 private:
-    const std::shared_ptr<MappedReadLimiter> budget_;
-    const std::size_t length_;
+    std::shared_ptr<MappedReadLimiter> budget_;
     void* mapping_ = MAP_FAILED;
-    bool active_ = true;
+    std::size_t length_;
 };
 
 class PosixMmapRandomAccessFile final : public RandomAccessFile {
 public:
-    PosixMmapRandomAccessFile(void* mapping, std::size_t length,
-                              std::shared_ptr<MappedReadLimiter> budget) noexcept
-        : mapping_(static_cast<const std::byte*>(mapping)),
-          length_(length),
-          budget_(std::move(budget)) {}
+    explicit PosixMmapRandomAccessFile(PosixMappedRegion&& region) noexcept
+        : region_(std::move(region)) {}
 
-    ~PosixMmapRandomAccessFile() override {
-        (void)::munmap(const_cast<std::byte*>(mapping_), length_);
-        budget_->Release();
-    }
+    ~PosixMmapRandomAccessFile() override = default;
 
     Result<std::size_t> Read(std::uint64_t offset, MutableByteView output) const override {
         if (output.empty()) {
@@ -384,31 +384,29 @@ public:
         if (!posix_offset.has_value()) {
             return std::unexpected(posix_offset.error());
         }
-        if (offset >= length_) {
+        if (offset >= region_.length()) {
             return 0U;
         }
         const std::size_t start = static_cast<std::size_t>(offset);
-        const std::size_t count = std::min(output.size(), length_ - start);
-        std::memcpy(output.data(), mapping_ + start, count);
+        const std::size_t count = std::min(output.size(), region_.length() - start);
+        std::memcpy(output.data(), region_.data() + start, count);
         return count;
     }
 
     std::optional<ByteView> TryReadView(std::uint64_t offset,
                                         std::size_t size) const noexcept override {
-        if (offset > length_) {
+        if (offset > region_.length()) {
             return std::nullopt;
         }
         const std::size_t start = static_cast<std::size_t>(offset);
-        if (size > length_ - start) {
+        if (size > region_.length() - start) {
             return std::nullopt;
         }
-        return ByteView(mapping_ + start, size);
+        return ByteView(region_.data() + start, size);
     }
 
 private:
-    const std::byte* const mapping_;
-    const std::size_t length_;
-    const std::shared_ptr<MappedReadLimiter> budget_;
+    PosixMappedRegion region_;
 };
 
 class PosixWritableFile final : public WritableFile {
@@ -684,7 +682,7 @@ Result<std::unique_ptr<RandomAccessFile>> PosixFileSystem::OpenRandomAccess(
     if (!mmap_budget_->Acquire()) {
         return OpenCopiedRandomFile(*descriptor, path);
     }
-    PendingMmap pending(mmap_budget_, *length);
+    PosixMappedRegion pending(mmap_budget_, *length);
     void* const mapping = ::mmap(nullptr, *length, PROT_READ, MAP_SHARED, descriptor->get(), 0);
     // GCOVR_EXCL_START: needs a resource-dependent real mmap failure
     if (mapping == MAP_FAILED) {
@@ -693,8 +691,7 @@ Result<std::unique_ptr<RandomAccessFile>> PosixFileSystem::OpenRandomAccess(
     // GCOVR_EXCL_STOP
     pending.SetMapping(mapping);
     std::unique_ptr<RandomAccessFile> file =
-        std::make_unique<PosixMmapRandomAccessFile>(mapping, *length, mmap_budget_);
-    pending.Commit();
+        std::make_unique<PosixMmapRandomAccessFile>(std::move(pending));
     return file;
 }
 
