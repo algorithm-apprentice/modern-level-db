@@ -13,6 +13,8 @@ TableBuilder AddValid stages, then gives every current Table/TableBuilder/
 compression definition and table lambda a bounded semantic disposition.
 Keep reviewed design, original-source characterization and two production
 topics as local commits, then publish one non-draft PR.
+The design and original characterization are accepted; both production topics
+are implemented locally. Integrated review and delivery remain pending.
 
 Changed production paths are table.cc/.h and table_builder.cc/.h.
 compression.cc/.h are inspected unchanged. No public API, table bytes, read
@@ -246,3 +248,41 @@ Windows Debug original-name parity before normal squash delivery.
 Successful tests do not prove arbitrary allocation failure, mapped backing
 mutation, unsupported builder reuse, physical copy/move/destruction counts,
 performance, or whole-production completion.
+
+## Local implementation evidence
+
+The accepted design is commit `f8c382f`. Original-source characterization is
+split before production edits: `1538906` proves mapped data blocks remain
+uncached; `69e050c` proves filter failure preserves builder state and exact
+sticky Error copies. Independent review found no significant issue.
+
+A fresh unchanged-production Windows Debug build included the unit/native
+targets and separate compression-failure executable, freezing 154 identities:
+
+| Suite | Cases |
+| --- | ---: |
+| TableTest | 39 |
+| TableNativeTest | 2 |
+| TableBuilderTest | 19 |
+| BuildTableTest | 5 |
+| TableCacheTest | 7 |
+| BlockCompressionTest | 7 |
+| CompressionFailureTest | 7 |
+| LookupTest | 14 |
+| DatabaseTest | 54 |
+
+The production topics remain separate local commits. `99b6e74` composes the
+cache key/admission and ReadDataBlock parent; its five-suite selection is the
+exact original 116-identity subset. `c782208` composes TableBuilder filter/
+pending-index/data/flush stages; its three-suite selection is the exact original
+78-identity subset. The final integrated selection exactly matches all original
+154 identities, with no failure, error, skip or duplicate.
+
+Complete GCOVR/LCOV/NOLINT annotation multisets are unchanged across all six
+production paths. The final scan reports 88 named definitions and two lambdas.
+Its four table.h grammar-recovery nodes are byte-for-byte/position-identical to
+the baseline scanner artifact and are not new parse failures. Local GCC Release
+warnings-as-errors with `-fno-range-for-ext-temps` compiles all production,
+ordinary test and separate compression-failure objects. Documentation
+validation and `git diff --check` pass. Hosted GCC 13 branch coverage, Windows
+native execution/name parity and normal merge remain delivery obligations.
