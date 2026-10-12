@@ -213,6 +213,34 @@ TEST(PosixFileSystemTest, ReadsSequentiallyAndReportsEof) {
     EXPECT_EQ(*empty, 0U);
 }
 
+TEST(PosixFileSystemTest, SequentialReaderOutlivesFilesystemAndUnlinkedPath) {
+    TemporaryDirectory directory;
+    const auto path = directory.path() / "retained-sequential";
+    WriteFixture(path, AsBytes("retained"));
+#if defined(__linux__)
+    const std::size_t descriptors_before = OpenDescriptorCount();
+#endif
+    std::unique_ptr<SequentialFile> reader;
+    {
+        PosixFileSystem file_system(false);
+        auto opened = file_system.OpenSequential(path);
+        ASSERT_TRUE(opened.has_value());
+        reader = std::move(*opened);
+    }
+
+    ASSERT_TRUE(std::filesystem::remove(path));
+    std::array<std::byte, 8> output{};
+    const auto read = reader->Read(output);
+    ASSERT_TRUE(read.has_value());
+    EXPECT_EQ(*read, output.size());
+    EXPECT_EQ(AsStringView(output), "retained");
+
+    reader.reset();
+#if defined(__linux__)
+    EXPECT_EQ(OpenDescriptorCount(), descriptors_before);
+#endif
+}
+
 TEST(PosixFileSystemTest, PerformsConcurrentPositionedReads) {
     TemporaryDirectory directory;
     const auto path = directory.path() / "random";
