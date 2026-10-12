@@ -46,11 +46,18 @@ public:
     [[nodiscard]] Status Schedule(BackgroundTask task) override;
 
 private:
+    using TaskOwner = std::unique_ptr<BackgroundTask>;
+    using TaskQueue = std::deque<TaskOwner>;
+
+    [[nodiscard]] Status Enqueue(TaskOwner task);
+    [[nodiscard]] TaskQueue StopAcceptingAndDetachTasks();
+    void StopAndJoinWorker();
+    [[nodiscard]] TaskOwner WaitForTask(std::stop_token stop_token);
     void Run(std::stop_token stop_token);
 
     std::mutex queue_mutex_;
     std::condition_variable_any work_available_;
-    std::deque<std::unique_ptr<BackgroundTask>> tasks_;
+    TaskQueue tasks_;
     bool accepting_tasks_ = true;
 
     std::jthread worker_;

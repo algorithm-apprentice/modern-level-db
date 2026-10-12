@@ -14,51 +14,59 @@ SerialExecutor::SerialExecutor()
     : worker_([this](std::stop_token stop_token) { Run(stop_token); }) {}
 
 SerialExecutor::~SerialExecutor() {
-    // Detach pending callback owners under the mutex, but destroy them after the
-    // worker joins and outside the lock; callbacks may own other engine resources.
-    std::deque<std::unique_ptr<BackgroundTask>> canceled_tasks;
+    TaskQueue canceled_tasks = StopAcceptingAndDetachTasks();
+    StopAndJoinWorker();
+    canceled_tasks.clear();
+}
+
+SerialExecutor::TaskQueue SerialExecutor::StopAcceptingAndDetachTasks() {
+    TaskQueue canceled_tasks;
     {
         std::lock_guard queue_lock(queue_mutex_);
         accepting_tasks_ = false;
         canceled_tasks.swap(tasks_);
     }
+    return canceled_tasks;
+}
 
+void SerialExecutor::StopAndJoinWorker() {
     worker_.request_stop();
     work_available_.notify_all();
     worker_.join();
-    canceled_tasks.clear();
 }
 
 Status SerialExecutor::Schedule(BackgroundTask task) {
     if (!task) {
         return std::unexpected(Error::InvalidArgument("background task is empty"));
     }
+    return Enqueue(std::make_unique<BackgroundTask>(std::move(task)));
+}
 
-    auto queued_task = std::make_unique<BackgroundTask>(std::move(task));
+Status SerialExecutor::Enqueue(TaskOwner task) {
     {
         std::lock_guard lock(queue_mutex_);
         if (!accepting_tasks_) {
             return std::unexpected(Error::Aborted("background executor is shut down"));
         }
-        tasks_.push_back(std::move(queued_task));
+        tasks_.push_back(std::move(task));
     }
     work_available_.notify_one();
     return {};
 }
 
+SerialExecutor::TaskOwner SerialExecutor::WaitForTask(std::stop_token stop_token) {
+    std::unique_lock lock(queue_mutex_);
+    work_available_.wait(lock, stop_token, [this] { return !tasks_.empty(); });
+    if (stop_token.stop_requested()) {
+        return {};
+    }
+    TaskOwner task = std::move(tasks_.front());
+    tasks_.pop_front();
+    return task;
+}
+
 void SerialExecutor::Run(std::stop_token stop_token) {
-    while (!stop_token.stop_requested()) {
-        std::unique_ptr<BackgroundTask> task;
-        {
-            std::unique_lock lock(queue_mutex_);
-            work_available_.wait(lock, stop_token, [this] { return !tasks_.empty(); });
-            if (stop_token.stop_requested()) {
-                return;
-            }
-            task = std::move(tasks_.front());
-            tasks_.pop_front();
-        }
-        // Callback execution must not hold the queue mutex: tasks may schedule work.
+    while (TaskOwner task = WaitForTask(stop_token)) {
         (*task)(stop_token);
     }
 }
