@@ -37,6 +37,8 @@
 
 namespace modern_leveldb {
 
+struct CompactionHooks;
+
 // Give compaction time before level-0 pressure becomes a hard stall: non-forced
 // writes sleep a millisecond once when the current version reaches this count.
 inline constexpr std::size_t WriteDelayLevel0FileCountThreshold = 8;
@@ -211,6 +213,9 @@ private:
     [[nodiscard]] bool Compact(std::unique_lock<std::mutex>& lock,
                                std::vector<std::uint64_t>& outputs);
     void InstallTrivialCompaction(const Compaction& compaction, std::unique_lock<std::mutex>& lock);
+    [[nodiscard]] CompactionHooks MakeCompactionHooks(std::vector<std::uint64_t>& outputs);
+    void RewriteCompaction(const Compaction& compaction, std::unique_lock<std::mutex>& lock,
+                           std::vector<std::uint64_t>& outputs);
     [[nodiscard]] Status ApplyBackgroundEdit(Result<VersionEdit> edit,
                                              std::unique_lock<std::mutex>& lock,
                                              std::string_view closing_error);
