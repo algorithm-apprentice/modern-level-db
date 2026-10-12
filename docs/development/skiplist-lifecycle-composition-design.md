@@ -15,7 +15,8 @@ publication, shared reverse/last search, and iterator sentinel normalization.
 Keep reviewed design, original-source characterization and responsibility-sized
 implementation commits locally, then publish one non-draft PR.
 The design and original characterization are accepted; both production topics
-are implemented locally. Integrated review and delivery remain pending.
+are implemented locally. Integrated review is complete; delivery remains
+pending.
 
 Production changes are limited to src/memory/skiplist.h. Arena and MemTable
 production are real owner/caller context but remain unchanged. Tests stay in
@@ -262,3 +263,10 @@ zero lambdas and zero recovery nodes, matching the 16 selected/new plus
 all DatabaseTest translation units. Documentation validation and `git diff
 --check` pass. Hosted GCC 13 branch coverage, sanitizer/runtime jobs, actual
 Windows Debug identity parity and normal merge remain delivery obligations.
+
+Initial integrated review found the pre-construction provenance regression
+described above. Focused correction review found no remaining significant issue:
+InitializeLinks is rooted in Arena storage, Node::LinkAt is restored to baseline,
+and the 48-row ledger is reconciled. The baseline node-relative post-construction
+tail-access idiom remains an explicit strict-provenance portability limitation,
+not a new guarantee or regression introduced by this batch.
