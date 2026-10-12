@@ -1360,6 +1360,82 @@ TEST_F(VersionSetTest, SparseRecordsCarryCountersAndKeepLastPresentPointerValues
     }
 }
 
+TEST_F(VersionSetTest, ResetPreviousLogKeepsHistoricalBoundAndLatestSparseCounters) {
+    for (const std::uint64_t next : {80U, 81U}) {
+        SCOPED_TRACE(next);
+        VersionEdit first = Counters(100, 9, 42);
+        first.SetPrevLogNumber(80);
+        VersionEdit second = Counters(next, 10, 7);
+        second.SetPrevLogNumber(0);
+        WriteDatabase({first, second, VersionEdit()});
+        const std::size_t start = file_system_.operations().size();
+        const auto input = file_system_.Contents(DescriptorFileName(directory_, 1));
+
+        auto recovered = TryRecover(file_system_);
+
+        if (next == 80) {
+            ASSERT_FALSE(recovered.has_value());
+            EXPECT_EQ(recovered.error().code(), ErrorCode::Corruption);
+            EXPECT_EQ(
+                recovered.error().message(),
+                "MANIFEST names file or log number 80, which is not below its next file number");
+        } else {
+            ASSERT_TRUE(recovered.has_value());
+            State expected;
+            expected.log_number = 10;
+            expected.prev_log_number = 0;
+            expected.last_sequence = 7;
+            EXPECT_EQ(StateOf(**recovered), expected);
+            EXPECT_EQ((*recovered)->manifest_file_number(), 81U);
+            EXPECT_EQ((*recovered)->NewFileNumber(), 82U);
+        }
+        EXPECT_EQ(file_system_.Contents(DescriptorFileName(directory_, 1)), input);
+        for (const auto& operation : std::span(file_system_.operations()).subspan(start)) {
+            EXPECT_TRUE(operation.starts_with("open_sequential ") ||
+                        operation.starts_with("read "));
+        }
+    }
+}
+
+TEST_F(VersionSetTest, DecreasingLogPrecedesMissingCounterOverlapAndLaterReadFailure) {
+    VersionEdit first;
+    first.SetLogNumber(9);
+    ASSERT_TRUE(first.SetLastSequence(42).has_value());
+    ASSERT_TRUE(first.AddFile(1, File(2, "a", "m")).has_value());
+    VersionEdit second;
+    second.SetLogNumber(8);
+    ASSERT_TRUE(second.AddFile(1, File(3, "k", "z")).has_value());
+    const std::vector<std::byte> encoded_first = first.Encode();
+    std::vector<std::byte> contents = Frame({encoded_first, second.Encode()});
+    contents.resize(2 * WalBlockSize, std::byte{0});
+    const auto manifest = DescriptorFileName(directory_, 1);
+    file_system_.Write(manifest, std::move(contents));
+    PointCurrentAt(1);
+    const auto input = file_system_.Contents(manifest);
+    const std::size_t start = file_system_.operations().size();
+    unsigned reads = 0;
+    file_system_.SetOperationHook([&](std::string_view operation) -> Status {
+        if (operation == "read MANIFEST-000001" && ++reads == 2) {
+            return std::unexpected(Error::Io("later MANIFEST read failed"));
+        }
+        return {};
+    });
+
+    const auto recovered = TryRecover(file_system_);
+    file_system_.SetOperationHook({});
+
+    ASSERT_FALSE(recovered.has_value());
+    EXPECT_EQ(recovered.error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(recovered.error().message(),
+              "MANIFEST record at offset " + std::to_string(WalHeaderSize + encoded_first.size()) +
+                  ": log number decreases");
+    EXPECT_EQ(reads, 1U);
+    EXPECT_EQ(file_system_.Contents(manifest), input);
+    for (const auto& operation : std::span(file_system_.operations()).subspan(start)) {
+        EXPECT_TRUE(operation.starts_with("open_sequential ") || operation.starts_with("read "));
+    }
+}
+
 TEST_F(VersionSetTest, DeletedHistoricalFileStillConstrainsRecoveredNextNumber) {
     VersionEdit first = Counters(9);
     ASSERT_TRUE(first.AddFile(0, File(7, "a", "b")).has_value());
