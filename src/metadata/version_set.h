@@ -125,6 +125,13 @@ private:
     [[nodiscard]] Status Validate(const VersionEdit& edit) const;
     [[nodiscard]] Status ApplyPrepared(VersionEdit edit, Version version,
                                        std::unique_lock<std::mutex>* lock);
+    void PrepareRuntimeEditCounters(VersionEdit& edit, std::uint64_t log_number,
+                                    std::uint64_t prev_log_number) const;
+    void PrepareManifestSnapshot(
+        std::optional<std::vector<std::byte>>& new_manifest_snapshot) const;
+    void PublishPreparedEdit(std::array<std::optional<InternalKey>, NumLevels>& compact_pointers,
+                             std::shared_ptr<const Version>& candidate, std::uint64_t log_number,
+                             std::uint64_t prev_log_number);
     [[nodiscard]] Status WritePrepared(
         const VersionEdit& edit, const std::optional<std::vector<std::byte>>& new_manifest_snapshot,
         std::unique_lock<std::mutex>* lock);
