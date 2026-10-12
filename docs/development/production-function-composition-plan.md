@@ -602,6 +602,7 @@ changed paths verified in main.
 | Recursive scalar/read-record codecs, block admission and MemTable lookup | [Read-record codecs](read-record-codec-composition-design.md) | Delivered in #254 from one locally reviewed larger batch; corrected 296-case original/final native parity, exact 99/197/131 topic subsets, and actual hosted Windows Debug selected names match the original 296. |
 | Complete cache-core index, pin, retention, accounting and teardown lifecycle | [Cache lifecycle](cache-lifecycle-composition-design.md) | Delivered in #255 from one locally reviewed larger batch; 35-case original/final parity, exact 28/29 topic subsets, complete core/typed-wrapper disposition, and actual hosted Windows Debug selected names match the original 35. |
 | Complete private-header SkipList layout, publication and search lifecycle | [SkipList lifecycle](skiplist-lifecycle-composition-design.md) | Delivered in #256 from one locally reviewed larger batch; corrected 100-case original/final parity, exact 32-case publication subset, complete 48-definition disposition, and actual hosted Windows Debug selected names match the original 100. |
+| Complete write queue commit and buffer-generation ownership lifecycle | [Write commit lifecycle](write-commit-lifecycle-composition-design.md) | Delivered in #257 from one locally reviewed larger batch; corrected 114-case original/final parity, exact 40/71/74 topic subsets, complete 61-definition/three-lambda disposition, and actual hosted Windows Debug selected names match the original 114. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -774,6 +775,18 @@ shared LinkAddress removed before publication. The baseline post-construction
 Node::LinkAt tail-allocation idiom remains an explicit portability limitation,
 not a new guarantee. Hosted checks and actual Windows Debug parity succeeded;
 Arena internals, MemTable's other definitions and whole production remain open.
+
+#257's nine-suite write/WAL/recovery/database selection contains 114 corrected
+original/final identities. Persistence/grouping, queue execution and buffer
+generation intermediates are exact original subsets of 40, 71 and 74.
+The complete bounded inventory covers 61 named definitions and the forced
+fallback, wait and retained-generation cleanup lambdas. The design preserves
+the original one failed-Error copy at WAL persistence and avoids adding a
+second copy at the new parent boundary. Stack Writer lifetime, result allocation
+before TakeOn, lock reacquisition, sequence restoration, WAL-before-MemTable
+visibility and active/immutable owner order all passed independent review and
+hosted gates. DatabaseEngine caller bodies and wider write/recovery files remain
+separate audit frontiers.
 
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,
