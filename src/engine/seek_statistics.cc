@@ -19,7 +19,7 @@ bool SeekStatistics::Charge(const Version& version, const Version& current,
                             const SeekCharge& charge) {
     const FileMetadata& file = **charge.file;
     --file.allowed_seeks;
-    if (file.allowed_seeks > 0 || &version != &current || IsRecordedFor(current)) {
+    if (!ShouldRecord(version, current, file)) {
         return false;
     }
     recorded_ = Recorded{
@@ -28,6 +28,17 @@ bool SeekStatistics::Charge(const Version& version, const Version& current,
         .file = charge.file,
     };
     return true;
+}
+
+bool SeekStatistics::ShouldRecord(const Version& version, const Version& current,
+                                  const FileMetadata& file) const noexcept {
+    if (file.allowed_seeks > 0) {
+        return false;
+    }
+    if (&version != &current) {
+        return false;
+    }
+    return !IsRecordedFor(current);
 }
 
 bool SeekStatistics::HasFileToCompact(const Version& current) const noexcept {

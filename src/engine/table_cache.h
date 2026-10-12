@@ -50,6 +50,9 @@ public:
     void Evict(std::uint64_t file_number);
 
 private:
+    [[nodiscard]] Result<std::unique_ptr<Table>> OpenTable(std::uint64_t file_number,
+                                                           std::uint64_t file_size);
+
     FileSystem* file_system_;
     std::filesystem::path directory_;
     const InternalKeyComparator* comparator_;

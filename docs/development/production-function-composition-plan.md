@@ -607,6 +607,7 @@ changed paths verified in main.
 | Complete internal-key, Arena and MemTable ownership lifecycle | [Key/memory lifecycle](key-memory-lifecycle-composition-design.md) | Delivered in #259 from one locally reviewed larger batch; 200-case original/final parity, exact 39/33 topic subsets, complete 115-definition disposition, and actual hosted Windows Debug selected names match the original 200. |
 | Complete Block, Iterator, BlockBuilder and block-format representation lifecycle | [Block representation lifecycle](block-representation-lifecycle-composition-design.md) | Delivered in #260 from one locally reviewed larger batch; corrected 208-case original/final parity, exact 121/133 topic subsets, complete 96-definition disposition, and actual hosted Windows Debug selected names match the original 208. |
 | Complete Bloom and filter-block generation/query lifecycle | [Table filter lifecycle](table-filter-lifecycle-composition-design.md) | Delivered in #261 from one locally reviewed larger batch; 162-case original/final parity, exact 78/144 topic subsets, complete 34-definition disposition, and actual hosted Windows Debug selected names match the original 162. |
+| Complete Table, TableBuilder and compression lifecycle | [Table lifecycle completion](table-lifecycle-completion-design.md) | Delivered in #262 from one locally reviewed larger batch; 154-case original/final parity, exact 116/78 topic subsets, complete 88-definition/two-lambda disposition, and actual hosted Windows Debug selected names match the original 154. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -833,6 +834,16 @@ short/range/array/topology priority and parent-owned Error source locations
 through owned and borrowed entrypoints. Hosted checks succeeded after retrying
 a transient GitHub GraphQL 504; actual Windows Debug identities matched.
 Table/TableBuilder/compression and broader engine/platform files remain open.
+
+#262 closes every Table, TableBuilder and compression definition plus the two
+table validation lambdas. Its nine-suite selection contains 154 original/final
+identities, including seven freshly built CompressionFailureTest cases from the
+separate executable. Cache and builder intermediates are exact original subsets
+of 116 and 78. Mapped blocks remain uncached; filter failure precedes every
+later builder mutation and all later failures copy the first Error. A transient
+crc32c FetchContent HTTP 504 caused the first fuzz failure; rerunning only
+failed jobs succeeded and all 20 gates passed. Engine/platform/API files remain
+open.
 
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,

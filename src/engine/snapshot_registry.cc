@@ -9,21 +9,29 @@ SnapshotRegistry::SnapshotRegistry() noexcept : sentinel_(0) {
 
 SnapshotRegistry::Registration* SnapshotRegistry::Register(SequenceNumber sequence) {
     Registration* const registration = new Registration(sequence);
-    registration->previous_ = sentinel_.previous_;
-    registration->next_ = &sentinel_;
-    registration->previous_->next_ = registration;
-    sentinel_.previous_ = registration;
+    LinkNewest(*registration);
     ++size_;
     return registration;
 }
 
 void SnapshotRegistry::Release(Registration*& registration) noexcept {
-    registration->previous_->next_ = registration->next_;
-    registration->next_->previous_ = registration->previous_;
+    Unlink(*registration);
     Registration* const released = registration;
     registration = nullptr;
     delete released;  // GCOVR_EXCL_LINE: GCC attributes trivial private destruction elsewhere
     --size_;
+}
+
+void SnapshotRegistry::LinkNewest(Registration& registration) noexcept {
+    registration.previous_ = sentinel_.previous_;
+    registration.next_ = &sentinel_;
+    registration.previous_->next_ = &registration;
+    sentinel_.previous_ = &registration;
+}
+
+void SnapshotRegistry::Unlink(Registration& registration) noexcept {
+    registration.previous_->next_ = registration.next_;
+    registration.next_->previous_ = registration.previous_;
 }
 
 std::optional<SequenceNumber> SnapshotRegistry::oldest() const noexcept {
