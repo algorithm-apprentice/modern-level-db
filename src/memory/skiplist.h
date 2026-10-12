@@ -73,25 +73,17 @@ public:
 
         void Next() { node_ = node_->Next(0); }
 
-        void Prev() {
-            node_ = list_->FindLessThan(node_->entry);
-            if (node_ == list_->head_) {
-                node_ = nullptr;
-            }
-        }
+        void Prev() { SetPosition(list_->FindLessThan(node_->entry)); }
 
         void Seek(const Entry& target) { node_ = list_->FindGreaterOrEqual(target, nullptr); }
 
         void SeekToFirst() { node_ = list_->head_->Next(0); }
 
-        void SeekToLast() {
-            node_ = list_->FindLast();
-            if (node_ == list_->head_) {
-                node_ = nullptr;
-            }
-        }
+        void SeekToLast() { SetPosition(list_->FindLast()); }
 
     private:
+        void SetPosition(Node* node) noexcept { node_ = node == list_->head_ ? nullptr : node; }
+
         const SkipList* list_;
         Node* node_ = nullptr;
     };
@@ -145,39 +137,61 @@ private:
         return (sizeof(Node) + alignof(Link) - 1U) & ~(alignof(Link) - 1U);
     }
 
-    void InsertAfterSearch(Entry entry, std::array<Node*, MaxHeight>& predecessors) {
-        const int height = RandomHeight();
-        const int current_height = max_height_.load(std::memory_order_relaxed);
-        if (height > current_height) {
-            for (int level = current_height; level < height; ++level) {
-                predecessors[static_cast<std::size_t>(level)] = head_;
-            }
-        }
+    [[nodiscard]] static constexpr std::size_t NodeStorageSize(int height) noexcept {
+        return LinksOffset() + sizeof(Link) * static_cast<std::size_t>(height);
+    }
 
-        Node* node = NewNode(entry, height);
+    static void InitializeLinks(std::byte* storage, int height) {
+        for (int level = 0; level < height; ++level) {
+            std::byte* address =
+                storage + LinksOffset() + static_cast<std::size_t>(level) * sizeof(Link);
+            static_cast<void>(std::construct_at(reinterpret_cast<Link*>(address), nullptr));
+        }
+    }
+
+    [[nodiscard]] int CurrentHeight() const noexcept {
+        return max_height_.load(std::memory_order_relaxed);
+    }
+
+    void PreparePredecessorsForHeight(std::array<Node*, MaxHeight>& predecessors,
+                                      int current_height, int height) const noexcept {
+        for (int level = current_height; level < height; ++level) {
+            predecessors[static_cast<std::size_t>(level)] = head_;
+        }
+    }
+
+    void PublishHeightIfNeeded(int height, int current_height) noexcept {
         if (height > current_height) {
             // Height is only a search hint. A reader seeing the higher level before
             // its first link is published finds the initialized null head link and descends.
             max_height_.store(height, std::memory_order_relaxed);
         }
+    }
+
+    static void LinkNodeAtLevel(Node& node, Node& predecessor, int level) noexcept {
+        node.SetNextRelaxed(level, predecessor.NextRelaxed(level));
+        // Release-publication pairs with readers' acquire loads: the key and
+        // outgoing link are initialized before the node becomes reachable.
+        predecessor.SetNext(level, &node);
+    }
+
+    void InsertAfterSearch(Entry entry, std::array<Node*, MaxHeight>& predecessors) {
+        const int height = RandomHeight();
+        const int current_height = CurrentHeight();
+        PreparePredecessorsForHeight(predecessors, current_height, height);
+
+        Node* node = NewNode(entry, height);
+        PublishHeightIfNeeded(height, current_height);
         for (int level = 0; level < height; ++level) {
             Node* predecessor = predecessors[static_cast<std::size_t>(level)];
-            node->SetNextRelaxed(level, predecessor->NextRelaxed(level));
-            // Release-publication pairs with readers' acquire loads: the key and
-            // outgoing link are initialized before the node becomes reachable.
-            predecessor->SetNext(level, node);
+            LinkNodeAtLevel(*node, *predecessor, level);
         }
     }
 
     [[nodiscard]] Node* NewNode(Entry entry, int height) {
-        std::byte* storage =
-            arena_.AllocateAligned(LinksOffset() + sizeof(Link) * static_cast<std::size_t>(height));
+        std::byte* storage = arena_.AllocateAligned(NodeStorageSize(height));
         Node* node = std::construct_at(reinterpret_cast<Node*>(storage), entry);
-        for (int level = 0; level < height; ++level) {
-            std::byte* address =
-                storage + LinksOffset() + static_cast<std::size_t>(level) * sizeof(Link);
-            (void)std::construct_at(reinterpret_cast<Link*>(address), nullptr);
-        }
+        InitializeLinks(storage, height);
         return node;
     }
 
@@ -208,7 +222,7 @@ private:
 
     [[nodiscard]] Node* FindGreaterOrEqual(const Entry& entry, Node** predecessors) const {
         Node* node = head_;
-        int level = max_height_.load(std::memory_order_relaxed) - 1;
+        int level = CurrentHeight() - 1;
         while (true) {
             Node* next = node->Next(level);
             if (EntryIsAfterNode(entry, next)) {
@@ -225,12 +239,22 @@ private:
         }
     }
 
-    [[nodiscard]] Node* FindLessThan(const Entry& entry) const {
+    [[nodiscard]] bool ReachedUpperBound(Node* next, const Entry* upper_bound) const {
+        if (next == nullptr) {
+            return true;
+        }
+        if (upper_bound == nullptr) {
+            return false;
+        }
+        return compare_(next->entry, *upper_bound) >= 0;
+    }
+
+    [[nodiscard]] Node* FindLastBefore(const Entry* upper_bound) const {
         Node* node = head_;
-        int level = max_height_.load(std::memory_order_relaxed) - 1;
+        int level = CurrentHeight() - 1;
         while (true) {
             Node* next = node->Next(level);
-            if (next == nullptr || compare_(next->entry, entry) >= 0) {
+            if (ReachedUpperBound(next, upper_bound)) {
                 if (level == 0) {
                     return node;
                 }
@@ -241,21 +265,9 @@ private:
         }
     }
 
-    [[nodiscard]] Node* FindLast() const {
-        Node* node = head_;
-        int level = max_height_.load(std::memory_order_relaxed) - 1;
-        while (true) {
-            Node* next = node->Next(level);
-            if (next == nullptr) {
-                if (level == 0) {
-                    return node;
-                }
-                --level;
-            } else {
-                node = next;
-            }
-        }
-    }
+    [[nodiscard]] Node* FindLessThan(const Entry& entry) const { return FindLastBefore(&entry); }
+
+    [[nodiscard]] Node* FindLast() const { return FindLastBefore(nullptr); }
 
     const Compare& compare_;
     Arena& arena_;

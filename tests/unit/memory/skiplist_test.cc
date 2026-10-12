@@ -34,6 +34,21 @@ struct IntegerCompare {
     }
 };
 
+struct RecordingIntegerCompare {
+    int operator()(std::uint64_t left, std::uint64_t right) const {
+        comparisons.emplace_back(left, right);
+        return IntegerCompare{}(left, right);
+    }
+
+    mutable std::vector<std::pair<std::uint64_t, std::uint64_t>> comparisons;
+};
+
+struct DecadeCompare {
+    int operator()(std::uint64_t left, std::uint64_t right) const noexcept {
+        return IntegerCompare{}(left / 10U, right / 10U);
+    }
+};
+
 struct ByteViewCompare {
     int operator()(ByteView left, ByteView right) const noexcept {
         return BytewiseComparator().Compare(left, right);
@@ -172,6 +187,144 @@ TEST(SkipListTest, IteratesSeeksAndMovesBackward) {
         ASSERT_TRUE(iterator.valid());
         EXPECT_EQ(iterator.entry(), expected);
         iterator.Prev();
+    }
+    EXPECT_FALSE(iterator.valid());
+}
+
+TEST(SkipListTest, LastPositioningAvoidsComparisonsAndPrevUsesStrictBounds) {
+    Arena arena;
+    RecordingIntegerCompare compare;
+    SkipList<std::uint64_t, RecordingIntegerCompare> list(compare, arena);
+    list.Insert(10);
+    list.Insert(20);
+    list.Insert(30);
+    compare.comparisons.clear();
+
+    SkipList<std::uint64_t, RecordingIntegerCompare>::Iterator iterator(list);
+    iterator.SeekToLast();
+
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(iterator.entry(), 30U);
+    EXPECT_TRUE(compare.comparisons.empty());
+
+    iterator.Prev();
+
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(iterator.entry(), 20U);
+    ASSERT_FALSE(compare.comparisons.empty());
+    bool saw_equal_bound = false;
+    for (const auto& [left, right] : compare.comparisons) {
+        EXPECT_EQ(right, 30U);
+        saw_equal_bound = saw_equal_bound || left == right;
+    }
+    EXPECT_TRUE(saw_equal_bound);
+
+    compare.comparisons.clear();
+    iterator.SeekToFirst();
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(iterator.entry(), 10U);
+    EXPECT_TRUE(compare.comparisons.empty());
+
+    iterator.Prev();
+
+    EXPECT_FALSE(iterator.valid());
+    ASSERT_FALSE(compare.comparisons.empty());
+    saw_equal_bound = false;
+    for (const auto& [left, right] : compare.comparisons) {
+        EXPECT_EQ(right, 10U);
+        saw_equal_bound = saw_equal_bound || left == right;
+    }
+    EXPECT_TRUE(saw_equal_bound);
+}
+
+TEST(SkipListTest, IteratorsObserveLaterNeighborsWithoutLosingCurrentNodes) {
+    Arena arena;
+    IntegerCompare compare;
+    IntegerList list(compare, arena);
+    list.Insert(10);
+    list.Insert(30);
+
+    IntegerList::Iterator forward(list);
+    forward.Seek(10);
+    ASSERT_TRUE(forward.valid());
+    EXPECT_EQ(forward.entry(), 10U);
+
+    list.Insert(20);
+
+    EXPECT_EQ(forward.entry(), 10U);
+    forward.Next();
+    ASSERT_TRUE(forward.valid());
+    EXPECT_EQ(forward.entry(), 20U);
+
+    list.Insert(40);
+
+    EXPECT_EQ(forward.entry(), 20U);
+    forward.Next();
+    ASSERT_TRUE(forward.valid());
+    EXPECT_EQ(forward.entry(), 30U);
+    forward.Next();
+    ASSERT_TRUE(forward.valid());
+    EXPECT_EQ(forward.entry(), 40U);
+
+    IntegerList::Iterator backward(list);
+    backward.Seek(30);
+    ASSERT_TRUE(backward.valid());
+    EXPECT_EQ(backward.entry(), 30U);
+
+    list.Insert(25);
+
+    EXPECT_EQ(backward.entry(), 30U);
+    backward.Prev();
+    ASSERT_TRUE(backward.valid());
+    EXPECT_EQ(backward.entry(), 25U);
+}
+
+TEST(SkipListTest, ComparatorEquivalenceDefinesContainsAndLowerBounds) {
+    Arena arena;
+    DecadeCompare compare;
+    SkipList<std::uint64_t, DecadeCompare> list(compare, arena);
+    list.Insert(10);
+    list.Insert(30);
+    list.Insert(50);
+
+    EXPECT_TRUE(list.Contains(19));
+    EXPECT_FALSE(list.Contains(20));
+    EXPECT_TRUE(list.Contains(39));
+    EXPECT_FALSE(list.Contains(49));
+
+    SkipList<std::uint64_t, DecadeCompare>::Iterator iterator(list);
+    iterator.Seek(19);
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(iterator.entry(), 10U);
+    iterator.Seek(20);
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(iterator.entry(), 30U);
+    iterator.Seek(49);
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(iterator.entry(), 50U);
+    iterator.Seek(60);
+    EXPECT_FALSE(iterator.valid());
+}
+
+TEST(SkipListTest, AlignsNodesAfterAnUnalignedArenaAllocation) {
+    Arena arena;
+    std::byte* prefix = arena.Allocate(1);
+    *prefix = std::byte{0xa5};
+    const std::size_t initial_usage = arena.memory_usage();
+    IntegerCompare compare;
+    IntegerList list(compare, arena);
+    for (const std::uint64_t key : std::array<std::uint64_t, 7>{70, 10, 50, 20, 60, 30, 40}) {
+        list.Insert(key);
+    }
+
+    EXPECT_EQ(*prefix, std::byte{0xa5});
+    EXPECT_EQ(arena.memory_usage(), initial_usage);
+    IntegerList::Iterator iterator(list);
+    iterator.SeekToFirst();
+    for (std::uint64_t expected = 10; expected <= 70; expected += 10) {
+        ASSERT_TRUE(iterator.valid());
+        EXPECT_EQ(iterator.entry(), expected);
+        iterator.Next();
     }
     EXPECT_FALSE(iterator.valid());
 }

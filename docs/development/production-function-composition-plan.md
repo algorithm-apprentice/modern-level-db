@@ -25,6 +25,17 @@ ranges are retained in session scan evidence. The file dispositions below and
 the source-read candidates are the starting worklist, not a final style
 certification.
 
+A current-source expanded scan at
+`de1ed34ad8c336f3cddc9efb21f7f0ce560f506c` includes tracked production
+headers as well as implementation files: 120 files, 17,024 lines,
+1,437 tree-sitter `function_definition` nodes and 38 lambdas. It includes
+deleted/defaulted special members and reports grammar-recovery nodes in several
+declaration-heavy headers, so it is neither directly comparable to the original
+741-definition implementation-file inventory nor a trustworthy completion
+counter. It does expose previously omitted private-header frontiers such as the
+39-definition arena-backed SkipList. The retained JSON remains the mechanical
+index; semantic disposition still requires source review and named evidence.
+
 ## Recursive design rule
 
 Every function does one named job. When that job consists of independently
@@ -589,6 +600,7 @@ changed paths verified in main.
 | Recursive lookup storage lifecycle and shared trusted key emission | [Lookup storage/encoding](lookup-key-storage-encoding-composition-design.md) | Delivered in #250 after accepted #249; corrected 151-case original/final native parity, 36-case foundation intermediates, and actual hosted Windows Debug selected names match the original 151. |
 | Recursive sticky-error capture and parent-owned diagnostic formatting | [Foundation error context](foundation-error-context-composition-design.md) | Delivered in #253 after accepted #252; 166-case original/final native parity, 26-case foundation intermediate, and actual hosted Windows Debug selected names match the original 166. |
 | Recursive scalar/read-record codecs, block admission and MemTable lookup | [Read-record codecs](read-record-codec-composition-design.md) | Delivered in #254 from one locally reviewed larger batch; corrected 296-case original/final native parity, exact 99/197/131 topic subsets, and actual hosted Windows Debug selected names match the original 296. |
+| Complete cache-core index, pin, retention, accounting and teardown lifecycle | [Cache lifecycle](cache-lifecycle-composition-design.md) | Delivered in #255 from one locally reviewed larger batch; 35-case original/final parity, exact 28/29 topic subsets, complete core/typed-wrapper disposition, and actual hosted Windows Debug selected names match the original 35. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -738,6 +750,17 @@ errors; the attempted full local GCC 16 target remains blocked by an unrelated
 pre-existing compaction diagnostic, while hosted GCC 13 gates all succeeded.
 This batch certifies only its eighteen selected/new definitions and bounded
 codec disposition, not the complete block, MemTable, coding or production tree.
+
+#255 applies the same larger-batch policy to the complete cache core and
+unchanged typed wrapper. Its 35-case selection spans the real unit, isolated
+allocation and TableCache users; hash-table and retention intermediates are
+exact original subsets of 28 and 29. Design review corrected exact rehash
+prepend order, replacement/growth observability, duplicate-pin timing,
+same-shard reentry and destructor stale-index scope before implementation.
+All 25 selected/new definitions and every unchanged core/typed runtime body
+have a bounded responsibility disposition. Hosted checks and actual Windows
+Debug names all succeeded. Engine TableCache loading policy and other cache
+users remain separate frontiers; this does not certify whole production.
 
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,
