@@ -395,6 +395,33 @@ private:
     const std::shared_ptr<WindowsFileOperations> operations_;
 };
 
+Result<DWORD> PositionedReadRequest(std::uint64_t offset, std::size_t size) {
+    constexpr auto MaximumOffset =
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    const DWORD request = WindowsIoRequestSize(size);
+    if (offset > MaximumOffset || request > MaximumOffset - offset) {
+        return std::unexpected(Error::InvalidArgument("read range exceeds signed 64-bit offsets"));
+    }
+    return request;
+}
+
+Result<ScopedHandle> OpenReadEvent(const std::filesystem::path& path,
+                                   const std::shared_ptr<WindowsFileOperations>& operations) {
+    ScopedHandle event(operations->Event(), operations);
+    if (!event.valid()) {
+        return std::unexpected(FileError("create read event", path, ::GetLastError()));
+    }
+    return event;
+}
+
+OVERLAPPED PositionedReadOperation(std::uint64_t offset, HANDLE event) noexcept {
+    OVERLAPPED overlapped{};
+    overlapped.Offset = static_cast<DWORD>(offset);
+    overlapped.OffsetHigh = static_cast<DWORD>(offset >> 32U);
+    overlapped.hEvent = event;
+    return overlapped;
+}
+
 class WindowsRandomAccessFile final : public RandomAccessFile {
 public:
     WindowsRandomAccessFile(ScopedHandle file, std::filesystem::path path,
@@ -404,22 +431,16 @@ public:
         if (output.empty()) {
             return 0U;
         }
-        constexpr auto MaximumOffset =
-            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-        const DWORD request = WindowsIoRequestSize(output.size());
-        if (offset > MaximumOffset || request > MaximumOffset - offset) {
-            return std::unexpected(
-                Error::InvalidArgument("read range exceeds signed 64-bit offsets"));
+        auto request = PositionedReadRequest(offset, output.size());
+        if (!request.has_value()) {
+            return std::unexpected(std::move(request).error());
         }
-        ScopedHandle event(operations_->Event(), operations_);
-        if (!event.valid()) {
-            return std::unexpected(FileError("create read event", path_, ::GetLastError()));
+        auto event = OpenReadEvent(path_, operations_);
+        if (!event.has_value()) {
+            return std::unexpected(std::move(event).error());
         }
-        OVERLAPPED overlapped{};
-        overlapped.Offset = static_cast<DWORD>(offset);
-        overlapped.OffsetHigh = static_cast<DWORD>(offset >> 32U);
-        overlapped.hEvent = event.get();
-        if (!operations_->Read(file_.get(), output.data(), request, nullptr, &overlapped)) {
+        OVERLAPPED overlapped = PositionedReadOperation(offset, event->get());
+        if (!operations_->Read(file_.get(), output.data(), *request, nullptr, &overlapped)) {
             const DWORD error = ::GetLastError();
             if (error == ERROR_HANDLE_EOF) {
                 return 0U;
@@ -526,18 +547,15 @@ public:
         if (output.empty()) {
             return 0U;
         }
-        constexpr auto MaximumOffset =
-            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-        const DWORD request = WindowsIoRequestSize(output.size());
-        if (offset > MaximumOffset || request > MaximumOffset - offset) {
-            return std::unexpected(
-                Error::InvalidArgument("read range exceeds signed 64-bit offsets"));
+        auto request = PositionedReadRequest(offset, output.size());
+        if (!request.has_value()) {
+            return std::unexpected(std::move(request).error());
         }
         if (offset >= length_) {
             return 0U;
         }
         const auto start = static_cast<std::size_t>(offset);
-        const auto count = std::min(static_cast<std::size_t>(request), length_ - start);
+        const auto count = std::min(static_cast<std::size_t>(*request), length_ - start);
         std::memcpy(output.data(), view_ + start, count);
         return count;
     }
