@@ -695,14 +695,7 @@ public:
         }
         return RememberFirstError(first_error_, WriteAll(data));
     }
-    Status Flush() override {
-        if (first_error_.has_value()) {
-            return std::unexpected(*first_error_);
-        }
-        const ByteView bytes(buffer_.data(), buffer_size_);
-        buffer_size_ = 0;
-        return RememberFirstError(first_error_, WriteAll(bytes));
-    }
+    Status Flush() override { return FlushBuffer(); }
     Status Sync() override {
         const Status flushed = Flush();
         if (!flushed.has_value()) {
@@ -724,6 +717,15 @@ public:
     }
 
 private:
+    Status FlushBuffer() {
+        if (first_error_.has_value()) {
+            return std::unexpected(*first_error_);
+        }
+        const ByteView bytes(buffer_.data(), buffer_size_);
+        buffer_size_ = 0;
+        return RememberFirstError(first_error_, WriteAll(bytes));
+    }
+
     Status WriteAll(ByteView data) {
         while (!data.empty()) {
             DWORD written = 0;

@@ -19,6 +19,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <source_location>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -429,8 +430,9 @@ public:
     }
 
     Status Append(ByteView data) override {
-        if (close_attempted_) {
-            return std::unexpected(Error::InvalidArgument("append called after file close"));
+        Status open = CheckOpen("append");
+        if (!open.has_value()) {
+            return open;
         }
         if (first_error_.has_value()) {
             return std::unexpected(*first_error_);
@@ -460,15 +462,17 @@ public:
     }
 
     Status Flush() override {
-        if (close_attempted_) {
-            return std::unexpected(Error::InvalidArgument("flush called after file close"));
+        Status open = CheckOpen("flush");
+        if (!open.has_value()) {
+            return open;
         }
         return FlushBuffer(descriptor_);
     }
 
     Status Sync() override {
-        if (close_attempted_) {
-            return std::unexpected(Error::InvalidArgument("sync called after file close"));
+        Status open = CheckOpen("sync");
+        if (!open.has_value()) {
+            return open;
         }
         Status status = FlushBuffer(descriptor_);
         if (!status.has_value()) {
@@ -496,6 +500,15 @@ public:
     }
 
 private:
+    Status CheckOpen(std::string_view operation,
+                     std::source_location location = std::source_location::current()) const {
+        if (close_attempted_) {
+            return std::unexpected(Error::InvalidArgument(
+                std::string(operation) + " called after file close", location));
+        }
+        return {};
+    }
+
     Status FlushBuffer(int descriptor) {
         if (first_error_.has_value()) {
             return std::unexpected(*first_error_);
