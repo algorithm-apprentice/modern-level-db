@@ -31,6 +31,12 @@ constexpr std::array<char, 16> HexDigits{
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 };
 
+void AppendDiagnosticHexByte(std::string& escaped, unsigned int byte) {
+    escaped += "\\x";
+    escaped.push_back(HexDigits[byte >> 4U]);
+    escaped.push_back(HexDigits[byte & 0x0fU]);
+}
+
 void AppendEscapedDiagnosticByte(std::string& escaped, std::byte value) {
     const unsigned int byte = std::to_integer<unsigned int>(value);
     switch (byte) {
@@ -53,9 +59,7 @@ void AppendEscapedDiagnosticByte(std::string& escaped, std::byte value) {
             if (byte >= 0x20U && byte <= 0x7eU) {
                 escaped.push_back(static_cast<char>(byte));
             } else {
-                escaped += "\\x";
-                escaped.push_back(HexDigits[byte >> 4U]);
-                escaped.push_back(HexDigits[byte & 0x0fU]);
+                AppendDiagnosticHexByte(escaped, byte);
             }
             break;
     }
