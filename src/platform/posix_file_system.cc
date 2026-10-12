@@ -222,10 +222,10 @@ Status CloseDescriptor(int descriptor, const std::filesystem::path& path) {
 
 class PosixSequentialFile final : public SequentialFile {
 public:
-    PosixSequentialFile(int descriptor, std::filesystem::path path)
-        : descriptor_(descriptor), path_(std::move(path)) {}
+    PosixSequentialFile(ScopedDescriptor&& descriptor, std::filesystem::path path) noexcept
+        : path_(std::move(path)), descriptor_(std::move(descriptor)) {}
 
-    ~PosixSequentialFile() override { (void)::close(descriptor_); }
+    ~PosixSequentialFile() override = default;
 
     Result<std::size_t> Read(MutableByteView output) override {
         if (output.empty()) {
@@ -235,7 +235,7 @@ public:
         const std::size_t request = MaximumIoSize(output.size());
         ssize_t result;
         do {
-            result = ::read(descriptor_, output.data(), request);
+            result = ::read(descriptor_.get(), output.data(), request);
         } while (result < 0 && errno == EINTR);
         if (result < 0) {
             return std::unexpected(FileError("read", path_, errno));
@@ -244,16 +244,16 @@ public:
     }
 
 private:
-    const int descriptor_;
     const std::filesystem::path path_;
+    ScopedDescriptor descriptor_;
 };
 
 class PosixRandomAccessFile final : public RandomAccessFile {
 public:
-    PosixRandomAccessFile(int descriptor, std::filesystem::path path)
-        : descriptor_(descriptor), path_(std::move(path)) {}
+    PosixRandomAccessFile(ScopedDescriptor&& descriptor, std::filesystem::path path) noexcept
+        : path_(std::move(path)), descriptor_(std::move(descriptor)) {}
 
-    ~PosixRandomAccessFile() override { (void)::close(descriptor_); }
+    ~PosixRandomAccessFile() override = default;
 
     Result<std::size_t> Read(std::uint64_t offset, MutableByteView output) const override {
         if (output.empty()) {
@@ -267,7 +267,7 @@ public:
         const std::size_t request = MaximumIoSize(output.size());
         ssize_t result;
         do {
-            result = ::pread(descriptor_, output.data(), request, *posix_offset);
+            result = ::pread(descriptor_.get(), output.data(), request, *posix_offset);
         } while (result < 0 && errno == EINTR);
         if (result < 0) {
             return std::unexpected(FileError("positioned read", path_, errno));
@@ -276,15 +276,14 @@ public:
     }
 
 private:
-    const int descriptor_;
     const std::filesystem::path path_;
+    ScopedDescriptor descriptor_;
 };
 
 Result<std::unique_ptr<RandomAccessFile>> OpenCopiedRandomFile(ScopedDescriptor& descriptor,
                                                                const std::filesystem::path& path) {
     std::unique_ptr<RandomAccessFile> file =
-        std::make_unique<PosixRandomAccessFile>(descriptor.get(), path);
-    (void)descriptor.Release();
+        std::make_unique<PosixRandomAccessFile>(std::move(descriptor), path);
     return file;
 }
 
@@ -661,8 +660,7 @@ Result<std::unique_ptr<SequentialFile>> PosixFileSystem::OpenSequential(
         return std::unexpected(descriptor.error());
     }
     std::unique_ptr<SequentialFile> file =
-        std::make_unique<PosixSequentialFile>(descriptor->get(), path);
-    (void)descriptor->Release();
+        std::make_unique<PosixSequentialFile>(std::move(*descriptor), path);
     return file;
 }
 
