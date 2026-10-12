@@ -371,7 +371,7 @@ DWORD ReadDirectoryChildren(HANDLE found, WIN32_FIND_DATAW& information,
 class WindowsSequentialFile final : public SequentialFile {
 public:
     WindowsSequentialFile(ScopedHandle file, std::filesystem::path path,
-                          std::shared_ptr<WindowsFileOperations> operations)
+                          std::shared_ptr<WindowsFileOperations> operations) noexcept
         : file_(std::move(file)), path_(std::move(path)), operations_(std::move(operations)) {}
     Result<std::size_t> Read(MutableByteView output) override {
         if (output.empty()) {
@@ -436,7 +436,7 @@ void RetirePendingRead(HANDLE file, OVERLAPPED& overlapped) noexcept {
 class WindowsRandomAccessFile final : public RandomAccessFile {
 public:
     WindowsRandomAccessFile(ScopedHandle file, std::filesystem::path path,
-                            std::shared_ptr<WindowsFileOperations> operations)
+                            std::shared_ptr<WindowsFileOperations> operations) noexcept
         : file_(std::move(file)), path_(std::move(path)), operations_(std::move(operations)) {}
     Result<std::size_t> Read(std::uint64_t offset, MutableByteView output) const override {
         if (output.empty()) {
