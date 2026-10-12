@@ -128,6 +128,43 @@ struct InputExpansion {
     KeyRange range;
 };
 
+struct InitialCompaction {
+    std::uint32_t level;
+    Files inputs;
+};
+
+std::optional<InitialCompaction> SelectInitialCompaction(
+    const Version& version, const InternalKeyComparator& comparator,
+    std::span<const std::optional<InternalKey>, NumLevels> compact_pointers,
+    const std::optional<SeekCompaction>& seek_compaction) {
+    const CompactionScore score = ScoreCompaction(version);
+    if (score.score >= 1) {
+        const std::span<const Version::File> files = version.files(score.level);
+        const std::optional<InternalKey>& pointer = compact_pointers[score.level];
+        const auto after = std::ranges::find_if(files, [&](const Version::File& file) {
+            return !pointer.has_value() || comparator.Compare(file->largest, *pointer) > 0;
+        });
+        Files inputs;
+        inputs.push_back(after != files.end() ? *after : files.front());
+        return InitialCompaction{.level = score.level, .inputs = std::move(inputs)};
+    }
+    if (!seek_compaction.has_value()) {
+        return std::nullopt;
+    }
+    Files inputs;
+    inputs.push_back(seek_compaction->file);
+    return InitialCompaction{.level = seek_compaction->level, .inputs = std::move(inputs)};
+}
+
+void CloseLevelZeroInputs(const Version& version, const InternalKeyComparator& comparator,
+                          std::uint32_t level, Files& inputs) {
+    if (level != 0) {
+        return;
+    }
+    const KeyRange start = RangeOf(comparator, inputs);
+    inputs = OverlappingFiles(version, 0, comparator.user_comparator(), start);
+}
+
 std::optional<InputExpansion> TryExpandInputs(const Version& version,
                                               const InternalKeyComparator& comparator,
                                               std::uint32_t level,
@@ -213,31 +250,14 @@ std::optional<Compaction> PickCompaction(
     std::shared_ptr<const Version> version, const InternalKeyComparator& comparator,
     std::span<const std::optional<InternalKey>, NumLevels> compact_pointers,
     const std::optional<SeekCompaction>& seek_compaction, std::uint64_t target_file_size) {
-    const CompactionScore score = ScoreCompaction(*version);
-    std::uint32_t level = 0;
-    Files inputs;
-    if (score.score >= 1) {
-        level = score.level;
-        // A full level has files. Start after the level's compact pointer, and
-        // wrap around past its last file.
-        const std::span<const Version::File> files = version->files(level);
-        const std::optional<InternalKey>& pointer = compact_pointers[level];
-        const auto after = std::ranges::find_if(files, [&](const Version::File& file) {
-            return !pointer.has_value() || comparator.Compare(file->largest, *pointer) > 0;
-        });
-        inputs.push_back(after != files.end() ? *after : files.front());
-    } else if (seek_compaction.has_value()) {
-        level = seek_compaction->level;
-        inputs.push_back(seek_compaction->file);
-    } else {
+    std::optional<InitialCompaction> initial =
+        SelectInitialCompaction(*version, comparator, compact_pointers, seek_compaction);
+    if (!initial.has_value()) {
         return std::nullopt;
     }
-
-    if (level == 0) {
-        const KeyRange start = RangeOf(comparator, inputs);
-        inputs = OverlappingFiles(*version, 0, comparator.user_comparator(), start);
-    }
-    return SetupInputs(std::move(version), comparator, level, std::move(inputs), target_file_size);
+    CloseLevelZeroInputs(*version, comparator, initial->level, initial->inputs);
+    return SetupInputs(std::move(version), comparator, initial->level, std::move(initial->inputs),
+                       target_file_size);
 }
 
 bool IsTrivialMove(const Compaction& compaction, std::uint64_t target_file_size) {
