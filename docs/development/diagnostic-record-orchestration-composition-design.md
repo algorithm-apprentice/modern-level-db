@@ -150,3 +150,29 @@ Independent pre-extraction characterization review found no actionable issue
 in either stream fixture or the three cases and independently checked the
 106-case XML. It confirmed explicit goldens, safe hook/counter scope and honest
 read-ahead/copy/allocation limits. No edits/builds/tests were performed.
+
+## Implementation and native parity
+
+Three separate source topics implement the nine-definition ledger after the
+characterization commit: framed traversal/physical reporting, shared invalid
+reporting and batch header/entry composition.
+The parent still constructs/owns its reader after header success and lends
+the existing formatter as an lvalue. Original const-Status failed returns stay
+at their logical child locations; new physical-report propagation moves errors.
+Contextual errors/lines and parent decoded results cover report/remember/return,
+while the batch owner covers trusted entry traversal.
+
+Both framed and shared-invalid intermediate selections pass 38 unique cases.
+Final native Windows Debug coupled XML has exactly the original 106 unique
+classname/name identities, all three additions and no failures/errors/skips.
+No header/seam/decoder/table/native/policy/coverage-exclusion changes.
+Precise copies, allocation/destruction ordering remain inspection-based.
+Local formatting/documentation/whitespace checks and independent combined
+review precede publication; reviewed exact-head hosted CI remains a merge gate.
+
+Independent combined read-only review found no significant issue in the
+three-path diff, nine-definition ledger and relevant caller/decoder/reader
+contracts against `2be58f9`. It independently verified the 106-case identity
+parity and both 38-case intermediates. Allocation/copy/destruction equivalence
+remains inspection-based rather than allocator-observer evidence.
+No edits/builds/tests or hosted-CI verification were performed by the reviewer.
