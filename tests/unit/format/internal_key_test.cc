@@ -172,6 +172,15 @@ std::vector<std::byte> Encoded(std::string_view user_key, SequenceNumber sequenc
 
 int Sign(int value) noexcept { return (value > 0) - (value < 0); }
 
+void ExpectLookupRepresentation(const LookupKey& key, ByteView encoded, std::size_t prefix_size) {
+    EXPECT_TRUE(std::ranges::equal(key.memtable_key(), encoded));
+    EXPECT_EQ(key.internal_key().data(), key.memtable_key().data() + prefix_size);
+    EXPECT_TRUE(std::ranges::equal(key.internal_key(), encoded.subspan(prefix_size)));
+    EXPECT_EQ(key.user_key().data(), key.internal_key().data());
+    EXPECT_TRUE(std::ranges::equal(
+        key.user_key(), encoded.subspan(prefix_size).first(encoded.size() - prefix_size - 8)));
+}
+
 int ReferenceCompare(const Comparator& comparator, ByteView left, ByteView right) {
     const InternalKeyView left_key = ParseInternalKey(left).value();
     const InternalKeyView right_key = ParseInternalKey(right).value();
@@ -305,6 +314,93 @@ TEST(LookupKeyTest, MovesAndResetsSourceToCanonicalEmptyKey) {
     EXPECT_TRUE(replacement_result->user_key().empty());
 }
 
+TEST(LookupKeyTest, LiteralPrefixAndTrailerBoundariesPreserveGuardedCallerBytes) {
+    struct LiteralLayout {
+        std::size_t user_size;
+        std::vector<std::byte> prefix;
+    };
+    const std::array layouts{
+        LiteralLayout{0, Bytes({0x08})},         LiteralLayout{118, Bytes({0x7e})},
+        LiteralLayout{119, Bytes({0x7f})},       LiteralLayout{120, Bytes({0x80, 0x01})},
+        LiteralLayout{190, Bytes({0xc6, 0x01})}, LiteralLayout{191, Bytes({0xc7, 0x01})},
+        LiteralLayout{512, Bytes({0x88, 0x04})},
+    };
+    const std::array pattern{std::byte{0x00}, std::byte{0xff}, std::byte{0x10}, std::byte{0x80}};
+    for (const auto& layout : layouts) {
+        for (const SequenceNumber sequence : {SequenceNumber{0}, MaxSequenceNumber}) {
+            SCOPED_TRACE(layout.user_size);
+            SCOPED_TRACE(sequence);
+            std::vector<std::byte> guarded(layout.user_size + 2);
+            guarded.front() = std::byte{0xa5};
+            guarded.back() = std::byte{0x5a};
+            for (std::size_t index = 0; index < layout.user_size; ++index) {
+                guarded[index + 1] = pattern[index % pattern.size()];
+            }
+            const std::vector<std::byte> before = guarded;
+            const ByteView user = ByteView(guarded).subspan(1, layout.user_size);
+            const std::vector<std::byte> trailer =
+                sequence == 0 ? Bytes({0x01, 0, 0, 0, 0, 0, 0, 0})
+                              : Bytes({0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff});
+            std::vector<std::byte> expected = layout.prefix;
+            expected.insert(expected.end(), user.begin(), user.end());
+            expected.insert(expected.end(), trailer.begin(), trailer.end());
+
+            const auto checked = LookupKey::Create(user, sequence);
+            ASSERT_TRUE(checked.has_value());
+            const LookupKey trusted = LookupKey::CreateTrusted(user, sequence);
+
+            ExpectLookupRepresentation(*checked, expected, layout.prefix.size());
+            ExpectLookupRepresentation(trusted, expected, layout.prefix.size());
+            EXPECT_NE(checked->user_key().data(), user.data());
+            EXPECT_NE(trusted.user_key().data(), user.data());
+            EXPECT_EQ(guarded, before);
+        }
+    }
+}
+
+TEST(LookupKeyTest, MoveMatrixKeepsCompleteOwnersAndExactCanonicalSources) {
+    constexpr std::array<std::size_t, 4> Sizes{0, 190, 191, 512};
+    const std::vector<std::byte> canonical = Bytes({0x08, 0x01, 0, 0, 0, 0, 0, 0, 0});
+    for (const std::size_t source_size : Sizes) {
+        SCOPED_TRACE(source_size);
+        const std::vector<std::byte> user(source_size, std::byte{0xff});
+        auto constructed_source = LookupKey::Create(user, MaxSequenceNumber);
+        ASSERT_TRUE(constructed_source.has_value());
+        const std::vector<std::byte> expected(constructed_source->memtable_key().begin(),
+                                              constructed_source->memtable_key().end());
+        const std::size_t prefix_size = expected.size() - source_size - 8;
+        const std::byte* const construction_address = constructed_source->memtable_key().data();
+
+        LookupKey constructed = std::move(*constructed_source);
+
+        ExpectLookupRepresentation(constructed, expected, prefix_size);
+        ExpectLookupRepresentation(*constructed_source, canonical, 1);
+        EXPECT_EQ(constructed.memtable_key().data() == construction_address, source_size >= 191);
+        for (const std::size_t destination_size : Sizes) {
+            SCOPED_TRACE(destination_size);
+            auto source = LookupKey::Create(user, MaxSequenceNumber);
+            ASSERT_TRUE(source.has_value());
+            const std::vector<std::byte> old_destination(destination_size, std::byte{0x00});
+            auto destination = LookupKey::Create(old_destination, 7);
+            ASSERT_TRUE(destination.has_value());
+            const std::byte* const source_address = source->memtable_key().data();
+
+            *destination = std::move(*source);
+
+            ExpectLookupRepresentation(*destination, expected, prefix_size);
+            ExpectLookupRepresentation(*source, canonical, 1);
+            EXPECT_EQ(destination->memtable_key().data() == source_address, source_size >= 191);
+            const std::byte* const destination_address = destination->memtable_key().data();
+            LookupKey* const self = &*destination;
+
+            *destination = std::move(*self);
+
+            ExpectLookupRepresentation(*destination, expected, prefix_size);
+            EXPECT_EQ(destination->memtable_key().data(), destination_address);
+        }
+    }
+}
+
 TEST(LookupKeyTest, RejectsSequenceOutsideInternalKeyRange) {
     const auto key = LookupKey::Create(AsBytes("key"), MaxSequenceNumber + 1U);
 
@@ -407,6 +503,49 @@ TEST(InternalKeyTest, RejectsInvalidConstructionInputs) {
     const auto invalid_kind = InternalKey::Create(AsBytes("key"), 1, static_cast<ValueKind>(2));
     ASSERT_FALSE(invalid_kind.has_value());
     EXPECT_EQ(invalid_kind.error().code(), ErrorCode::InvalidArgument);
+}
+
+TEST(InternalKeyTest, ConstructionAdmissionKeepsExactSequenceBeforeKindPriority) {
+    struct InvalidInput {
+        SequenceNumber sequence;
+        ValueKind kind;
+        std::string_view message;
+    };
+    const std::array invalid{
+        InvalidInput{MaxSequenceNumber + 1, static_cast<ValueKind>(2),
+                     "internal key sequence exceeds 56 bits"},
+        InvalidInput{MaxSequenceNumber + 1, ValueKind::Value,
+                     "internal key sequence exceeds 56 bits"},
+        InvalidInput{0, static_cast<ValueKind>(2), "internal key value kind is unsupported"},
+        InvalidInput{MaxSequenceNumber, static_cast<ValueKind>(0xff),
+                     "internal key value kind is unsupported"},
+    };
+    for (const auto& test : invalid) {
+        SCOPED_TRACE(test.message);
+        const auto key = InternalKey::Create(AsBytes("s"), test.sequence, test.kind);
+        ASSERT_FALSE(key.has_value());
+        EXPECT_EQ(key.error().code(), ErrorCode::InvalidArgument);
+        EXPECT_EQ(key.error().message(), test.message);
+    }
+    struct ValidInput {
+        SequenceNumber sequence;
+        ValueKind kind;
+        std::vector<std::byte> encoded;
+    };
+    const std::array valid{
+        ValidInput{0, ValueKind::Deletion, Bytes({0x73, 0, 0, 0, 0, 0, 0, 0, 0})},
+        ValidInput{0, ValueKind::Value, Bytes({0x73, 0x01, 0, 0, 0, 0, 0, 0, 0})},
+        ValidInput{MaxSequenceNumber, ValueKind::Deletion,
+                   Bytes({0x73, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff})},
+        ValidInput{MaxSequenceNumber, ValueKind::Value,
+                   Bytes({0x73, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff})},
+    };
+    for (const auto& test : valid) {
+        SCOPED_TRACE(test.sequence);
+        const auto key = InternalKey::Create(AsBytes("s"), test.sequence, test.kind);
+        ASSERT_TRUE(key.has_value());
+        EXPECT_TRUE(std::ranges::equal(key->encoded(), test.encoded));
+    }
 }
 
 TEST(InternalKeyTest, RejectsTruncatedAndUnknownPersistentKinds) {
