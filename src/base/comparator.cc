@@ -9,21 +9,34 @@
 namespace modern_leveldb {
 namespace {
 
+int NormalizeByteOrder(int order) noexcept {
+    if (order < 0) {
+        return -1;
+    }
+    return order > 0 ? 1 : 0;
+}
+
+int CompareCommonPrefix(ByteView left, ByteView right) noexcept {
+    const std::size_t size = std::min(left.size(), right.size());
+    const int order = size == 0 ? 0 : std::memcmp(left.data(), right.data(), size);
+    return NormalizeByteOrder(order);
+}
+
+int CompareKeyLengths(std::size_t left, std::size_t right) noexcept {
+    if (left < right) {
+        return -1;
+    }
+    return left > right ? 1 : 0;
+}
+
 class BytewiseComparatorImpl final : public Comparator {
 public:
     [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override {
-        const std::size_t size = std::min(left.size(), right.size());
-        const int order = size == 0 ? 0 : std::memcmp(left.data(), right.data(), size);
-        if (order < 0) {
-            return -1;
+        const int order = CompareCommonPrefix(left, right);
+        if (order != 0) {
+            return order;
         }
-        if (order > 0) {
-            return 1;
-        }
-        if (left.size() < right.size()) {
-            return -1;
-        }
-        return left.size() > right.size() ? 1 : 0;
+        return CompareKeyLengths(left.size(), right.size());
     }
 
     [[nodiscard]] std::string_view Name() const noexcept override {

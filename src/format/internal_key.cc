@@ -46,6 +46,18 @@ std::vector<std::byte> EncodeUnchecked(ByteView user_key, SequenceNumber sequenc
     return encoded;
 }
 
+int CompareDescendingTrailers(ByteView left, ByteView right) noexcept {
+    const std::uint64_t left_trailer = DecodeFixed64(left.last<InternalKeyTrailerSize>());
+    const std::uint64_t right_trailer = DecodeFixed64(right.last<InternalKeyTrailerSize>());
+    if (left_trailer > right_trailer) {
+        return -1;
+    }
+    if (left_trailer < right_trailer) {
+        return 1;
+    }
+    return 0;
+}
+
 }  // namespace
 
 Result<InternalKeyView> ParseInternalKey(ByteView encoded) {
@@ -177,15 +189,7 @@ int InternalKeyComparator::Compare(ByteView left, ByteView right) const noexcept
     if (user_order != 0) {
         return user_order;
     }
-    const std::uint64_t left_trailer = DecodeFixed64(left.last<InternalKeyTrailerSize>());
-    const std::uint64_t right_trailer = DecodeFixed64(right.last<InternalKeyTrailerSize>());
-    if (left_trailer > right_trailer) {
-        return -1;
-    }
-    if (left_trailer < right_trailer) {
-        return 1;
-    }
-    return 0;
+    return CompareDescendingTrailers(left, right);
 }
 
 std::string_view InternalKeyComparator::Name() const noexcept {
