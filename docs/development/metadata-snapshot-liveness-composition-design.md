@@ -48,7 +48,7 @@ LiveFiles keeps result ownership, weak-lock/skip policy and the strong version
 owner. `CollectVersionFileNumbers` traverses levels and delegates each borrowed
 span to `CollectLevelFileNumbers`, which inserts numbers into the borrowed set.
 The helpers introduce no reference-count increments, intermediate allocation,
-callback abstraction or owning copies.
+callback abstraction or additional owning copies.
 
 ## Six-definition recursive ledger
 
@@ -134,3 +134,28 @@ Independent pre-extraction characterization review found no actionable issue
 in either case and independently checked the 121-case XML. It confirmed no
 hidden strong owner masks pin retirement and no WAL borrowed span is used
 after advancing. The reviewer performed no edits/builds/tests.
+
+## Implementation and native parity
+
+Separate snapshot materialization and liveness collection source commits
+implement the six-definition ledger after the characterization commit.
+Snapshot retains comparator-first observation and per-level pointer admission
+before file-span evaluation. LiveFiles still owns each weak-lock result in
+the original parent loop while borrowed children traverse it. No additional
+owning copies, new containers, public/private headers or publication/pin changes.
+
+The snapshot intermediate passes 37 VersionSet cases. Final native Windows
+Debug JUnit contains exactly the same 121 unique classname/name pairs as the
+unchanged-production baseline, both additions included, with no failures,
+errors or skips. Allocation ordering/failure and traversal-owner lifetime
+remain inspection-based. Formatting/documentation/whitespace checks and
+independent combined review precede publication; exact-head hosted CI remains
+a delivery gate.
+
+Independent combined read-only review found no significant issue in the
+three-path diff, six definitions and relevant callers/headers against
+`65ff295`. It independently inspected the saved 121-case parity and 37-case
+intermediate XML, including both additions. The reviewer performed no
+edits/builds/tests; XML identity alone does not establish build provenance.
+Local command logs and the characterization-before-source commit sequence
+provide the recorded original/final provenance. Hosted CI is not yet claimed.
