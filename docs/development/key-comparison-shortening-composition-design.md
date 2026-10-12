@@ -297,3 +297,33 @@ The bounded independent integrated code reviewer inspected the accepted-baseline
 source/header/test/design scope and reported no significant issue. This is a
 local read-only review, not GitHub approval or a new native execution, and does
 not remove the recorded hosted, allocation-observer or physical-scalar limits.
+
+### Authoritative coverage correction
+
+The first published head c3b736e failed GCC 13 diff coverage in run 38209177658:
+98% overall, with only comparator.cc line 36 missing branch coverage.
+The saved XML reports 1186 hits and 75% (3/4) for SeparatorSuccessor's compound
+admission. The missing branch is start_byte == ff, not a production behavior
+failure or a reason to alter the byte policy/threshold/exclusion.
+
+A separate local original-source branch based on the accepted design, with
+only the original characterization commit applied, first adds the literal
+start ff/00, limit fe, unchanged ff/00 row. All five selected production paths
+remain byte-identical to the accepted source; its freshly built 35 foundation
+cases pass. The bounded independent reviewer confirms the missing first-false
+branch and exact original output, contrasting the already-covered second-false
+fe/00 -> ff case. The public contract's conditional ordering guarantee is not
+a start < limit caller precondition.
+
+`ade34bc` ports that independently reviewed test-only row normally onto the
+published branch, without rewriting history or changing production.
+The final coupled rerun still contains exactly the original 238 identities,
+all passing, and the separate original-source 35 are exactly its foundation
+subset. No new test identity is added by extending the existing matrix.
+Post-correction authoritative coverage is still a new-head gate, not inferred
+from Windows native success or the branch argument.
+
+The separate bounded final changed-scope reviewer inspected this test-only
+addition and correction record against the first published head, with saved
+original/final/coverage evidence. No significant issue was found; no new
+native execution or restored GCC coverage was claimed by that reviewer.
