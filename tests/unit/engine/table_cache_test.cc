@@ -241,6 +241,24 @@ TEST_F(TableCacheTest, ReusesCachedTablesUntilEvicted) {
     EXPECT_EQ(TryLookup(reopened, "key"), "seven");
 }
 
+TEST_F(TableCacheTest, EvictedOldHandleSurvivesWhileReopenUsesRewrittenFile) {
+    const std::uint64_t old_size = WriteTable(7, "old");
+    TableCache cache(file_system_, directory_, comparator_, {}, 10);
+    const TableCache::Handle old_table = Found(cache.Find(7, old_size));
+    EXPECT_EQ(TryLookup(old_table, "key"), "old");
+    EXPECT_EQ(Opens(7), 1);
+
+    cache.Evict(7);
+    const std::uint64_t new_size = WriteTable(7, "new");
+    const TableCache::Handle new_table = Found(cache.Find(7, new_size));
+
+    EXPECT_EQ(Opens(7), 2);
+    EXPECT_EQ(TryLookup(old_table, "key"), "old");
+    EXPECT_EQ(TryLookup(new_table, "key"), "new");
+    EXPECT_EQ(TryLookup(Found(cache.Find(7, new_size)), "key"), "new");
+    EXPECT_EQ(Opens(7), 2);
+}
+
 TEST_F(TableCacheTest, OpensTablesWithTheTableOptions) {
     TableBuilderOptions filtered;
     filtered.filter_policy = BloomFilterPolicy(10);
