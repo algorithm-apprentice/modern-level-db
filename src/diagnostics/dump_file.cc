@@ -116,6 +116,17 @@ Status AppendRecordError(WritableFile& output, std::uint64_t offset, const Error
     return AppendDiagnosticLine(output, std::move(line));
 }
 
+Status ReportInvalidRecord(std::string_view type, std::uint64_t offset, const Error& cause,
+                           WritableFile& output, std::optional<Error>& first) {
+    const Error error = InvalidRecord(type, offset, cause);
+    const Status appended = AppendRecordError(output, offset, error);
+    if (!appended.has_value()) {
+        return appended;
+    }
+    RememberFirst(first, error);
+    return {};
+}
+
 std::string FormatPhysicalCorruption(const WalCorruption& corruption) {
     return "corruption offset=" + std::to_string(corruption.offset) +
            " dropped_bytes=" + std::to_string(corruption.dropped_bytes) + " error='" +
@@ -215,13 +226,7 @@ Status FormatWriteBatch(const WalLogicalRecord& record, WritableFile& output,
                         std::optional<Error>& first) {
     Result<WriteBatchReader> batch = WriteBatchReader::Open(record.data);
     if (!batch.has_value()) {
-        const Error error = InvalidRecord("WAL", record.offset, batch.error());
-        const Status appended = AppendRecordError(output, record.offset, error);
-        if (!appended.has_value()) {
-            return appended;
-        }
-        RememberFirst(first, error);
-        return {};
+        return ReportInvalidRecord("WAL", record.offset, batch.error(), output, first);
     }
 
     std::string header = "record offset=" + std::to_string(record.offset) +
@@ -359,13 +364,7 @@ Status FormatVersionEdit(const WalLogicalRecord& record, WritableFile& output,
                          std::optional<Error>& first) {
     Result<VersionEdit> edit = VersionEdit::Decode(record.data);
     if (!edit.has_value()) {
-        const Error error = InvalidRecord("MANIFEST", record.offset, edit.error());
-        const Status appended = AppendRecordError(output, record.offset, error);
-        if (!appended.has_value()) {
-            return appended;
-        }
-        RememberFirst(first, error);
-        return {};
+        return ReportInvalidRecord("MANIFEST", record.offset, edit.error(), output, first);
     }
     Status header = AppendDiagnosticLine(output, "record offset=" + std::to_string(record.offset));
     if (!header.has_value()) {
