@@ -8,8 +8,9 @@ Source baseline: `ba6ecf276a630aaee68ff5d14c98ef0751d881f8`.
 Prior C01-C04 delivery #194 and C05 delivery #196 remain accepted evidence, not
 whole-file exemptions.
 
-The current bounded inventory contains 34 named definitions and two picker
-lambdas. This batch targets the remaining initial-candidate/input-closure
+The current bounded inventory contains 36 named definitions and two picker
+lambdas, including the two deleted NewCompactionIterator rvalue overloads in
+the header. This batch targets the remaining initial-candidate/input-closure
 orchestration, compaction iterator source assembly, and complete input-run loop.
 No on-disk format, selection priority, overlap/drop policy, output transaction,
 snapshot semantics, hook order, cache policy, mutex policy, benchmark,
@@ -20,7 +21,8 @@ diagnostic or coverage policy change.
 Add InitialCompaction containing selected level and source files. Add
 SelectInitialCompaction(version, comparator, compact_pointers, seek), preserving
 size score priority over seek pressure, compact-pointer first-file-after/wrap
-policy, and null when neither source exists.
+policy, and null when neither source exists. The existing compact-pointer
+find_if predicate moves unchanged into this selected child.
 
 Add CloseLevelZeroInputs when the selected level is zero, computing the initial
 range and transitive level-0 overlap closure. Other levels retain the selected
@@ -44,9 +46,10 @@ children vector and constructs the merging iterator.
 Add RunInputEntries, preserving exact order: SeekToFirst, before-entry hook,
 grandparent advancement/output boundary, key parse, history/drop decision,
 optional output append, then input Next. It returns the first hook/output/input
-error and never calls FinishCompaction.
+or parse-corruption error and never calls FinishCompaction.
 
 RunCompaction retains comparator/state owners, invokes RunInputEntries, then
+returns any failed loop Status immediately; only complete success invokes
 FinishCompaction. Outputs, VisibleHistory, BaseLevel and GrandparentOverlap keep
 their previously delivered responsibilities and lifetimes.
 
@@ -65,7 +68,7 @@ their previously delivered responsibilities and lifetimes.
 | RunInputEntries | New complete input seek/process/advance loop |
 | RunCompaction | State-owner construction, input run and finalization |
 
-## Inspected unchanged definitions
+## Thirty-two inspected unchanged definitions
 
 The remaining 30 definitions retain their existing bounded responsibilities:
 MaxBytesForLevel, TotalFileSize, Widen, RangeOf, OverlappingFiles,
@@ -74,11 +77,12 @@ CompactionEdit; GrandparentOverlap constructor/ShouldStopBefore/AdvancePast;
 BaseLevel constructor/IsBaseLevelForKey/LevelContains; Outputs constructor,
 open, finished, Add, Finish, Open, Append, FinishBuilder, MakeMetadata;
 VisibleHistory constructor, ShouldDrop, StartUserKey; ProcessEntry and
-FinishCompaction.
+FinishCompaction; and the two deleted NewCompactionIterator overloads rejecting
+temporary Compaction or comparator owners.
 
-The two unchanged lambdas are AddBoundaryInputs' partition predicate and
-PickCompaction's compact-pointer search predicate. Final implementation must
-reconcile the exact post-change definition/lambda scan.
+The AddBoundaryInputs partition predicate remains unchanged. The compact-pointer
+search predicate moves unchanged into selected SelectInitialCompaction. Final
+implementation must reconcile 42 named definitions and two lambdas.
 
 ## Characterization and delivery
 
@@ -86,10 +90,15 @@ Before production edits, add public/internal compaction cases proving:
 
 1. Size pressure still wins over a simultaneous seek candidate, compact-pointer
    selection wraps after the last file, and level-0 closure remains transitive.
-2. NewCompactionIterator preserves level-0 individual source order followed by
-   the next-level run, with fill_cache false and exact error stopping.
+2. NewCompactionIterator uses identical internal keys with distinct values
+   across multiple level-0 files and the next-level run, proving forward and
+   reverse child precedence. A nonzero-level earlier-child failure proves the
+   source run precedes the next-level run and later children are not opened
+   after the first error.
 3. The input loop invokes hooks/overlap/drop/output/Next in exact order and does
-   not finalize after an input or hook error.
+   not finalize after an input or hook error. An open-output malformed-key case
+   must also prove no output Finish, cache verification or directory sync occurs
+   after parse corruption.
 
 Fresh-build compaction, picker, iterator, table-builder, lookup and Database
 suites on unchanged production; freeze exact identities and independently review
@@ -99,3 +108,9 @@ then integrated review of every definition and both lambdas.
 One non-draft PR must pass exact-head hosted checks, GCC 13 branch coverage and
 actual Windows Debug original-name parity before normal merge. This design is
 not yet accepted and does not certify engine/platform/API completion.
+
+## Independent design review
+
+Independent review corrected the definition count, lambda migration, complete
+loop-error contract and discriminating iterator-order characterization above.
+No production edits or tests were performed during this design review.
