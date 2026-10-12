@@ -832,6 +832,15 @@ Status PosixFileSystem::RenameFile(const std::filesystem::path& source,
     return {};
 }
 
+Status SyncAndCloseDirectory(ScopedDescriptor& descriptor, const std::filesystem::path& path) {
+    Status synced = SyncDescriptor(descriptor.get(), path, false);
+    const Status closed = CloseDescriptor(descriptor.Release(), path);
+    if (!synced.has_value()) {
+        return synced;
+    }
+    return closed;
+}
+
 Status PosixFileSystem::SyncDirectory(const std::filesystem::path& path) {
 #if defined(O_DIRECTORY)
     constexpr int DirectoryFlag = O_DIRECTORY;
@@ -843,12 +852,14 @@ Status PosixFileSystem::SyncDirectory(const std::filesystem::path& path) {
         return std::unexpected(descriptor.error());
     }
 
-    Status status = SyncDescriptor(descriptor->get(), path, false);
-    const Status close_status = CloseDescriptor(descriptor->Release(), path);
-    if (!status.has_value()) {
-        return status;
+    return SyncAndCloseDirectory(*descriptor, path);
+}
+
+Status AcquireKernelLock(int descriptor, const std::filesystem::path& path) {
+    if (SetFileLock(descriptor, F_WRLCK) == -1) {
+        return std::unexpected(LockError(path, errno));
     }
-    return close_status;
+    return {};
 }
 
 Result<std::unique_ptr<FileLock>> PosixFileSystem::LockFile(const std::filesystem::path& path) {
@@ -872,9 +883,9 @@ Result<std::unique_ptr<FileLock>> PosixFileSystem::LockFile(const std::filesyste
         return std::unexpected(descriptor.error());
     }
 
-    if (SetFileLock(descriptor->get(), F_WRLCK) == -1) {
-        const int lock_error = errno;
-        return std::unexpected(LockError(path, lock_error));
+    Status locked = AcquireKernelLock(descriptor->get(), path);
+    if (!locked.has_value()) {
+        return std::unexpected(std::move(locked).error());
     }
 
     std::unique_ptr<FileLock> lock = std::make_unique<PosixFileLock>(descriptor->get(), *identity);

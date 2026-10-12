@@ -626,6 +626,18 @@ TEST(PosixFileSystemTest, WritableDestructorIgnoresBestEffortWriteFailure) {
     ASSERT_TRUE(writable.has_value());
     ASSERT_TRUE((*writable)->Append(AsBytes("buffered")));
 }
+
+TEST(PosixFileSystemTest, DirectorySyncReportsFailureAfterClosingDescriptor) {
+    PosixFileSystem file_system;
+    const std::size_t descriptors_before = OpenDescriptorCount();
+
+    const Status status = file_system.SyncDirectory("/proc/self/fd");
+
+    ASSERT_FALSE(status.has_value());
+    EXPECT_EQ(status.error().code(), ErrorCode::Io);
+    EXPECT_TRUE(status.error().message().starts_with("sync '/proc/self/fd':"));
+    EXPECT_EQ(OpenDescriptorCount(), descriptors_before);
+}
 #endif
 
 TEST(PosixFileSystemTest, SupportsNamespaceOperationsAndExplicitDirectorySync) {
