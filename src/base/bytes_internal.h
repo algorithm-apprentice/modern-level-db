@@ -9,6 +9,15 @@
 
 namespace modern_leveldb {
 
+inline std::size_t SharedPrefixLength(ByteView left, ByteView right) noexcept {
+    const std::size_t limit = std::min(left.size(), right.size());
+    std::size_t shared = 0;
+    while (shared < limit && left[shared] == right[shared]) {
+        ++shared;
+    }
+    return shared;
+}
+
 // The source borrows a separate owner that remains live throughout the copy.
 inline void CopyLookupValue(ByteView source, std::vector<std::byte>& value) {
     value.resize(source.size());
