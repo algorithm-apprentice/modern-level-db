@@ -93,3 +93,15 @@ Review corrected directory-sync scope, platform-specific post-Close behavior,
 POSIX closed-before-sticky priority, source-location/owner equality, limits of
 current fault seams, and the need for a POSIX child-process kernel-lock release
 oracle. These contracts are incorporated above before production edits.
+
+## Local implementation evidence
+
+Original POSIX characterization commits `f581e4c` and `d9f348f` cover
+closed-before-sticky diagnostics, complete Error context/independent ownership,
+child-process kernel unlock and Linux descriptor-count release.
+
+Production commit `022ce85` adds POSIX caller-location-aware CheckOpen and
+extracts the unchanged Windows Flush body without adding a close state.
+WindowsFileSystemTest, WalIoNativeTest, WalWriterTest and DatabaseTest pass
+locally. Independent implementation review found no significant issue.
+Linux/macOS runtime evidence remains the hosted CI delivery gate.
