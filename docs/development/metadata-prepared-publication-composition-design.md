@@ -2,11 +2,13 @@
 
 ## Status and scope
 
-Proposed recursive follow-up to the production composition plan, after
+Implemented recursive follow-up to the production composition plan, after
 recovered-counter #238 and snapshot/liveness #225 delivery.
 Source-read baseline: `6df11fc0edd02c915532a48269c5bd5c7de916cc`.
-Pending key #245 uses independent source/test/design paths and is not a
-prerequisite.
+Design accepted through #247. Implementation starts from accepted main
+`7e7b060b2e4bd169f8458cfe9ac052bb13e28c7b`, including independently delivered
+key #245; that batch uses separate source/test/design paths and is not a
+semantic prerequisite.
 
 Scope: version_set.cc, directly dependent private version_set.h declarations,
 existing version_set_test.cc and this document. Three small topics may share
@@ -163,3 +165,88 @@ five-class counts are 39/12/1/17/54, totaling 123; adding two cases would sugges
 125, not measured runtime evidence. No edits/builds/native execution or nested
 agents were performed. Implementation, allocation-failure observations,
 exact-head CI and actual hosted identities remain unverified.
+
+## Implemented topics and original-source evidence
+
+The two original-source cases were committed as `82472a7` before production
+edits. Both scoped production paths were byte-equal to accepted main.
+The six-row required-field matrix first accepts files 2 and 3 individually,
+then observes missing next/log/sequence, beyond-limit next, historical bound
+and final overlapping topology in exact order and with exact messages.
+Nonzero beyond-limit next goes through the actual setter/encoder/decoder;
+no malformed sequence or direct counter injection is used.
+
+The publication matrix runs successful and failed CURRENT temporary sync:
+recovered MANIFEST 1 names file 2 and old level-2 pointer `a`; reserved new
+MANIFEST 3 prepares deletion 2/addition 4, log 4, previous log 2 and duplicate
+level-2 pointers `c`, then `d`. The gate is `sync 000003.dbtmp`, after durable
+MANIFEST append/sync and before CURRENT rename. A weak old-version probe and
+owned State observations cannot retain the old version accidentally.
+During unlocked I/O the foreground obtains the old raw ReadPin, observes
+unchanged pointers/topology, allocates number 5 and advances sequence 7 to 8.
+The worker is opened/joined and the hook cleared before fatal assertions;
+the pin is inspected and destroyed under the same external mutex.
+
+On success, live files are 2/4 until pin release, then only 4, and the weak old
+version expires. On failure, current stays at file 2 and the weak probe remains
+live; the exact I/O error is sticky and a subsequent apply performs no I/O.
+Both rows retain live sequence 8 and next allocation 6. Both written MANIFESTs
+contain the complete original snapshot and complete captured edit (next 5,
+sequence 7, both duplicate pointers), compared after decode/re-encode using
+unchanged VersionEdit production code. CURRENT stays MANIFEST 1 on failed sync
+and becomes MANIFEST 3 on success. These are public source-bound observations,
+not independent wire-codec or general concurrent-writer certification.
+
+The read-only independent original-case reviewer traced source, setter,
+trusted builder, synchronization, snapshot, weak/raw ownership and MemoryFS
+contracts plus supplied native evidence. No significant issue was found.
+It performed no edits, builds, execution or nested delegation.
+
+Three small production topics follow that characterization:
+
+1. `f7d6bfb`: required fields before recovered bounds; existing mutable parent
+   Status, const next owner, exact error priority and Finish owners remain.
+2. `e8bb54e`: two real compact-pointer callers share the ordered assignment;
+   parent-owned edit/array/snapshot/candidate compose counter fill, snapshot
+   preparation and successful pointer/log/topology publication.
+3. `3378dfc`: late old-current retention and weak registration/strong transfer
+   compose InstallPrepared; erase_if and expiration lambda remain directly
+   visible in the parent, and ReleaseRead remains unchanged.
+
+Private declarations mirror their definitions. No public API, additional
+staged array/snapshot/version owner, new input assertion/validation guard,
+changed write/relock/failure policy or new annotation was introduced.
+Pointer copying and snapshot materialization
+retain their potential exceptions before I/O; publication has no added
+noexcept contract. RetainPinnedCurrent/RegisterCurrentVersion preserve the
+original reserved-capacity InstallPrepared noexcept invariant.
+
+### Measured local native identities
+
+Fresh Windows Debug unit/lock-child build and the anchored five-class selector
+measured 125 unique identities both before and after production changes:
+VersionSetTest 41, VersionBuilderTest 12, VersionTest 1, RecoveryTest 17 and
+DatabaseTest 54. There are zero failures/errors/skips; both new public names
+are present. Original and final `(classname,name)` sets match exactly.
+After each of the first two production topics, VersionSetTest has exactly
+the original 41-identity subset, not merely the same count.
+
+Persistent original/final evidence is `metadata-prepared-before.xml/.log` and
+`metadata-prepared-after.xml/.log`; intermediate evidence is
+`metadata-prepared-fields.xml/.log` and `metadata-prepared-staging.xml/.log`.
+Both source/header coverage/lint annotation full-text multisets are unchanged
+against accepted main, not just annotation counts.
+
+No allocator-failure injection, physical copy/elision claim, benchmark claim
+or whole-file/every-definition completion is inferred from these checks.
+GCC 13 authoritative diff-branch coverage, all reviewed-head CI checks and
+actual hosted Windows Debug selected identities remain delivery gates.
+
+### Independent integrated review
+
+The read-only reviewer independently traced the four scoped paths against
+accepted main through all three production topics and the evidence update.
+No significant issue was found. Supplied original/final/intermediate XML/logs
+support the exact measured identity claims; no edits, builds, execution or
+nested agents were performed. Hosted CI, authoritative GCC 13 diff coverage,
+allocator-failure behavior and every-definition completion were not certified.

@@ -608,6 +608,109 @@ TEST_F(VersionSetTest, RuntimeApplyUnlocksRequiredCurrentInstallation) {
     EXPECT_EQ(Text(file_system_.Contents(directory_ / "CURRENT")), "MANIFEST-000003\n");
 }
 
+TEST_F(VersionSetTest, PreparedCurrentPublicationKeepsLatePinsAndCapturedEditState) {
+    for (const bool fail_current_sync : {false, true}) {
+        SCOPED_TRACE(fail_current_sync);
+        VersionEdit original = Counters(3);
+        ASSERT_TRUE(original.AddFile(1, File(2, "a", "b")).has_value());
+        ASSERT_TRUE(original.AddCompactPointer(2, Key("a", 5)).has_value());
+        WriteDatabase({original});
+        auto set = Recover();
+        ASSERT_NE(set, nullptr);
+        EXPECT_EQ(set->NewFileNumber(), 4U);
+        set->SetLastSequence(7);
+        const State before = StateOf(*set);
+        const std::weak_ptr<const Version> previous = set->current();
+        VersionEdit requested;
+        requested.SetLogNumber(4);
+        requested.SetPrevLogNumber(2);
+        ASSERT_TRUE(requested.RemoveFile(1, 2).has_value());
+        ASSERT_TRUE(requested.AddFile(1, File(4, "d", "e")).has_value());
+        ASSERT_TRUE(requested.AddCompactPointer(2, Key("c", 6)).has_value());
+        ASSERT_TRUE(requested.AddCompactPointer(2, Key("d", 7)).has_value());
+        OperationGate current("sync 000003.dbtmp");
+        file_system_.SetOperationHook([&](std::string_view operation) -> Status {
+            const Status gated = current(operation);
+            if (operation == "sync 000003.dbtmp" && fail_current_sync) {
+                return std::unexpected(Error::Io("CURRENT publication sync failed"));
+            }
+            return gated;
+        });
+        std::mutex mutex;
+        std::optional<Status> applied;
+        std::optional<VersionSet::ReadPin> pinned;
+        bool returned_locked = false;
+        std::thread manifest([&] {
+            std::unique_lock lock(mutex);
+            applied = set->LogAndApply(requested, lock);
+            returned_locked = lock.owns_lock();
+        });
+        current.WaitUntilReached();
+        {
+            const std::unique_lock lock(mutex);
+            EXPECT_EQ(StateOf(*set), before);
+            EXPECT_EQ(set->LiveFiles(), (std::set<std::uint64_t>{2}));
+            pinned.emplace(set->PinCurrent());
+            EXPECT_EQ(set->NewFileNumber(), 5U);
+            set->SetLastSequence(8);
+        }
+        current.Open();
+        manifest.join();
+        file_system_.SetOperationHook({});
+
+        {
+            const std::unique_lock lock(mutex);
+            EXPECT_FALSE(previous.expired());
+            EXPECT_EQ(pinned->value().files(1).size(), 1U);
+            if (!pinned->value().files(1).empty()) {
+                EXPECT_EQ(pinned->value().files(1).front()->number, 2U);
+            }
+            EXPECT_EQ(set->LiveFiles(), fail_current_sync ? (std::set<std::uint64_t>{2})
+                                                          : (std::set<std::uint64_t>{2, 4}));
+            pinned.reset();
+            EXPECT_EQ(previous.expired(), !fail_current_sync);
+            EXPECT_EQ(set->LiveFiles(), fail_current_sync ? (std::set<std::uint64_t>{2})
+                                                          : (std::set<std::uint64_t>{4}));
+        }
+        ASSERT_TRUE(applied.has_value());
+        EXPECT_TRUE(returned_locked);
+        EXPECT_EQ(applied->has_value(), !fail_current_sync);
+        State expected = before;
+        expected.last_sequence = 8;
+        if (fail_current_sync) {
+            ASSERT_FALSE(applied->has_value());
+            EXPECT_EQ(applied->error().code(), ErrorCode::Io);
+            EXPECT_EQ(applied->error().message(), "CURRENT publication sync failed");
+            const std::size_t operations_before_retry = file_system_.operations().size();
+            const Status rejected = set->LogAndApply(VersionEdit());
+            ASSERT_FALSE(rejected.has_value());
+            EXPECT_EQ(rejected.error().code(), applied->error().code());
+            EXPECT_EQ(rejected.error().message(), applied->error().message());
+            EXPECT_EQ(file_system_.operations().size(), operations_before_retry);
+        } else {
+            expected.files[1] = {Summarize(File(4, "d", "e"))};
+            expected.compact_pointers[2] = Materialize(Key("d", 7).encoded());
+            expected.log_number = 4;
+            expected.prev_log_number = 2;
+        }
+        EXPECT_EQ(StateOf(*set), expected);
+        EXPECT_EQ(set->NewFileNumber(), 6U);
+        EXPECT_EQ(Text(file_system_.Contents(directory_ / "CURRENT")),
+                  fail_current_sync ? "MANIFEST-000001\n" : "MANIFEST-000003\n");
+        const std::vector<VersionEdit> records = ManifestRecords(3);
+        ASSERT_EQ(records.size(), 2U);
+        VersionEdit snapshot;
+        snapshot.SetComparatorName("leveldb.BytewiseComparator");
+        ASSERT_TRUE(snapshot.AddCompactPointer(2, Key("a", 5)).has_value());
+        ASSERT_TRUE(snapshot.AddFile(1, File(2, "a", "b")).has_value());
+        EXPECT_EQ(records[0].Encode(), snapshot.Encode());
+        VersionEdit captured = requested;
+        ASSERT_TRUE(captured.SetNextFileNumber(5).has_value());
+        ASSERT_TRUE(captured.SetLastSequence(7).has_value());
+        EXPECT_EQ(records[1].Encode(), captured.Encode());
+    }
+}
+
 TEST_F(VersionSetTest, PreAppendExceptionPreservesPreparedStateAndAllowsRetry) {
     auto set = Create();
     ASSERT_NE(set, nullptr);
@@ -1326,6 +1429,45 @@ TEST_F(VersionSetTest, RequiredCountersAreCheckedBeforeFinalOverlappingTopology)
     ASSERT_FALSE(recovered.has_value());
     EXPECT_EQ(recovered.error().code(), ErrorCode::Corruption);
     EXPECT_EQ(recovered.error().message(), "MANIFEST: files 2 and 3 overlap in level 1");
+}
+
+TEST_F(VersionSetTest, RequiredPresencePrecedesNumericBoundsAndOverlappingTopology) {
+    struct CounterCase {
+        std::optional<std::uint64_t> next;
+        bool log;
+        bool sequence;
+        std::string_view message;
+    };
+    const std::array cases{
+        CounterCase{std::nullopt, false, false, "MANIFEST has no next file number"},
+        CounterCase{FileNumberLimit + 1, false, false, "MANIFEST has no log number"},
+        CounterCase{FileNumberLimit + 1, true, false, "MANIFEST has no last sequence"},
+        CounterCase{FileNumberLimit + 1, true, true,
+                    "MANIFEST's next file number is beyond the file number limit"},
+        CounterCase{3, true, true,
+                    "MANIFEST names file or log number 3, which is not below its next file number"},
+        CounterCase{4, true, true, "MANIFEST: files 2 and 3 overlap in level 1"},
+    };
+    for (const auto& test : cases) {
+        SCOPED_TRACE(test.message);
+        VersionEdit edit;
+        ASSERT_TRUE(edit.AddFile(1, File(2, "a", "m")).has_value());
+        ASSERT_TRUE(edit.AddFile(1, File(3, "k", "z")).has_value());
+        if (test.next.has_value()) {
+            ASSERT_TRUE(edit.SetNextFileNumber(*test.next).has_value());
+        }
+        if (test.log) {
+            edit.SetLogNumber(0);
+        }
+        if (test.sequence) {
+            ASSERT_TRUE(edit.SetLastSequence(0).has_value());
+        }
+        WriteDatabase({edit});
+        const auto recovered = TryRecover(file_system_);
+        ASSERT_FALSE(recovered.has_value());
+        EXPECT_EQ(recovered.error().code(), ErrorCode::Corruption);
+        EXPECT_EQ(recovered.error().message(), test.message);
+    }
 }
 
 TEST_F(VersionSetTest, SparseRecordsCarryCountersAndKeepLastPresentPointerValues) {
