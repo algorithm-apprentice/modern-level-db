@@ -235,7 +235,8 @@ TEST(BlockTest, LiteralHeaderAndPayloadFailuresDoNotPublishVisitorEntries) {
         Bytes({0x80, 0x80, 0x80, 0x80, 0x80, 0, 1, 1, 'a', 0xff}),
     };
     for (std::size_t size = 1; size < complete.size(); ++size) {
-        malformed.emplace_back(complete.begin(), complete.begin() + size);
+        malformed.emplace_back(complete.begin(),
+                               complete.begin() + static_cast<std::ptrdiff_t>(size));
     }
     for (const auto& entry : malformed) {
         SCOPED_TRACE(entry.size());
@@ -256,8 +257,8 @@ TEST(BlockTest, LiteralHeaderAndPayloadFailuresDoNotPublishVisitorEntries) {
 TEST(BlockTest, LiteralFooterAdmissionKeepsPriorityAndLazyZeroCountTopology) {
     const auto footer = Bytes({1, 0, 0, 0});
     for (std::size_t size = 0; size < footer.size(); ++size) {
-        const auto block =
-            Block::Create(std::vector<std::byte>(footer.begin(), footer.begin() + size));
+        const auto block = Block::Create(std::vector<std::byte>(
+            footer.begin(), footer.begin() + static_cast<std::ptrdiff_t>(size)));
         ASSERT_FALSE(block.has_value());
         EXPECT_EQ(block.error().code(), ErrorCode::Corruption);
         EXPECT_EQ(block.error().message(), "block is too short");
