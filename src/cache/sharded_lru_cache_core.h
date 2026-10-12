@@ -141,8 +141,11 @@ private:
     using PendingEntry = std::unique_ptr<Entry, void (*)(Entry*) noexcept>;
 
     [[nodiscard]] static std::size_t ShardIndex(std::uint32_t hash) noexcept;
+    [[nodiscard]] static std::size_t ShardCapacity(std::size_t capacity) noexcept;
+    [[nodiscard]] static bool TryAddCharge(std::size_t& total, std::size_t charge) noexcept;
     [[nodiscard]] static PendingEntry CreateEntry(ByteView key, PendingValue value,
                                                   std::size_t charge);
+    static void CopyEntryKey(Entry& entry, ByteView key);
     [[nodiscard]] static bool CanAdmit(const Shard& shard, const Entry& entry,
                                        HandleTable::PreparedInsert prepared) noexcept;
     static void CommitAdmission(Shard& shard, Entry& entry, HandleTable::PreparedInsert prepared,
@@ -162,6 +165,7 @@ private:
     static void Evict(Shard& shard, Entry*& retired) noexcept;
     static void Retire(Entry& entry, Entry*& retired) noexcept;
     static void DeleteRetired(Entry* retired) noexcept;
+    static void DestroyShard(Shard& shard, Entry*& retired) noexcept;
     void Initialize(std::size_t capacity) noexcept;
     void Destroy() noexcept;
     void Release(Entry& entry) noexcept;

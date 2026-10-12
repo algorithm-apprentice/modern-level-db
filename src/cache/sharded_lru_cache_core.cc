@@ -178,8 +178,7 @@ ShardedLruCacheCore::~ShardedLruCacheCore() { Destroy(); }
 // GCOVR_EXCL_STOP
 
 void ShardedLruCacheCore::Initialize(std::size_t capacity) noexcept {
-    const std::size_t shard_capacity =
-        capacity / ShardCount + (capacity % ShardCount != 0U ? 1U : 0U);
+    const std::size_t shard_capacity = ShardCapacity(capacity);
     for (Shard& shard : shards_) {
         shard.capacity = shard_capacity;
     }
@@ -188,13 +187,7 @@ void ShardedLruCacheCore::Initialize(std::size_t capacity) noexcept {
 void ShardedLruCacheCore::Destroy() noexcept {
     Entry* retired = nullptr;
     for (Shard& shard : shards_) {
-        for (Entry* entry = shard.lru.next; entry != &shard.lru;) {
-            Entry* next = entry->next;
-            entry->in_cache = false;
-            Unref(shard, *entry, retired);
-            entry = next;
-        }
-        shard.usage = 0;
+        DestroyShard(shard, retired);
     }
     DeleteRetired(retired);
 }
@@ -264,10 +257,9 @@ std::size_t ShardedLruCacheCore::total_charge() const {
     std::size_t total = 0;
     for (const Shard& shard : shards_) {
         std::lock_guard lock(shard.mutex);
-        if (shard.usage > std::numeric_limits<std::size_t>::max() - total) {
+        if (!TryAddCharge(total, shard.usage)) {
             return std::numeric_limits<std::size_t>::max();
         }
-        total += shard.usage;
     }
     return total;
 }
@@ -280,6 +272,18 @@ std::size_t ShardedLruCacheCore::ShardIndex(std::uint32_t hash) noexcept {
     return hash >> (32U - ShardBits);
 }
 
+std::size_t ShardedLruCacheCore::ShardCapacity(std::size_t capacity) noexcept {
+    return capacity / ShardCount + (capacity % ShardCount != 0U ? 1U : 0U);
+}
+
+bool ShardedLruCacheCore::TryAddCharge(std::size_t& total, std::size_t charge) noexcept {
+    if (charge > std::numeric_limits<std::size_t>::max() - total) {
+        return false;
+    }
+    total += charge;
+    return true;
+}
+
 ShardedLruCacheCore::PendingEntry ShardedLruCacheCore::CreateEntry(ByteView key, PendingValue value,
                                                                    std::size_t charge) {
     void* storage = ::operator new(sizeof(Entry) + key.size());
@@ -288,8 +292,12 @@ ShardedLruCacheCore::PendingEntry ShardedLruCacheCore::CreateEntry(ByteView key,
                       Hash32(key, 0U));
     PendingEntry owned(entry, &DeleteEntry);
     static_cast<void>(value.release());
-    std::ranges::copy(key, reinterpret_cast<std::byte*>(entry) + sizeof(Entry));
+    CopyEntryKey(*entry, key);
     return owned;
+}
+
+void ShardedLruCacheCore::CopyEntryKey(Entry& entry, ByteView key) {
+    std::ranges::copy(key, reinterpret_cast<std::byte*>(&entry) + sizeof(Entry));
 }
 
 void ShardedLruCacheCore::DeleteEntry(Entry* entry) noexcept {
@@ -382,6 +390,16 @@ void ShardedLruCacheCore::DeleteRetired(Entry* retired) noexcept {
         DeleteEntry(retired);
         retired = next;
     }
+}
+
+void ShardedLruCacheCore::DestroyShard(Shard& shard, Entry*& retired) noexcept {
+    for (Entry* entry = shard.lru.next; entry != &shard.lru;) {
+        Entry* next = entry->next;
+        entry->in_cache = false;
+        Unref(shard, *entry, retired);
+        entry = next;
+    }
+    shard.usage = 0;
 }
 
 void ShardedLruCacheCore::Release(Entry& entry) noexcept {
