@@ -117,6 +117,24 @@ struct DirectoryCloser {
 
 using ScopedDirectory = std::unique_ptr<DIR, DirectoryCloser>;
 
+void AppendDirectoryChild(std::vector<std::filesystem::path>& children, const dirent& entry) {
+    const std::string name(entry.d_name);
+    if (name != "." && name != "..") {
+        children.emplace_back(name);
+    }
+}
+
+int ReadDirectoryChildren(DIR* directory, std::vector<std::filesystem::path>& children) {
+    while (true) {
+        errno = 0;
+        dirent* entry = ::readdir(directory);
+        if (entry == nullptr) {
+            return errno;
+        }
+        AppendDirectoryChild(children, *entry);
+    }
+}
+
 int OpenFlagsWithCloseOnExec(int flags) {
 #if defined(O_CLOEXEC)
     return flags | O_CLOEXEC;
@@ -718,19 +736,7 @@ Result<std::vector<std::filesystem::path>> PosixFileSystem::ListDirectory(
     }
 
     std::vector<std::filesystem::path> children;
-    int read_error = 0;
-    while (true) {
-        errno = 0;
-        dirent* entry = ::readdir(directory.get());
-        if (entry == nullptr) {
-            read_error = errno;
-            break;
-        }
-        const std::string name(entry->d_name);
-        if (name != "." && name != "..") {
-            children.emplace_back(name);
-        }
-    }
+    const int read_error = ReadDirectoryChildren(directory.get(), children);
     DIR* raw_directory = directory.release();
     const int close_result = ::closedir(raw_directory);
     if (read_error != 0) {
