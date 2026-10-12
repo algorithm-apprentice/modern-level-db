@@ -148,3 +148,33 @@ unchanged-production characterization without private-state access.
 Source/header/tests remain unchanged; the reviewer did not edit files, execute
 builds/tests or perform allocation-fault experiments. This is design evidence,
 not implementation runtime verification.
+
+## Original characterization stage
+
+Design accepted in #222, merged as
+2c6de1c290d4eba59f721710b08c5dc12c84622c.
+Four new public-operation cases cover CURRENT short/malformed chunks through
+EOF and owner release, error/oversized priority after partial progress, exact
+temporary-byte/name/stage prefixes for six failures plus success, and six
+mixed-invalid runtime proofs with lazy Name observation and nonsticky retry.
+All pass before any production/private-header changes.
+
+Test-local wrappers retain the real MemoryFileSystem owner and return injected
+chunk failures without constructing an oversized span. Destructors only count
+owner release; the comparator uses atomic Name counting and delegates the
+unchanged bytewise comparison contract. Temporary-stage observations allow
+unrelated scoped MANIFEST cleanup instead of suppressing it.
+
+Native Windows Debug's final original selection passes 119 unique cases:
+VersionSetTest, VersionBuilderTest, VersionTest, RecoveryTest and DatabaseTest,
+including all four additions. Exact JUnit names are retained for final parity.
+The earlier 106-case selection omitted the coupled builder/version cases; the
+final selection explicitly retains the same five suites as #203.
+Final implementation execution and combined implementation review are pending.
+
+Independent bounded characterization review found no significant issue and
+verified all four new names, the 119-case XML and unchanged production/header.
+It confirmed public behavior, owner/error/temporary-stage boundaries, lazy
+ordered proofs and valid retries. No edits or builds/tests/allocation experiments
+were performed by the reviewer; the earlier build log's 106-case selector is
+not substituted for the final 119-case XML and case-execution log.
