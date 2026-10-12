@@ -251,5 +251,33 @@ TEST(SerialExecutorTest, DestructorRunsCanceledTaskCleanupWithoutQueueLock) {
               static_cast<int>(ErrorCode::Aborted));
 }
 
+TEST(SerialExecutorTest, DestructorDestroysCanceledTasksAfterRunningTaskFinishes) {
+    std::latch running(1);
+    std::atomic<bool> running_finished = false;
+    std::atomic<bool> cleanup_saw_finished = false;
+    auto executor = std::make_unique<SerialExecutor>();
+
+    ASSERT_TRUE(executor->Schedule([&](std::stop_token stop_token) {
+        running.count_down();
+        while (!stop_token.stop_requested()) {
+            std::this_thread::yield();
+        }
+        running_finished.store(true, std::memory_order_relaxed);
+    }));
+    running.wait();
+
+    auto cleanup = std::shared_ptr<int>(new int(1), [&](int* value) {
+        delete value;
+        cleanup_saw_finished.store(running_finished.load(std::memory_order_relaxed),
+                                   std::memory_order_relaxed);
+    });
+    ASSERT_TRUE(executor->Schedule([cleanup](std::stop_token) {}));
+    cleanup.reset();
+
+    executor.reset();
+
+    EXPECT_TRUE(cleanup_saw_finished.load(std::memory_order_relaxed));
+}
+
 }  // namespace
 }  // namespace modern_leveldb
