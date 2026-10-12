@@ -2,12 +2,13 @@
 
 ## Status and scope
 
-Proposed recursive follow-up to the
+Accepted design #235; implementation complete, hosted delivery pending.
+Recursive follow-up to the
 [production composition plan](production-function-composition-plan.md).
 Source-read baseline: `2704d2e`, after record delivery reconciliation #234.
-Table traversal implementation #233 is pending; its changed definitions are
-outside this design. Characterization waits for that delivery and starts on
-unchanged dispatch production.
+Table traversal implementation #233 was pending during design; its changed
+definitions are outside this batch. It delivered at `01c0259` before dispatch
+characterization, which starts on unchanged dispatch production.
 
 Scope is `DumpFile` and two file-local children in
 `src/diagnostics/dump_file.cc`, existing public dump tests and this document.
@@ -116,5 +117,52 @@ certify the rest of the dump file or the final every-definition production audit
 
 Bounded read-only design review found no significant issues. It made no edits,
 ran no builds/tests and delegated no further work. This is a source-inspected
-design conclusion, not runtime proof; pending table delivery and subsequent
-characterization/implementation remain unverified.
+design conclusion, not runtime proof; table delivery and subsequent
+characterization/implementation were unverified at that review.
+
+## Implementation and native evidence
+
+Characterization commit `1331a1c` precedes production changes.
+`RejectsCanonicalAndMalformedNamesBeforeAnyFileOperation` checks four canonical
+non-dumpable names and ten malformed/empty/trailing-component names with exact
+code/message, no output and no filesystem operations. The subsequent supported
+log open observes the still-armed acquisition failure, before failed output.
+
+`DispatchesByCanonicalLeafWithExactNestedPathAndOpenPriority` uses a
+noncanonical in-memory parent containing apostrophe, tab and UTF-8 e-acute.
+Literal escaped full-path/type headers and one log/MANIFEST/table entry identify
+all three selected dumpers. Its sequential-open and table size/open failures
+beat failed output with exact logged prefixes. MemoryFileSystem records leaf
+names only; these fixtures do not claim that a tab-containing name is valid on
+the real native filesystem. Borrowed vectors and the synchronous test lambda
+remain alive for their calls. Independent bounded characterization review found
+no significant issues and inspected captured XML/logs without rerunning tests.
+
+The original coupled Windows native run has **110 unique cases**, with both
+additions and no failure/error/skip. DumpFile has 28, DumpCommand 6,
+NativeCommand 3, NativeDumpCommand 2, WindowsOutput 3, WalReader 17, WalWriter 10,
+WalIoNative 1, Table 38 and TableNative 2. These are the same ten suites as the
+prior table batch's 108, plus these two public cases.
+
+Commit `3f80f17` extracts checked canonical classification; its diagnostic-only
+intermediate has **42 unique cases**, all members of the original coupled set
+and no failure/error/skip. Commit `4e6f3d8` extracts borrowed exhaustive dispatch.
+The final coupled native run has **the same 110 exact classname/name identities**
+and no failure/error/skip. Artifacts are `diagnostic-dispatch-before.xml`,
+`diagnostic-dispatch-classification.xml` and `diagnostic-dispatch-after.xml`,
+with corresponding build/CTest logs in the session evidence directory.
+
+Coverage annotation text/multiplicity matches original source exactly.
+Source inspection retains full/component conversion ownership/order, the
+original parser, canonical-before-escape and unsupported-after-escape ordering,
+the escaped parent string through borrowed dispatch, exact type/formatter
+selection and acquisition-before-output priority. The checked result adds an
+explicit Error move; physical allocation/move/elision/destructor counts and
+portable conversion-failure ordering are not certified by output/XML/operation
+counts. Hosted checks, actual native-name parity and normal delivery remain
+pending; no complete-file or recursive-audit certification is claimed.
+
+Independent bounded combined review against baseline `01c0259` found no
+significant issues and inspected captured before/after/intermediate XML/logs.
+It made no edits, ran no builds/tests and delegated no further work. Local
+review is not hosted execution, allocation observation or GitHub approval.
