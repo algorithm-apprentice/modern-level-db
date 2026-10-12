@@ -17,6 +17,14 @@ ByteView ShardedLruCacheCore::Entry::key() const noexcept {
     return ByteView(bytes, key_length);
 }
 
+bool ShardedLruCacheCore::Entry::Matches(ByteView candidate_key,
+                                         std::uint32_t candidate_hash) const noexcept {
+    if (hash != candidate_hash) {
+        return false;
+    }
+    return std::ranges::equal(key(), candidate_key);
+}
+
 // GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
 ShardedLruCacheCore::Pin::Pin(ShardedLruCacheCore& cache, Entry& entry) noexcept
     : cache_(&cache), entry_(&entry) {}
@@ -54,7 +62,7 @@ ShardedLruCacheCore::HandleTable::HandleTable() : length_(4), buckets_(AllocateB
 ShardedLruCacheCore::Entry* ShardedLruCacheCore::HandleTable::Lookup(
     ByteView key, std::uint32_t hash) const noexcept {
     Entry* entry = buckets_[hash & (length_ - 1U)];
-    while (entry != nullptr && (entry->hash != hash || !std::ranges::equal(entry->key(), key))) {
+    while (entry != nullptr && !entry->Matches(key, hash)) {
         entry = entry->next_hash;
     }
     return entry;
@@ -73,21 +81,30 @@ ShardedLruCacheCore::HandleTable::PreparedInsert ShardedLruCacheCore::HandleTabl
 
 ShardedLruCacheCore::Entry* ShardedLruCacheCore::HandleTable::CommitInsert(PreparedInsert prepared,
                                                                            Entry* entry) {
-    std::unique_ptr<Entry*[]> growth;
     const std::uint32_t growth_length = prepared.needs_growth ? length_ * 2U : 0U;
+    std::unique_ptr<Entry*[]> growth = PrepareGrowth(growth_length);
+    Entry* replaced = LinkEntry(prepared, entry);
     if (prepared.needs_growth) {
-        growth = AllocateBuckets(growth_length);
+        RehashInto(std::move(growth), growth_length);
     }
+    return replaced;
+}
 
+std::unique_ptr<ShardedLruCacheCore::Entry*[]> ShardedLruCacheCore::HandleTable::PrepareGrowth(
+    std::uint32_t growth_length) {
+    if (growth_length == 0) {
+        return {};
+    }
+    return AllocateBuckets(growth_length);
+}
+
+ShardedLruCacheCore::Entry* ShardedLruCacheCore::HandleTable::LinkEntry(PreparedInsert prepared,
+                                                                        Entry* entry) noexcept {
     Entry* replaced = prepared.existing;
     entry->next_hash = replaced == nullptr ? nullptr : replaced->next_hash;
     *prepared.position = entry;
     if (replaced == nullptr) {
         ++elements_;
-    }
-
-    if (prepared.needs_growth) {
-        RehashInto(std::move(growth), growth_length);
     }
     return replaced;
 }
@@ -107,8 +124,7 @@ ShardedLruCacheCore::Entry* ShardedLruCacheCore::HandleTable::Remove(ByteView ke
 ShardedLruCacheCore::Entry** ShardedLruCacheCore::HandleTable::FindPointer(
     ByteView key, std::uint32_t hash) noexcept {
     Entry** position = &buckets_[hash & (length_ - 1U)];
-    while (*position != nullptr &&
-           ((*position)->hash != hash || !std::ranges::equal((*position)->key(), key))) {
+    while (*position != nullptr && !(*position)->Matches(key, hash)) {
         position = &(*position)->next_hash;
     }
     return position;
@@ -123,17 +139,21 @@ std::unique_ptr<ShardedLruCacheCore::Entry*[]> ShardedLruCacheCore::HandleTable:
     return buckets;
 }
 
+void ShardedLruCacheCore::HandleTable::RehashChain(Entry* entry, Entry** buckets,
+                                                   std::uint32_t length) noexcept {
+    while (entry != nullptr) {
+        Entry* next = entry->next_hash;
+        Entry** position = &buckets[entry->hash & (length - 1U)];
+        entry->next_hash = *position;
+        *position = entry;
+        entry = next;
+    }
+}
+
 void ShardedLruCacheCore::HandleTable::RehashInto(std::unique_ptr<Entry*[]> buckets,
                                                   std::uint32_t length) noexcept {
     for (std::uint32_t index = 0; index < length_; ++index) {
-        Entry* entry = buckets_[index];
-        while (entry != nullptr) {
-            Entry* next = entry->next_hash;
-            Entry** position = &buckets[entry->hash & (length - 1U)];
-            entry->next_hash = *position;
-            *position = entry;
-            entry = next;
-        }
+        RehashChain(buckets_[index], buckets.get(), length);
     }
     buckets_ = std::move(buckets);
     length_ = length;

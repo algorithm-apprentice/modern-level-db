@@ -73,6 +73,7 @@ private:
               hash(entry_hash) {}
 
         [[nodiscard]] ByteView key() const noexcept;
+        [[nodiscard]] bool Matches(ByteView key, std::uint32_t hash) const noexcept;
 
         const void* value;
         ValueDeleter deleter;
@@ -107,7 +108,10 @@ private:
 
     private:
         [[nodiscard]] Entry** FindPointer(ByteView key, std::uint32_t hash) noexcept;
+        [[nodiscard]] static std::unique_ptr<Entry*[]> PrepareGrowth(std::uint32_t growth_length);
+        Entry* LinkEntry(PreparedInsert prepared, Entry* entry) noexcept;
         [[nodiscard]] static std::unique_ptr<Entry*[]> AllocateBuckets(std::uint32_t length);
+        static void RehashChain(Entry* entry, Entry** buckets, std::uint32_t length) noexcept;
         void RehashInto(std::unique_ptr<Entry*[]> buckets, std::uint32_t length) noexcept;
 
         std::uint32_t length_ = 0;
