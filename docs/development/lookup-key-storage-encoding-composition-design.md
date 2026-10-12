@@ -255,3 +255,27 @@ No significant issue was found. No edits, builds, execution or nested agents
 were performed. Source and supplied identity evidence do not certify the whole
 file, allocator-failure behavior or performance. Hosted CI, actual hosted
 selected-case parity and authoritative GCC 13 coverage remain pending.
+
+### Release fixture-construction correction
+
+First implementation head `5a35e73` passed the GCC 13 coverage job, but portable
+checksum and Linux Release builds rejected the new test's guarded vector
+front/back writes with `-Werror=null-dereference`. The actual seven fixture
+lengths are bounded literals; production encoding was not implicated.
+Replace size-plus-two construction and front/back writes with an explicit
+leading-byte initializer, identical patterned pushes and final trailing-byte
+push. The complete input/guard bytes, offsets and 14 rows remain unchanged,
+and views are still formed only after all pushes.
+
+The correction was first executed on unchanged key production in original
+branch commit `c54a0b3`, with all six LookupKeyTest identities passing.
+An independent limited original-case review found no significant issue.
+Normal cherry-pick `33fcbc1` ports it to the published implementation without
+rewriting history, changing production or weakening compiler/coverage flags.
+Corrected final `lookup-guard-after.xml/.log` has exactly the same original
+151 identities; `lookup-guard-before.xml/.log` is exactly its six-name lookup
+subset. Original and first-final evidence/logs are preserved.
+Authoritative new-head Release/portable compilation and all delivery gates
+remain pending; successful local execution does not substitute for them.
+The independent final changed-scope reviewer traced the fixture/doc correction
+and retained evidence and found no significant issue, without edits or execution.
