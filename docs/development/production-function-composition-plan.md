@@ -601,6 +601,7 @@ changed paths verified in main.
 | Recursive sticky-error capture and parent-owned diagnostic formatting | [Foundation error context](foundation-error-context-composition-design.md) | Delivered in #253 after accepted #252; 166-case original/final native parity, 26-case foundation intermediate, and actual hosted Windows Debug selected names match the original 166. |
 | Recursive scalar/read-record codecs, block admission and MemTable lookup | [Read-record codecs](read-record-codec-composition-design.md) | Delivered in #254 from one locally reviewed larger batch; corrected 296-case original/final native parity, exact 99/197/131 topic subsets, and actual hosted Windows Debug selected names match the original 296. |
 | Complete cache-core index, pin, retention, accounting and teardown lifecycle | [Cache lifecycle](cache-lifecycle-composition-design.md) | Delivered in #255 from one locally reviewed larger batch; 35-case original/final parity, exact 28/29 topic subsets, complete core/typed-wrapper disposition, and actual hosted Windows Debug selected names match the original 35. |
+| Complete private-header SkipList layout, publication and search lifecycle | [SkipList lifecycle](skiplist-lifecycle-composition-design.md) | Delivered in #256 from one locally reviewed larger batch; corrected 100-case original/final parity, exact 32-case publication subset, complete 48-definition disposition, and actual hosted Windows Debug selected names match the original 100. |
 
 For #216, local Windows builds were not used as POSIX runtime evidence.
 The reviewed characterization-only draft first ran unchanged production on
@@ -761,6 +762,18 @@ All 25 selected/new definitions and every unchanged core/typed runtime body
 have a bounded responsibility disposition. Hosted checks and actual Windows
 Debug names all succeeded. Engine TableCache loading policy and other cache
 users remain separate frontiers; this does not certify whole production.
+
+#256 closes the expanded scan's first major private-header blind spot.
+Its five-suite selection contains 100 corrected original/final identities and
+the node-layout/publication intermediate is the exact original 32-case subset.
+The final semantic ledger contains 16 selected/new and 32 unchanged definitions;
+the scanner confirms 48 definitions, zero lambdas and zero recovery nodes.
+Integrated review caught a new pre-construction pointer-provenance regression:
+InitializeLinks was restored to the original Arena storage pointer and the
+shared LinkAddress removed before publication. The baseline post-construction
+Node::LinkAt tail-allocation idiom remains an explicit portability limitation,
+not a new guarantee. Hosted checks and actual Windows Debug parity succeeded;
+Arena internals, MemTable's other definitions and whole production remain open.
 
 The selected N01-N09 slices are delivered, not the whole native source files.
 The selected diagnostic record/table loops and file dispatch are also delivered,

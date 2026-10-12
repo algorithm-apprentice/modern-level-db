@@ -56,6 +56,11 @@ public:
     void ReleaseReadPinnedMemtables();
 
 private:
+    void InstallLogGeneration(std::unique_ptr<WalWriter> log, std::uint64_t log_number);
+    void InstallMutableGeneration(std::shared_ptr<MemTable> mutable_table);
+    void PromoteMutableToImmutable() noexcept;
+    void RetireImmutable();
+
     std::unique_ptr<WalWriter> log_;
     std::uint64_t log_number_ = 0;
     std::shared_ptr<MemTable> mutable_;
