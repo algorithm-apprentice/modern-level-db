@@ -14,19 +14,16 @@ SerialExecutor::SerialExecutor()
     : worker_([this](std::stop_token stop_token) { Run(stop_token); }) {}
 
 SerialExecutor::~SerialExecutor() {
-    TaskQueue canceled_tasks = StopAcceptingAndDetachTasks();
+    TaskQueue canceled_tasks;
+    StopAcceptingAndDetachTasks(canceled_tasks);
     StopAndJoinWorker();
     canceled_tasks.clear();
 }
 
-SerialExecutor::TaskQueue SerialExecutor::StopAcceptingAndDetachTasks() {
-    TaskQueue canceled_tasks;
-    {
-        std::lock_guard queue_lock(queue_mutex_);
-        accepting_tasks_ = false;
-        canceled_tasks.swap(tasks_);
-    }
-    return canceled_tasks;
+void SerialExecutor::StopAcceptingAndDetachTasks(TaskQueue& canceled_tasks) {
+    std::lock_guard queue_lock(queue_mutex_);
+    accepting_tasks_ = false;
+    canceled_tasks.swap(tasks_);
 }
 
 void SerialExecutor::StopAndJoinWorker() {
@@ -39,14 +36,16 @@ Status SerialExecutor::Schedule(BackgroundTask task) {
     if (!task) {
         return std::unexpected(Error::InvalidArgument("background task is empty"));
     }
-    return Enqueue(std::make_unique<BackgroundTask>(std::move(task)));
+    return Enqueue(std::make_unique<BackgroundTask>(std::move(task)),
+                   std::source_location::current());
 }
 
-Status SerialExecutor::Enqueue(TaskOwner task) {
+Status SerialExecutor::Enqueue(TaskOwner task, std::source_location error_location) {
     {
         std::lock_guard lock(queue_mutex_);
         if (!accepting_tasks_) {
-            return std::unexpected(Error::Aborted("background executor is shut down"));
+            return std::unexpected(
+                Error::Aborted("background executor is shut down", error_location));
         }
         tasks_.push_back(std::move(task));
     }

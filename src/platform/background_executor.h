@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <source_location>
 #include <stop_token>
 #include <thread>
 
@@ -49,8 +50,8 @@ private:
     using TaskOwner = std::unique_ptr<BackgroundTask>;
     using TaskQueue = std::deque<TaskOwner>;
 
-    [[nodiscard]] Status Enqueue(TaskOwner task);
-    [[nodiscard]] TaskQueue StopAcceptingAndDetachTasks();
+    [[nodiscard]] Status Enqueue(TaskOwner task, std::source_location error_location);
+    void StopAcceptingAndDetachTasks(TaskQueue& canceled_tasks);
     void StopAndJoinWorker();
     [[nodiscard]] TaskOwner WaitForTask(std::stop_token stop_token);
     void Run(std::stop_token stop_token);
