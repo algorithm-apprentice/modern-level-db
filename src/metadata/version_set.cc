@@ -23,27 +23,39 @@
 namespace modern_leveldb {
 namespace {
 
-Result<std::string> ReadCurrent(FileSystem& file_system, const std::filesystem::path& directory) {
-    Result<std::unique_ptr<SequentialFile>> file =
-        file_system.OpenSequential(CurrentFileName(directory));
-    if (!file.has_value()) {
-        return std::unexpected(std::move(file).error());
+Result<std::size_t> ReadCurrentChunk(SequentialFile& file, MutableByteView output) {
+    const Result<std::size_t> read = file.Read(output);
+    if (!read.has_value()) {
+        return std::unexpected(read.error());
     }
+    if (*read > output.size()) {
+        return std::unexpected(Error::Io("CURRENT returned an oversized read"));
+    }
+    return *read;
+}
+
+Result<std::string> ReadCurrentContents(SequentialFile& file) {
     std::string contents;
     std::array<std::byte, 64> buffer{};
     while (true) {
-        const Result<std::size_t> read = (*file)->Read(buffer);
+        Result<std::size_t> read = ReadCurrentChunk(file, buffer);
         if (!read.has_value()) {
-            return std::unexpected(read.error());
-        }
-        if (*read > buffer.size()) {
-            return std::unexpected(Error::Io("CURRENT returned an oversized read"));
+            return std::unexpected(std::move(read).error());
         }
         if (*read == 0) {
             return contents;
         }
         contents.append(AsStringView(ByteView(buffer).first(*read)));
     }
+}
+
+Result<std::string> ReadCurrent(FileSystem& file_system, const std::filesystem::path& directory) {
+    Result<std::unique_ptr<SequentialFile>> file =
+        file_system.OpenSequential(CurrentFileName(directory));
+    if (!file.has_value()) {
+        return std::unexpected(std::move(file).error());
+    }
+    return ReadCurrentContents(**file);
 }
 
 struct SelectedManifest {
