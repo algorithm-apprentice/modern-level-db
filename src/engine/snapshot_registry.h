@@ -50,6 +50,9 @@ public:
     [[nodiscard]] SequenceNumber OldestOr(SequenceNumber fallback) const noexcept;
 
 private:
+    void LinkNewest(Registration& registration) noexcept;
+    static void Unlink(Registration& registration) noexcept;
+
     Registration sentinel_;
     std::size_t size_ = 0;
 };
