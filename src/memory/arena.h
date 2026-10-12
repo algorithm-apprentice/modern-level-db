@@ -37,6 +37,11 @@ private:
     static constexpr std::size_t BlockSize = 4U * 1'024U;
     static constexpr std::size_t DedicatedAllocationThreshold = BlockSize / 4U;
 
+    [[nodiscard]] static std::size_t AlignmentPadding(const std::byte* pointer) noexcept;
+    [[nodiscard]] bool CanAllocateFromCurrentBlock(std::size_t bytes,
+                                                   std::size_t padding) const noexcept;
+    [[nodiscard]] static bool ShouldAllocateDedicated(std::size_t bytes) noexcept;
+    void RefillCurrentBlock();
     [[nodiscard]] std::byte* AllocateFromCurrentBlock(std::size_t bytes,
                                                       std::size_t padding = 0) noexcept;
     [[nodiscard]] std::byte* AllocateFallback(std::size_t bytes);

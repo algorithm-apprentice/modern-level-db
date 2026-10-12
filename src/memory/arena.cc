@@ -17,20 +17,36 @@ std::byte* Arena::Allocate(std::size_t bytes) {
 std::byte* Arena::AllocateAligned(std::size_t bytes) {
     static_assert((Alignment & (Alignment - 1U)) == 0U);
 
-    std::size_t padding = 0;
-    if (allocation_pointer_ != nullptr) {
-        const auto address = reinterpret_cast<std::uintptr_t>(allocation_pointer_);
-        const std::size_t misalignment = address & (Alignment - 1U);
-        padding = misalignment == 0U ? 0U : Alignment - misalignment;
-    }
-
-    if (padding <= bytes_remaining_ && bytes <= bytes_remaining_ - padding) {
+    const std::size_t padding = AlignmentPadding(allocation_pointer_);
+    if (CanAllocateFromCurrentBlock(bytes, padding)) {
         std::byte* result = AllocateFromCurrentBlock(bytes, padding);
         return result;
     }
 
     std::byte* result = AllocateFallback(bytes);
     return result;
+}
+
+std::size_t Arena::AlignmentPadding(const std::byte* pointer) noexcept {
+    if (pointer == nullptr) {
+        return 0;
+    }
+    const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+    const std::size_t misalignment = address & (Alignment - 1U);
+    return misalignment == 0U ? 0U : Alignment - misalignment;
+}
+
+bool Arena::CanAllocateFromCurrentBlock(std::size_t bytes, std::size_t padding) const noexcept {
+    return bytes <= bytes_remaining_ - padding;
+}
+
+bool Arena::ShouldAllocateDedicated(std::size_t bytes) noexcept {
+    return bytes > DedicatedAllocationThreshold;
+}
+
+void Arena::RefillCurrentBlock() {
+    allocation_pointer_ = AllocateBlock(BlockSize);
+    bytes_remaining_ = BlockSize;
 }
 
 std::byte* Arena::AllocateFromCurrentBlock(std::size_t bytes, std::size_t padding) noexcept {
@@ -43,12 +59,11 @@ std::byte* Arena::AllocateFromCurrentBlock(std::size_t bytes, std::size_t paddin
 std::byte* Arena::AllocateFallback(std::size_t bytes) {
     // Large requests get a dedicated block without replacing the current small
     // allocation block, preserving its remaining space for subsequent entries.
-    if (bytes > DedicatedAllocationThreshold) {
+    if (ShouldAllocateDedicated(bytes)) {
         return AllocateBlock(bytes);
     }
 
-    allocation_pointer_ = AllocateBlock(BlockSize);
-    bytes_remaining_ = BlockSize;
+    RefillCurrentBlock();
     return AllocateFromCurrentBlock(bytes);
 }
 
