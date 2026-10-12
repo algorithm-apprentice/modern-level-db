@@ -9,6 +9,8 @@ This larger related batch covers the remaining ShardedLruCacheCore hash-table,
 retention-list, pin/reference, eviction, accounting, entry-construction and
 destruction composition, plus a bounded disposition of the unchanged typed
 wrapper definitions.
+The design and original characterization are accepted; all three production
+topics are implemented locally. Integrated review and delivery remain pending.
 
 Keep the reviewed design, original-source characterization and three production
 topics as small local commits, then publish one non-draft implementation PR.
@@ -282,3 +284,38 @@ normal squash delivery.
 Successful tests do not establish allocator-failure behavior outside the
 isolated seams, physical copy/move/destruction counts, fairness, performance,
 unsupported Pins surviving cache destruction, or whole-production completion.
+
+## Local implementation evidence
+
+The accepted design is commit `2572509`. Original-source characterization is
+split before production edits: `90323dc` covers collision, pin ordering and
+same-shard reentrant reclamation; `15cc674` covers replacement and deferred
+bucket growth allocation. Independent bounded review found no significant case
+issue and separately syntax-checked the cases with GCC 16.1 using the project's
+Release warnings-as-errors flags.
+
+A fresh unchanged-production Windows Debug build rebuilt both real test
+executables and froze 35 unique identities:
+
+| Suite | Cases |
+| --- | ---: |
+| ShardedLruCacheTest | 22 |
+| CacheAllocationTest | 6 |
+| TableCacheTest | 7 |
+
+The production topics remain separate local commits:
+`964c35d` composes hash identity, precommit growth allocation, link publication
+and exact traversal/prepend rehashing; `097d162` composes mapping, pin/list and
+eviction transitions; `ab394e7` composes capacity, charge, entry-key and
+teardown stages. The hash-table intermediate preserves the exact original
+28-test cache/allocation subset. The retention intermediate preserves the exact
+original 29-test cache/table-cache subset. The accounting intermediate and
+final integrated selection exactly match all original 35 identities, with no
+failure, error, skip or duplicate.
+
+Complete GCOVR/LCOV/NOLINT annotation multisets are unchanged in the core source,
+private core header and typed wrapper header. Local GCC Release with the project
+warnings-as-errors set compiles the core production object and all three
+selected test translation units. Documentation validation and `git diff
+--check` pass. Hosted GCC 13 branch coverage, allocation jobs, actual Windows
+Debug name parity and normal merge remain delivery obligations.
