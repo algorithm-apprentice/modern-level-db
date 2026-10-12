@@ -114,7 +114,10 @@ private:
         }
 
         [[nodiscard]] Link& LinkAt(int level) const noexcept {
-            return *std::launder(LinkAddress(*const_cast<Node*>(this), level));
+            auto* base = reinterpret_cast<std::byte*>(const_cast<Node*>(this));
+            std::byte* address =
+                base + LinksOffset() + static_cast<std::size_t>(level) * sizeof(Link);
+            return *std::launder(reinterpret_cast<Link*>(address));
         }
 
         const Entry entry;
@@ -134,19 +137,15 @@ private:
         return (sizeof(Node) + alignof(Link) - 1U) & ~(alignof(Link) - 1U);
     }
 
-    [[nodiscard]] static Link* LinkAddress(Node& node, int level) noexcept {
-        auto* base = reinterpret_cast<std::byte*>(&node);
-        std::byte* address = base + LinksOffset() + static_cast<std::size_t>(level) * sizeof(Link);
-        return reinterpret_cast<Link*>(address);
-    }
-
     [[nodiscard]] static constexpr std::size_t NodeStorageSize(int height) noexcept {
         return LinksOffset() + sizeof(Link) * static_cast<std::size_t>(height);
     }
 
-    static void InitializeLinks(Node& node, int height) {
+    static void InitializeLinks(std::byte* storage, int height) {
         for (int level = 0; level < height; ++level) {
-            static_cast<void>(std::construct_at(LinkAddress(node, level), nullptr));
+            std::byte* address =
+                storage + LinksOffset() + static_cast<std::size_t>(level) * sizeof(Link);
+            static_cast<void>(std::construct_at(reinterpret_cast<Link*>(address), nullptr));
         }
     }
 
@@ -192,7 +191,7 @@ private:
     [[nodiscard]] Node* NewNode(Entry entry, int height) {
         std::byte* storage = arena_.AllocateAligned(NodeStorageSize(height));
         Node* node = std::construct_at(reinterpret_cast<Node*>(storage), entry);
-        InitializeLinks(*node, height);
+        InitializeLinks(storage, height);
         return node;
     }
 

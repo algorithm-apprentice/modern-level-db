@@ -49,21 +49,22 @@ acquire. Preserve this exact order and memory orders.
 
 ## Topic one: trailing-link layout and complete node initialization
 
-Add LinkAddress(node, level), the one raw address calculation for a trailing
-atomic link: fixed node base plus aligned LinksOffset plus `level * sizeof(Link)`.
-It returns storage suitable for construction and does not launder an
-unconstructed object.
-
-Node::LinkAt calls LinkAddress and launders the already-constructed Link before
-load/store. Add NodeStorageSize(height), the fixed/aligned node prefix plus all
-trailing link bytes. Add InitializeLinks(node, height), constructing null Links
-in ascending level order through LinkAddress.
+Add NodeStorageSize(height), the fixed/aligned node prefix plus all trailing link
+bytes. Add InitializeLinks(storage, height), constructing null Links in
+ascending level order from the original Arena-returned std::byte pointer.
+Construction address arithmetic must remain rooted in that live backing byte
+array, exactly as in the baseline, rather than being recovered from Node.
 
 NewNode retains parent Arena allocation, immutable Node construction, complete
 link initialization and returned stable pointer. Allocation or Node
 construction failure occurs before link construction/publication; link
 construction is the existing trivial atomic initialization. No alternate owner,
 per-node delete, padding change or zero-height path.
+
+Node::LinkAt remains the original post-construction access boundary and launders
+the already-constructed trailing Link. This batch does not generalize its
+existing node-relative representation access into pre-construction code or
+claim a new strict-provenance guarantee for the baseline tail-allocation idiom.
 
 ## Topic two: insertion height and per-level publication
 
@@ -112,17 +113,15 @@ it. Seek/SeekToFirst/Next retain direct positions because their search/link
 results never return head. No validity guard is added below the existing caller
 precondition for entry/Next/Prev.
 
-## Selected eighteen-definition ledger
+## Selected sixteen-definition ledger
 
 | Definition | Composition or stopping boundary |
 | --- | --- |
 | Iterator::SetPosition | New head-sentinel to public-null normalization |
 | Iterator::Prev | Strict predecessor search then normalized publication |
 | Iterator::SeekToLast | Last-node search then normalized publication |
-| Node::LinkAt | Constructed-link projection through shared raw address |
-| LinkAddress | New trailing-link raw storage calculation leaf |
 | NodeStorageSize | New fixed node plus height-dependent links size leaf |
-| InitializeLinks | New complete ascending null-link construction |
+| InitializeLinks | New complete ascending null-link construction rooted in Arena storage |
 | NewNode | Arena allocation, immutable node construction and link initialization |
 | CurrentHeight | New shared relaxed height snapshot |
 | PreparePredecessorsForHeight | New head initialization for exposed levels |
@@ -135,7 +134,7 @@ precondition for entry/Next/Prev.
 | FindLessThan | Strict-upper-bound adapter |
 | FindLast | Unbounded-last adapter without comparator calls |
 
-## Thirty-one inspected unchanged definitions
+## Thirty-two inspected unchanged definitions
 
 | Definition | Responsibility retained |
 | --- | --- |
@@ -165,13 +164,14 @@ precondition for entry/Next/Prev.
 | Node::NextRelaxed | Writer-private relaxed-load one predecessor link |
 | Node::SetNext | Release-store one reader-visible link |
 | Node::SetNextRelaxed | Initialize one unpublished outgoing link |
+| Node::LinkAt | Original laundered projection of one constructed trailing Link |
 | LinksOffset | Align trailing Links after fixed Node |
 | NextRandom | One deterministic minimal-standard seed transform |
 | RandomHeight | Bounded geometric height selection |
 | Equal | Comparator-defined equality leaf |
 | EntryIsAfterNode | Null-safe strict node-before-entry decision |
 
-The 18 selected/new definitions plus these 31 rows yield 49 post-change
+The 16 selected/new definitions plus these 32 rows yield 48 post-change
 definitions and cover every current syntax-level SkipList function, including
 deleted/defaulted type constraints. Counts are bounded ledger bookkeeping, not
 compiler-resolved call-graph proof or production-wide completion.
@@ -214,7 +214,7 @@ equality for skiplist.h.
 
 Local GCC Release warnings-as-errors should compile SkipList, MemTable and the
 selected tests with `-fno-range-for-ext-temps` where supported to model GCC 13
-range lifetime. Independent integrated review must reconcile all 49 ledger rows,
+range lifetime. Independent integrated review must reconcile all 48 ledger rows,
 memory orders, layout calculations, comparator counts and iterator lifetimes.
 One published exact head must pass every hosted check, authoritative GCC 13
 branch coverage and actual Windows Debug original-name parity before normal
@@ -250,9 +250,14 @@ sentinel normalization; the final integrated selection exactly matches all
 original 100 identities, with no failure, error, skip or duplicate.
 
 The complete GCOVR/LCOV/NOLINT annotation multiset in skiplist.h is unchanged.
-A post-change expanded scan reports exactly 49 SkipList definitions, zero
-lambdas and zero recovery nodes, matching the 18 selected/new plus 31 unchanged
-ledger. Local GCC Release warnings-as-errors with
+A post-change expanded scan before integrated-review correction reported
+49 SkipList definitions. Integrated review found that the new shared
+node-relative LinkAddress extended the baseline tail-access idiom into
+pre-construction pointer arithmetic. The correction removes that helper,
+roots InitializeLinks in the original Arena storage pointer, restores
+Node::LinkAt unchanged, and requires a corrected final scan of 48 definitions,
+zero lambdas and zero recovery nodes, matching the 16 selected/new plus
+32 unchanged ledger. Local GCC Release warnings-as-errors with
 `-fno-range-for-ext-temps` compiles MemTable, SkipList/MemTable/Lookup tests and
 all DatabaseTest translation units. Documentation validation and `git diff
 --check` pass. Hosted GCC 13 branch coverage, sanitizer/runtime jobs, actual
