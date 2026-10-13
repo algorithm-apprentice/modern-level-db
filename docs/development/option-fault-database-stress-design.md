@@ -59,6 +59,7 @@ filesystem are created per scenario.
 | WAL append | next log `append` | write fails and becomes sticky; reopen yields the old complete batch state |
 | WAL sync | next log `sync` | write fails and becomes sticky; reopen yields an allowed whole-batch state, never partial |
 | Old WAL close | rotation closes old `.log` | rotation fails sticky; reopen yields the old complete batch state |
+| Table open | flush output `.ldb` open | background/flush fails sticky; reopen recovers all acknowledged values |
 | Table sync | flush output `.ldb` sync | background/flush fails sticky; reopen recovers all acknowledged values from WAL/installed state |
 | Table close | flush output `.ldb` close | background/flush fails sticky; reopen recovers all acknowledged values |
 | Table directory sync | second runtime database-directory sync | publication fails sticky; reopen recovers all acknowledged values |

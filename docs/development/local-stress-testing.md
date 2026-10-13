@@ -28,7 +28,7 @@ The local stress targets currently cover:
   - optional whole-batch in-flight probes;
 - option/fault V4:
   - complete 48-cell public option matrix;
-  - ten named in-memory I/O/scheduling fault boundaries;
+  - eleven named in-memory I/O/scheduling fault boundaries;
   - retry, sticky-stop, and whole-batch recovery oracles;
   - separate fault-free liveness with deterministic background draining;
 - WAL rotation, flush, and compaction pressure through a 64 KiB write buffer;
@@ -288,7 +288,7 @@ Windows:
   --liveness-writes 2000
 ```
 
-V4 always runs all 48 option cells and all ten fault scenarios. `--operations`
+V4 always runs all 48 option cells and all eleven fault scenarios. `--operations`
 is the shared-model operation count per native cell. `--liveness-writes` is the
 separate no-fault internal-engine write count.
 
@@ -356,7 +356,7 @@ Before reviewing V3 changes, run at least 25 acknowledged kill/recover rounds
 plus in-flight probes for None, Snappy, and Zstd. On Windows, include one
 Unicode database/output path. Confirm no worker process survives any campaign.
 
-Before reviewing V4 changes, run all 48 cells, all ten fault scenarios, and at
+Before reviewing V4 changes, run all 48 cells, all eleven fault scenarios, and at
 least 2,000 liveness writes for seeds 1, 17, and 301. Use a fresh workspace for
 each campaign and preserve every failure workspace unchanged.
 

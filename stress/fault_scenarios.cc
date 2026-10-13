@@ -264,6 +264,16 @@ FaultScenarioSummary MutationScenario(FaultScenario scenario) {
             harness.file_system().SetOperationHook(std::ref(*failure));
             failed = WritePair(*database, new_values);
             break;
+        case FaultScenario::TableOpen:
+            RequireSuccess(WritePair(*database, new_values), "acknowledged write");
+            failure.emplace(
+                [](std::string_view operation) {
+                    return IsTableOperation(operation, "open_writable ");
+                },
+                Error::Io(message));
+            harness.file_system().SetOperationHook(std::ref(*failure));
+            failed = Flush(harness, *database);
+            break;
         case FaultScenario::TableSync:
             RequireSuccess(WritePair(*database, new_values), "acknowledged write");
             failure.emplace(
@@ -378,6 +388,7 @@ std::vector<FaultScenario> EnumerateFaultScenarios() {
         FaultScenario::WalAppend,
         FaultScenario::WalSync,
         FaultScenario::OldWalClose,
+        FaultScenario::TableOpen,
         FaultScenario::TableSync,
         FaultScenario::TableClose,
         FaultScenario::TableDirectorySync,
@@ -397,6 +408,8 @@ std::string FaultScenarioName(FaultScenario scenario) {
             return "wal-sync";
         case FaultScenario::OldWalClose:
             return "old-wal-close";
+        case FaultScenario::TableOpen:
+            return "table-open";
         case FaultScenario::TableSync:
             return "table-sync";
         case FaultScenario::TableClose:
