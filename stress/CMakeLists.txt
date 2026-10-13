@@ -10,7 +10,13 @@ add_custom_target(
   VERBATIM
 )
 
-add_executable(modern_leveldb_stress stress_main.cc stress.cc "${stress_build_header}")
+add_executable(
+  modern_leveldb_stress
+  stress_main.cc
+  stress.cc
+  stress_support.cc
+  "${stress_build_header}"
+)
 add_dependencies(modern_leveldb_stress modern_leveldb_stress_build_identity)
 target_include_directories(
   modern_leveldb_stress
@@ -21,3 +27,22 @@ target_include_directories(
 )
 target_link_libraries(modern_leveldb_stress PRIVATE modern_leveldb::modern_leveldb)
 modern_leveldb_set_project_warnings(modern_leveldb_stress PRIVATE)
+
+add_executable(
+  modern_leveldb_concurrent_stress
+  concurrent_stress_main.cc
+  concurrent_stress.cc
+  linearizability.cc
+  stress_support.cc
+  "${stress_build_header}"
+)
+add_dependencies(modern_leveldb_concurrent_stress modern_leveldb_stress_build_identity)
+target_include_directories(
+  modern_leveldb_concurrent_stress
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}"
+    "${PROJECT_SOURCE_DIR}/tests"
+    "${CMAKE_CURRENT_BINARY_DIR}"
+)
+target_link_libraries(modern_leveldb_concurrent_stress PRIVATE modern_leveldb::modern_leveldb)
+modern_leveldb_set_project_warnings(modern_leveldb_concurrent_stress PRIVATE)

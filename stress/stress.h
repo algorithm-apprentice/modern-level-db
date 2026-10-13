@@ -5,9 +5,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <span>
-#include <string>
 
 #include "modern_leveldb/options.h"
+#include "stress/stress_support.h"
 #include "support/database_model.h"
 
 namespace modern_leveldb::stress {
@@ -19,11 +19,6 @@ struct StressArguments {
     std::size_t operations = 100'000;
     Compression compression = Compression::None;
     bool help = false;
-};
-
-struct StressBuildIdentity {
-    std::string revision;
-    bool dirty = false;
 };
 
 struct StressSummary {
