@@ -62,6 +62,8 @@ add_executable(
   unit/platform/file_system_test.cc
   unit/platform/mapped_read_limiter_test.cc
   unit/platform/serial_executor_test.cc
+  unit/stress/concurrent_stress_test.cc
+  unit/stress/linearizability_test.cc
   unit/stress/stress_test.cc
   unit/support/database_model_test.cc
   unit/table/block_format_test.cc
@@ -73,7 +75,10 @@ add_executable(
   unit/table/table_test.cc
   unit/toolchain_test.cc
   unit/wal/wal_io_test.cc
+  "${PROJECT_SOURCE_DIR}/stress/concurrent_stress.cc"
+  "${PROJECT_SOURCE_DIR}/stress/linearizability.cc"
   "${PROJECT_SOURCE_DIR}/stress/stress.cc"
+  "${PROJECT_SOURCE_DIR}/stress/stress_support.cc"
   support/memory_file_system.cc
 )
 if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")

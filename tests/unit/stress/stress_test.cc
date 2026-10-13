@@ -3,37 +3,17 @@
 #include <gtest/gtest.h>
 
 #include <array>
-#include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "support/temporary_directory.h"
+#include "support/text_file.h"
 
 namespace modern_leveldb::stress {
 namespace {
-
-std::string ReadText(const std::filesystem::path& path) {
-    std::error_code error;
-    const std::uintmax_t file_size = std::filesystem::file_size(path, error);
-    if (error || file_size > std::numeric_limits<std::size_t>::max() ||
-        file_size > static_cast<std::uintmax_t>(std::numeric_limits<std::streamsize>::max())) {
-        throw std::runtime_error("cannot size test artifact");
-    }
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        throw std::runtime_error("cannot read test artifact");
-    }
-    std::string result(static_cast<std::size_t>(file_size), '\0');
-    input.read(result.data(), static_cast<std::streamsize>(result.size()));
-    if (input.gcount() != static_cast<std::streamsize>(result.size())) {
-        throw std::runtime_error("cannot read complete test artifact");
-    }
-    return result;
-}
 
 StressArguments SmallRun(const std::filesystem::path& root, std::string_view name) {
     StressArguments result;
@@ -159,17 +139,17 @@ TEST(StressRunTest, SameSeedProducesIdenticalSemanticArtifacts) {
 
     EXPECT_EQ(first_summary, second_summary);
     EXPECT_EQ(first_summary.operations, first.operations);
-    const std::string run = ReadText(first.output / "run.txt");
-    EXPECT_EQ(run, ReadText(second.output / "run.txt"));
+    const std::string run = test_support::ReadTextFile(first.output / "run.txt");
+    EXPECT_EQ(run, test_support::ReadTextFile(second.output / "run.txt"));
     EXPECT_NE(run.find("revision=test-revision"), std::string::npos);
     EXPECT_NE(run.find("dirty=false"), std::string::npos);
     EXPECT_NE(run.find("write_buffer_size=65536"), std::string::npos);
-    EXPECT_EQ(ReadText(first.output / "operations.log"),
-              ReadText(second.output / "operations.log"));
-    EXPECT_EQ(ReadText(first.output / "final-state.txt"),
-              ReadText(second.output / "final-state.txt"));
-    EXPECT_EQ(ReadText(first.output / "completion.txt"),
-              ReadText(second.output / "completion.txt"));
+    EXPECT_EQ(test_support::ReadTextFile(first.output / "operations.log"),
+              test_support::ReadTextFile(second.output / "operations.log"));
+    EXPECT_EQ(test_support::ReadTextFile(first.output / "final-state.txt"),
+              test_support::ReadTextFile(second.output / "final-state.txt"));
+    EXPECT_EQ(test_support::ReadTextFile(first.output / "completion.txt"),
+              test_support::ReadTextFile(second.output / "completion.txt"));
     EXPECT_FALSE(std::filesystem::exists(first.output / "failure.txt"));
 }
 
@@ -181,11 +161,13 @@ TEST(StressRunTest, FailurePreservesAttemptAndDoesNotPublishCompletion) {
 
     EXPECT_THROW(static_cast<void>(RunStress(arguments, identity, &observer)), std::runtime_error);
 
-    const std::string operations = ReadText(arguments.output / "operations.log");
+    const std::string operations =
+        test_support::ReadTextFile(arguments.output / "operations.log");
     EXPECT_NE(operations.find("\n0\t"), std::string::npos);
     EXPECT_NE(operations.find("\n3\t"), std::string::npos);
     EXPECT_EQ(operations.find("\n4\t"), std::string::npos);
-    EXPECT_NE(ReadText(arguments.output / "failure.txt").find("injected stress observer failure"),
+    EXPECT_NE(test_support::ReadTextFile(arguments.output / "failure.txt")
+                  .find("injected stress observer failure"),
               std::string::npos);
     EXPECT_FALSE(std::filesystem::exists(arguments.output / "completion.txt"));
     EXPECT_FALSE(std::filesystem::exists(arguments.output / "final-state.txt"));
