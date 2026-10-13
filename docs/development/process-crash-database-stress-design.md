@@ -90,14 +90,11 @@ open; no normal return or destructor can improve the crash image.
 
 ### Python parent
 
-```text
-tools/run_crash_stress.py
-```
-
-Command:
+The implementation adds one local runner under `tools`. Its planned command
+interface is:
 
 ```console
-python tools/run_crash_stress.py \
+python LOCAL_CRASH_STRESS_RUNNER \
   --worker WORKER_BINARY \
   --db NEW_DATABASE_DIRECTORY \
   --output NEW_ARTIFACT_DIRECTORY \
