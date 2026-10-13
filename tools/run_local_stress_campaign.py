@@ -977,9 +977,9 @@ def validate_job_artifacts(
     if not revision:
         raise ArtifactError("missing_identity", "run revision is missing")
     dirty_text = run.get("dirty")
-    if dirty_text not in {"true", "false"}:
+    if dirty_text not in {"true", "false", "dirty", "clean"}:
         raise ArtifactError("missing_identity", "run dirty state is invalid")
-    return SourceIdentity(revision, dirty_text == "true")
+    return SourceIdentity(revision, dirty_text in {"true", "dirty"})
 
 
 def _attempt_path(workspace: Path, job: CampaignJob, number: int) -> Path:

@@ -140,13 +140,15 @@ Every successful V1 through V4 job has an artifact `run.txt` containing:
 
 ```text
 revision=<git object>
-dirty=<true|false>
+dirty=<true|false|dirty|clean>
 ```
 
 The first successful job establishes the campaign identity. Every later
 successful job, including one completed before resume, must match it exactly.
 Rebuilding only part of the stress suite during a campaign therefore fails
 explicitly rather than producing a success-shaped mixed-source summary.
+The orchestrator normalizes `false`/`clean` and `true`/`dirty` before comparing
+the C++ driver and V3 worker encodings.
 
 ## Durable orchestration state
 
