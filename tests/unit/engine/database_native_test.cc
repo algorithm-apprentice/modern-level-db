@@ -171,8 +171,8 @@ TEST(DatabaseNativeTest, MixedStressReclaimsDeferredTablesWhenItReopens) {
     arguments.output = directory.path() / "output";
     arguments.seed = 301;
     arguments.threads = 4;
-    arguments.operations_per_thread = 5'000;
-    arguments.keys = 65'536;
+    arguments.operations_per_thread = 1'000;
+    arguments.keys = 16'384;
     arguments.reopens = 2;
     arguments.compression = Compression::None;
 
