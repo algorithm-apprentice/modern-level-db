@@ -61,6 +61,9 @@ existing evidence.
 The detailed V2 oracle and delivery boundary are in
 [Concurrent database stress testing](concurrent-database-stress-design.md).
 
+V2 is implemented. Its bounded checker and snapshot/batch phase do not change
+the separate V3 process-crash requirements below.
+
 ### V3: native process crash and restart
 
 - Parent-owned child process and database directory.

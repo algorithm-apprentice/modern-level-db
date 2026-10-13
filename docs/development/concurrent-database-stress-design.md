@@ -229,3 +229,66 @@ occurred.
 9. Review synchronization, failure containment, oracle soundness, and
    nonclaims.
 10. Deliver one accumulated PR without a hosted long-running campaign.
+
+## V2 implementation record
+
+V2 is implemented through:
+
+- a bounded register linearizability checker with real-time predecessor masks,
+  backtracking, witness output, malformed-history rejection, and a nine-operation
+  limit;
+- `modern_leveldb_concurrent_stress`, built by the existing default-off local
+  stress option;
+- round-scoped same-key Put/Delete/Get/batch worker cohorts and one final read
+  per round;
+- concurrent disjoint batch writers and snapshot/iterator readers;
+- final Iterator use after both Snapshot and Database handles are destroyed,
+  followed by reopen and exact-state verification;
+- shared V1/V2 path, compression, database-policy, artifact, and build-identity
+  support.
+
+The implementation review found and fixed:
+
+1. a fixed-count round barrier could strand already-created threads if a later
+   `std::jthread` construction threw; a cancellable start gate now releases or
+   cancels a complete round cohort safely;
+2. snapshot-phase writers could finish before readers started in a short run;
+   the same cancellable gate now releases all writer/reader threads together;
+3. initial history artifacts lost the distinction between Put and atomic
+   batch stores and omitted sync/yield plans; every worker record now retains
+   its source operation and scheduling plan;
+4. two artifact-reading test helpers duplicated GCC-sensitive I/O; one shared
+   bounded text-file helper now serves both stress suites.
+
+Validation completed:
+
+```text
+Windows Debug                       891/891
+Windows Release                     891/891
+Windows model/compatibility/crash    18/18
+focused V1/V2 stress contracts       19/19
+GCC strict object compilation        pass
+documentation routing tests          17/17
+documentation contract tests         13/13
+documentation validation             pass
+```
+
+Repeated timing evidence:
+
+- the main concurrent contract passed 100 consecutive runs;
+- the 2/8-thread boundary contract passed 50 consecutive runs;
+- three identical-seed 4-thread campaigns produced different snapshot-check
+  counts while retaining valid histories and final state.
+
+Local acceptance campaigns:
+
+| Threads | Compression | Seed | Rounds | Linearized worker operations | Batch writes |
+|---:|---|---:|---:|---:|---:|
+| 2 | None | 1 | 300 | 600 | 300 |
+| 4 | Snappy | 17 | 300 | 1200 | 600 |
+| 8 | Zstd | 301 | 300 | 2400 | 1200 |
+| 8 | Zstd | 20261013 | 1000 | 8000 | 4000 |
+
+V2 is complete at this boundary. V3 must use a parent-owned process and
+external acknowledgement journal; in-process exception injection cannot stand
+in for abrupt process death.
