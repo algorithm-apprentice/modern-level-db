@@ -297,3 +297,75 @@ the database stress campaigns.
 9. Run Windows and WSL acceptance scenarios.
 10. Review process cleanup, path safety, schema stability, and no-CI boundary.
 11. Deliver one PR and mark the V1 through V5 roadmap complete.
+
+## V5 implementation record
+
+V5 is implemented through:
+
+- `tools/run_local_stress_campaign.py` as a thin Python 3.9+ CLI and
+  `tools/local_stress_campaign.py` as its importable core;
+- a canonical 10-job-per-seed V1 through V4 planner with stable IDs, exact argv
+  templates, sorted versioned JSON, and SHA-256 plan identity;
+- fresh attempt directories with exact commands, direct stdout/stderr files,
+  process results, artifact validation, database/output workspaces, and no
+  deletion or reuse;
+- POSIX session/process-group and Windows process-group ownership with bounded
+  graceful termination and kill fallback;
+- fsynced event records plus atomic state, per-job state, summary, and
+  completion publication;
+- source revision/dirty normalization across the C++ drivers and V3 worker;
+- exact-plan resume with passed-artifact revalidation, stale-running
+  conversion, monotonic attempt numbering, and duration exhaustion.
+
+The implementation review found and fixed:
+
+1. V3 writes worker identity as `clean`/`dirty`, while V1, V2, and V4 write
+   `false`/`true`; the orchestrator now normalizes both encodings before
+   comparing source identity;
+2. relative executable paths made resume depend on the caller's current
+   directory; the immutable plan now stores resolved executable paths and the
+   default child working directory is the repository root;
+3. unconditional POSIX directory `fsync` rejected filesystems that do not
+   admit it; state publication now keeps file sync mandatory and treats only
+   documented unsupported directory-sync errors as best effort;
+4. an initial summary exposed only global counts despite the design requiring
+   tier/seed trends; JSON and text summaries now include per-tier, per-seed,
+   and total durations and counts;
+5. one 1,355-line executable mixed CLI and testable orchestration; a minimal
+   entry point now delegates to a separately importable core module;
+6. passed-artifact revalidation initially overwrote the attempt's historical
+   category; it now records a separate revalidation category and preserves the
+   original attempt result.
+
+Validation completed:
+
+```text
+Windows Debug unit                  911/911
+Windows Release unit                911/911
+Windows model/compatibility/crash     18/18
+WSL Ubuntu GCC 13 Debug unit        878/878
+WSL Ubuntu GCC 13 Release unit      878/878
+WSL model/compatibility/crash         10/10
+Windows Python campaign contracts     19/19
+WSL Python campaign contracts         19/19
+Python 3.9 grammar compatibility       pass
+documentation validation               pass
+```
+
+Local acceptance:
+
+- a real Windows one-seed all-tier plan ran all ten jobs;
+- its first V3 attempt completed the database work but exposed the
+  `clean`/`false` identity-encoding difference, stopped before later jobs, and
+  retained the complete attempt;
+- resume skipped the six already validated V1/V2 jobs, retried only that V3 job
+  as attempt 002, ran the remaining V3/V4 jobs, and completed 10/10;
+- a WSL Ubuntu ext4 one-seed all-tier plan completed 10/10 directly;
+- Windows and WSL fake-child timeout contracts both proved process-group
+  containment;
+- durable tests cover duration exhaustion followed by resume, stale-running
+  conversion, tampered passed-artifact retry, plan mismatch rejection, and
+  completion suppression.
+
+V5 is complete at this boundary. The full V1 through V5 local stress roadmap is
+implemented without adding a hosted long-running campaign.

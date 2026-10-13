@@ -108,6 +108,10 @@ The detailed deterministic plan, subprocess ownership, durable state, and
 resume contract are in
 [Local stress campaign orchestration](local-stress-campaign-design.md).
 
+V5 is implemented. It composes the existing V1 through V4 tools through a
+deterministic local-only job plan, owned subprocess attempts, durable summaries,
+and exact-plan resume. The V1 through V5 roadmap is complete at this boundary.
+
 Advancing phases requires the preceding artifact and reproduction contract to
 remain stable. Do not combine V2 through V5 into the first implementation.
 
