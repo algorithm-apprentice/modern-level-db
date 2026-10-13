@@ -34,6 +34,7 @@ class HoldingResult:
     returncode: int
     trailing_stdout: str
     stderr: str
+    terminated_by_parent: bool
 
 
 @dataclass
@@ -111,7 +112,8 @@ def _read_one_line(pipe, result: queue.Queue) -> None:
 
 
 def _kill_and_collect(process: subprocess.Popen, reader: threading.Thread) -> HoldingResult:
-    if process.poll() is None:
+    terminated_by_parent = process.poll() is None
+    if terminated_by_parent:
         process.kill()
     try:
         process.wait(timeout=5)
@@ -121,7 +123,9 @@ def _kill_and_collect(process: subprocess.Popen, reader: threading.Thread) -> Ho
     if reader.is_alive():
         raise RuntimeError("owned child protocol reader did not finish")
     trailing_stdout, stderr = process.communicate(timeout=5)
-    return HoldingResult(process.returncode, trailing_stdout, stderr)
+    return HoldingResult(
+        process.returncode, trailing_stdout, stderr, terminated_by_parent
+    )
 
 
 def run_holding_child(
@@ -183,6 +187,10 @@ def run_holding_child(
             )
         if collected.stderr:
             raise RuntimeError(f"child emitted stderr: {collected.stderr!r}")
+        if not collected.terminated_by_parent:
+            raise RuntimeError(
+                f"child exited before parent termination with code {collected.returncode}"
+            )
         if collected.returncode == 0:
             raise RuntimeError("killed child reported successful exit")
         return collected

@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
@@ -86,6 +87,7 @@ class CrashStressTest(unittest.TestCase):
             )
 
             self.assertTrue(callback_ran)
+            self.assertTrue(result.terminated_by_parent)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(result.trailing_stdout, "")
             self.assertEqual(result.stderr, "")
@@ -117,6 +119,21 @@ class CrashStressTest(unittest.TestCase):
             with self.subTest(message=message):
                 with self.assertRaisesRegex(RuntimeError, message):
                     run_crash_stress.run_holding_child(command, expected, 0.2)
+
+    def test_holding_child_rejects_exit_during_acknowledgement_callback(self):
+        command = [
+            sys.executable,
+            "-c",
+            "import sys,time; print('ack\\t0', flush=True); time.sleep(0.1); sys.exit(7)",
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "before parent termination"):
+            run_crash_stress.run_holding_child(
+                command,
+                "ack\t0",
+                1.0,
+                lambda: time.sleep(0.2),
+            )
 
     def test_journal_is_contiguous_and_fsynced(self):
         with tempfile.TemporaryDirectory() as temporary:
