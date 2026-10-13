@@ -58,6 +58,9 @@ existing evidence.
   context-switch campaigns.
 - Snapshot, iterator, close, and child-lifetime combinations.
 
+The detailed V2 oracle and delivery boundary are in
+[Concurrent database stress testing](concurrent-database-stress-design.md).
+
 ### V3: native process crash and restart
 
 - Parent-owned child process and database directory.
