@@ -116,6 +116,9 @@ Post-roadmap workload broadening is designed separately in
 [RocksDB-applicable mixed stress workload](rocksdb-applicable-stress-workload-design.md).
 It does not reopen the completed V1 through V5 delivery sequence.
 
+Native disk/resource reclamation composition is tracked in
+[Native resource reclamation validation](native-resource-reclamation-validation-design.md).
+
 Advancing phases requires the preceding artifact and reproduction contract to
 remain stable. Do not combine V2 through V5 into the first implementation.
 
