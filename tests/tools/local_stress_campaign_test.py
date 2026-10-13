@@ -12,7 +12,7 @@ import textwrap
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
-import run_local_stress_campaign
+import local_stress_campaign as run_local_stress_campaign
 
 
 class LocalStressCampaignPlannerTest(unittest.TestCase):
@@ -213,8 +213,9 @@ class LocalStressCampaignPlannerTest(unittest.TestCase):
         ]
         for arguments in invalid:
             with self.subTest(arguments=arguments):
-                with self.assertRaises(SystemExit):
-                    run_local_stress_campaign.parse_arguments(arguments)
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit):
+                        run_local_stress_campaign.parse_arguments(arguments)
 
     def test_argument_parser_applies_defaults_and_canonical_tier_order(self):
         parsed = run_local_stress_campaign.parse_arguments(
