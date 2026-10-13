@@ -195,3 +195,65 @@ remains local.
 7. Run full local matrix/fault/liveness campaigns.
 8. Review oracle separation, sticky behavior, scenario names, and nonclaims.
 9. Deliver one PR without a hosted matrix campaign.
+
+## V4 implementation record
+
+V4 is implemented through:
+
+- `modern_leveldb_option_fault_stress`, built only by the existing default-off
+  local stress option;
+- a complete 48-cell Cartesian public-option matrix with stable path-safe cell
+  IDs, per-cell seeds, and binary-state fingerprints;
+- eleven fresh deterministic in-memory fault scenarios covering table reads,
+  WAL append/sync/old-close, table open/sync/close/directory-sync, MANIFEST
+  append/sync, and executor rejection;
+- one separate no-fault liveness scenario that drains every accepted ManualExecutor
+  task, performs periodic point reads/scans, and verifies final/reopened state;
+- one absent disposable workspace containing native databases and versioned
+  run, cell, fault, liveness, completion, or failure artifacts.
+
+The implementation review found and fixed:
+
+1. matching the first runtime `sync_directory db` injected failure into
+   foreground WAL creation rather than table publication and could leave the
+   test waiting for a task that was never scheduled; the table-directory
+   scenario now selects the second runtime barrier;
+2. recovery of a large WAL can legitimately schedule a flush; ManualExecutor
+   recovery now explicitly drains accepted work before database destruction;
+3. the roadmap promised open-failure coverage but the initial named set began
+   at table sync; a table-output open scenario now closes that boundary;
+4. each scenario test initially checked only a nonempty operation string; it
+   now requires the exact documented operation family and suffix.
+
+Validation completed:
+
+```text
+Windows Debug unit                  910/910
+Windows Release unit                910/910
+Windows model/compatibility/crash     18/18
+WSL Ubuntu GCC 13 Debug unit        877/877
+WSL Ubuntu GCC 13 Release unit      877/877
+WSL model/compatibility/crash         10/10
+focused MSVC V4 contracts             24/24
+portable GCC V4 contracts             20/20
+clang-format                           pass
+documentation validation               pass
+```
+
+Local acceptance campaigns:
+
+| Platform | Path | Seed | Cells | Faults | Operations/cell | Liveness writes | Option entries |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Windows | ASCII | 1 | 48 | 11 | 250 | 2000 | 982 |
+| Windows | Unicode/non-BMP | 17 | 48 | 11 | 250 | 2000 | 1018 |
+| Windows | ASCII | 301 | 48 | 11 | 250 | 2000 | 1036 |
+| WSL Ubuntu ext4 | Unicode/non-BMP | 301 | 48 | 11 | 250 | 2000 | 1036 |
+
+Every 2,000-write liveness run drained 64 background tasks, produced 65 table
+outputs, completed 118 point reads and 23 scans, and reopened with 2,000 exact
+entries. Windows and WSL seed 301 produced byte-identical `cells.tsv`,
+`faults.tsv`, and `liveness.txt` artifacts.
+
+V4 is complete at this boundary. Its deterministic no-effect fault seam does
+not replace V3 process death, the power-loss simulator, or future V5
+multi-process campaign ownership and resume policy.
