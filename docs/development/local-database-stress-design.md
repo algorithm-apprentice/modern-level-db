@@ -302,7 +302,9 @@ The implementation review found and fixed:
 3. unsafe paths initially reporting runtime failure instead of command/safety
    failure; they now produce exit code 2;
 4. a GCC signed-character warning in binary artifact encoding that MSVC did not
-   diagnose.
+   diagnose;
+5. GCC 13 Release's `istreambuf_iterator` null-dereference diagnostic in the
+   test artifact reader; the test now sizes and reads the file explicitly.
 
 Fast driver tests cover parser duplicates/bounds, existing/equal/nested/missing
 paths, deterministic semantic artifacts, attempted-operation retention,
