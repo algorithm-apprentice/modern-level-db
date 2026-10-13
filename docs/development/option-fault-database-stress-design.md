@@ -112,7 +112,8 @@ Planned command:
 modern_leveldb_option_fault_stress \
   --workspace NEW_DISPOSABLE_DIRECTORY \
   [--seed N] \
-  [--operations N]
+  [--operations N] \
+  [--liveness-writes N]
 ```
 
 Defaults:
@@ -120,6 +121,7 @@ Defaults:
 ```text
 seed       301
 operations 250
+liveness   2000 writes
 ```
 
 The workspace must be absent and have an existing parent. The runner creates:

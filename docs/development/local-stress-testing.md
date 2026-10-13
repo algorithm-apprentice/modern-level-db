@@ -26,6 +26,11 @@ The local stress targets currently cover:
   - abrupt kill/reap after every acknowledged batch;
   - reopen and exact prefix verification after every child;
   - optional whole-batch in-flight probes;
+- option/fault V4:
+  - complete 48-cell public option matrix;
+  - ten named in-memory I/O/scheduling fault boundaries;
+  - retry, sticky-stop, and whole-batch recovery oracles;
+  - separate fault-free liveness with deterministic background draining;
 - WAL rotation, flush, and compaction pressure through a 64 KiB write buffer;
 - None, Snappy, and Zstd table compression;
 - versioned run, operation, final-state, completion, and failure artifacts.
@@ -33,14 +38,14 @@ The local stress targets currently cover:
 V1 remains the deterministic single-thread model. V2 adds bounded concurrent
 contracts; it does not claim unbounded linearizability for every API. V3 adds
 process-crash acknowledgement/recovery evidence, not machine power-loss
-certification. Randomized option compatibility and fault-injection recovery
-remain separate later phases in the
-[stress design](local-database-stress-design.md) and
-[concurrent design](concurrent-database-stress-design.md).
+certification. V4 composes a bounded supported option matrix with deterministic
+fault seams; it does not model arbitrary partial syscalls or native media
+failure. Multi-seed campaign orchestration remains V5 in the
+[stress design](local-database-stress-design.md).
 
 ## Safety
 
-Both supplied paths must:
+V1 through V3 database/output paths must:
 
 - be absent;
 - have an existing parent directory;
@@ -49,6 +54,10 @@ Both supplied paths must:
 
 The driver rejects an existing database or artifact path. It never recursively
 deletes either path and never reuses an old database.
+
+V4 takes one `--workspace` path. It must be absent and have an existing parent.
+The executable creates `databases/` and `artifacts/` beneath it and never
+deletes or reuses the workspace.
 
 External modification while the database is open remains unsupported.
 
@@ -60,7 +69,7 @@ Linux/macOS:
 cmake --preset local-stress
 cmake --build --preset local-stress \
   --target modern_leveldb_stress modern_leveldb_concurrent_stress \
-    modern_leveldb_crash_stress_worker
+    modern_leveldb_crash_stress_worker modern_leveldb_option_fault_stress
 ```
 
 Windows, from an initialized x64 MSVC developer environment:
@@ -69,7 +78,7 @@ Windows, from an initialized x64 MSVC developer environment:
 cmake --preset windows-local-stress
 cmake --build --preset windows-local-stress `
   --target modern_leveldb_stress modern_leveldb_concurrent_stress `
-    modern_leveldb_crash_stress_worker
+    modern_leveldb_crash_stress_worker modern_leveldb_option_fault_stress
 ```
 
 Building the target refreshes the source revision and dirty-worktree identity
@@ -257,6 +266,65 @@ applies bounded protocol and completion timeouts.
 The probe databases remain under the output directory. Preserve a failure
 directory unchanged until the worker command and journal reproduce it.
 
+## Run option and fault matrix V4
+
+Linux/macOS:
+
+```bash
+./build/local-stress/stress/modern_leveldb_option_fault_stress \
+  --workspace /absolute/disposable/path/option-fault-01 \
+  --seed 301 \
+  --operations 250 \
+  --liveness-writes 2000
+```
+
+Windows:
+
+```powershell
+& .\build\windows-local-stress\stress\modern_leveldb_option_fault_stress.exe `
+  --workspace C:\absolute\disposable\path\option-fault-01 `
+  --seed 301 `
+  --operations 250 `
+  --liveness-writes 2000
+```
+
+V4 always runs all 48 option cells and all ten fault scenarios. `--operations`
+is the shared-model operation count per native cell. `--liveness-writes` is the
+separate no-fault internal-engine write count.
+
+V4 options:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `--workspace` | required | New disposable campaign root |
+| `--seed` | 301 | Campaign seed and per-cell seed source |
+| `--operations` | 250 | Positive model operations per option cell |
+| `--liveness-writes` | 2000 | Positive writes in the fault-free liveness phase |
+
+The option dimensions are compression (None/Snappy/Zstd), mapped/copy reads,
+Bloom disabled/10 bits per key, 64/256 KiB write buffers, and synchronized or
+unsynchronized WAL creation.
+
+The fault phase uses fresh in-memory databases for read, WAL append/sync/close,
+table sync/close/directory-sync, MANIFEST append/sync, and scheduling
+rejection. A failed mutation must become sticky, a later write must return the
+same error without filesystem progress, and reopen must show one complete
+allowed batch state.
+
+## V4 artifacts
+
+| File | Interpretation |
+|---|---|
+| `run.txt` | Source identity, seed, budgets, and selected matrix/scenario counts |
+| `cells.tsv` | Stable cell/options ID, derived seed, entry count, and state fingerprint |
+| `faults.tsv` | Injected operation, error, sticky/retry result, and reopened batch state |
+| `liveness.txt` | Writes, drained tasks, table outputs, reads/scans, and final fingerprint |
+| `completion.txt` | Exists only after every cell, fault, and liveness oracle succeeds |
+| `failure.txt` | Best available failure message |
+
+Each native database remains under `workspace/databases/<cell-id>`. Preserve
+the complete workspace when any phase fails.
+
 ## Local acceptance sets
 
 Before reviewing V1 changes, run three fresh campaigns:
@@ -287,6 +355,10 @@ history unchanged.
 Before reviewing V3 changes, run at least 25 acknowledged kill/recover rounds
 plus in-flight probes for None, Snappy, and Zstd. On Windows, include one
 Unicode database/output path. Confirm no worker process survives any campaign.
+
+Before reviewing V4 changes, run all 48 cells, all ten fault scenarios, and at
+least 2,000 liveness writes for seeds 1, 17, and 301. Use a fresh workspace for
+each campaign and preserve every failure workspace unchanged.
 
 These campaigns are local evidence. Do not add them to GitHub Actions or CTest
 without a separate cost, duration, flakiness, and ownership decision.

@@ -39,6 +39,8 @@ private:
                                                 std::string_view option);
 [[nodiscard]] PreparedStressPaths PrepareStressPaths(
     const std::filesystem::path& database, const std::filesystem::path& output);
+[[nodiscard]] std::filesystem::path PrepareStressWorkspace(
+    const std::filesystem::path& workspace);
 [[nodiscard]] std::string StressCompressionName(Compression compression);
 [[nodiscard]] Compression ParseStressCompression(std::string_view value);
 [[nodiscard]] std::string StressHex(std::string_view bytes);

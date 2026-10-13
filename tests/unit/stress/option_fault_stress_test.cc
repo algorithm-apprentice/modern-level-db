@@ -305,8 +305,14 @@ TEST(OptionFaultStressRunTest, PublishesDeterministicVersionedArtifacts) {
     const StressBuildIdentity identity{"test-revision", false};
     const std::array<OptionMatrixCell, 1> cells{EnumerateOptionMatrix().front()};
     const std::array<FaultScenario, 1> faults{FaultScenario::Read};
-    const OptionFaultStressArguments first =
+    OptionFaultStressArguments first =
         SmallOptionFaultRun(root.path(), "first");
+#if defined(_WIN32)
+    first.workspace = root.path() / L"first-\u6570\u636e-\U0001f680";
+#else
+    first.workspace =
+        root.path() / "first-\xe6\x95\xb0\xe6\x8d\xae-\xf0\x9f\x9a\x80";
+#endif
     const OptionFaultStressArguments second =
         SmallOptionFaultRun(root.path(), "second");
 

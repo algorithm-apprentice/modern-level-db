@@ -94,6 +94,10 @@ filesystem fault matrix and the existing deterministic power-loss simulator.
 The detailed bounded matrix and fault/liveness oracle are in
 [Option and fault matrix database stress testing](option-fault-database-stress-design.md).
 
+V4 is implemented as one default-off local executable. Its complete native
+matrix, deterministic fault boundaries, and no-fault liveness phase remain
+separate artifact streams under one disposable workspace.
+
 ### V5: campaign orchestration
 
 - Multi-seed local runner with duration limits and retained failure bundles.
