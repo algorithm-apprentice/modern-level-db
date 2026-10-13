@@ -120,10 +120,12 @@ DatabaseEngine::~DatabaseEngine() {
         }
     }
     background_finished_.wait(lock, [this] { return !background_scheduled_; });
-    // The final child handle has released every old Version/Table pin. A prior
-    // cleanup may have retained those files legitimately, so sweep once more
-    // before releasing the directory lock.
-    RemoveObsoleteFiles(lock);
+    if (versions_ != nullptr && lock_ != nullptr) {
+        // The final child handle has released every old Version/Table pin. A
+        // prior cleanup may have retained those files legitimately, so sweep
+        // once more before releasing the directory lock.
+        RemoveObsoleteFiles(lock);
+    }
 }
 
 Status DatabaseEngine::Recover(const DatabaseEngineOptions& options) {
