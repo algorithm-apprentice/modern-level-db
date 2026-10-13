@@ -3,6 +3,7 @@
 import argparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import errno
 import hashlib
 import json
 import os
@@ -468,9 +469,22 @@ def _json_text(document: dict) -> str:
 def _fsync_directory(path: Path) -> None:
     if os.name == "nt":
         return
-    descriptor = os.open(str(path), os.O_RDONLY | os.O_DIRECTORY)
     try:
-        os.fsync(descriptor)
+        descriptor = os.open(str(path), os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as error:
+        if error.errno in {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}:
+            return
+        raise
+    try:
+        try:
+            os.fsync(descriptor)
+        except OSError as error:
+            if error.errno not in {
+                errno.EINVAL,
+                errno.ENOTSUP,
+                errno.EOPNOTSUPP,
+            }:
+                raise
     finally:
         os.close(descriptor)
 
@@ -990,7 +1004,12 @@ def _prepare_new_workspace(workspace: Path, plan: CampaignPlan) -> dict:
         raise ValueError(f"workspace path already exists: {workspace}")
     if not workspace.parent.is_dir():
         raise ValueError("workspace parent directory does not exist")
-    workspace.mkdir()
+    try:
+        workspace.mkdir()
+    except FileExistsError as error:
+        raise ValueError(
+            f"workspace path already exists: {workspace}"
+        ) from error
     (workspace / "jobs").mkdir()
     for job in plan.jobs:
         root = _job_root(workspace, job)
@@ -1079,7 +1098,7 @@ def _revalidate_passed_jobs(
                 ) from error
             recorded["status"] = "failed"
             recorded["attempts"][-1]["revalidation_error"] = str(error)
-            recorded["attempts"][-1]["category"] = error.category
+            recorded["attempts"][-1]["revalidation_category"] = error.category
     return identity
 
 
@@ -1170,6 +1189,11 @@ def run_campaign(
 ) -> CampaignSummary:
     selected_plan = build_plan(config) if plan is None else plan
     _validate_plan_commands(selected_plan)
+    campaign_working_directory = (
+        Path(__file__).resolve().parents[1]
+        if working_directory is None
+        else working_directory
+    )
     workspace = config.workspace.resolve(strict=False)
     state = (
         _load_resume_workspace(workspace, selected_plan)
@@ -1248,7 +1272,7 @@ def run_campaign(
                 job,
                 attempt,
                 timeout,
-                working_directory=working_directory,
+                working_directory=campaign_working_directory,
             )
         except KeyboardInterrupt:
             published = read_json(attempt / "result.json")
@@ -1348,4 +1372,3 @@ def main(arguments: Sequence[str]) -> int:
     if summary.status == "budget_exhausted":
         return 3
     return 1
-
