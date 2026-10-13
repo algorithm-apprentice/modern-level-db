@@ -1240,13 +1240,43 @@ def run_campaign(
 
 
 def main(arguments: Sequence[str]) -> int:
-    parse_arguments(arguments)
-    raise RuntimeError("campaign execution is not implemented")
+    try:
+        config = parse_arguments(arguments)
+        summary = run_campaign(config)
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        return 130
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 2
+    except Exception as error:
+        print(error, file=sys.stderr)
+        return 1
+
+    print(
+        " ".join(
+            [
+                f"status={summary.status}",
+                f"total={summary.total}",
+                f"passed={summary.passed}",
+                f"failed={summary.failed}",
+                f"pending={summary.pending}",
+                f"revision={summary.revision or ''}",
+                (
+                    "dirty="
+                    if summary.dirty is None
+                    else f"dirty={'true' if summary.dirty else 'false'}"
+                ),
+                f"blocking_job={summary.blocking_job or ''}",
+            ]
+        )
+    )
+    if summary.status == "completed":
+        return 0
+    if summary.status == "budget_exhausted":
+        return 3
+    return 1
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main(sys.argv[1:]))
-    except ValueError as error:
-        print(error, file=sys.stderr)
-        sys.exit(2)
+    sys.exit(main(sys.argv[1:]))
