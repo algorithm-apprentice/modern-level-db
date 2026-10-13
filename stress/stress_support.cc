@@ -114,6 +114,21 @@ PreparedStressPaths PrepareStressPaths(const std::filesystem::path& database,
     return result;
 }
 
+std::filesystem::path PrepareStressWorkspace(
+    const std::filesystem::path& workspace) {
+    const std::filesystem::path normalized = NormalizeAbsentPath(
+        AbsoluteLexicalPath(workspace, "workspace"), "workspace");
+    std::error_code error;
+    if (!std::filesystem::create_directory(normalized, error)) {
+        if (error) {
+            throw std::runtime_error("cannot create stress workspace: " +
+                                     error.message());
+        }
+        throw std::invalid_argument("stress workspace was not created");
+    }
+    return normalized;
+}
+
 std::string StressCompressionName(Compression compression) {
     switch (compression) {
         case Compression::None:

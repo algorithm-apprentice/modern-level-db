@@ -66,3 +66,32 @@ target_link_libraries(
   modern_leveldb_crash_stress_worker PRIVATE modern_leveldb::modern_leveldb
 )
 modern_leveldb_set_project_warnings(modern_leveldb_crash_stress_worker PRIVATE)
+
+add_executable(
+  modern_leveldb_option_fault_stress
+  option_fault_stress_main.cc
+  option_fault_campaign.cc
+  option_fault_stress.cc
+  fault_scenarios.cc
+  liveness_scenario.cc
+  stress_support.cc
+  "${PROJECT_SOURCE_DIR}/tests/support/memory_file_system.cc"
+  "${stress_build_header}"
+)
+add_dependencies(
+  modern_leveldb_option_fault_stress modern_leveldb_stress_build_identity
+)
+target_include_directories(
+  modern_leveldb_option_fault_stress
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}"
+    "${PROJECT_SOURCE_DIR}/src"
+    "${PROJECT_SOURCE_DIR}/tests"
+    "${CMAKE_CURRENT_BINARY_DIR}"
+)
+target_link_libraries(
+  modern_leveldb_option_fault_stress PRIVATE modern_leveldb::modern_leveldb
+)
+modern_leveldb_set_project_warnings(
+  modern_leveldb_option_fault_stress PRIVATE
+)
