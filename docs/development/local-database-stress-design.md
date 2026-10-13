@@ -275,3 +275,66 @@ and reopen activity.
 7. Review the full diff for deterministic reproduction, native path handling,
    no existing-data mutation, and clean future phase boundaries.
 8. Open one accumulated PR; do not add or modify a GitHub stress workflow.
+
+## V1 implementation record
+
+V1 is implemented as designed:
+
+- `tests/support/database_model.h` now owns a GoogleTest-free
+  `ModelWorkload`, owning `ModelOperation` records, an observer seam, and
+  seed/operation diagnostic context shared by model, differential, and stress
+  callers;
+- `stress/stress.cc` provides argument, path-safety, native model execution,
+  operation-log, final-state, completion, and failure contracts;
+- `modern_leveldb_stress` is built only through the default-off local stress
+  option and presets;
+- build-time source revision/dirty identity is refreshed before each stress
+  target build;
+- no CTest or GitHub workflow runs a stress campaign.
+
+The implementation review found and fixed:
+
+1. a configure-time provenance design that could become stale after later
+   source edits; identity generation now runs before every stress target build;
+2. a time-of-check/time-of-use window between absent-path validation and
+   database creation; the first open now uses `error_if_exists=true`, while
+   only the driver's own later reopens permit an existing database;
+3. unsafe paths initially reporting runtime failure instead of command/safety
+   failure; they now produce exit code 2;
+4. a GCC signed-character warning in binary artifact encoding that MSVC did not
+   diagnose.
+
+Fast driver tests cover parser duplicates/bounds, existing/equal/nested/missing
+paths, deterministic semantic artifacts, attempted-operation retention,
+completion suppression after failure, native Unicode paths, source identity,
+and the local-only usage boundary.
+
+Local validation completed:
+
+```text
+Windows Debug                       879/879
+Windows Release                     879/879
+Windows model/compatibility/crash    18/18
+focused stress/model contracts       10/10
+GCC strict object compilation        pass
+documentation routing tests          17/17
+documentation contract tests         13/13
+documentation validation             pass
+```
+
+Three native Windows campaigns completed 5,000 operations each:
+
+| Compression | Seed | Final entries |
+|---|---:|---:|
+| None | 1 | 18 |
+| Snappy | 17 | 17 |
+| Zstd | 301 | 19 |
+
+The None campaign exercised all eight V1 operation kinds and left ten table
+files, one active WAL, `CURRENT`, and a later MANIFEST, demonstrating repeated
+physical maintenance and reopen activity rather than a memory-only trace.
+
+V2 remains a separate design task. It must define a concurrent history oracle
+and synchronization strategy before adding threads; wrapping the current model
+in one mutex would serialize the answer and would not validate the public
+concurrency contract.
