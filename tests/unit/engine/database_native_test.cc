@@ -3,17 +3,56 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "engine/database.h"
+#include "format/internal_key.h"
 #include "format/write_batch.h"
+#include "metadata/version_set.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
+#include "platform/file_system.h"
+#include "stress/mixed_stress.h"
 #include "support/temporary_directory.h"
 
 namespace modern_leveldb {
 namespace {
+
+std::size_t PhysicalTableCount(const std::filesystem::path& directory) {
+    std::size_t result = 0;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(directory)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".ldb") {
+            ++result;
+        }
+    }
+    return result;
+}
+
+std::size_t ManifestTableCount(std::filesystem::path directory) {
+    auto file_system = CreateDefaultFileSystem(directory,
+#if defined(_WIN32)
+                                               true,
+#else
+                                               false,
+#endif
+                                               true);
+    if (!file_system.has_value()) {
+        throw std::runtime_error(file_system.error().ToString());
+    }
+    const InternalKeyComparator comparator(BytewiseComparator());
+    auto versions = VersionSet::Recover(**file_system, directory, comparator);
+    if (!versions.has_value()) {
+        throw std::runtime_error(versions.error().ToString());
+    }
+    std::size_t result = 0;
+    for (std::uint32_t level = 0; level < NumLevels; ++level) {
+        result += (*versions)->current()->files(level).size();
+    }
+    return result;
+}
 
 TEST(DatabaseNativeTest, OwnsAFileSystemExecutorAndBlockCacheWhenGivenNone) {
     const std::filesystem::path directory =
@@ -89,6 +128,61 @@ TEST(DatabaseNativeTest, CompactionPreservesSnapshotsAndPinnedIteratorFiles) {
     EXPECT_EQ(AsStringView(value), first);
     EXPECT_EQ(AsStringView(iterator->value()), first);
     database.ReleaseSnapshot(snapshot);
+    iterator.reset();
+    opened->reset();
+    EXPECT_EQ(PhysicalTableCount(directory.path() / "db"), current_files);
+}
+
+TEST(DatabaseNativeTest, RemovesUnpinnedCompactionInputsWithoutAnotherOpen) {
+    test_support::TemporaryDirectory directory;
+    const std::filesystem::path database_path = directory.path() / "db";
+    DatabaseEngineOptions options;
+    options.create_if_missing = true;
+    options.write_buffer_size = 64 * 1'024;
+#if defined(_WIN32)
+    options.allow_weak_namespace_durability = true;
+#endif
+    auto opened = DatabaseEngine::Open(options, database_path);
+    ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+    auto& database = **opened;
+    for (unsigned generation = 0; generation < 24; ++generation) {
+        EncodedWriteBatch batch;
+        const std::string value(80 * 1'024, static_cast<char>('a' + generation % 26U));
+        batch.Put(AsBytes("shared"), AsBytes(value));
+        ASSERT_TRUE(database.Write(batch, true).has_value());
+        ASSERT_TRUE(database.FlushMemTable().has_value());
+        ASSERT_TRUE(database.WaitForBackgroundWork().has_value());
+    }
+
+    const Result<DatabaseEngineState> state = database.GetState();
+    ASSERT_TRUE(state.has_value()) << state.error().ToString();
+    std::size_t live_tables = 0;
+    for (const DatabaseEngineLevelState& level : state->levels) {
+        live_tables += level.file_count;
+    }
+
+    EXPECT_EQ(PhysicalTableCount(database_path), live_tables);
+    EXPECT_EQ(state->protected_output_count, 0U);
+    EXPECT_FALSE(state->background_work_scheduled);
+    EXPECT_FALSE(state->sticky_error.has_value());
+}
+
+TEST(DatabaseNativeTest, MixedStressLeavesOnlyManifestLiveTablesAfterClose) {
+    test_support::TemporaryDirectory directory;
+    stress::MixedStressArguments arguments;
+    arguments.database = directory.path() / "db";
+    arguments.output = directory.path() / "output";
+    arguments.seed = 301;
+    arguments.threads = 4;
+    arguments.operations_per_thread = 5'000;
+    arguments.keys = 65'536;
+    arguments.reopens = 2;
+    arguments.compression = Compression::None;
+
+    static_cast<void>(
+        stress::RunMixedStress(arguments, stress::StressBuildIdentity{"test-revision", false}));
+
+    EXPECT_EQ(PhysicalTableCount(arguments.database), ManifestTableCount(arguments.database));
 }
 
 }  // namespace
