@@ -80,6 +80,7 @@ add_executable(
   unit/wal/wal_io_test.cc
   "${PROJECT_SOURCE_DIR}/stress/crash_stress_worker.cc"
   "${PROJECT_SOURCE_DIR}/stress/concurrent_stress.cc"
+  "${PROJECT_SOURCE_DIR}/stress/fault_scenarios.cc"
   "${PROJECT_SOURCE_DIR}/stress/linearizability.cc"
   "${PROJECT_SOURCE_DIR}/stress/option_fault_stress.cc"
   "${PROJECT_SOURCE_DIR}/stress/stress.cc"

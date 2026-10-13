@@ -27,8 +27,8 @@ void HashUnsigned(std::uint64_t& hash, std::uint64_t value) {
 }
 
 void HashBytes(std::uint64_t& hash, std::string_view bytes) {
-    for (const unsigned char byte : bytes) {
-        HashByte(hash, byte);
+    for (const char character : bytes) {
+        HashByte(hash, static_cast<unsigned char>(character));
     }
 }
 

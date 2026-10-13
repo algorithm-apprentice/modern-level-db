@@ -154,42 +154,54 @@ TEST(FaultScenarioTest, EnumeratesStableNamedBoundaries) {
     EXPECT_EQ(FaultScenarioName(FaultScenario::Scheduling), "scheduling");
 }
 
-TEST(FaultScenarioTest, EnforcesRetryStickyAndWholeBatchOracles) {
-    for (const FaultScenario scenario : EnumerateFaultScenarios()) {
-        SCOPED_TRACE(FaultScenarioName(scenario));
+class FaultScenarioContractTest : public testing::TestWithParam<FaultScenario> {};
 
-        const FaultScenarioSummary summary = RunFaultScenario(scenario);
+TEST_P(FaultScenarioContractTest, EnforcesRetryStickyAndWholeBatchOracles) {
+    const FaultScenario scenario = GetParam();
+    const FaultScenarioSummary summary = RunFaultScenario(scenario);
 
-        EXPECT_EQ(summary.scenario, scenario);
-        EXPECT_EQ(summary.name, FaultScenarioName(scenario));
-        EXPECT_FALSE(summary.injected_operation.empty());
-        EXPECT_EQ(summary.error_message,
-                  "injected " + FaultScenarioName(scenario) + " failure");
-        if (scenario == FaultScenario::Read) {
-            EXPECT_EQ(summary.error_code, ErrorCode::Io);
-            EXPECT_FALSE(summary.sticky);
-            EXPECT_FALSE(summary.later_write_reused_error_without_io);
-            EXPECT_TRUE(summary.retry_succeeded);
-            EXPECT_FALSE(summary.recovered_batch.has_value());
-            continue;
-        }
+    EXPECT_EQ(summary.scenario, scenario);
+    EXPECT_EQ(summary.name, FaultScenarioName(scenario));
+    EXPECT_FALSE(summary.injected_operation.empty());
+    EXPECT_EQ(summary.error_message,
+              "injected " + FaultScenarioName(scenario) + " failure");
+    if (scenario == FaultScenario::Read) {
+        EXPECT_EQ(summary.error_code, ErrorCode::Io);
+        EXPECT_FALSE(summary.sticky);
+        EXPECT_FALSE(summary.later_write_reused_error_without_io);
+        EXPECT_TRUE(summary.retry_succeeded);
+        EXPECT_FALSE(summary.recovered_batch.has_value());
+        return;
+    }
 
-        EXPECT_EQ(summary.error_code,
-                  scenario == FaultScenario::Scheduling ? ErrorCode::Busy
-                                                        : ErrorCode::Io);
-        EXPECT_TRUE(summary.sticky);
-        EXPECT_TRUE(summary.later_write_reused_error_without_io);
-        EXPECT_FALSE(summary.retry_succeeded);
-        ASSERT_TRUE(summary.recovered_batch.has_value());
-        if (scenario == FaultScenario::WalAppend ||
-            scenario == FaultScenario::OldWalClose ||
-            scenario == FaultScenario::Scheduling) {
-            EXPECT_EQ(*summary.recovered_batch, RecoveredBatchState::Old);
-        } else {
-            EXPECT_EQ(*summary.recovered_batch, RecoveredBatchState::New);
-        }
+    EXPECT_EQ(summary.error_code,
+              scenario == FaultScenario::Scheduling ? ErrorCode::Busy
+                                                    : ErrorCode::Io);
+    EXPECT_TRUE(summary.sticky);
+    EXPECT_TRUE(summary.later_write_reused_error_without_io);
+    EXPECT_FALSE(summary.retry_succeeded);
+    ASSERT_TRUE(summary.recovered_batch.has_value());
+    if (scenario == FaultScenario::WalAppend ||
+        scenario == FaultScenario::OldWalClose ||
+        scenario == FaultScenario::Scheduling) {
+        EXPECT_EQ(*summary.recovered_batch, RecoveredBatchState::Old);
+    } else {
+        EXPECT_EQ(*summary.recovered_batch, RecoveredBatchState::New);
     }
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    NamedBoundary, FaultScenarioContractTest,
+    testing::ValuesIn(EnumerateFaultScenarios()),
+    [](const testing::TestParamInfo<FaultScenario>& information) {
+        std::string name = FaultScenarioName(information.param);
+        for (char& character : name) {
+            if (character == '-') {
+                character = '_';
+            }
+        }
+        return name;
+    });
 
 }  // namespace
 }  // namespace modern_leveldb::stress

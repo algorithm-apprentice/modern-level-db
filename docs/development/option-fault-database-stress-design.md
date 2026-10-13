@@ -58,7 +58,10 @@ filesystem are created per scenario.
 | Read | first table `read` | Get returns typed error; clearing the hook permits the same read |
 | WAL append | next log `append` | write fails and becomes sticky; reopen yields the old complete batch state |
 | WAL sync | next log `sync` | write fails and becomes sticky; reopen yields an allowed whole-batch state, never partial |
+| Old WAL close | rotation closes old `.log` | rotation fails sticky; reopen yields the old complete batch state |
 | Table sync | flush output `.ldb` sync | background/flush fails sticky; reopen recovers all acknowledged values from WAL/installed state |
+| Table close | flush output `.ldb` close | background/flush fails sticky; reopen recovers all acknowledged values |
+| Table directory sync | second runtime database-directory sync | publication fails sticky; reopen recovers all acknowledged values |
 | MANIFEST append | runtime MANIFEST append | installation fails sticky; reopen recovers all acknowledged values |
 | MANIFEST sync | runtime MANIFEST sync | installation fails sticky; reopen recovers all acknowledged values |
 | Scheduling | background executor rejects work | write/flush reports and retains the scheduling failure without stranded work |
