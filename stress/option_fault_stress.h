@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -21,12 +22,26 @@ struct OptionMatrixCell {
     friend bool operator==(const OptionMatrixCell&, const OptionMatrixCell&) = default;
 };
 
+struct OptionMatrixCellSummary {
+    std::string id;
+    std::uint64_t seed = 0;
+    std::size_t operations = 0;
+    std::size_t entries = 0;
+    std::string fingerprint;
+
+    friend bool operator==(const OptionMatrixCellSummary&,
+                           const OptionMatrixCellSummary&) = default;
+};
+
 [[nodiscard]] std::vector<OptionMatrixCell> EnumerateOptionMatrix();
 [[nodiscard]] std::string OptionMatrixCellId(const OptionMatrixCell& cell);
 [[nodiscard]] std::uint64_t DeriveOptionMatrixSeed(std::uint64_t campaign_seed,
                                                    const OptionMatrixCell& cell);
 [[nodiscard]] std::string StableModelFingerprint(const test_support::Model& model);
 [[nodiscard]] Options OptionMatrixDatabaseOptions(const OptionMatrixCell& cell);
+[[nodiscard]] OptionMatrixCellSummary RunOptionMatrixCell(
+    const std::filesystem::path& database, const OptionMatrixCell& cell,
+    std::uint64_t campaign_seed, std::size_t operations);
 
 }  // namespace modern_leveldb::stress
 

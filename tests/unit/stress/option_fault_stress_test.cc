@@ -9,6 +9,8 @@
 #include <string>
 #include <tuple>
 
+#include "support/temporary_directory.h"
+
 namespace modern_leveldb::stress {
 namespace {
 
@@ -97,6 +99,30 @@ TEST(OptionMatrixTest, FingerprintsSortedBinaryStateWithStableFormat) {
 
     EXPECT_EQ(StableModelFingerprint({}), "cbf29ce484222325");
     EXPECT_EQ(StableModelFingerprint(model), "c1900cb37fcee501");
+}
+
+TEST(OptionMatrixCellTest, ReopensAndProducesDeterministicSemanticSummary) {
+    test_support::TemporaryDirectory root;
+    const OptionMatrixCell cell{
+        Compression::None,
+        false,
+        0,
+        64U * 1024U,
+        false,
+    };
+
+    const OptionMatrixCellSummary first =
+        RunOptionMatrixCell(root.path() / "first", cell, 17, 96);
+    const OptionMatrixCellSummary second =
+        RunOptionMatrixCell(root.path() / "second", cell, 17, 96);
+
+    EXPECT_EQ(first, second);
+    EXPECT_EQ(first.id, OptionMatrixCellId(cell));
+    EXPECT_EQ(first.seed, DeriveOptionMatrixSeed(17, cell));
+    EXPECT_EQ(first.operations, 96U);
+    EXPECT_EQ(first.fingerprint.size(), 16U);
+    EXPECT_TRUE(std::filesystem::exists(root.path() / "first" / "CURRENT"));
+    EXPECT_TRUE(std::filesystem::exists(root.path() / "second" / "CURRENT"));
 }
 
 }  // namespace
