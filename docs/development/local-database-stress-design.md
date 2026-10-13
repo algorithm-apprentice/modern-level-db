@@ -75,6 +75,12 @@ the separate V3 process-crash requirements below.
 - Windows and POSIX process ownership implemented separately where native
   mechanisms differ.
 
+The detailed V3 acknowledgement journal and parent/worker protocol are in
+[Process-crash database stress testing](process-crash-database-stress-design.md).
+
+V3 is implemented. Its process-kill model remains distinct from the V4
+filesystem fault matrix and the existing deterministic power-loss simulator.
+
 ### V4: option and fault matrix
 
 - Seeded selection from a deliberately small supported option set.

@@ -17,6 +17,7 @@ FetchContent_Declare(
   GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(googletest)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 add_executable(
   modern_leveldb_unit_tests
@@ -62,6 +63,7 @@ add_executable(
   unit/platform/file_system_test.cc
   unit/platform/mapped_read_limiter_test.cc
   unit/platform/serial_executor_test.cc
+  unit/stress/crash_stress_worker_test.cc
   unit/stress/concurrent_stress_test.cc
   unit/stress/linearizability_test.cc
   unit/stress/stress_test.cc
@@ -75,6 +77,7 @@ add_executable(
   unit/table/table_test.cc
   unit/toolchain_test.cc
   unit/wal/wal_io_test.cc
+  "${PROJECT_SOURCE_DIR}/stress/crash_stress_worker.cc"
   "${PROJECT_SOURCE_DIR}/stress/concurrent_stress.cc"
   "${PROJECT_SOURCE_DIR}/stress/linearizability.cc"
   "${PROJECT_SOURCE_DIR}/stress/stress.cc"
@@ -234,6 +237,12 @@ gtest_discover_tests(
   DISCOVERY_TIMEOUT "${modern_leveldb_gtest_discovery_timeout}"
   PROPERTIES LABELS unit TIMEOUT 10
 )
+
+add_test(
+  NAME stress.crash_runner_contracts
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/crash_stress_test.py"
+)
+set_tests_properties(stress.crash_runner_contracts PROPERTIES LABELS unit TIMEOUT 30)
 
 set(consumer_scenarios
   module_shadow default_tests tests_disabled gtest_options dependency_targets
