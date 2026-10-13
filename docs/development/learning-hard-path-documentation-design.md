@@ -137,3 +137,51 @@ mutable evidence links, privacy findings, or line-ending violations.
 - The global content review finds no remaining directly related
   contradiction or orphaned advanced topic.
 - Documentation validation and checker tests pass.
+
+## Completion and global review
+
+The delivered structure follows the placement above:
+
+- lesson 04 now teaches the prepared `VersionSet` edit, unlocked MANIFEST I/O,
+  post-durability publication, sticky failure, read pins, and live-Version
+  retention;
+- lesson 05 and Lab 6 now teach retired-entry reclamation and reentrant value
+  deleters, with lesson 08 carrying the general destroy-after-unlock rule;
+- lesson 12 now provides the dedicated POSIX/Windows owner, completion,
+  mapping, writer, directory-sync, lock, error-priority, and teardown model.
+
+Navigation updates keep the core 01-10 sequence unchanged. The comparison
+appendix and native maintainer lesson are separately labeled as advanced
+reading. The concept index gives native lifecycle changes their own route,
+the glossary defines the new maintenance terms, and the platform reference
+links to the implementation model without duplicating it.
+
+The integrated review read all 15 Markdown files under `docs/learning` and
+their directly related architecture, code-style, and platform-reference
+boundaries. It checked prerequisite progression, first/implementation/deep
+routes, ownership and durability terminology, responsibility links,
+duplication, and current-source claims.
+
+Two cross-document issues were corrected during that review:
+
+1. lesson 12 initially appeared directly after lesson 10 in the core table,
+   making a maintainer deep dive look like a first-pass requirement; it now
+   lives with the separately labeled appendix/deep-dive material;
+2. lesson 08 still recommended Debug runtime assertions for established
+   private invariants, contradicting current code style and the production
+   tree; it now requires documented proven invariants plus applicable
+   compile-time checks and behavioral test assertions.
+
+No remaining directly related contradiction, duplicate authority, broken
+learning route, or stale production responsibility was found. Existing WAL,
+compaction, iterator, MVCC, table-format, and verification lessons remain the
+authoritative introductions for their domains.
+
+Final local validation passed:
+
+```text
+ci_changes_test.py             17/17
+check_documentation_test.py    13/13
+check_documentation.py         passed
+git diff --check               passed
+```

@@ -39,6 +39,8 @@ opening requires explicit weak-namespace consent: file-content flushes remain
 real, but directory/name persistence cannot claim the POSIX-equivalent
 guarantee. See
 [platform support and durability](../reference/platform-support-and-durability.md).
+The maintainer-level native owners and teardown sequences are covered in
+[lesson 12](12-native-filesystem-lifecycles.md).
 
 ## Append, Flush, Sync, Close
 
@@ -210,9 +212,11 @@ database mutex reacquired
     success -> publish captured pointers, log counters, and candidate Version
 ```
 
-Unlocking does not make the candidate mutable. Every byte and owner needed by
-the write was prepared under the mutex. The mutex is reacquired before every
-normal return and before a thrown exception leaves `WritePrepared`.
+Unlocking does not make the candidate mutable. The edit state, optional
+snapshot bytes, candidate owner, and publication capacity were captured under
+the mutex. The local edit can be encoded during the unlocked write. The mutex
+is reacquired before every normal return and before a thrown exception leaves
+`WritePrepared`.
 
 Foreground work can still advance allocation and sequence counters while the
 I/O is in progress. The MANIFEST record contains the values captured before
@@ -242,13 +246,13 @@ every file absent from it:
 
 ```text
 current_ shared owner        -> keeps the new Version live
-ReadPin on the old current   -> moves an owner to read_pinned_versions_
+ReadPin on the old current   -> installation retains it in read_pinned_versions_
 iterator/compaction owner    -> keeps its shared Version live directly
 versions_ weak registry      -> observes every installed Version still owned
 LiveFiles()                  -> unions files from all observed live Versions
 ```
 
-`ReadPin` is intentionally lighter than taking another public shared owner.
+`ReadPin` is intentionally lighter than taking another shared owner.
 It increments a mutex-protected pin count. During installation,
 `RetainPinnedCurrent` gives a pinned old current Version a real owner before
 `current_` moves to the candidate. Releasing the last pin removes that retained
@@ -320,7 +324,8 @@ different path; it must preserve its old-WAL close and sticky-error protocol.
    transition.
 5. After the edit becomes durable, publishing its matching in-memory state
    must not depend on an allocation that can throw. Preparation also freezes
-   the exact edit and snapshot bytes before concurrent counters may advance.
+   the exact edit state and snapshot bytes before concurrent counters may
+   advance.
 6. No. Read pins and shared owners can keep older installed Versions live.
    Cleanup must include their files, pending outputs, and cache ownership.
 

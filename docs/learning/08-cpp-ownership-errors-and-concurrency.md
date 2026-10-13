@@ -219,7 +219,7 @@ There are two kinds of validation:
 | Boundary | Appropriate behavior |
 |---|---|
 | Public argument, persistent bytes, I/O result | Check and return an explicit error |
-| Established private invariant | Use the invariant; assert internal preconditions in Debug |
+| Established private invariant | Document and rely on the proven invariant; keep applicable compile-time checks and behavioral test assertions |
 
 For a trusted path, identify its caller, established shape, protected
 lifetime, and invalidation events.

@@ -236,6 +236,8 @@ access can fail through the operating system's in-page/access-fault path.
 `allow_mmap_reads=false` selects copied reads when typed read errors are
 required. External modification or truncation of live database files is
 unsupported.
+For mapping admission, rollback, native handle ownership, and teardown order,
+see [lesson 12](12-native-filesystem-lifecycles.md).
 
 ## Source tour
 

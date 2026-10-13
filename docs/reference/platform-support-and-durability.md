@@ -93,3 +93,7 @@ The repository retains:
 
 Those checks are evidence within their stated models. They are not real
 power-loss certification or production-readiness certification.
+
+For the maintainer-level owner, completion, rollback, lock, and teardown
+models behind these guarantees, read
+[native filesystem lifecycles](../learning/12-native-filesystem-lifecycles.md).

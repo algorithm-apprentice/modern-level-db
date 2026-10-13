@@ -29,7 +29,7 @@ both platforms. The native resources satisfying one operation are different:
 |---|---|---|
 | Sequential reader | Reader object owns one descriptor | Reader object owns one file handle |
 | Copied random reader | Reader object owns one descriptor; `pread` avoids shared position | Reader object owns one overlapped-capable file handle; each call owns an event and `OVERLAPPED` |
-| Mapped random reader | Region owns the mapping and limiter slot; the opening descriptor can close | View owns the mapping and limiter slot; opening file and section handles close after publication |
+| Mapped random reader | Region owns the mapping and limiter slot; the opening descriptor closes after `mmap` succeeds | View owns the mapping and limiter slot; opening file and section handles close after view acquisition |
 | Writable file | Writer owns one descriptor and its buffered first-error state | Writer owns one handle and its buffered first-error state |
 | Database lock | Lock object owns a descriptor plus process-local reservation | Lock object owns the handle carrying the kernel lock |
 
@@ -135,7 +135,9 @@ The pending mapping owner is rollback:
 acquire limiter slot
     -> construct pending region/view owner
     -> attempt native mapping
-       failure: pending owner releases every acquired resource
+       copied fallback: pending owner releases the slot;
+                        opening handle transfers to the copied reader
+       typed failure: pending owners release partial native resources and slot
        success: move pending owner into returned RandomAccessFile
 ```
 
@@ -157,8 +159,10 @@ slot. Releasing the slot first would let another mapping consume capacity
 while the old view might still exist.
 
 Do not generalize one backend's destructor policy into a portable guarantee.
-The shared invariant is narrower: a successful teardown never advertises a
-free mapping slot before the owned view is gone.
+On the ordinary successful path, both remove the view before releasing its
+slot. Their exceptional policies differ: POSIX may release after an unreported
+`munmap` failure, while Windows terminates rather than advertise that outcome
+as successful teardown.
 
 Mapped bytes remain borrowed from the file view. A table, iterator, or block
 using those bytes must retain the owning random-access file through the table
