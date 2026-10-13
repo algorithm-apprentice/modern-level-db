@@ -329,6 +329,8 @@ def build_plan(config: CampaignConfig) -> CampaignPlan:
                         "{artifacts}",
                         "--seed",
                         str(seed),
+                        "--mode",
+                        "checked",
                         "--threads",
                         str(threads),
                         "--rounds",

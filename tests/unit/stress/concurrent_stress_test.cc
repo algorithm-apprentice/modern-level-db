@@ -66,8 +66,8 @@ TEST(ConcurrentStressArgumentsTest, ParsesDefaultsOverridesAndBounds) {
     EXPECT_EQ(parsed_defaults.compression, Compression::None);
 
     const std::vector<std::filesystem::path> overrides{
-        "--db",      "db",  "--output", "out", "--seed",        "18446744073709551615",
-        "--threads", "8",   "--rounds", "42",  "--compression", "snappy",
+        "--db",      "db",      "--output", "out", "--seed",        "18446744073709551615",
+        "--threads", "8",       "--rounds", "42",  "--compression", "snappy",
         "--mode",    "checked",
     };
     const ConcurrentStressArguments parsed_overrides = ParseConcurrentStressArguments(overrides);
@@ -107,8 +107,7 @@ TEST(ConcurrentStressArgumentsTest, FanoutAcceptsAnyPositiveRepresentableThreadC
         const ConcurrentStressArguments parsed = ParseConcurrentStressArguments(arguments);
 
         EXPECT_EQ(parsed.mode, ConcurrentStressMode::Fanout);
-        EXPECT_EQ(parsed.threads,
-                  static_cast<std::size_t>(std::stoull(std::string(threads))));
+        EXPECT_EQ(parsed.threads, static_cast<std::size_t>(std::stoull(std::string(threads))));
     }
 }
 

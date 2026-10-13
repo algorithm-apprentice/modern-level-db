@@ -640,11 +640,12 @@ ConcurrentStressArguments ParseConcurrentStressArguments(
     if (!have_database || !have_output) {
         throw std::invalid_argument("--db and --output are required");
     }
-    const std::size_t maximum_threads = result.mode == ConcurrentStressMode::Checked ? 8U : 256U;
-    if (result.threads < 2 || result.threads > maximum_threads) {
-        throw std::invalid_argument(result.mode == ConcurrentStressMode::Checked
-                                        ? "--threads must be in 2..8 for checked mode"
-                                        : "--threads must be in 2..256 for fanout mode");
+    if (result.mode == ConcurrentStressMode::Checked &&
+        (result.threads < 2 || result.threads > 8)) {
+        throw std::invalid_argument("--threads must be in 2..8 for checked mode");
+    }
+    if (result.mode == ConcurrentStressMode::Fanout && result.threads == 0) {
+        throw std::invalid_argument("--threads must be positive for fanout mode");
     }
     return result;
 }
@@ -732,7 +733,8 @@ std::string ConcurrentStressUsage() {
            "--output NEW_ARTIFACT_DIRECTORY [--seed N] [--mode checked|fanout] "
            "[--threads N] [--rounds N] [--compression none|snappy|zstd]\n"
            "Checked mode bounds threads to 2..8 and includes bounded linearizability. "
-           "Fanout mode bounds threads to 2..256 and runs the scalable batch/snapshot oracle. "
+           "Fanout mode accepts any positive thread count and runs the scalable "
+           "batch/snapshot oracle. "
            "Both paths must be absent, distinct, non-nested, and used only for disposable "
            "local stress data.\n";
 }
