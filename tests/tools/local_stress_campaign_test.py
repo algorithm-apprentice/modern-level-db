@@ -406,5 +406,327 @@ class LocalStressCampaignAttemptTest(unittest.TestCase):
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep")
 
 
+class LocalStressCampaignStateTest(unittest.TestCase):
+    def fake_job(self, root: Path) -> Path:
+        script = root / "fake_campaign_job.py"
+        script.write_text(
+            textwrap.dedent(
+                """
+                import argparse
+                from pathlib import Path
+                import sys
+
+                parser = argparse.ArgumentParser()
+                parser.add_argument("--artifacts", type=Path, required=True)
+                parser.add_argument("--control", type=Path, required=True)
+                parser.add_argument("--revision", required=True)
+                parser.add_argument("--dirty", required=True)
+                parser.add_argument("--label", required=True)
+                args = parser.parse_args()
+
+                behavior = args.control.read_text(encoding="utf-8").strip()
+                print(f"start {args.label}", flush=True)
+                if behavior == "fail":
+                    print(f"failed {args.label}", file=sys.stderr, flush=True)
+                    raise SystemExit(7)
+
+                args.artifacts.mkdir()
+                if behavior != "no-run":
+                    (args.artifacts / "run.txt").write_text(
+                        "\\n".join(
+                            [
+                                "format=modern-leveldb-stress-run-v1",
+                                f"revision={args.revision}",
+                                f"dirty={args.dirty}",
+                                "",
+                            ]
+                        ),
+                        encoding="utf-8",
+                    )
+                if behavior != "no-completion":
+                    (args.artifacts / "completion.txt").write_text(
+                        "format=modern-leveldb-stress-result-v1\\n",
+                        encoding="utf-8",
+                    )
+                """
+            ).lstrip(),
+            encoding="utf-8",
+        )
+        return script
+
+    def config(self, root: Path) -> run_local_stress_campaign.CampaignConfig:
+        return run_local_stress_campaign.CampaignConfig(
+            stress_dir=root,
+            workspace=root / "campaign",
+            seeds=(17,),
+            tiers=("v1",),
+            v1_operations=1,
+            v2_rounds=1,
+            v3_rounds=1,
+            v3_inflight_probes=0,
+            v3_timeout_seconds=1.0,
+            v4_operations=1,
+            v4_liveness_writes=1,
+            job_timeout_seconds=5.0,
+            max_duration_seconds=0.0,
+            resume=False,
+        )
+
+    def job(
+        self,
+        index: int,
+        script: Path,
+        control: Path,
+        job_id: str,
+        revision: str = "fake-revision",
+    ) -> run_local_stress_campaign.CampaignJob:
+        return run_local_stress_campaign.CampaignJob(
+            index=index,
+            job_id=job_id,
+            tier="v1",
+            seed=17,
+            argv_template=(
+                sys.executable,
+                str(script),
+                "--artifacts",
+                "{artifacts}",
+                "--control",
+                str(control),
+                "--revision",
+                revision,
+                "--dirty",
+                "false",
+                "--label",
+                job_id,
+            ),
+            run_artifact="artifacts/run.txt",
+            completion_artifact="artifacts/completion.txt",
+        )
+
+    def plan(
+        self, root: Path, jobs: list[run_local_stress_campaign.CampaignJob]
+    ) -> run_local_stress_campaign.CampaignPlan:
+        return run_local_stress_campaign.CampaignPlan(
+            stress_dir=str(root),
+            seeds=(17,),
+            tiers=("v1",),
+            v1_operations=1,
+            v2_rounds=1,
+            v3_rounds=1,
+            v3_inflight_probes=0,
+            v3_timeout_seconds=1.0,
+            v4_operations=1,
+            v4_liveness_writes=1,
+            jobs=tuple(jobs),
+        )
+
+    def control(self, root: Path, name: str, behavior: str) -> Path:
+        path = root / f"{name}.control"
+        path.write_text(behavior, encoding="utf-8")
+        return path
+
+    def test_campaign_publishes_completion_state_summary_and_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script = self.fake_job(root)
+            first = self.control(root, "first", "pass")
+            second = self.control(root, "second", "pass")
+            plan = self.plan(
+                root,
+                [
+                    self.job(0, script, first, "job-one"),
+                    self.job(1, script, second, "job-two"),
+                ],
+            )
+            config = self.config(root)
+
+            summary = run_local_stress_campaign.run_campaign(
+                config, plan=plan, working_directory=root
+            )
+
+            self.assertEqual(summary.status, "completed")
+            self.assertEqual(summary.total, 2)
+            self.assertEqual(summary.passed, 2)
+            self.assertEqual(summary.failed, 0)
+            self.assertEqual(summary.pending, 0)
+            self.assertEqual(summary.revision, "fake-revision")
+            self.assertFalse(summary.dirty)
+            self.assertIsNone(summary.blocking_job)
+            self.assertTrue((config.workspace / "completion.txt").is_file())
+            self.assertTrue((config.workspace / "plan.json").is_file())
+            self.assertTrue((config.workspace / "state.json").is_file())
+            self.assertTrue((config.workspace / "summary.json").is_file())
+            self.assertTrue((config.workspace / "summary.txt").is_file())
+            self.assertTrue((config.workspace / "events.jsonl").is_file())
+            state = run_local_stress_campaign.read_json(
+                config.workspace / "state.json"
+            )
+            self.assertEqual(
+                [job["status"] for job in state["jobs"]],
+                ["passed", "passed"],
+            )
+            self.assertEqual(
+                len(state["jobs"][0]["attempts"]),
+                1,
+            )
+
+    def test_campaign_stops_on_failure_and_resume_retries_in_order(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script = self.fake_job(root)
+            controls = [
+                self.control(root, "first", "pass"),
+                self.control(root, "second", "fail"),
+                self.control(root, "third", "pass"),
+            ]
+            plan = self.plan(
+                root,
+                [
+                    self.job(0, script, controls[0], "job-one"),
+                    self.job(1, script, controls[1], "job-two"),
+                    self.job(2, script, controls[2], "job-three"),
+                ],
+            )
+            config = self.config(root)
+
+            failed = run_local_stress_campaign.run_campaign(
+                config, plan=plan, working_directory=root
+            )
+
+            self.assertEqual(failed.status, "failed")
+            self.assertEqual(failed.passed, 1)
+            self.assertEqual(failed.failed, 1)
+            self.assertEqual(failed.pending, 1)
+            self.assertEqual(failed.blocking_job, "job-two")
+            self.assertFalse((config.workspace / "completion.txt").exists())
+            first_attempt = (
+                config.workspace / "jobs" / "000-job-one" / "attempts" / "001"
+            )
+            failed_attempt = (
+                config.workspace / "jobs" / "001-job-two" / "attempts" / "001"
+            )
+            pending_attempts = (
+                config.workspace / "jobs" / "002-job-three" / "attempts"
+            )
+            self.assertTrue((first_attempt / "result.json").is_file())
+            self.assertEqual(
+                run_local_stress_campaign.read_json(
+                    failed_attempt / "result.json"
+                )["category"],
+                "nonzero_exit",
+            )
+            self.assertEqual(list(pending_attempts.iterdir()), [])
+
+            controls[1].write_text("pass", encoding="utf-8")
+            config.resume = True
+            completed = run_local_stress_campaign.run_campaign(
+                config, plan=plan, working_directory=root
+            )
+
+            self.assertEqual(completed.status, "completed")
+            self.assertEqual(completed.passed, 3)
+            self.assertEqual(
+                sorted(path.name for path in (first_attempt.parent).iterdir()),
+                ["001"],
+            )
+            self.assertEqual(
+                sorted(
+                    path.name
+                    for path in (
+                        config.workspace
+                        / "jobs"
+                        / "001-job-two"
+                        / "attempts"
+                    ).iterdir()
+                ),
+                ["001", "002"],
+            )
+            self.assertEqual(
+                sorted(
+                    path.name
+                    for path in (
+                        config.workspace
+                        / "jobs"
+                        / "002-job-three"
+                        / "attempts"
+                    ).iterdir()
+                ),
+                ["001"],
+            )
+            self.assertTrue((config.workspace / "completion.txt").is_file())
+
+    def test_campaign_rejects_missing_artifacts_and_mixed_identity(self):
+        cases = [
+            ("no-completion", "same", "missing_completion"),
+            ("pass", "different-revision", "identity_mismatch"),
+        ]
+        for behavior, revision, category in cases:
+            with self.subTest(category=category):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    script = self.fake_job(root)
+                    first = self.control(root, "first", "pass")
+                    second = self.control(root, "second", behavior)
+                    plan = self.plan(
+                        root,
+                        [
+                            self.job(
+                                0, script, first, "job-one", "same"
+                            ),
+                            self.job(
+                                1, script, second, "job-two", revision
+                            ),
+                        ],
+                    )
+                    config = self.config(root)
+
+                    summary = run_local_stress_campaign.run_campaign(
+                        config, plan=plan, working_directory=root
+                    )
+
+                    self.assertEqual(summary.status, "failed")
+                    self.assertEqual(summary.blocking_job, "job-two")
+                    state = run_local_stress_campaign.read_json(
+                        config.workspace / "state.json"
+                    )
+                    self.assertEqual(
+                        state["jobs"][1]["attempts"][-1]["category"],
+                        category,
+                    )
+                    self.assertFalse(
+                        (config.workspace / "completion.txt").exists()
+                    )
+
+    def test_resume_rejects_plan_mismatch_before_new_attempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script = self.fake_job(root)
+            control = self.control(root, "first", "fail")
+            initial = self.plan(
+                root, [self.job(0, script, control, "job-one")]
+            )
+            config = self.config(root)
+            run_local_stress_campaign.run_campaign(
+                config, plan=initial, working_directory=root
+            )
+            attempts = (
+                config.workspace / "jobs" / "000-job-one" / "attempts"
+            )
+            changed = self.plan(
+                root,
+                [self.job(0, script, control, "job-one", "changed")],
+            )
+            config.resume = True
+
+            with self.assertRaisesRegex(ValueError, "plan does not match"):
+                run_local_stress_campaign.run_campaign(
+                    config, plan=changed, working_directory=root
+                )
+
+            self.assertEqual(
+                sorted(path.name for path in attempts.iterdir()), ["001"]
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
