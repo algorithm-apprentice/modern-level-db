@@ -53,7 +53,7 @@ struct MixedStressSummary {
     std::size_t writes = 0;
     std::size_t deletes = 0;
     std::size_t iterations = 0;
-    std::size_t fresh_writes = 0;
+    std::size_t fresh_write_plans = 0;
     std::size_t exact_checks = 0;
     std::size_t entries = 0;
     std::string fingerprint;

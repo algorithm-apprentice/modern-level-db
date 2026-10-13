@@ -143,7 +143,7 @@ private:
 
 struct MixedCounters {
     std::array<std::atomic<std::size_t>, 5> operations{};
-    std::atomic<std::size_t> fresh_writes{0};
+    std::atomic<std::size_t> fresh_write_plans{0};
 };
 
 template <typename T>
@@ -326,7 +326,7 @@ void ExecuteOperation(Database& database, StripedModel& model, std::shared_mutex
             const std::uint64_t token = MixedRandom(arguments.seed, worker, operation, 2);
             const std::string value = MixedValue(arguments.seed, worker, operation, token);
             if (MixedRandom(arguments.seed, worker, operation, 3) % 100U < 60U) {
-                counters.fresh_writes.fetch_add(1, std::memory_order_relaxed);
+                counters.fresh_write_plans.fetch_add(1, std::memory_order_relaxed);
                 WritePreferFresh(database, model, quiescence, arguments, worker, fresh_counter,
                                  slot, value);
             } else {
@@ -451,7 +451,7 @@ void WriteOperationSummary(const std::filesystem::path& output, const MixedStres
                              "\nwrites=" + std::to_string(summary.writes) +
                              "\ndeletes=" + std::to_string(summary.deletes) +
                              "\niterations=" + std::to_string(summary.iterations) +
-                             "\nfresh_writes=" + std::to_string(summary.fresh_writes) +
+                             "\nfresh_write_plans=" + std::to_string(summary.fresh_write_plans) +
                              "\nexact_checks=" + std::to_string(summary.exact_checks) + "\n";
     WriteStressText(output / "operation-summary.txt", text);
 }
@@ -632,7 +632,7 @@ MixedStressSummary RunMixedStress(const MixedStressArguments& arguments,
                 std::memory_order_relaxed),
             counters.operations[static_cast<std::size_t>(MixedOperationKind::Iterate)].load(
                 std::memory_order_relaxed),
-            counters.fresh_writes.load(std::memory_order_relaxed),
+            counters.fresh_write_plans.load(std::memory_order_relaxed),
             exact_checks,
             final_state.size(),
             StableStressFingerprint(final_state),

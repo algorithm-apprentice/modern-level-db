@@ -163,8 +163,8 @@ TEST(MixedStressRunTest, ExecutesApplicableMixAcrossReopenEpochs) {
     EXPECT_GT(summary.writes, 0U);
     EXPECT_GT(summary.deletes, 0U);
     EXPECT_GT(summary.iterations, 0U);
-    EXPECT_GT(summary.fresh_writes, 0U);
-    EXPECT_LE(summary.fresh_writes, summary.writes);
+    EXPECT_GT(summary.fresh_write_plans, 0U);
+    EXPECT_LE(summary.fresh_write_plans, summary.writes);
     EXPECT_EQ(summary.exact_checks, 5U);
     EXPECT_LE(summary.entries, arguments.keys);
     EXPECT_EQ(summary.fingerprint.size(), 16U);
@@ -190,7 +190,7 @@ TEST(MixedStressRunTest, SameSeedPreservesOperationCountsAcrossSchedules) {
     EXPECT_EQ(first_summary.writes, second_summary.writes);
     EXPECT_EQ(first_summary.deletes, second_summary.deletes);
     EXPECT_EQ(first_summary.iterations, second_summary.iterations);
-    EXPECT_EQ(first_summary.fresh_writes, second_summary.fresh_writes);
+    EXPECT_EQ(first_summary.fresh_write_plans, second_summary.fresh_write_plans);
 }
 
 TEST(MixedStressRunTest, PreservesCompletedEpochsOnFailure) {
