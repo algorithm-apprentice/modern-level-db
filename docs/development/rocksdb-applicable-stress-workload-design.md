@@ -115,7 +115,7 @@ An exclusion is not evidence. When Modern adds one of these public contracts,
 the matrix must be revisited before claiming broader RocksDB-applicable
 coverage.
 
-## Planned executable
+## Executable
 
 The default-off local stress build will add:
 
@@ -123,7 +123,7 @@ The default-off local stress build will add:
 modern_leveldb_mixed_stress
 ```
 
-Planned arguments:
+Arguments:
 
 ```text
 --db NEW_DATABASE_DIRECTORY
