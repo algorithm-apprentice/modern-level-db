@@ -54,6 +54,33 @@ TEST_F(DatabaseTest, FlushesTheMemtableIntoATable) {
     EXPECT_EQ(Numbers(FileType::Table).size(), 1U);
 }
 
+TEST_F(DatabaseTest, CloseRetriesAnObsoleteFileRemovalFailure) {
+    auto database = Open();
+    ASSERT_TRUE(Put(*database, "a", "1").has_value());
+    const std::uint64_t old_log = Numbers(FileType::Log).back();
+    const std::string removal = "remove " + Numbered(old_log, ".log");
+    bool failed_once = false;
+    file_system_.SetOperationHook([&](std::string_view operation) -> Status {
+        if (!failed_once && operation == removal) {
+            failed_once = true;
+            return std::unexpected(Error::Io("injected cleanup failure"));
+        }
+        return {};
+    });
+
+    ASSERT_TRUE(Flush(*database).has_value());
+    ASSERT_TRUE(failed_once);
+    EXPECT_TRUE(Exists(Numbered(old_log, ".log")));
+    const auto state = database->GetState();
+    ASSERT_TRUE(state.has_value());
+    EXPECT_FALSE(state->sticky_error.has_value());
+    file_system_.SetOperationHook({});
+
+    database.reset();
+
+    EXPECT_FALSE(Exists(Numbered(old_log, ".log")));
+}
+
 TEST_F(DatabaseTest, StopsWritesAfterAFailedFlush) {
     const auto database = Open();
     ASSERT_TRUE(Put(*database, "a", "1").has_value());
@@ -361,6 +388,44 @@ TEST_F(DatabaseTest, CompactsLevel0InTheBackground) {
     EXPECT_EQ(Levels(), "0 1 1 0 0 0 0");
     EXPECT_FALSE(Exists(Numbered(first_output, ".ldb")));
     EXPECT_EQ(Numbers(FileType::Table).size(), 2U);
+}
+
+TEST_F(DatabaseTest, CloseReclaimsCompactionInputsSkippedForAnIteratorPin) {
+    auto database = Open();
+    WarmUp(*database);
+    for (std::uint32_t i = 0; i < Level0CompactionTrigger; ++i) {
+        Cycle(*database);
+    }
+    ASSERT_EQ(Levels(), "4 1 1 0 0 0 0");
+    ASSERT_EQ(executor_.queued(), 1U);
+    const std::vector<std::vector<std::uint64_t>> before = Files();
+    std::vector<std::uint64_t> inputs = before[0];
+    inputs.insert(inputs.end(), before[1].begin(), before[1].end());
+    auto iterator = database->NewIterator();
+    ASSERT_TRUE(iterator->SeekToFirst().has_value());
+    ASSERT_TRUE(iterator->valid());
+    const std::size_t start = file_system_.operations().size();
+
+    ASSERT_TRUE(executor_.RunOne());
+
+    EXPECT_EQ(Levels(), "0 1 1 0 0 0 0");
+    const std::vector<std::string> operations = OperationsSince(start);
+    for (const std::uint64_t number : inputs) {
+        EXPECT_TRUE(Exists(Numbered(number, ".ldb"))) << number;
+        const std::string removal = "remove " + Numbered(number, ".ldb");
+        EXPECT_EQ(std::ranges::find(operations, removal), operations.end()) << removal;
+    }
+
+    iterator.reset();
+    for (const std::uint64_t number : inputs) {
+        EXPECT_TRUE(Exists(Numbered(number, ".ldb"))) << number;
+    }
+
+    database.reset();
+
+    for (const std::uint64_t number : inputs) {
+        EXPECT_FALSE(Exists(Numbered(number, ".ldb"))) << number;
+    }
 }
 
 TEST_F(DatabaseTest, MovesALoneFileToTheNextLevelWithoutRewritingIt) {
