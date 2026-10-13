@@ -249,6 +249,12 @@ add_test(
 )
 set_tests_properties(stress.crash_runner_contracts PROPERTIES LABELS unit TIMEOUT 30)
 
+add_test(
+  NAME stress.campaign_runner_contracts
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/local_stress_campaign_test.py"
+)
+set_tests_properties(stress.campaign_runner_contracts PROPERTIES LABELS unit TIMEOUT 30)
+
 set(consumer_scenarios
   module_shadow default_tests tests_disabled gtest_options dependency_targets
   crc32c_parent_target dependency_parent_values dependency_shared_only windows_arm64ec_rejected

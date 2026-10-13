@@ -31,6 +31,10 @@ The local stress targets currently cover:
   - eleven named in-memory I/O/scheduling fault boundaries;
   - retry, sticky-stop, and whole-batch recovery oracles;
   - separate fault-free liveness with deterministic background draining;
+- campaign orchestration V5:
+  - deterministic multi-seed V1 through V4 job plans;
+  - bounded owned subprocesses and retained attempt bundles;
+  - source-identity validation, durable summaries, and exact-plan resume;
 - WAL rotation, flush, and compaction pressure through a 64 KiB write buffer;
 - None, Snappy, and Zstd table compression;
 - versioned run, operation, final-state, completion, and failure artifacts.
@@ -40,8 +44,7 @@ contracts; it does not claim unbounded linearizability for every API. V3 adds
 process-crash acknowledgement/recovery evidence, not machine power-loss
 certification. V4 composes a bounded supported option matrix with deterministic
 fault seams; it does not model arbitrary partial syscalls or native media
-failure. Multi-seed campaign orchestration remains V5 in the
-[stress design](local-database-stress-design.md).
+failure. V5 composes the existing tools without adding another database oracle.
 
 ## Safety
 
@@ -84,6 +87,9 @@ cmake --build --preset windows-local-stress `
 Building the target refreshes the source revision and dirty-worktree identity
 compiled into the executable. Rebuild after changing or committing source
 before collecting evidence.
+
+V5 is a Python 3.9+ runner and adds no build target. Build all four stress
+executables above before starting a campaign.
 
 ## Run
 
@@ -325,6 +331,92 @@ allowed batch state.
 Each native database remains under `workspace/databases/<cell-id>`. Preserve
 the complete workspace when any phase fails.
 
+## Run multi-tier campaign orchestration V5
+
+Linux/macOS:
+
+```bash
+python3 tools/run_local_stress_campaign.py \
+  --stress-dir ./build/local-stress/stress \
+  --workspace /absolute/disposable/path/campaign-01 \
+  --seeds 1,17,301 \
+  --tiers v1,v2,v3,v4 \
+  --v1-operations 5000 \
+  --v2-rounds 300 \
+  --v3-rounds 25 \
+  --v3-inflight-probes 3 \
+  --v4-operations 250 \
+  --v4-liveness-writes 2000
+```
+
+Windows:
+
+```powershell
+python tools\run_local_stress_campaign.py `
+  --stress-dir .\build\windows-local-stress\stress `
+  --workspace C:\absolute\disposable\path\campaign-01 `
+  --seeds 1,17,301 `
+  --tiers v1,v2,v3,v4 `
+  --v1-operations 5000 `
+  --v2-rounds 300 `
+  --v3-rounds 25 `
+  --v3-inflight-probes 3 `
+  --v4-operations 250 `
+  --v4-liveness-writes 2000
+```
+
+For every seed, the full plan contains three V1 compression jobs, the V2
+2/None, 4/Snappy, and 8/Zstd profiles, three V3 compression jobs, and one V4
+job. The default three seeds therefore produce 30 sequential subprocesses.
+
+Campaign options:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `--stress-dir` | required | Directory containing all four current-platform stress executables |
+| `--workspace` | required | New campaign root, or recognized root with `--resume` |
+| `--seeds` | `1,17,301` | Ordered, unique uint64 seeds |
+| `--tiers` | `v1,v2,v3,v4` | Complete tiers to include |
+| `--v1-operations` | 5000 | V1 operations per compression/seed |
+| `--v2-rounds` | 300 | V2 rounds per thread/compression profile/seed |
+| `--v3-rounds` | 25 | V3 acknowledged crash rounds per compression/seed |
+| `--v3-inflight-probes` | 3 | V3 optional in-flight probes per job |
+| `--v3-timeout-seconds` | 30 | V3 child protocol timeout |
+| `--v4-operations` | 250 | V4 operations per native option cell |
+| `--v4-liveness-writes` | 2000 | V4 fault-free liveness writes |
+| `--job-timeout-seconds` | 3600 | Outer timeout for one complete job |
+| `--max-duration-seconds` | 0 | Invocation budget; zero is unlimited |
+| `--resume` | off | Revalidate and continue an exact recorded plan |
+
+Resume with the same planning arguments and stress directory:
+
+```console
+python3 tools/run_local_stress_campaign.py ... --resume
+```
+
+Passed jobs are skipped only after their completion format and normalized
+revision/dirty identity are revalidated. Failed, timed-out, interrupted, or
+stale-running jobs receive a new attempt directory; earlier attempts are never
+deleted or overwritten.
+
+## V5 artifacts
+
+| Path | Interpretation |
+|---|---|
+| `plan.json` | Canonical immutable job plan and SHA-256 digest |
+| `events.jsonl` | Append-only fsynced campaign transition journal |
+| `state.json` | Current durable job/attempt state |
+| `summary.json` | Overall, per-tier, per-seed, duration, identity, and attempt summary |
+| `summary.txt` | Human-readable summary |
+| `completion.txt` | Exists only after every planned job passes |
+| `jobs/<index>-<id>/state.json` | Durable state for one job |
+| `jobs/<index>-<id>/attempts/<n>/` | Exact command, logs, result, validation, database, and stress artifacts |
+
+The orchestrator stops at the first blocking job. Exit code 3 means the
+invocation-wide duration budget expired with resumable pending work; it is not
+a completed campaign. Exit code 130 means user interruption after owned-process
+containment.
+
 ## Local acceptance sets
 
 Before reviewing V1 changes, run three fresh campaigns:
@@ -359,6 +451,11 @@ Unicode database/output path. Confirm no worker process survives any campaign.
 Before reviewing V4 changes, run all 48 cells, all eleven fault scenarios, and at
 least 2,000 liveness writes for seeds 1, 17, and 301. Use a fresh workspace for
 each campaign and preserve every failure workspace unchanged.
+
+Before reviewing V5 changes, run a low-budget all-tier campaign, preserve and
+resume one real failed attempt, exercise a contained timeout, and run at least
+one equivalent campaign on POSIX. Confirm every completed job reports one
+source identity and no process survives timeout or interruption.
 
 These campaigns are local evidence. Do not add them to GitHub Actions or CTest
 without a separate cost, duration, flakiness, and ownership decision.
