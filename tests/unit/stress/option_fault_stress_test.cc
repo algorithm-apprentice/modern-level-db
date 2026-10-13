@@ -137,6 +137,7 @@ TEST(FaultScenarioTest, EnumeratesStableNamedBoundaries) {
                   FaultScenario::WalAppend,
                   FaultScenario::WalSync,
                   FaultScenario::OldWalClose,
+                  FaultScenario::TableOpen,
                   FaultScenario::TableSync,
                   FaultScenario::TableClose,
                   FaultScenario::TableDirectorySync,
@@ -148,6 +149,7 @@ TEST(FaultScenarioTest, EnumeratesStableNamedBoundaries) {
     EXPECT_EQ(FaultScenarioName(FaultScenario::WalAppend), "wal-append");
     EXPECT_EQ(FaultScenarioName(FaultScenario::WalSync), "wal-sync");
     EXPECT_EQ(FaultScenarioName(FaultScenario::OldWalClose), "old-wal-close");
+    EXPECT_EQ(FaultScenarioName(FaultScenario::TableOpen), "table-open");
     EXPECT_EQ(FaultScenarioName(FaultScenario::TableSync), "table-sync");
     EXPECT_EQ(FaultScenarioName(FaultScenario::TableClose), "table-close");
     EXPECT_EQ(FaultScenarioName(FaultScenario::TableDirectorySync),

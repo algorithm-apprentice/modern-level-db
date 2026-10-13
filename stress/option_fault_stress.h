@@ -42,6 +42,7 @@ enum class FaultScenario : std::uint8_t {
     WalAppend,
     WalSync,
     OldWalClose,
+    TableOpen,
     TableSync,
     TableClose,
     TableDirectorySync,
