@@ -112,6 +112,10 @@ V5 is implemented. It composes the existing V1 through V4 tools through a
 deterministic local-only job plan, owned subprocess attempts, durable summaries,
 and exact-plan resume. The V1 through V5 roadmap is complete at this boundary.
 
+Post-roadmap workload broadening is designed separately in
+[RocksDB-applicable mixed stress workload](rocksdb-applicable-stress-workload-design.md).
+It does not reopen the completed V1 through V5 delivery sequence.
+
 Advancing phases requires the preceding artifact and reproduction contract to
 remain stable. Do not combine V2 through V5 into the first implementation.
 
