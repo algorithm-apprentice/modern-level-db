@@ -1,8 +1,6 @@
 #ifndef MODERN_LEVELDB_TESTS_SUPPORT_DATABASE_MODEL_H_
 #define MODERN_LEVELDB_TESTS_SUPPORT_DATABASE_MODEL_H_
 
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -24,6 +22,94 @@ using Model = std::map<std::string, std::string>;
 using Entries = std::vector<std::pair<std::string, std::string>>;
 using ModelBatch = std::vector<std::pair<std::string, std::optional<std::string>>>;
 inline constexpr std::size_t SnapshotSlots = 4;
+
+enum class ModelOperationKind : std::uint8_t {
+    Put,
+    Delete,
+    Batch,
+    Snapshot,
+    Release,
+    Read,
+    Reopen,
+    Scan,
+};
+
+struct ModelOperation {
+    std::size_t index = 0;
+    ModelOperationKind kind = ModelOperationKind::Put;
+    std::string key;
+    std::string value;
+    ModelBatch batch;
+    std::size_t slot = 0;
+    bool sync = false;
+    bool use_snapshot = false;
+
+    friend bool operator==(const ModelOperation&, const ModelOperation&) = default;
+};
+
+inline std::string ModelKey(std::uint64_t number) {
+    return std::string("key\0", 4) + static_cast<char>(number % 32);
+}
+
+inline std::string ModelValue(std::mt19937_64& random) {
+    const std::size_t length = static_cast<std::size_t>(random() % 2049);
+    std::string result(length, static_cast<char>(random()));
+    if (random() % 3 == 0) {
+        for (char& byte : result) {
+            byte = static_cast<char>(random());
+        }
+    }
+    return result;
+}
+
+class ModelWorkload final {
+public:
+    explicit ModelWorkload(std::uint64_t seed) : random_(seed) {}
+
+    ModelOperation Next(std::size_t index) {
+        ModelOperation operation;
+        operation.index = index;
+        operation.key = ModelKey(random_());
+        operation.slot = static_cast<std::size_t>(random_() % SnapshotSlots);
+        switch (random_() % 10) {
+            case 0:
+            case 1:
+            case 2:
+                operation.kind = ModelOperationKind::Put;
+                operation.value = ModelValue(random_);
+                break;
+            case 3:
+                operation.kind = ModelOperationKind::Delete;
+                break;
+            case 4:
+                operation.kind = ModelOperationKind::Batch;
+                operation.batch = ModelBatch{{operation.key, ModelValue(random_)},
+                                             {ModelKey(random_()), std::nullopt},
+                                             {operation.key, ModelValue(random_)}};
+                operation.sync = index % 17 == 0;
+                break;
+            case 5:
+                operation.kind = ModelOperationKind::Snapshot;
+                break;
+            case 6:
+                operation.kind = ModelOperationKind::Release;
+                break;
+            case 7:
+                operation.kind = ModelOperationKind::Read;
+                break;
+            case 8:
+                operation.kind = ModelOperationKind::Reopen;
+                break;
+            case 9:
+                operation.kind = ModelOperationKind::Scan;
+                break;
+        }
+        return operation;
+    }
+
+private:
+    std::mt19937_64 random_;
+};
 
 inline void Check(const Status& status) {
     if (!status.has_value()) {
@@ -138,103 +224,126 @@ private:
     std::array<std::optional<Snapshot>, SnapshotSlots> snapshots_;
 };
 
-inline std::string ModelKey(std::uint64_t number) {
-    return std::string("key\0", 4) + static_cast<char>(number % 32);
+inline std::string ModelContext(std::uint64_t seed, std::string_view operation) {
+    return "seed=" + std::to_string(seed) + " operation=" + std::string(operation) + ": ";
 }
 
-inline std::string ModelValue(std::mt19937_64& random) {
-    const std::size_t length = static_cast<std::size_t>(random() % 2049);
-    std::string result(length, static_cast<char>(random()));
-    if (random() % 3 == 0) {
-        for (char& byte : result) {
-            byte = static_cast<char>(random());
-        }
+inline std::string ModelContext(std::uint64_t seed, std::size_t operation) {
+    return ModelContext(seed, std::to_string(operation));
+}
+
+template <typename Left, typename Right>
+void RequireModelEqual(const Left& actual, const Right& expected, std::string_view message) {
+    if (actual != expected) {
+        throw std::runtime_error(std::string(message));
     }
-    return result;
 }
 
-template <typename... Clients>
-Model RunModel(std::uint64_t seed, std::size_t operations, Clients&... clients) {
-    std::mt19937_64 random(seed);
+template <typename Observer, typename... Clients>
+Model RunModelObserved(std::uint64_t seed, std::size_t operations, Observer&& observer,
+                       Clients&... clients) {
+    ModelWorkload workload(seed);
     Model model;
     std::array<std::optional<Model>, SnapshotSlots> snapshots;
     const auto each = [&](auto action) { (action(clients), ...); };
     for (std::size_t index = 0; index < operations; ++index) {
-        SCOPED_TRACE(testing::Message() << "seed=" << seed << " operation=" << index);
-        const std::string key = ModelKey(random());
-        const std::size_t slot = static_cast<std::size_t>(random() % SnapshotSlots);
-        switch (random() % 10) {
-            case 0:
-            case 1:
-            case 2: {
-                const std::string value = ModelValue(random);
-                each([&](auto& client) { client.Put(key, value); });
-                model[key] = value;
-                break;
-            }
-            case 3:
-                each([&](auto& client) { client.Delete(key); });
-                model.erase(key);
-                break;
-            case 4: {
-                const ModelBatch batch{{key, ModelValue(random)},
-                                       {ModelKey(random()), std::nullopt},
-                                       {key, ModelValue(random)}};
-                each([&](auto& client) { client.Write(batch, index % 17 == 0); });
-                for (const auto& [batch_key, value] : batch) {
-                    if (value.has_value()) {
-                        model[batch_key] = *value;
-                    } else {
-                        model.erase(batch_key);
+        ModelOperation operation = workload.Next(index);
+        if (operation.kind == ModelOperationKind::Read) {
+            operation.use_snapshot = snapshots[operation.slot].has_value();
+        }
+        try {
+            observer(operation);
+            switch (operation.kind) {
+                case ModelOperationKind::Put:
+                    each([&](auto& client) { client.Put(operation.key, operation.value); });
+                    model[operation.key] = operation.value;
+                    break;
+                case ModelOperationKind::Delete:
+                    each([&](auto& client) { client.Delete(operation.key); });
+                    model.erase(operation.key);
+                    break;
+                case ModelOperationKind::Batch:
+                    each([&](auto& client) { client.Write(operation.batch, operation.sync); });
+                    for (const auto& [batch_key, value] : operation.batch) {
+                        if (value.has_value()) {
+                            model[batch_key] = *value;
+                        } else {
+                            model.erase(batch_key);
+                        }
                     }
+                    break;
+                case ModelOperationKind::Snapshot:
+                    each([&](auto& client) { client.SnapshotAt(operation.slot); });
+                    snapshots[operation.slot] = model;
+                    break;
+                case ModelOperationKind::Release:
+                    each([&](auto& client) { client.Release(operation.slot); });
+                    snapshots[operation.slot].reset();
+                    break;
+                case ModelOperationKind::Read: {
+                    const Model& view =
+                        operation.use_snapshot ? *snapshots[operation.slot] : model;
+                    const std::size_t selected =
+                        operation.use_snapshot ? operation.slot : SnapshotSlots;
+                    const auto found = view.find(operation.key);
+                    std::optional<std::string> expected;
+                    if (found != view.end()) {
+                        expected = found->second;
+                    }
+                    each([&](auto& client) {
+                        RequireModelEqual(client.Read(operation.key, selected), expected,
+                                          "point-read result differs from model");
+                    });
+                    each([&](auto& client) {
+                        RequireModelEqual(client.Scan(false, selected, operation.key),
+                                          ExpectedEntries(view, false, operation.key),
+                                          "seek scan differs from model");
+                    });
+                    break;
                 }
-                break;
+                case ModelOperationKind::Reopen:
+                    each([&](auto& client) {
+                        client.Reopen();
+                        RequireModelEqual(client.Scan(false), ExpectedEntries(model, false),
+                                          "reopened state differs from model");
+                    });
+                    for (auto& snapshot : snapshots) {
+                        snapshot.reset();
+                    }
+                    break;
+                case ModelOperationKind::Scan:
+                    each([&](auto& client) {
+                        RequireModelEqual(client.Scan(false), ExpectedEntries(model, false),
+                                          "forward scan differs from model");
+                        RequireModelEqual(client.Scan(true), ExpectedEntries(model, true),
+                                          "reverse scan differs from model");
+                    });
+                    break;
             }
-            case 5:
-                each([&](auto& client) { client.SnapshotAt(slot); });
-                snapshots[slot] = model;
-                break;
-            case 6:
-                each([&](auto& client) { client.Release(slot); });
-                snapshots[slot].reset();
-                break;
-            case 7: {
-                const bool use_snapshot = snapshots[slot].has_value();
-                const Model& view = use_snapshot ? *snapshots[slot] : model;
-                const std::size_t selected = use_snapshot ? slot : SnapshotSlots;
-                const auto found = view.find(key);
-                std::optional<std::string> expected;
-                if (found != view.end()) {
-                    expected = found->second;
-                }
-                each([&](auto& client) { EXPECT_EQ(client.Read(key, selected), expected); });
-                each([&](auto& client) {
-                    EXPECT_EQ(client.Scan(false, selected, key), ExpectedEntries(view, false, key));
-                });
-                break;
-            }
-            case 8:
-                each([&](auto& client) {
-                    client.Reopen();
-                    EXPECT_EQ(client.Scan(false), ExpectedEntries(model, false));
-                });
-                for (auto& snapshot : snapshots) {
-                    snapshot.reset();
-                }
-                break;
-            case 9:
-                each([&](auto& client) {
-                    EXPECT_EQ(client.Scan(false), ExpectedEntries(model, false));
-                    EXPECT_EQ(client.Scan(true), ExpectedEntries(model, true));
-                });
-                break;
+        } catch (const std::exception& error) {
+            throw std::runtime_error(ModelContext(seed, index) + error.what());
+        } catch (...) {
+            throw std::runtime_error(ModelContext(seed, index) + "unknown failure");
         }
     }
-    each([&](auto& client) {
-        EXPECT_EQ(client.Scan(false), ExpectedEntries(model, false));
-        EXPECT_EQ(client.Scan(true), ExpectedEntries(model, true));
-    });
+    try {
+        each([&](auto& client) {
+            RequireModelEqual(client.Scan(false), ExpectedEntries(model, false),
+                              "final forward scan differs from model");
+            RequireModelEqual(client.Scan(true), ExpectedEntries(model, true),
+                              "final reverse scan differs from model");
+        });
+    } catch (const std::exception& error) {
+        throw std::runtime_error(ModelContext(seed, "final") + error.what());
+    } catch (...) {
+        throw std::runtime_error(ModelContext(seed, "final") + "unknown failure");
+    }
     return model;
+}
+
+template <typename... Clients>
+Model RunModel(std::uint64_t seed, std::size_t operations, Clients&... clients) {
+    return RunModelObserved(seed, operations, [](const ModelOperation&) {}, clients...);
 }
 
 }  // namespace modern_leveldb::test_support

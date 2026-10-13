@@ -62,6 +62,7 @@ add_executable(
   unit/platform/file_system_test.cc
   unit/platform/mapped_read_limiter_test.cc
   unit/platform/serial_executor_test.cc
+  unit/support/database_model_test.cc
   unit/table/block_format_test.cc
   unit/table/block_test.cc
   unit/table/bloom_filter_test.cc
