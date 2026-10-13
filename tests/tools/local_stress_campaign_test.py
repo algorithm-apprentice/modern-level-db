@@ -573,6 +573,18 @@ class LocalStressCampaignStateTest(unittest.TestCase):
                 len(state["jobs"][0]["attempts"]),
                 1,
             )
+            published_summary = run_local_stress_campaign.read_json(
+                config.workspace / "summary.json"
+            )
+            self.assertEqual(
+                published_summary["by_tier"]["v1"]["passed"], 2
+            )
+            self.assertEqual(
+                published_summary["by_seed"]["17"]["passed"], 2
+            )
+            self.assertGreaterEqual(
+                published_summary["duration_seconds"], 0.0
+            )
 
     def test_campaign_stops_on_failure_and_resume_retries_in_order(self):
         with tempfile.TemporaryDirectory() as temporary:
