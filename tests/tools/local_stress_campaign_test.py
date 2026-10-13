@@ -88,6 +88,8 @@ class LocalStressCampaignPlannerTest(unittest.TestCase):
                 str(attempt / "artifacts"),
                 "--seed",
                 "17",
+                "--mode",
+                "checked",
                 "--threads",
                 "2",
                 "--rounds",

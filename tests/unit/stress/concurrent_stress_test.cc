@@ -30,6 +30,7 @@ ConcurrentStressArguments SmallConcurrentRun(const std::filesystem::path& root,
     result.database = root / (std::string(name) + "-db");
     result.output = root / (std::string(name) + "-output");
     result.seed = 17;
+    result.mode = ConcurrentStressMode::Checked;
     result.threads = 4;
     result.rounds = 24;
     result.compression = Compression::None;
@@ -59,29 +60,28 @@ TEST(ConcurrentStressArgumentsTest, ParsesDefaultsOverridesAndBounds) {
     };
     const ConcurrentStressArguments parsed_defaults = ParseConcurrentStressArguments(defaults);
     EXPECT_EQ(parsed_defaults.seed, 301U);
-    EXPECT_EQ(parsed_defaults.mode, ConcurrentStressMode::Checked);
-    EXPECT_EQ(parsed_defaults.threads, 4U);
+    EXPECT_EQ(parsed_defaults.mode, ConcurrentStressMode::Fanout);
+    EXPECT_EQ(parsed_defaults.threads, 32U);
     EXPECT_EQ(parsed_defaults.rounds, 1000U);
     EXPECT_EQ(parsed_defaults.compression, Compression::None);
 
     const std::vector<std::filesystem::path> overrides{
-        "--db",      "db",     "--output", "out", "--seed",        "18446744073709551615",
-        "--threads", "256",    "--rounds", "42",  "--compression", "snappy",
-        "--mode",    "fanout",
+        "--db",      "db",  "--output", "out", "--seed",        "18446744073709551615",
+        "--threads", "8",   "--rounds", "42",  "--compression", "snappy",
+        "--mode",    "checked",
     };
     const ConcurrentStressArguments parsed_overrides = ParseConcurrentStressArguments(overrides);
     EXPECT_EQ(parsed_overrides.seed, std::numeric_limits<std::uint64_t>::max());
-    EXPECT_EQ(parsed_overrides.mode, ConcurrentStressMode::Fanout);
-    EXPECT_EQ(parsed_overrides.threads, 256U);
+    EXPECT_EQ(parsed_overrides.mode, ConcurrentStressMode::Checked);
+    EXPECT_EQ(parsed_overrides.threads, 8U);
     EXPECT_EQ(parsed_overrides.rounds, 42U);
     EXPECT_EQ(parsed_overrides.compression, Compression::Snappy);
 
     const std::vector<std::vector<std::filesystem::path>> invalid{
         {},
-        {"--db", "db", "--output", "out", "--threads", "1"},
-        {"--db", "db", "--output", "out", "--threads", "9"},
-        {"--db", "db", "--output", "out", "--mode", "fanout", "--threads", "1"},
-        {"--db", "db", "--output", "out", "--mode", "fanout", "--threads", "257"},
+        {"--db", "db", "--output", "out", "--mode", "fanout", "--threads", "0"},
+        {"--db", "db", "--output", "out", "--mode", "checked", "--threads", "1"},
+        {"--db", "db", "--output", "out", "--mode", "checked", "--threads", "9"},
         {"--db", "db", "--output", "out", "--mode", "unknown"},
         {"--db", "db", "--output", "out", "--mode", "checked", "--mode", "fanout"},
         {"--db", "db", "--output", "out", "--rounds", "0"},
@@ -98,15 +98,18 @@ TEST(ConcurrentStressArgumentsTest, ParsesDefaultsOverridesAndBounds) {
     EXPECT_TRUE(ParseConcurrentStressArguments(help_arguments).help);
 }
 
-TEST(ConcurrentStressArgumentsTest, FanoutThreadValidationIsOptionOrderIndependent) {
-    const std::vector<std::filesystem::path> arguments{
-        "--db", "db", "--output", "out", "--threads", "256", "--mode", "fanout",
-    };
+TEST(ConcurrentStressArgumentsTest, FanoutAcceptsAnyPositiveRepresentableThreadCount) {
+    for (const std::string_view threads : {"1", "32", "256", "1024"}) {
+        const std::vector<std::filesystem::path> arguments{
+            "--db", "db", "--output", "out", "--threads", threads, "--mode", "fanout",
+        };
 
-    const ConcurrentStressArguments parsed = ParseConcurrentStressArguments(arguments);
+        const ConcurrentStressArguments parsed = ParseConcurrentStressArguments(arguments);
 
-    EXPECT_EQ(parsed.mode, ConcurrentStressMode::Fanout);
-    EXPECT_EQ(parsed.threads, 256U);
+        EXPECT_EQ(parsed.mode, ConcurrentStressMode::Fanout);
+        EXPECT_EQ(parsed.threads,
+                  static_cast<std::size_t>(std::stoull(std::string(threads))));
+    }
 }
 
 TEST(ConcurrentStressRunTest, CompletesLinearizableAndSnapshotPhases) {
@@ -214,7 +217,7 @@ TEST(ConcurrentStressRunTest, UsageStatesBoundedLocalConcurrency) {
     const std::string usage = ConcurrentStressUsage();
 
     EXPECT_NE(usage.find("2..8"), std::string::npos);
-    EXPECT_NE(usage.find("256"), std::string::npos);
+    EXPECT_NE(usage.find("positive"), std::string::npos);
     EXPECT_NE(usage.find("--mode"), std::string::npos);
     EXPECT_NE(usage.find("--rounds"), std::string::npos);
     EXPECT_NE(usage.find("local"), std::string::npos);

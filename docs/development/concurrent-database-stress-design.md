@@ -70,8 +70,8 @@ Defaults:
 
 ```text
 seed         301
-mode         checked
-threads      4
+mode         fanout
+threads      32
 rounds       1000
 compression  none
 ```
@@ -81,10 +81,11 @@ worst-case search, and each linearizability round adds one final read after the
 worker operations. Keeping the bound explicit prevents a local stress option
 from silently turning into an unbounded model checker.
 
-Fanout mode limits threads to 2 through 256 and runs only the scalable Phase B
-batch/snapshot/iterator/reopen oracle. It writes
+Fanout mode accepts any positive representable thread count and runs only the
+scalable Phase B batch/snapshot/iterator/reopen oracle. It writes
 `linearized_worker_operations=0` and does not claim a 256-operation
-linearizability proof.
+linearizability proof. Thread creation or resource exhaustion remains an
+explicit campaign failure rather than an arbitrary project-level cap.
 
 The command reuses V1's absent/distinct/non-nested path validation, build
 identity, compression policy, and disposable-data requirements.
@@ -218,7 +219,8 @@ modern_leveldb_concurrent_stress \
 
 Passing this command proves the selected 256-thread batch/snapshot workload
 completed with its exact oracle. It does not prove arbitrary 256-thread
-histories or remove the checked mode's 2-through-8 bound.
+histories or remove the checked mode's 2-through-8 bound. A separate 32-thread
+run covers the ordinary default.
 
 ## Scheduling and shutdown
 
