@@ -19,6 +19,7 @@ option(
 )
 option(MODERN_LEVELDB_BUILD_EXTENDED_TESTS "Build model, compatibility, and crash tests" OFF)
 option(MODERN_LEVELDB_BUILD_FUZZERS "Build coverage-guided libFuzzer targets" OFF)
+option(MODERN_LEVELDB_BUILD_STRESS "Build the local database stress driver" OFF)
 option(MODERN_LEVELDB_BUILD_BENCHMARKS "Build the comparative database benchmark" OFF)
 option(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS "Build the selected-workload profiling harness" OFF)
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/WindowsBackend.cmake")
@@ -166,6 +167,13 @@ if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
   endif()
 endif()
 
+if(MODERN_LEVELDB_BUILD_STRESS)
+  if(NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+     NOT MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
+    message(FATAL_ERROR "The local database stress driver requires an admitted native backend")
+  endif()
+endif()
+
 if(MODERN_LEVELDB_BUILD_EXTENDED_TESTS OR MODERN_LEVELDB_BUILD_BENCHMARKS OR
    MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
   if(MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)
@@ -195,6 +203,10 @@ endif()
 if(MODERN_LEVELDB_BUILD_FUZZERS)
   enable_testing()
   add_subdirectory(fuzz)
+endif()
+
+if(MODERN_LEVELDB_BUILD_STRESS)
+  add_subdirectory(stress)
 endif()
 
 if(MODERN_LEVELDB_BUILD_BENCHMARKS OR MODERN_LEVELDB_BUILD_PERFORMANCE_TESTS)

@@ -116,6 +116,29 @@ ctest --preset fuzz
 Use the compiler/tool versions selected by CI when reproducing a gate. Do not
 apply GCC coverage/sanitizer flags to native MSVC presets.
 
+## Local database stress
+
+The optional stress executable is default-off and is not registered with
+CTest or GitHub Actions.
+
+Linux/macOS:
+
+```bash
+cmake --preset local-stress
+cmake --build --preset local-stress --target modern_leveldb_stress
+```
+
+Windows:
+
+```powershell
+cmake --preset windows-local-stress
+cmake --build --preset windows-local-stress --target modern_leveldb_stress
+```
+
+Use only new disposable database and artifact paths. See
+[local database stress testing](local-stress-testing.md) for the command,
+artifact contract, current single-thread boundary, and local acceptance set.
+
 ## Dependency isolation
 
 The repository fetches pinned Snappy, Zstd, CRC32C, GoogleTest, Google
