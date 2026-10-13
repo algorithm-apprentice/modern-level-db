@@ -12,11 +12,17 @@
 
 namespace modern_leveldb::stress {
 
+enum class ConcurrentStressMode : std::uint8_t {
+    Checked,
+    Fanout,
+};
+
 struct ConcurrentStressArguments {
     std::filesystem::path database;
     std::filesystem::path output;
     std::uint64_t seed = 301;
-    std::size_t threads = 4;
+    ConcurrentStressMode mode = ConcurrentStressMode::Fanout;
+    std::size_t threads = 32;
     std::size_t rounds = 1000;
     Compression compression = Compression::None;
     bool help = false;
@@ -25,6 +31,7 @@ struct ConcurrentStressArguments {
 struct ConcurrentStressSummary {
     std::size_t rounds = 0;
     std::size_t threads = 0;
+    ConcurrentStressMode mode = ConcurrentStressMode::Fanout;
     std::size_t linearized_worker_operations = 0;
     std::size_t batch_writes = 0;
     std::size_t snapshot_checks = 0;
@@ -48,6 +55,7 @@ public:
 
 [[nodiscard]] ConcurrentStressArguments ParseConcurrentStressArguments(
     std::span<const std::filesystem::path> arguments);
+[[nodiscard]] std::string ConcurrentStressModeName(ConcurrentStressMode mode);
 [[nodiscard]] ConcurrentStressSummary RunConcurrentStress(
     const ConcurrentStressArguments& arguments, const StressBuildIdentity& identity,
     ConcurrentStressObserver* observer = nullptr);

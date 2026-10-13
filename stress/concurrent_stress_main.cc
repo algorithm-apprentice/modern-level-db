@@ -1,5 +1,3 @@
-#include "stress/concurrent_stress.h"
-
 #include <cstdio>
 #include <exception>
 #include <filesystem>
@@ -9,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "stress/concurrent_stress.h"
 #include "stress_build.h"
 
 namespace modern_leveldb::stress {
@@ -20,8 +19,7 @@ bool Write(FILE* stream, std::string_view text) {
 
 int Run(std::span<const std::filesystem::path> arguments) {
     try {
-        const ConcurrentStressArguments parsed =
-            ParseConcurrentStressArguments(arguments);
+        const ConcurrentStressArguments parsed = ParseConcurrentStressArguments(arguments);
         if (parsed.help) {
             const std::string usage = ConcurrentStressUsage();
             return Write(stdout, usage) ? 0 : 1;
@@ -30,20 +28,18 @@ int Run(std::span<const std::filesystem::path> arguments) {
             MODERN_LEVELDB_STRESS_SOURCE_REVISION,
             MODERN_LEVELDB_STRESS_SOURCE_DIRTY != 0,
         };
-        const ConcurrentStressSummary summary =
-            RunConcurrentStress(parsed, identity);
+        const ConcurrentStressSummary summary = RunConcurrentStress(parsed, identity);
         const std::string completed =
             "completed rounds=" + std::to_string(summary.rounds) +
             " threads=" + std::to_string(summary.threads) +
-            " linearized_operations=" +
-            std::to_string(summary.linearized_worker_operations) +
+            " mode=" + ConcurrentStressModeName(summary.mode) +
+            " linearized_operations=" + std::to_string(summary.linearized_worker_operations) +
             " batch_writes=" + std::to_string(summary.batch_writes) +
             " snapshot_checks=" + std::to_string(summary.snapshot_checks) +
             " entries=" + std::to_string(summary.entries) + "\n";
         return Write(stdout, completed) ? 0 : 1;
     } catch (const std::invalid_argument& error) {
-        const std::string message =
-            std::string(error.what()) + "\n" + ConcurrentStressUsage();
+        const std::string message = std::string(error.what()) + "\n" + ConcurrentStressUsage();
         static_cast<void>(Write(stderr, message));
         return 2;
     } catch (const std::exception& error) {

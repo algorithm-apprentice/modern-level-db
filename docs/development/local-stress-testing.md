@@ -140,6 +140,7 @@ Linux/macOS:
   --db /absolute/disposable/path/concurrent-db-01 \
   --output /absolute/disposable/path/concurrent-output-01 \
   --seed 301 \
+  --mode checked \
   --threads 4 \
   --rounds 1000 \
   --compression none
@@ -152,6 +153,7 @@ Windows:
   --db C:\absolute\disposable\path\concurrent-db-01 `
   --output C:\absolute\disposable\path\concurrent-output-01 `
   --seed 301 `
+  --mode checked `
   --threads 4 `
   --rounds 1000 `
   --compression none
@@ -164,7 +166,8 @@ Concurrent options:
 | `--db` | required | New disposable database directory |
 | `--output` | required | New artifact directory |
 | `--seed` | 301 | Reproducible operation/yield selection |
-| `--threads` | 4 | Worker count in the bounded range 2 through 8 |
+| `--mode` | `fanout` | scalable snapshots by default, or `checked` bounded linearizability plus snapshots |
+| `--threads` | 32 | `checked`: 2 through 8; `fanout`: any positive representable count |
 | `--rounds` | 1000 | Linearizability rounds and batch generations |
 | `--compression` | `none` | `none`, `snappy`, or `zstd` |
 
@@ -176,6 +179,25 @@ check atomic batch, snapshot, iterator, and retained-child lifetimes.
 The same seed chooses the same operations and yield counts. Native scheduling
 can still produce a different valid history; `linearizability.log` records the
 actual invocation/completion intervals and witness.
+
+For high-thread scheduler and API-concurrency evidence, run fanout mode:
+
+```powershell
+& .\build\windows-local-stress\stress\modern_leveldb_concurrent_stress.exe `
+  --db C:\absolute\disposable\path\fanout-db-01 `
+  --output C:\absolute\disposable\path\fanout-output-01 `
+  --seed 301 `
+  --mode fanout `
+  --threads 256 `
+  --rounds 4 `
+  --compression none
+```
+
+Fanout mode releases exactly the configured number of worker threads, split
+equally between disjoint atomic-batch writers and snapshot/iterator readers.
+It retains final child-handle and reopen verification but intentionally skips
+the factorial bounded linearizability phase. Its completion artifact therefore
+reports `linearized_worker_operations=0`.
 
 ## V1 artifacts
 
@@ -443,6 +465,9 @@ threads  compression  seed
 Repeat at least one combination several times because scheduling, unlike the
 operation plan, is intentionally nondeterministic. Preserve every invalid
 history unchanged.
+
+For high-thread fanout changes, additionally run a 32-thread baseline and 256
+threads to cover this project's explicit local upper bound.
 
 Before reviewing V3 changes, run at least 25 acknowledged kill/recover rounds
 plus in-flight probes for None, Snappy, and Zstd. On Windows, include one

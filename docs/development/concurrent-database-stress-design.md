@@ -60,6 +60,7 @@ modern_leveldb_concurrent_stress \
   --db DISPOSABLE_DATABASE_DIRECTORY \
   --output NEW_ARTIFACT_DIRECTORY \
   [--seed N] \
+  [--mode checked|fanout] \
   [--threads N] \
   [--rounds N] \
   [--compression none|snappy|zstd]
@@ -69,15 +70,22 @@ Defaults:
 
 ```text
 seed         301
-threads      4
+mode         fanout
+threads      32
 rounds       1000
 compression  none
 ```
 
-Threads are limited to 2 through 8. The checker has factorial worst-case
-search, and each linearizability round adds one final read after the worker
-operations. Keeping the bound explicit prevents a local stress option from
-silently turning into an unbounded model checker.
+Checked mode limits threads to 2 through 8. The checker has factorial
+worst-case search, and each linearizability round adds one final read after the
+worker operations. Keeping the bound explicit prevents a local stress option
+from silently turning into an unbounded model checker.
+
+Fanout mode accepts any positive representable thread count and runs only the
+scalable Phase B batch/snapshot/iterator/reopen oracle. It writes
+`linearized_worker_operations=0` and does not claim a 256-operation
+linearizability proof. Thread creation or resource exhaustion remains an
+explicit campaign failure rather than an arbitrary project-level cap.
 
 The command reuses V1's absent/distinct/non-nested path validation, build
 identity, compression policy, and disposable-data requirements.
@@ -181,6 +189,39 @@ After all threads join:
 - a full iterator scan must contain exactly the hot key when present plus the
   expected partition keys.
 
+## High-thread fanout mode
+
+Fanout mode exists for scheduler, API-concurrency, ownership, liveness, and
+resource-pressure evidence beyond the bounded checker.
+
+- The configured count is the exact number of simultaneously released
+  `std::jthread` workers.
+- Half are disjoint batch writers and half are snapshot/iterator readers.
+- Every reader executes at least one complete snapshot and iterator check.
+- Every writer must acknowledge every configured generation.
+- Final retained-iterator and reopen verification remain unchanged.
+- The run and completion artifacts record `mode=fanout`.
+- The linearizability log contains only its format header because Phase A is
+  intentionally skipped.
+
+Fast tests exercise fanout with a smaller thread count. Local acceptance runs:
+
+```console
+modern_leveldb_concurrent_stress \
+  --db DISPOSABLE_DATABASE_DIRECTORY \
+  --output NEW_ARTIFACT_DIRECTORY \
+  --mode fanout \
+  --threads 256 \
+  --rounds 4 \
+  --seed 301 \
+  --compression none
+```
+
+Passing this command proves the selected 256-thread batch/snapshot workload
+completed with its exact oracle. It does not prove arbitrary 256-thread
+histories or remove the checked mode's 2-through-8 bound. A separate 32-thread
+run covers the ordinary default.
+
 ## Scheduling and shutdown
 
 V2 does not use sleeps for correctness.
@@ -207,7 +248,7 @@ The output directory contains:
 | `linearizability.log` | Per-round initial state, Put/Delete/Get/batch source, sync/yield plan, operation intervals/results, final read, and witness order |
 | `snapshot-summary.txt` | Writer generations, reader checks, iterator checks, and final partition state |
 | `final-state.txt` | Final reopened sorted database state |
-| `completion.txt` | Written only after both phases succeed |
+| `completion.txt` | Written only after every phase selected by the mode succeeds |
 | `failure.txt` | Failure message when reporting remains possible |
 
 Unlike V1, complete concurrent artifacts are not expected to be byte-identical
@@ -292,3 +333,42 @@ Local acceptance campaigns:
 V2 is complete at this boundary. V3 must use a parent-owned process and
 external acknowledgement journal; in-process exception injection cannot stand
 in for abrupt process death.
+
+## High-thread fanout implementation record
+
+The later fanout extension:
+
+- keeps `checked` mode's original 2-through-8 bounded linearizability and
+  snapshot phases unchanged;
+- makes `fanout` with 32 threads the ordinary default;
+- accepts any positive representable fanout thread count, leaving resource
+  exhaustion as an explicit campaign failure rather than an arbitrary cap;
+- skips Phase A only in fanout mode and records
+  `linearized_worker_operations=0`;
+- records mode in run/completion artifacts and command output;
+- makes every existing V5 V2 profile pass `--mode checked` explicitly.
+
+Validation completed:
+
+```text
+Windows Debug unit                  913/913
+Windows Release unit                913/913
+WSL Ubuntu GCC 13 Debug unit        880/880
+WSL Ubuntu GCC 13 Release unit      880/880
+focused concurrent contracts           8/8
+Python V5 campaign contracts          19/19
+documentation validation               pass
+```
+
+Local fanout campaigns:
+
+| Platform | Threads | Rounds | Compression | Batch writes | Snapshot checks | Final entries |
+|---|---:|---:|---|---:|---:|---:|
+| Windows | 1 | 4 | None | 4 | 0 | 2 |
+| Windows default | 32 | 20 | None | 320 | 413 | 32 |
+| Windows | 256 | 4 | Zstd | 512 | 6515 | 256 |
+| WSL Ubuntu | 256 | 2 | Snappy | 256 | 316 | 256 |
+
+The 256-thread results prove the selected scalable oracle completed at that
+fanout on both native backends. They do not turn Phase A into an unbounded
+linearizability proof.

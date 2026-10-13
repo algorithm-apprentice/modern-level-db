@@ -158,8 +158,8 @@ void Yield(unsigned count) {
     }
 }
 
-RegisterOperation ExecutePlanned(Database& database, const PlannedOperation& plan,
-                                 std::size_t id, std::atomic<std::uint64_t>& tick) {
+RegisterOperation ExecutePlanned(Database& database, const PlannedOperation& plan, std::size_t id,
+                                 std::atomic<std::uint64_t>& tick) {
     RegisterOperation operation;
     operation.id = id;
     operation.invoke = tick.fetch_add(1, std::memory_order_relaxed);
@@ -230,10 +230,10 @@ std::string DescribeHistory(std::size_t round, const std::optional<std::string>&
     std::string result =
         "round=" + std::to_string(round) + "\tinitial=" + OptionalHex(initial) + "\n";
     for (const RegisterOperation& operation : operations) {
-        result += "op=" + std::to_string(operation.id) + "\tkind=" +
-                  RegisterKindName(operation.kind) + "\tinvoke=" +
-                  std::to_string(operation.invoke) + "\tcomplete=" +
-                  std::to_string(operation.complete);
+        result += "op=" + std::to_string(operation.id) +
+                  "\tkind=" + RegisterKindName(operation.kind) +
+                  "\tinvoke=" + std::to_string(operation.invoke) +
+                  "\tcomplete=" + std::to_string(operation.complete);
         if (operation.id < plans.size()) {
             const PlannedOperation& plan = plans[operation.id];
             result += "\tsource=" + PlannedKindName(plan.kind) +
@@ -274,9 +274,10 @@ void RethrowFirst(const std::vector<std::exception_ptr>& errors) {
     }
 }
 
-LinearizabilityPhase RunLinearizabilityPhase(
-    Database& database, const ConcurrentStressArguments& arguments,
-    ConcurrentStressObserver* observer, CheckedOutput& history_log) {
+LinearizabilityPhase RunLinearizabilityPhase(Database& database,
+                                             const ConcurrentStressArguments& arguments,
+                                             ConcurrentStressObserver* observer,
+                                             CheckedOutput& history_log) {
     std::mt19937_64 random(arguments.seed);
     std::atomic<std::uint64_t> tick{1};
     std::optional<std::string> state;
@@ -284,8 +285,7 @@ LinearizabilityPhase RunLinearizabilityPhase(
         if (observer != nullptr) {
             observer->BeforeLinearizabilityRound(round);
         }
-        const std::vector<PlannedOperation> plans =
-            PlanRound(random, round, arguments.threads);
+        const std::vector<PlannedOperation> plans = PlanRound(random, round, arguments.threads);
         std::vector<RegisterOperation> history(arguments.threads);
         std::vector<std::exception_ptr> errors(arguments.threads);
         StartGate start;
@@ -346,9 +346,8 @@ std::size_t ParseGeneration(std::string_view value, std::size_t writer) {
     }
     const std::string_view generation_text = value.substr(prefix.size());
     std::uint64_t generation = 0;
-    const auto parsed = std::from_chars(generation_text.data(),
-                                        generation_text.data() + generation_text.size(),
-                                        generation);
+    const auto parsed = std::from_chars(
+        generation_text.data(), generation_text.data() + generation_text.size(), generation);
     if (generation_text.empty() || parsed.ec != std::errc{} ||
         parsed.ptr != generation_text.data() + generation_text.size() ||
         generation > std::numeric_limits<std::size_t>::max()) {
@@ -429,8 +428,7 @@ SnapshotPhase RunSnapshotPhase(Database& database, const ConcurrentStressArgumen
                 }
                 try {
                     for (std::size_t generation = 1;
-                         generation <= arguments.rounds &&
-                         !stop.load(std::memory_order_acquire);
+                         generation <= arguments.rounds && !stop.load(std::memory_order_acquire);
                          ++generation) {
                         const std::string value = GenerationValue(writer, generation);
                         issued[writer].store(generation, std::memory_order_release);
@@ -488,8 +486,8 @@ SnapshotPhase RunSnapshotPhase(Database& database, const ConcurrentStressArgumen
     };
 }
 
-std::map<std::string, std::string> ExpectedFinalState(
-    const ConcurrentStressArguments& arguments, const std::optional<std::string>& hot_value) {
+std::map<std::string, std::string> ExpectedFinalState(const ConcurrentStressArguments& arguments,
+                                                      const std::optional<std::string>& hot_value) {
     std::map<std::string, std::string> expected;
     if (hot_value.has_value()) {
         expected.emplace(HotKey, *hot_value);
@@ -505,26 +503,25 @@ std::map<std::string, std::string> ExpectedFinalState(
 
 void WriteRun(const std::filesystem::path& output, const ConcurrentStressArguments& arguments,
               const StressBuildIdentity& identity) {
-    const std::string text =
-        "format=" + std::string(RunFormat) + "\nrevision=" + identity.revision +
-        "\ndirty=" + (identity.dirty ? "true" : "false") +
-        "\nseed=" + std::to_string(arguments.seed) +
-        "\nthreads=" + std::to_string(arguments.threads) +
-        "\nrounds=" + std::to_string(arguments.rounds) +
-        "\ncompression=" + StressCompressionName(arguments.compression) +
-        "\nwrite_buffer_size=" + std::to_string(StressWriteBufferSize) +
-        "\nbloom_bits_per_key=" + std::to_string(StressBloomBitsPerKey) + "\n";
+    const std::string text = "format=" + std::string(RunFormat) +
+                             "\nrevision=" + identity.revision +
+                             "\ndirty=" + (identity.dirty ? "true" : "false") +
+                             "\nseed=" + std::to_string(arguments.seed) +
+                             "\nmode=" + ConcurrentStressModeName(arguments.mode) +
+                             "\nthreads=" + std::to_string(arguments.threads) +
+                             "\nrounds=" + std::to_string(arguments.rounds) +
+                             "\ncompression=" + StressCompressionName(arguments.compression) +
+                             "\nwrite_buffer_size=" + std::to_string(StressWriteBufferSize) +
+                             "\nbloom_bits_per_key=" + std::to_string(StressBloomBitsPerKey) + "\n";
     WriteStressText(output / "run.txt", text);
 }
 
 void WriteSnapshotSummary(const std::filesystem::path& output,
-                          const ConcurrentStressArguments& arguments,
-                          const SnapshotPhase& phase) {
-    const std::string text =
-        "format=" + std::string(SnapshotFormat) +
-        "\nwriters=" + std::to_string(std::max<std::size_t>(1, arguments.threads / 2)) +
-        "\nbatch_writes=" + std::to_string(phase.batch_writes) +
-        "\nsnapshot_checks=" + std::to_string(phase.snapshot_checks) + "\n";
+                          const ConcurrentStressArguments& arguments, const SnapshotPhase& phase) {
+    const std::string text = "format=" + std::string(SnapshotFormat) + "\nwriters=" +
+                             std::to_string(std::max<std::size_t>(1, arguments.threads / 2)) +
+                             "\nbatch_writes=" + std::to_string(phase.batch_writes) +
+                             "\nsnapshot_checks=" + std::to_string(phase.snapshot_checks) + "\n";
     WriteStressText(output / "snapshot-summary.txt", text);
 }
 
@@ -537,13 +534,12 @@ void WriteFinalState(const std::filesystem::path& output,
     }
 }
 
-void WriteCompletion(const std::filesystem::path& output,
-                     const ConcurrentStressSummary& summary) {
+void WriteCompletion(const std::filesystem::path& output, const ConcurrentStressSummary& summary) {
     const std::string text =
-        "format=" + std::string(ResultFormat) + "\nrounds=" +
-        std::to_string(summary.rounds) + "\nthreads=" + std::to_string(summary.threads) +
-        "\nlinearized_worker_operations=" +
-        std::to_string(summary.linearized_worker_operations) +
+        "format=" + std::string(ResultFormat) + "\nrounds=" + std::to_string(summary.rounds) +
+        "\nthreads=" + std::to_string(summary.threads) +
+        "\nmode=" + ConcurrentStressModeName(summary.mode) +
+        "\nlinearized_worker_operations=" + std::to_string(summary.linearized_worker_operations) +
         "\nbatch_writes=" + std::to_string(summary.batch_writes) +
         "\nsnapshot_checks=" + std::to_string(summary.snapshot_checks) +
         "\nentries=" + std::to_string(summary.entries) + "\n";
@@ -551,9 +547,8 @@ void WriteCompletion(const std::filesystem::path& output,
 }
 
 void WriteFailure(const std::filesystem::path& output, std::string_view message) {
-    const std::string text =
-        "format=" + std::string(ResultFormat) +
-        "\ncategory=runtime\nmessage=" + SanitizeStressMessage(message) + "\n";
+    const std::string text = "format=" + std::string(ResultFormat) +
+                             "\ncategory=runtime\nmessage=" + SanitizeStressMessage(message) + "\n";
     WriteStressText(output / "failure.txt", text);
 }
 
@@ -569,6 +564,7 @@ ConcurrentStressArguments ParseConcurrentStressArguments(
     bool have_database = false;
     bool have_output = false;
     bool have_seed = false;
+    bool have_mode = false;
     bool have_threads = false;
     bool have_rounds = false;
     bool have_compression = false;
@@ -599,13 +595,25 @@ ConcurrentStressArguments ParseConcurrentStressArguments(
             }
             result.seed = ParseStressUnsigned(value.string(), "--seed");
             have_seed = true;
+        } else if (option == std::filesystem::path("--mode")) {
+            if (have_mode) {
+                throw std::invalid_argument("--mode was provided more than once");
+            }
+            if (value == std::filesystem::path("checked")) {
+                result.mode = ConcurrentStressMode::Checked;
+            } else if (value == std::filesystem::path("fanout")) {
+                result.mode = ConcurrentStressMode::Fanout;
+            } else {
+                throw std::invalid_argument("unknown concurrent stress mode");
+            }
+            have_mode = true;
         } else if (option == std::filesystem::path("--threads")) {
             if (have_threads) {
                 throw std::invalid_argument("--threads was provided more than once");
             }
             const std::uint64_t threads = ParseStressUnsigned(value.string(), "--threads");
-            if (threads < 2 || threads > 8) {
-                throw std::invalid_argument("--threads must be in 2..8");
+            if (threads > std::numeric_limits<std::size_t>::max()) {
+                throw std::invalid_argument("--threads must fit size_t");
             }
             result.threads = static_cast<std::size_t>(threads);
             have_threads = true;
@@ -632,22 +640,40 @@ ConcurrentStressArguments ParseConcurrentStressArguments(
     if (!have_database || !have_output) {
         throw std::invalid_argument("--db and --output are required");
     }
+    if (result.mode == ConcurrentStressMode::Checked &&
+        (result.threads < 2 || result.threads > 8)) {
+        throw std::invalid_argument("--threads must be in 2..8 for checked mode");
+    }
+    if (result.mode == ConcurrentStressMode::Fanout && result.threads == 0) {
+        throw std::invalid_argument("--threads must be positive for fanout mode");
+    }
     return result;
+}
+
+std::string ConcurrentStressModeName(ConcurrentStressMode mode) {
+    switch (mode) {
+        case ConcurrentStressMode::Checked:
+            return "checked";
+        case ConcurrentStressMode::Fanout:
+            return "fanout";
+    }
+    throw std::invalid_argument("unknown concurrent stress mode");
 }
 
 ConcurrentStressSummary RunConcurrentStress(const ConcurrentStressArguments& arguments,
                                             const StressBuildIdentity& identity,
                                             ConcurrentStressObserver* observer) {
-    const PreparedStressPaths paths =
-        PrepareStressPaths(arguments.database, arguments.output);
+    const PreparedStressPaths paths = PrepareStressPaths(arguments.database, arguments.output);
     WriteRun(paths.output, arguments, identity);
     CheckedOutput history_log(paths.output / "linearizability.log");
     history_log.Write("format=" + std::string(HistoryFormat) + "\n");
     try {
         Options options = StressDatabaseOptions(arguments.compression);
         std::optional<Database> database(Take(Database::Open(options, paths.database)));
-        const LinearizabilityPhase linear =
-            RunLinearizabilityPhase(*database, arguments, observer, history_log);
+        LinearizabilityPhase linear;
+        if (arguments.mode == ConcurrentStressMode::Checked) {
+            linear = RunLinearizabilityPhase(*database, arguments, observer, history_log);
+        }
         const SnapshotPhase snapshots = RunSnapshotPhase(*database, arguments);
         WriteSnapshotSummary(paths.output, arguments, snapshots);
 
@@ -663,7 +689,8 @@ ConcurrentStressSummary RunConcurrentStress(const ConcurrentStressArguments& arg
             retained = ConsumeIterator(iterator);
         }
         if (retained != expected) {
-            throw std::runtime_error("iterator retained the wrong state after Database destruction");
+            throw std::runtime_error(
+                "iterator retained the wrong state after Database destruction");
         }
 
         options.error_if_exists = false;
@@ -673,11 +700,9 @@ ConcurrentStressSummary RunConcurrentStress(const ConcurrentStressArguments& arg
             throw std::runtime_error("final concurrent state differs after reopen");
         }
         const ConcurrentStressSummary summary{
-            arguments.rounds,
-            arguments.threads,
-            linear.worker_operations,
-            snapshots.batch_writes,
-            snapshots.snapshot_checks,
+            arguments.rounds,       arguments.threads,
+            arguments.mode,         linear.worker_operations,
+            snapshots.batch_writes, snapshots.snapshot_checks,
             actual.size(),
         };
         WriteFinalState(paths.output, actual);
@@ -705,10 +730,13 @@ ConcurrentStressSummary RunConcurrentStress(const ConcurrentStressArguments& arg
 
 std::string ConcurrentStressUsage() {
     return "usage: modern_leveldb_concurrent_stress --db DISPOSABLE_DATABASE_DIRECTORY "
-           "--output NEW_ARTIFACT_DIRECTORY [--seed N] [--threads N] [--rounds N] "
-           "[--compression none|snappy|zstd]\n"
-           "Threads are bounded to 2..8. Both paths must be absent, distinct, non-nested, and "
-           "used only for disposable local stress data.\n";
+           "--output NEW_ARTIFACT_DIRECTORY [--seed N] [--mode checked|fanout] "
+           "[--threads N] [--rounds N] [--compression none|snappy|zstd]\n"
+           "Checked mode bounds threads to 2..8 and includes bounded linearizability. "
+           "Fanout mode accepts any positive thread count and runs the scalable "
+           "batch/snapshot oracle. "
+           "Both paths must be absent, distinct, non-nested, and used only for disposable "
+           "local stress data.\n";
 }
 
 }  // namespace modern_leveldb::stress
