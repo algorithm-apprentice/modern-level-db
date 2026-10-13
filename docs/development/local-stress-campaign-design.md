@@ -26,7 +26,7 @@ python3 tools/run_local_stress_campaign.py \
   --stress-dir BUILD_DIRECTORY/stress \
   --workspace NEW_OR_RECOGNIZED_CAMPAIGN_DIRECTORY \
   [--seeds 1,17,301] \
-  [--tiers v1,v2,v3,v4] \
+  [--tiers v1,v2,v3,v4[,mixed]] \
   [--v1-operations 5000] \
   [--v2-rounds 300] \
   [--v3-rounds 25] \
@@ -34,6 +34,10 @@ python3 tools/run_local_stress_campaign.py \
   [--v3-timeout-seconds 30] \
   [--v4-operations 250] \
   [--v4-liveness-writes 2000] \
+  [--mixed-threads 32] \
+  [--mixed-operations-per-thread 10000] \
+  [--mixed-keys 1048576] \
+  [--mixed-reopens 10] \
   [--job-timeout-seconds 3600] \
   [--max-duration-seconds 0] \
   [--resume]
@@ -50,6 +54,7 @@ modern_leveldb_stress
 modern_leveldb_concurrent_stress
 modern_leveldb_crash_stress_worker
 modern_leveldb_option_fault_stress
+modern_leveldb_mixed_stress
 ```
 
 Windows uses the `.exe` names. V3 is launched through the adjacent maintained
@@ -65,9 +70,10 @@ For every selected seed, the standard all-tier plan contains:
 | V2 | 3 | 2/None, 4/Snappy, 8/Zstd |
 | V3 | 3 | None, Snappy, Zstd |
 | V4 | 1 | complete internal 48-cell/11-fault matrix |
+| Mixed | optional 1 | RocksDB-applicable 10/20/45/15/10 profile |
 
-The full default is 30 jobs. `--tiers` removes complete tiers without changing
-the identity or ordering of the remaining jobs.
+The full default remains 30 V1-through-V4 jobs. Selecting `mixed` adds one job
+per seed without changing the identity or ordering of the existing jobs.
 
 Stable job IDs are:
 
@@ -76,6 +82,7 @@ seed-<seed>-v1-<compression>
 seed-<seed>-v2-t<threads>-<compression>
 seed-<seed>-v3-<compression>
 seed-<seed>-v4
+seed-<seed>-mixed
 ```
 
 The plan records exact argv arrays, budgets, expected completion/run artifact

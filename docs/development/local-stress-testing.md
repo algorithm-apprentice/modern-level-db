@@ -477,7 +477,7 @@ Campaign options:
 | `--stress-dir` | required | Directory containing all four current-platform stress executables |
 | `--workspace` | required | New campaign root, or recognized root with `--resume` |
 | `--seeds` | `1,17,301` | Ordered, unique uint64 seeds |
-| `--tiers` | `v1,v2,v3,v4` | Complete tiers to include |
+| `--tiers` | `v1,v2,v3,v4` | Complete tiers to include; add `mixed` for the RocksDB-applicable workload |
 | `--v1-operations` | 5000 | V1 operations per compression/seed |
 | `--v2-rounds` | 300 | V2 rounds per thread/compression profile/seed |
 | `--v3-rounds` | 25 | V3 acknowledged crash rounds per compression/seed |
@@ -485,6 +485,10 @@ Campaign options:
 | `--v3-timeout-seconds` | 30 | V3 child protocol timeout |
 | `--v4-operations` | 250 | V4 operations per native option cell |
 | `--v4-liveness-writes` | 2000 | V4 fault-free liveness writes |
+| `--mixed-threads` | 32 | Mixed workload worker count |
+| `--mixed-operations-per-thread` | 10000 | Mixed operations assigned to each worker |
+| `--mixed-keys` | 1048576 | Mixed sparse logical key-space |
+| `--mixed-reopens` | 10 | Mixed reopen count |
 | `--job-timeout-seconds` | 3600 | Outer timeout for one complete job |
 | `--max-duration-seconds` | 0 | Invocation budget; zero is unlimited |
 | `--resume` | off | Revalidate and continue an exact recorded plan |
@@ -499,6 +503,10 @@ Passed jobs are skipped only after their completion format and normalized
 revision/dirty identity are revalidated. Failed, timed-out, interrupted, or
 stale-running jobs receive a new attempt directory; earlier attempts are never
 deleted or overwritten.
+
+To orchestrate the mixed workload with the same failure bundles and resume
+policy, include `mixed` in `--tiers`. The default remains the original
+V1-through-V4 30-job plan.
 
 ## V5 artifacts
 

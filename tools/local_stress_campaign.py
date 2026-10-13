@@ -24,7 +24,8 @@ STATE_FORMAT = "modern-leveldb-stress-state-v1"
 SUMMARY_FORMAT = "modern-leveldb-stress-summary-v1"
 CAMPAIGN_RESULT_FORMAT = "modern-leveldb-stress-campaign-result-v1"
 UINT64_MAX = (1 << 64) - 1
-TIER_ORDER = ("v1", "v2", "v3", "v4")
+TIER_ORDER = ("v1", "v2", "v3", "v4", "mixed")
+DEFAULT_TIERS = ("v1", "v2", "v3", "v4")
 COMPRESSIONS = ("none", "snappy", "zstd")
 V2_PROFILES = ((2, "none"), (4, "snappy"), (8, "zstd"))
 
@@ -34,7 +35,7 @@ class CampaignConfig:
     stress_dir: Path
     workspace: Path
     seeds: tuple[int, ...] = (1, 17, 301)
-    tiers: tuple[str, ...] = TIER_ORDER
+    tiers: tuple[str, ...] = DEFAULT_TIERS
     v1_operations: int = 5000
     v2_rounds: int = 300
     v3_rounds: int = 25
@@ -42,6 +43,10 @@ class CampaignConfig:
     v3_timeout_seconds: float = 30.0
     v4_operations: int = 250
     v4_liveness_writes: int = 2000
+    mixed_threads: int = 32
+    mixed_operations_per_thread: int = 10000
+    mixed_keys: int = 1_048_576
+    mixed_reopens: int = 10
     job_timeout_seconds: float = 3600.0
     max_duration_seconds: float = 0.0
     resume: bool = False
@@ -71,6 +76,10 @@ class CampaignPlan:
     v4_operations: int
     v4_liveness_writes: int
     jobs: tuple[CampaignJob, ...]
+    mixed_threads: int = 32
+    mixed_operations_per_thread: int = 10000
+    mixed_keys: int = 1_048_576
+    mixed_reopens: int = 10
 
 
 @dataclass(frozen=True)
@@ -184,7 +193,7 @@ def parse_arguments(arguments: Sequence[str]) -> CampaignConfig:
     parser.add_argument("--stress-dir", type=Path, required=True)
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--seeds", type=_parse_seeds, default=(1, 17, 301))
-    parser.add_argument("--tiers", type=_parse_tiers, default=TIER_ORDER)
+    parser.add_argument("--tiers", type=_parse_tiers, default=DEFAULT_TIERS)
     parser.add_argument("--v1-operations", type=_positive_int, default=5000)
     parser.add_argument("--v2-rounds", type=_positive_int, default=300)
     parser.add_argument("--v3-rounds", type=_positive_int, default=25)
@@ -198,6 +207,12 @@ def parse_arguments(arguments: Sequence[str]) -> CampaignConfig:
     parser.add_argument(
         "--v4-liveness-writes", type=_positive_int, default=2000
     )
+    parser.add_argument("--mixed-threads", type=_positive_int, default=32)
+    parser.add_argument(
+        "--mixed-operations-per-thread", type=_positive_int, default=10000
+    )
+    parser.add_argument("--mixed-keys", type=_positive_int, default=1_048_576)
+    parser.add_argument("--mixed-reopens", type=_nonnegative_int, default=10)
     parser.add_argument(
         "--job-timeout-seconds", type=_positive_float, default=3600.0
     )
@@ -206,7 +221,7 @@ def parse_arguments(arguments: Sequence[str]) -> CampaignConfig:
     )
     parser.add_argument("--resume", action="store_true")
     parsed = parser.parse_args(arguments)
-    return CampaignConfig(
+    config = CampaignConfig(
         stress_dir=parsed.stress_dir,
         workspace=parsed.workspace,
         seeds=parsed.seeds,
@@ -218,10 +233,19 @@ def parse_arguments(arguments: Sequence[str]) -> CampaignConfig:
         v3_timeout_seconds=parsed.v3_timeout_seconds,
         v4_operations=parsed.v4_operations,
         v4_liveness_writes=parsed.v4_liveness_writes,
+        mixed_threads=parsed.mixed_threads,
+        mixed_operations_per_thread=parsed.mixed_operations_per_thread,
+        mixed_keys=parsed.mixed_keys,
+        mixed_reopens=parsed.mixed_reopens,
         job_timeout_seconds=parsed.job_timeout_seconds,
         max_duration_seconds=parsed.max_duration_seconds,
         resume=parsed.resume,
     )
+    try:
+        _validate_config(config)
+    except ValueError as error:
+        parser.error(str(error))
+    return config
 
 
 def _executable(stress_dir: Path, name: str) -> str:
@@ -254,6 +278,9 @@ def _validate_config(config: CampaignConfig) -> tuple[str, ...]:
         config.v3_timeout_seconds,
         config.v4_operations,
         config.v4_liveness_writes,
+        config.mixed_threads,
+        config.mixed_operations_per_thread,
+        config.mixed_keys,
         config.job_timeout_seconds,
     )
     if any(value <= 0 for value in positive):
@@ -262,6 +289,10 @@ def _validate_config(config: CampaignConfig) -> tuple[str, ...]:
         raise ValueError("inflight probes cannot be negative")
     if config.max_duration_seconds < 0:
         raise ValueError("maximum duration cannot be negative")
+    if config.mixed_reopens >= config.mixed_operations_per_thread:
+        raise ValueError(
+            "mixed reopens must be below mixed operations per thread"
+        )
     return tuple(tier for tier in TIER_ORDER if tier in config.tiers)
 
 
@@ -391,6 +422,31 @@ def build_plan(config: CampaignConfig) -> CampaignPlan:
                 run_artifact="workspace/artifacts/run.txt",
                 completion_artifact="workspace/artifacts/completion.txt",
             )
+        if "mixed" in tiers:
+            add(
+                f"seed-{seed}-mixed",
+                "mixed",
+                seed,
+                [
+                    _executable(stress_dir, "modern_leveldb_mixed_stress"),
+                    "--db",
+                    "{database}",
+                    "--output",
+                    "{artifacts}",
+                    "--seed",
+                    str(seed),
+                    "--threads",
+                    str(config.mixed_threads),
+                    "--operations-per-thread",
+                    str(config.mixed_operations_per_thread),
+                    "--keys",
+                    str(config.mixed_keys),
+                    "--reopens",
+                    str(config.mixed_reopens),
+                    "--compression",
+                    "snappy",
+                ],
+            )
 
     return CampaignPlan(
         stress_dir=str(stress_dir),
@@ -404,6 +460,10 @@ def build_plan(config: CampaignConfig) -> CampaignPlan:
         v4_operations=config.v4_operations,
         v4_liveness_writes=config.v4_liveness_writes,
         jobs=tuple(jobs),
+        mixed_threads=config.mixed_threads,
+        mixed_operations_per_thread=config.mixed_operations_per_thread,
+        mixed_keys=config.mixed_keys,
+        mixed_reopens=config.mixed_reopens,
     )
 
 
@@ -418,20 +478,30 @@ def command_for_attempt(job: CampaignJob, attempt: Path) -> list[str]:
 
 
 def plan_document(plan: CampaignPlan) -> dict:
+    budgets = {
+        "v1_operations": plan.v1_operations,
+        "v2_rounds": plan.v2_rounds,
+        "v3_rounds": plan.v3_rounds,
+        "v3_inflight_probes": plan.v3_inflight_probes,
+        "v3_timeout_seconds": plan.v3_timeout_seconds,
+        "v4_operations": plan.v4_operations,
+        "v4_liveness_writes": plan.v4_liveness_writes,
+    }
+    if "mixed" in plan.tiers:
+        budgets.update(
+            {
+                "mixed_threads": plan.mixed_threads,
+                "mixed_operations_per_thread": plan.mixed_operations_per_thread,
+                "mixed_keys": plan.mixed_keys,
+                "mixed_reopens": plan.mixed_reopens,
+            }
+        )
     return {
         "format": PLAN_FORMAT,
         "stress_dir": plan.stress_dir,
         "seeds": list(plan.seeds),
         "tiers": list(plan.tiers),
-        "budgets": {
-            "v1_operations": plan.v1_operations,
-            "v2_rounds": plan.v2_rounds,
-            "v3_rounds": plan.v3_rounds,
-            "v3_inflight_probes": plan.v3_inflight_probes,
-            "v3_timeout_seconds": plan.v3_timeout_seconds,
-            "v4_operations": plan.v4_operations,
-            "v4_liveness_writes": plan.v4_liveness_writes,
-        },
+        "budgets": budgets,
         "jobs": [
             {
                 "index": job.index,
@@ -955,6 +1025,10 @@ def _expected_formats(tier: str) -> tuple[str, str]:
         "v4": (
             "modern-leveldb-option-fault-run-v1",
             "modern-leveldb-option-fault-result-v1",
+        ),
+        "mixed": (
+            "modern-leveldb-mixed-stress-run-v1",
+            "modern-leveldb-mixed-stress-result-v1",
         ),
     }
     try:
