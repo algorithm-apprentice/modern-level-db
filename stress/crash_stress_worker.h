@@ -52,7 +52,7 @@ struct CrashStressJournal {
 [[nodiscard]] CrashStressJournal ParseCrashStressJournal(
     const std::filesystem::path& path);
 [[nodiscard]] Database OpenCrashStressDatabase(
-    const std::filesystem::path& database, std::size_t index, Compression compression);
+    const std::filesystem::path& database, Compression compression, bool create);
 void ApplyCrashStressBatch(Database& database, std::uint64_t seed, std::size_t index);
 void WriteCrashStressBatch(const std::filesystem::path& database, std::uint64_t seed,
                            std::size_t index, Compression compression);

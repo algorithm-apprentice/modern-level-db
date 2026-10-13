@@ -165,5 +165,19 @@ TEST(CrashStressWorkerTest, OptionalBatchAcceptsOnlyAbsentOrCompleteState) {
         std::runtime_error);
 }
 
+TEST(CrashStressWorkerTest, FreshInflightDatabaseCanUseANonzeroOperationIndex) {
+    test_support::TemporaryDirectory directory;
+    const auto database_path = directory.path() / "inflight";
+
+    {
+        Database database =
+            OpenCrashStressDatabase(database_path, Compression::None, true);
+        ApplyCrashStressBatch(database, 17, 9);
+    }
+
+    EXPECT_EQ(VerifyOptionalCrashStressBatch(database_path, 17, 9, Compression::None),
+              OptionalCrashBatchState::Complete);
+}
+
 }  // namespace
 }  // namespace modern_leveldb::stress

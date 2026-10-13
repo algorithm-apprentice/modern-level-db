@@ -46,7 +46,8 @@ int Run(std::span<const std::filesystem::path> arguments) {
             }
             case CrashStressWorkerMode::WriteHold: {
                 Database database =
-                    OpenCrashStressDatabase(parsed.database, parsed.index, parsed.compression);
+                    OpenCrashStressDatabase(parsed.database, parsed.compression,
+                                            parsed.index == 0);
                 ApplyCrashStressBatch(database, parsed.seed, parsed.index);
                 if (!Write(stdout, CrashStressAcknowledgement(parsed.index))) {
                     return 1;
@@ -58,7 +59,7 @@ int Run(std::span<const std::filesystem::path> arguments) {
                     return 1;
                 }
                 Database database =
-                    OpenCrashStressDatabase(parsed.database, parsed.index, parsed.compression);
+                    OpenCrashStressDatabase(parsed.database, parsed.compression, true);
                 ApplyCrashStressBatch(database, parsed.seed, parsed.index);
                 Hold(database);
             }

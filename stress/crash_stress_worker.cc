@@ -275,13 +275,12 @@ CrashStressJournal ParseCrashStressJournal(const std::filesystem::path& path) {
 
 void WriteCrashStressBatch(const std::filesystem::path& database, std::uint64_t seed,
                            std::size_t index, Compression compression) {
-    Database handle = OpenCrashStressDatabase(database, index, compression);
+    Database handle = OpenCrashStressDatabase(database, compression, index == 0);
     ApplyCrashStressBatch(handle, seed, index);
 }
 
-Database OpenCrashStressDatabase(const std::filesystem::path& database, std::size_t index,
-                                 Compression compression) {
-    const bool create = index == 0;
+Database OpenCrashStressDatabase(const std::filesystem::path& database,
+                                 Compression compression, bool create) {
     auto opened =
         Database::Open(CrashDatabaseOptions(compression, create, create), database);
     return Take(std::move(opened));

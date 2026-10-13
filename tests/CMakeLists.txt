@@ -17,6 +17,7 @@ FetchContent_Declare(
   GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(googletest)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 add_executable(
   modern_leveldb_unit_tests
@@ -236,6 +237,12 @@ gtest_discover_tests(
   DISCOVERY_TIMEOUT "${modern_leveldb_gtest_discovery_timeout}"
   PROPERTIES LABELS unit TIMEOUT 10
 )
+
+add_test(
+  NAME stress.crash_runner_contracts
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/crash_stress_test.py"
+)
+set_tests_properties(stress.crash_runner_contracts PROPERTIES LABELS unit TIMEOUT 30)
 
 set(consumer_scenarios
   module_shadow default_tests tests_disabled gtest_options dependency_targets
