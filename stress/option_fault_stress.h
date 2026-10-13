@@ -4,9 +4,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "modern_leveldb/base/result.h"
 #include "modern_leveldb/options.h"
 #include "support/database_model.h"
 
@@ -33,6 +35,39 @@ struct OptionMatrixCellSummary {
                            const OptionMatrixCellSummary&) = default;
 };
 
+enum class FaultScenario : std::uint8_t {
+    Read,
+    WalAppend,
+    WalSync,
+    OldWalClose,
+    TableSync,
+    TableClose,
+    TableDirectorySync,
+    ManifestAppend,
+    ManifestSync,
+    Scheduling,
+};
+
+enum class RecoveredBatchState : std::uint8_t {
+    Old,
+    New,
+};
+
+struct FaultScenarioSummary {
+    FaultScenario scenario = FaultScenario::Read;
+    std::string name;
+    std::string injected_operation;
+    ErrorCode error_code = ErrorCode::Io;
+    std::string error_message;
+    bool sticky = false;
+    bool later_write_reused_error_without_io = false;
+    bool retry_succeeded = false;
+    std::optional<RecoveredBatchState> recovered_batch;
+
+    friend bool operator==(const FaultScenarioSummary&,
+                           const FaultScenarioSummary&) = default;
+};
+
 [[nodiscard]] std::vector<OptionMatrixCell> EnumerateOptionMatrix();
 [[nodiscard]] std::string OptionMatrixCellId(const OptionMatrixCell& cell);
 [[nodiscard]] std::uint64_t DeriveOptionMatrixSeed(std::uint64_t campaign_seed,
@@ -42,6 +77,9 @@ struct OptionMatrixCellSummary {
 [[nodiscard]] OptionMatrixCellSummary RunOptionMatrixCell(
     const std::filesystem::path& database, const OptionMatrixCell& cell,
     std::uint64_t campaign_seed, std::size_t operations);
+[[nodiscard]] std::vector<FaultScenario> EnumerateFaultScenarios();
+[[nodiscard]] std::string FaultScenarioName(FaultScenario scenario);
+[[nodiscard]] FaultScenarioSummary RunFaultScenario(FaultScenario scenario);
 
 }  // namespace modern_leveldb::stress
 
