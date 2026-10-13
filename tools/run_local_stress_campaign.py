@@ -266,6 +266,7 @@ def _validate_config(config: CampaignConfig) -> tuple[str, ...]:
 
 def build_plan(config: CampaignConfig) -> CampaignPlan:
     tiers = _validate_config(config)
+    stress_dir = config.stress_dir.resolve(strict=False)
     crash_runner = Path(__file__).resolve().with_name("run_crash_stress.py")
     jobs = []
 
@@ -297,7 +298,7 @@ def build_plan(config: CampaignConfig) -> CampaignPlan:
                     "v1",
                     seed,
                     [
-                        _executable(config.stress_dir, "modern_leveldb_stress"),
+                        _executable(stress_dir, "modern_leveldb_stress"),
                         "--db",
                         "{database}",
                         "--output",
@@ -318,7 +319,7 @@ def build_plan(config: CampaignConfig) -> CampaignPlan:
                     seed,
                     [
                         _executable(
-                            config.stress_dir,
+                            stress_dir,
                             "modern_leveldb_concurrent_stress",
                         ),
                         "--db",
@@ -346,7 +347,7 @@ def build_plan(config: CampaignConfig) -> CampaignPlan:
                         str(crash_runner),
                         "--worker",
                         _executable(
-                            config.stress_dir,
+                            stress_dir,
                             "modern_leveldb_crash_stress_worker",
                         ),
                         "--db",
@@ -372,7 +373,7 @@ def build_plan(config: CampaignConfig) -> CampaignPlan:
                 seed,
                 [
                     _executable(
-                        config.stress_dir,
+                        stress_dir,
                         "modern_leveldb_option_fault_stress",
                     ),
                     "--workspace",
@@ -389,7 +390,7 @@ def build_plan(config: CampaignConfig) -> CampaignPlan:
             )
 
     return CampaignPlan(
-        stress_dir=str(config.stress_dir),
+        stress_dir=str(stress_dir),
         seeds=config.seeds,
         tiers=tiers,
         v1_operations=config.v1_operations,
@@ -624,6 +625,9 @@ def execute_attempt(
             if error_text is None:
                 error_text = str(error)
             category = "execution_failure"
+        for stream in (stdout, stderr):
+            stream.flush()
+            os.fsync(stream.fileno())
 
     duration = time.monotonic() - started
     result = AttemptResult(
@@ -794,6 +798,49 @@ def _summary_from_state(state: dict) -> CampaignSummary:
 
 def _publish_summary(workspace: Path, state: dict) -> CampaignSummary:
     summary = _summary_from_state(state)
+    failed_statuses = {"failed", "timed_out", "interrupted"}
+
+    def aggregate(selected: list[dict]) -> dict:
+        statuses = [job["status"] for job in selected]
+        return {
+            "total": len(selected),
+            "passed": statuses.count("passed"),
+            "failed": sum(status in failed_statuses for status in statuses),
+            "pending": sum(
+                status in {"pending", "running"} for status in statuses
+            ),
+            "duration_seconds": sum(
+                float(attempt.get("duration_seconds") or 0.0)
+                for job in selected
+                for attempt in job["attempts"]
+            ),
+        }
+
+    tiers = []
+    seeds = []
+    for job in state["jobs"]:
+        if job["tier"] not in tiers:
+            tiers.append(job["tier"])
+        seed = str(job["seed"])
+        if seed not in seeds:
+            seeds.append(seed)
+    by_tier = {
+        tier: aggregate(
+            [job for job in state["jobs"] if job["tier"] == tier]
+        )
+        for tier in tiers
+    }
+    by_seed = {
+        seed: aggregate(
+            [job for job in state["jobs"] if str(job["seed"]) == seed]
+        )
+        for seed in seeds
+    }
+    duration = sum(
+        float(attempt.get("duration_seconds") or 0.0)
+        for job in state["jobs"]
+        for attempt in job["attempts"]
+    )
     _atomic_write_json(
         workspace / "summary.json",
         {
@@ -807,9 +854,23 @@ def _publish_summary(workspace: Path, state: dict) -> CampaignSummary:
             "revision": summary.revision,
             "dirty": summary.dirty,
             "blocking_job": summary.blocking_job,
+            "duration_seconds": duration,
+            "by_tier": by_tier,
+            "by_seed": by_seed,
             "jobs": state["jobs"],
         },
     )
+    aggregate_lines = []
+    for group_name, groups in (("tier", by_tier), ("seed", by_seed)):
+        for name, values in groups.items():
+            for key in ("total", "passed", "failed", "pending"):
+                aggregate_lines.append(
+                    f"{group_name}.{name}.{key}={values[key]}"
+                )
+            aggregate_lines.append(
+                f"{group_name}.{name}.duration_seconds="
+                f"{values['duration_seconds']}"
+            )
     _atomic_write_text(
         workspace / "summary.txt",
         "\n".join(
@@ -828,6 +889,8 @@ def _publish_summary(workspace: Path, state: dict) -> CampaignSummary:
                     else f"dirty={'true' if summary.dirty else 'false'}"
                 ),
                 f"blocking_job={summary.blocking_job or ''}",
+                f"duration_seconds={duration}",
+                *aggregate_lines,
                 "",
             ]
         ),
@@ -842,9 +905,15 @@ def _parse_text_artifact(path: Path) -> dict[str, str]:
         raise ArtifactError("unreadable_artifact", str(error)) from error
     result = {}
     for line in lines:
-        if not line or "=" not in line:
+        if not line:
             continue
+        if "=" not in line:
+            raise ArtifactError(
+                "invalid_artifact", f"malformed artifact line: {line}"
+            )
         key, value = line.split("=", 1)
+        if not key:
+            raise ArtifactError("invalid_artifact", "artifact key is empty")
         if key in result:
             raise ArtifactError(
                 "invalid_artifact", f"duplicate artifact key: {key}"
@@ -1108,6 +1177,10 @@ def run_campaign(
         if config.resume
         else _prepare_new_workspace(workspace, selected_plan)
     )
+    if (workspace / "completion.txt").exists() and not all(
+        job["status"] == "passed" for job in state["jobs"]
+    ):
+        raise ValueError("campaign completion conflicts with incomplete state")
     identity = _revalidate_passed_jobs(workspace, selected_plan, state)
     recorded_identity = _identity_from_state(state)
     if recorded_identity is not None and identity is not None:

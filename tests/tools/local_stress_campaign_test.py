@@ -76,11 +76,12 @@ class LocalStressCampaignPlannerTest(unittest.TestCase):
             ],
         )
         suffix = ".exe" if os.name == "nt" else ""
+        stress_dir = config.stress_dir.resolve(strict=False)
         attempt = Path("/attempt")
         self.assertEqual(
             run_local_stress_campaign.command_for_attempt(plan.jobs[0], attempt),
             [
-                str(Path("/stress") / f"modern_leveldb_concurrent_stress{suffix}"),
+                str(stress_dir / f"modern_leveldb_concurrent_stress{suffix}"),
                 "--db",
                 str(attempt / "database"),
                 "--output",
@@ -98,7 +99,7 @@ class LocalStressCampaignPlannerTest(unittest.TestCase):
         self.assertEqual(
             run_local_stress_campaign.command_for_attempt(plan.jobs[-1], attempt),
             [
-                str(Path("/stress") / f"modern_leveldb_option_fault_stress{suffix}"),
+                str(stress_dir / f"modern_leveldb_option_fault_stress{suffix}"),
                 "--workspace",
                 str(attempt / "workspace"),
                 "--seed",
