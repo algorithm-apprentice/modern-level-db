@@ -126,7 +126,8 @@ Linux/macOS:
 ```bash
 cmake --preset local-stress
 cmake --build --preset local-stress \
-  --target modern_leveldb_stress modern_leveldb_concurrent_stress
+  --target modern_leveldb_stress modern_leveldb_concurrent_stress \
+    modern_leveldb_crash_stress_worker
 ```
 
 Windows:
@@ -134,7 +135,8 @@ Windows:
 ```powershell
 cmake --preset windows-local-stress
 cmake --build --preset windows-local-stress `
-  --target modern_leveldb_stress modern_leveldb_concurrent_stress
+  --target modern_leveldb_stress modern_leveldb_concurrent_stress `
+    modern_leveldb_crash_stress_worker
 ```
 
 Use only new disposable database and artifact paths. See

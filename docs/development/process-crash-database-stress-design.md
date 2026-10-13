@@ -51,10 +51,11 @@ recovery is part of the workload rather than one final check.
 
 A separate fresh database probe:
 
-1. child emits `ready<TAB>0<LF>`;
-2. child attempts one synchronous two-key batch;
-3. parent kills immediately after readiness;
-4. verification accepts either:
+1. a short-lived worker creates and cleanly closes an empty baseline database;
+2. child emits `ready<TAB>0<LF>`;
+3. child opens that existing database and attempts one synchronous two-key batch;
+4. parent kills immediately after readiness;
+5. verification accepts either:
    - neither key/marker;
    - the complete batch and marker.
 
@@ -80,6 +81,7 @@ Modes:
 | `inflight-hold` | Emit ready, attempt one sync batch, wait forever if it returns |
 | `verify-prefix` | Read the external journal and verify every acknowledged index |
 | `verify-optional` | Verify one in-flight batch is wholly absent or wholly present |
+| `initialize` | Create and cleanly close an empty baseline for one in-flight probe |
 | `identity` | Print source revision and dirty state |
 
 The worker receives native paths on Windows through `wmain`.
@@ -90,11 +92,10 @@ open; no normal return or destructor can improve the crash image.
 
 ### Python parent
 
-The implementation adds one local runner under `tools`. Its planned command
-interface is:
+The local parent is `tools/run_crash_stress.py`:
 
 ```console
-python LOCAL_CRASH_STRESS_RUNNER \
+python tools/run_crash_stress.py \
   --worker WORKER_BINARY \
   --db NEW_DATABASE_DIRECTORY \
   --output NEW_ARTIFACT_DIRECTORY \

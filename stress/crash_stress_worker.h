@@ -21,6 +21,7 @@ enum class CrashStressWorkerMode : std::uint8_t {
     InflightHold,
     VerifyPrefix,
     VerifyOptional,
+    Initialize,
     Identity,
 };
 
@@ -51,6 +52,8 @@ struct CrashStressJournal {
 [[nodiscard]] std::string CrashStressReadiness(std::size_t index);
 [[nodiscard]] CrashStressJournal ParseCrashStressJournal(
     const std::filesystem::path& path);
+void InitializeCrashStressDatabase(const std::filesystem::path& database,
+                                   Compression compression);
 [[nodiscard]] Database OpenCrashStressDatabase(
     const std::filesystem::path& database, Compression compression, bool create);
 void ApplyCrashStressBatch(Database& database, std::uint64_t seed, std::size_t index);

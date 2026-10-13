@@ -323,6 +323,12 @@ def run_campaign(config: Config) -> Summary:
             probe_root = inflight_root / str(probe)
             probe_root.mkdir()
             probe_database = probe_root / "db"
+            run_completed_child(
+                _worker_command(config, "initialize", probe_database),
+                "initialized",
+                config.timeout_seconds,
+            )
+            _append_process_log(process_log, f"initialize\tinflight\t{probe}")
             _append_process_log(process_log, f"launch\tinflight\t{probe}")
             run_holding_child(
                 _worker_command(config, "inflight-hold", probe_database, index=probe),

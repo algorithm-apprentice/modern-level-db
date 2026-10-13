@@ -43,6 +43,8 @@ class CrashStressTest(unittest.TestCase):
                 elif args.mode == "inflight-hold":
                     print(f"ready\\t{args.index}", flush=True)
                     time.sleep(60)
+                elif args.mode == "initialize":
+                    print("initialized", flush=True)
                 elif args.mode == "verify-prefix":
                     lines = Path(args.journal).read_text(encoding="utf-8").splitlines()
                     print(f"verified\\t{len(lines) - 1}", flush=True)
@@ -151,6 +153,7 @@ class CrashStressTest(unittest.TestCase):
                 process_log.index("kill\tack\t0"),
             )
             self.assertIn("verify\tprefix\t3", process_log)
+            self.assertIn("initialize\tinflight\t0", process_log)
             self.assertIn("verify\toptional\tabsent", process_log)
 
     def test_campaign_failure_preserves_artifacts_without_completion(self):

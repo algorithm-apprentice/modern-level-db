@@ -59,7 +59,7 @@ int Run(std::span<const std::filesystem::path> arguments) {
                     return 1;
                 }
                 Database database =
-                    OpenCrashStressDatabase(parsed.database, parsed.compression, true);
+                    OpenCrashStressDatabase(parsed.database, parsed.compression, false);
                 ApplyCrashStressBatch(database, parsed.seed, parsed.index);
                 Hold(database);
             }
@@ -78,6 +78,9 @@ int Run(std::span<const std::filesystem::path> arguments) {
                                                              : "optional\tcomplete\n";
                 return Write(stdout, verified) ? 0 : 1;
             }
+            case CrashStressWorkerMode::Initialize:
+                InitializeCrashStressDatabase(parsed.database, parsed.compression);
+                return Write(stdout, "initialized\n") ? 0 : 1;
         }
     } catch (const std::invalid_argument& error) {
         const std::string message =

@@ -21,14 +21,20 @@ The local stress targets currently cover:
   - concurrent disjoint writer batches;
   - snapshot point-read and iterator consistency;
   - iterators retained after Snapshot and Database handles are destroyed;
+- process-crash V3:
+  - parent-owned sync acknowledgement journal;
+  - abrupt kill/reap after every acknowledged batch;
+  - reopen and exact prefix verification after every child;
+  - optional whole-batch in-flight probes;
 - WAL rotation, flush, and compaction pressure through a 64 KiB write buffer;
 - None, Snappy, and Zstd table compression;
 - versioned run, operation, final-state, completion, and failure artifacts.
 
 V1 remains the deterministic single-thread model. V2 adds bounded concurrent
-contracts; it does not claim unbounded linearizability for every API.
-Process-crash safety, power-loss safety, randomized option compatibility, and
-fault-injection recovery remain separate later phases in the
+contracts; it does not claim unbounded linearizability for every API. V3 adds
+process-crash acknowledgement/recovery evidence, not machine power-loss
+certification. Randomized option compatibility and fault-injection recovery
+remain separate later phases in the
 [stress design](local-database-stress-design.md) and
 [concurrent design](concurrent-database-stress-design.md).
 
@@ -53,7 +59,8 @@ Linux/macOS:
 ```bash
 cmake --preset local-stress
 cmake --build --preset local-stress \
-  --target modern_leveldb_stress modern_leveldb_concurrent_stress
+  --target modern_leveldb_stress modern_leveldb_concurrent_stress \
+    modern_leveldb_crash_stress_worker
 ```
 
 Windows, from an initialized x64 MSVC developer environment:
@@ -61,7 +68,8 @@ Windows, from an initialized x64 MSVC developer environment:
 ```powershell
 cmake --preset windows-local-stress
 cmake --build --preset windows-local-stress `
-  --target modern_leveldb_stress modern_leveldb_concurrent_stress
+  --target modern_leveldb_stress modern_leveldb_concurrent_stress `
+    modern_leveldb_crash_stress_worker
 ```
 
 Building the target refreshes the source revision and dirty-worktree identity
@@ -193,6 +201,62 @@ The tool returns:
 
 The concurrent executable uses the same exit-code meanings as V1.
 
+## Run process-crash V3
+
+Linux/macOS:
+
+```bash
+python3 tools/run_crash_stress.py \
+  --worker ./build/local-stress/stress/modern_leveldb_crash_stress_worker \
+  --db /absolute/disposable/path/crash-db-01 \
+  --output /absolute/disposable/path/crash-output-01 \
+  --rounds 25 \
+  --seed 301 \
+  --compression none \
+  --timeout-seconds 30 \
+  --inflight-probes 3
+```
+
+Windows:
+
+```powershell
+python tools\run_crash_stress.py `
+  --worker .\build\windows-local-stress\stress\modern_leveldb_crash_stress_worker.exe `
+  --db C:\absolute\disposable\path\crash-db-01 `
+  --output C:\absolute\disposable\path\crash-output-01 `
+  --rounds 25 `
+  --seed 301 `
+  --compression none `
+  --timeout-seconds 30 `
+  --inflight-probes 3
+```
+
+For every acknowledged round, the worker synchronizes one atomic batch,
+emits an acknowledgement, and remains alive with its Database handle. The
+parent fsyncs that acknowledgement into an external journal, kills and reaps
+the child, then starts a fresh verifier. The verifier must recover the complete
+journal prefix.
+
+In-flight probes emit readiness before attempting a batch. Recovery may report
+the batch wholly absent or wholly complete; a partial batch is failure.
+
+V3 requires Python 3.9 or newer. The parent owns all child processes and
+applies bounded protocol and completion timeouts.
+
+## V3 artifacts
+
+| File | Interpretation |
+|---|---|
+| `run.txt` | Worker source identity, seed, rounds, compression, timeout, and probe count |
+| `acknowledged.log` | Parent-owned contiguous oracle, flushed and fsynced before each kill |
+| `process.log` | Launch, journal, kill, reap/verification progression |
+| `inflight.txt` | Each optional probe's absent/complete result |
+| `completion.txt` | Exists only after every recovery and optional probe succeeds |
+| `failure.txt` | Parent failure message |
+
+The probe databases remain under the output directory. Preserve a failure
+directory unchanged until the worker command and journal reproduce it.
+
 ## Local acceptance sets
 
 Before reviewing V1 changes, run three fresh campaigns:
@@ -219,6 +283,10 @@ threads  compression  seed
 Repeat at least one combination several times because scheduling, unlike the
 operation plan, is intentionally nondeterministic. Preserve every invalid
 history unchanged.
+
+Before reviewing V3 changes, run at least 25 acknowledged kill/recover rounds
+plus in-flight probes for None, Snappy, and Zstd. On Windows, include one
+Unicode database/output path. Confirm no worker process survives any campaign.
 
 These campaigns are local evidence. Do not add them to GitHub Actions or CTest
 without a separate cost, duration, flakiness, and ownership decision.

@@ -70,6 +70,9 @@ CrashStressWorkerMode ParseMode(std::string_view mode) {
     if (mode == "verify-optional") {
         return CrashStressWorkerMode::VerifyOptional;
     }
+    if (mode == "initialize") {
+        return CrashStressWorkerMode::Initialize;
+    }
     if (mode == "identity") {
         return CrashStressWorkerMode::Identity;
     }
@@ -205,6 +208,10 @@ CrashStressWorkerArguments ParseCrashStressWorkerArguments(
         if (!have_journal || have_index) {
             throw std::invalid_argument("verify-prefix requires --journal and no --index");
         }
+    } else if (result.mode == CrashStressWorkerMode::Initialize) {
+        if (have_journal || have_index) {
+            throw std::invalid_argument("initialize accepts no --journal or --index");
+        }
     }
     return result;
 }
@@ -271,6 +278,12 @@ CrashStressJournal ParseCrashStressJournal(const std::filesystem::path& path) {
         throw std::runtime_error("crash acknowledgement journal is empty");
     }
     return {line_index - 1};
+}
+
+void InitializeCrashStressDatabase(const std::filesystem::path& database,
+                                   Compression compression) {
+    static_cast<void>(
+        Take(Database::Open(CrashDatabaseOptions(compression, true, true), database)));
 }
 
 void WriteCrashStressBatch(const std::filesystem::path& database, std::uint64_t seed,
@@ -347,7 +360,7 @@ OptionalCrashBatchState VerifyOptionalCrashStressBatch(
 
 std::string CrashStressWorkerUsage() {
     return "usage: modern_leveldb_crash_stress_worker --mode "
-           "write-hold|inflight-hold|verify-prefix|verify-optional|identity "
+           "write-hold|inflight-hold|verify-prefix|verify-optional|initialize|identity "
            "[--db PATH] [--journal PATH] [--seed N] [--index N] "
            "[--compression none|snappy|zstd]\n";
 }

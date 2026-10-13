@@ -59,6 +59,11 @@ TEST(CrashStressWorkerArgumentsTest, ParsesModesDefaultsAndNativePaths) {
     const std::array<std::filesystem::path, 2> identity{"--mode", "identity"};
     EXPECT_EQ(ParseCrashStressWorkerArguments(identity).mode,
               CrashStressWorkerMode::Identity);
+    const std::array<std::filesystem::path, 4> initialize{
+        "--mode", "initialize", "--db", database,
+    };
+    EXPECT_EQ(ParseCrashStressWorkerArguments(initialize).mode,
+              CrashStressWorkerMode::Initialize);
 }
 
 TEST(CrashStressWorkerArgumentsTest, RejectsInvalidModeSpecificArguments) {
@@ -137,6 +142,7 @@ TEST(CrashStressWorkerTest, VerifiesAcknowledgedPrefixAgainstNativeDatabase) {
 TEST(CrashStressWorkerTest, OptionalBatchAcceptsOnlyAbsentOrCompleteState) {
     test_support::TemporaryDirectory directory;
     const auto absent = directory.path() / "absent";
+    InitializeCrashStressDatabase(absent, Compression::None);
     EXPECT_EQ(VerifyOptionalCrashStressBatch(absent, 301, 0, Compression::None),
               OptionalCrashBatchState::Absent);
 
@@ -168,10 +174,11 @@ TEST(CrashStressWorkerTest, OptionalBatchAcceptsOnlyAbsentOrCompleteState) {
 TEST(CrashStressWorkerTest, FreshInflightDatabaseCanUseANonzeroOperationIndex) {
     test_support::TemporaryDirectory directory;
     const auto database_path = directory.path() / "inflight";
+    InitializeCrashStressDatabase(database_path, Compression::None);
 
     {
         Database database =
-            OpenCrashStressDatabase(database_path, Compression::None, true);
+            OpenCrashStressDatabase(database_path, Compression::None, false);
         ApplyCrashStressBatch(database, 17, 9);
     }
 
