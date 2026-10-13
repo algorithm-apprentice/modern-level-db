@@ -57,19 +57,21 @@ TEST(ConcurrentStressArgumentsTest, ParsesDefaultsOverridesAndBounds) {
     const ConcurrentStressArguments parsed_defaults =
         ParseConcurrentStressArguments(defaults);
     EXPECT_EQ(parsed_defaults.seed, 301U);
+    EXPECT_EQ(parsed_defaults.mode, ConcurrentStressMode::Checked);
     EXPECT_EQ(parsed_defaults.threads, 4U);
     EXPECT_EQ(parsed_defaults.rounds, 1000U);
     EXPECT_EQ(parsed_defaults.compression, Compression::None);
 
     const std::vector<std::filesystem::path> overrides{
         "--db",          "db", "--output",     "out", "--seed",
-        "18446744073709551615", "--threads", "8", "--rounds", "42",
-        "--compression", "snappy",
+        "18446744073709551615", "--threads", "256", "--rounds", "42",
+        "--compression", "snappy", "--mode", "fanout",
     };
     const ConcurrentStressArguments parsed_overrides =
         ParseConcurrentStressArguments(overrides);
     EXPECT_EQ(parsed_overrides.seed, std::numeric_limits<std::uint64_t>::max());
-    EXPECT_EQ(parsed_overrides.threads, 8U);
+    EXPECT_EQ(parsed_overrides.mode, ConcurrentStressMode::Fanout);
+    EXPECT_EQ(parsed_overrides.threads, 256U);
     EXPECT_EQ(parsed_overrides.rounds, 42U);
     EXPECT_EQ(parsed_overrides.compression, Compression::Snappy);
 
@@ -77,6 +79,10 @@ TEST(ConcurrentStressArgumentsTest, ParsesDefaultsOverridesAndBounds) {
         {},
         {"--db", "db", "--output", "out", "--threads", "1"},
         {"--db", "db", "--output", "out", "--threads", "9"},
+        {"--db", "db", "--output", "out", "--mode", "fanout", "--threads", "1"},
+        {"--db", "db", "--output", "out", "--mode", "fanout", "--threads", "257"},
+        {"--db", "db", "--output", "out", "--mode", "unknown"},
+        {"--db", "db", "--output", "out", "--mode", "checked", "--mode", "fanout"},
         {"--db", "db", "--output", "out", "--rounds", "0"},
         {"--db", "db", "--output", "out", "--threads", "4", "--threads", "5"},
         {"--db", "db", "--output", "out", "--rounds", "1", "--rounds", "2"},
@@ -91,6 +97,18 @@ TEST(ConcurrentStressArgumentsTest, ParsesDefaultsOverridesAndBounds) {
     EXPECT_TRUE(ParseConcurrentStressArguments(help_arguments).help);
 }
 
+TEST(ConcurrentStressArgumentsTest, FanoutThreadValidationIsOptionOrderIndependent) {
+    const std::vector<std::filesystem::path> arguments{
+        "--db", "db", "--output", "out", "--threads", "256", "--mode", "fanout",
+    };
+
+    const ConcurrentStressArguments parsed =
+        ParseConcurrentStressArguments(arguments);
+
+    EXPECT_EQ(parsed.mode, ConcurrentStressMode::Fanout);
+    EXPECT_EQ(parsed.threads, 256U);
+}
+
 TEST(ConcurrentStressRunTest, CompletesLinearizableAndSnapshotPhases) {
     test_support::TemporaryDirectory root;
     const StressBuildIdentity identity{"test-revision", false};
@@ -101,6 +119,7 @@ TEST(ConcurrentStressRunTest, CompletesLinearizableAndSnapshotPhases) {
 
     EXPECT_EQ(summary.rounds, arguments.rounds);
     EXPECT_EQ(summary.threads, arguments.threads);
+    EXPECT_EQ(summary.mode, ConcurrentStressMode::Checked);
     EXPECT_EQ(summary.linearized_worker_operations,
               arguments.rounds * arguments.threads);
     EXPECT_GT(summary.batch_writes, 0U);
@@ -118,6 +137,36 @@ TEST(ConcurrentStressRunTest, CompletesLinearizableAndSnapshotPhases) {
     EXPECT_TRUE(std::filesystem::exists(arguments.output / "final-state.txt"));
     EXPECT_TRUE(std::filesystem::exists(arguments.output / "completion.txt"));
     EXPECT_FALSE(std::filesystem::exists(arguments.output / "failure.txt"));
+}
+
+TEST(ConcurrentStressRunTest, FanoutRunsOnlyScalableSnapshotAndReopenOracle) {
+    test_support::TemporaryDirectory root;
+    const StressBuildIdentity identity{"test-revision", false};
+    ConcurrentStressArguments arguments =
+        SmallConcurrentRun(root.path(), "fanout");
+    arguments.mode = ConcurrentStressMode::Fanout;
+    arguments.threads = 32;
+    arguments.rounds = 2;
+
+    const ConcurrentStressSummary summary =
+        RunConcurrentStress(arguments, identity);
+
+    EXPECT_EQ(summary.mode, ConcurrentStressMode::Fanout);
+    EXPECT_EQ(summary.threads, 32U);
+    EXPECT_EQ(summary.rounds, 2U);
+    EXPECT_EQ(summary.linearized_worker_operations, 0U);
+    EXPECT_EQ(summary.batch_writes, 32U);
+    EXPECT_GE(summary.snapshot_checks, 16U);
+    EXPECT_EQ(summary.entries, 32U);
+    const std::string histories =
+        test_support::ReadTextFile(arguments.output / "linearizability.log");
+    EXPECT_EQ(Count(histories, "\nround="), 0U);
+    EXPECT_NE(test_support::ReadTextFile(arguments.output / "run.txt")
+                  .find("mode=fanout"),
+              std::string::npos);
+    EXPECT_NE(test_support::ReadTextFile(arguments.output / "completion.txt")
+                  .find("mode=fanout"),
+              std::string::npos);
 }
 
 TEST(ConcurrentStressRunTest, FailurePreservesCompletedHistoriesWithoutCompletion) {
@@ -175,6 +224,8 @@ TEST(ConcurrentStressRunTest, UsageStatesBoundedLocalConcurrency) {
     const std::string usage = ConcurrentStressUsage();
 
     EXPECT_NE(usage.find("2..8"), std::string::npos);
+    EXPECT_NE(usage.find("256"), std::string::npos);
+    EXPECT_NE(usage.find("--mode"), std::string::npos);
     EXPECT_NE(usage.find("--rounds"), std::string::npos);
     EXPECT_NE(usage.find("local"), std::string::npos);
 }
