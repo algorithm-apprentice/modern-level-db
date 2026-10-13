@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 
@@ -216,6 +217,8 @@ TEST(LivenessScenarioTest, DrainsWorkAndVerifiesFinalAndReopenedModel) {
     EXPECT_GT(first.scans, 0U);
     EXPECT_EQ(first.entries, first.writes);
     EXPECT_EQ(first.fingerprint.size(), 16U);
+    EXPECT_THROW(static_cast<void>(RunLivenessScenario(17, 0)),
+                 std::invalid_argument);
 }
 
 }  // namespace
