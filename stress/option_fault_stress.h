@@ -68,6 +68,20 @@ struct FaultScenarioSummary {
                            const FaultScenarioSummary&) = default;
 };
 
+struct LivenessScenarioSummary {
+    std::uint64_t seed = 0;
+    std::size_t writes = 0;
+    std::size_t background_tasks = 0;
+    std::size_t table_outputs = 0;
+    std::size_t point_reads = 0;
+    std::size_t scans = 0;
+    std::size_t entries = 0;
+    std::string fingerprint;
+
+    friend bool operator==(const LivenessScenarioSummary&,
+                           const LivenessScenarioSummary&) = default;
+};
+
 [[nodiscard]] std::vector<OptionMatrixCell> EnumerateOptionMatrix();
 [[nodiscard]] std::string OptionMatrixCellId(const OptionMatrixCell& cell);
 [[nodiscard]] std::uint64_t DeriveOptionMatrixSeed(std::uint64_t campaign_seed,
@@ -80,6 +94,8 @@ struct FaultScenarioSummary {
 [[nodiscard]] std::vector<FaultScenario> EnumerateFaultScenarios();
 [[nodiscard]] std::string FaultScenarioName(FaultScenario scenario);
 [[nodiscard]] FaultScenarioSummary RunFaultScenario(FaultScenario scenario);
+[[nodiscard]] LivenessScenarioSummary RunLivenessScenario(
+    std::uint64_t seed, std::size_t writes);
 
 }  // namespace modern_leveldb::stress
 

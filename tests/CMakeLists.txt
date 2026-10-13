@@ -82,6 +82,7 @@ add_executable(
   "${PROJECT_SOURCE_DIR}/stress/concurrent_stress.cc"
   "${PROJECT_SOURCE_DIR}/stress/fault_scenarios.cc"
   "${PROJECT_SOURCE_DIR}/stress/linearizability.cc"
+  "${PROJECT_SOURCE_DIR}/stress/liveness_scenario.cc"
   "${PROJECT_SOURCE_DIR}/stress/option_fault_stress.cc"
   "${PROJECT_SOURCE_DIR}/stress/stress.cc"
   "${PROJECT_SOURCE_DIR}/stress/stress_support.cc"

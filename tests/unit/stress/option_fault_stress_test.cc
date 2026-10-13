@@ -203,5 +203,20 @@ INSTANTIATE_TEST_SUITE_P(
         return name;
     });
 
+TEST(LivenessScenarioTest, DrainsWorkAndVerifiesFinalAndReopenedModel) {
+    const LivenessScenarioSummary first = RunLivenessScenario(17, 256);
+    const LivenessScenarioSummary second = RunLivenessScenario(17, 256);
+
+    EXPECT_EQ(first, second);
+    EXPECT_EQ(first.seed, 17U);
+    EXPECT_EQ(first.writes, 256U);
+    EXPECT_GT(first.background_tasks, 0U);
+    EXPECT_GT(first.table_outputs, 0U);
+    EXPECT_GT(first.point_reads, 0U);
+    EXPECT_GT(first.scans, 0U);
+    EXPECT_EQ(first.entries, first.writes);
+    EXPECT_EQ(first.fingerprint.size(), 16U);
+}
+
 }  // namespace
 }  // namespace modern_leveldb::stress
