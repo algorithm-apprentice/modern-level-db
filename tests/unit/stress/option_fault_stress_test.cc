@@ -5,12 +5,14 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <tuple>
 
 #include "support/temporary_directory.h"
+#include "support/text_file.h"
 
 namespace modern_leveldb::stress {
 namespace {
@@ -219,6 +221,189 @@ TEST(LivenessScenarioTest, DrainsWorkAndVerifiesFinalAndReopenedModel) {
     EXPECT_EQ(first.fingerprint.size(), 16U);
     EXPECT_THROW(static_cast<void>(RunLivenessScenario(17, 0)),
                  std::invalid_argument);
+}
+
+OptionFaultStressArguments SmallOptionFaultRun(
+    const std::filesystem::path& root, std::string_view name) {
+    OptionFaultStressArguments result;
+    result.workspace = root / std::string(name);
+    result.seed = 17;
+    result.operations = 32;
+    result.liveness_writes = 64;
+    return result;
+}
+
+class ThrowBeforeFault final : public OptionFaultStressObserver {
+public:
+    void BeforeOptionCell(std::size_t, const OptionMatrixCell&) override {}
+    void BeforeFaultScenario(std::size_t, FaultScenario) override {
+        throw std::runtime_error("injected option-fault observer failure");
+    }
+    void BeforeLiveness() override {}
+};
+
+TEST(OptionFaultStressArgumentsTest, ParsesDefaultsOverridesAndNativePaths) {
+#if defined(_WIN32)
+    const std::filesystem::path workspace = L"matrix-\u6570\u636e-\U0001f680";
+#else
+    const std::filesystem::path workspace =
+        "matrix-\xe6\x95\xb0\xe6\x8d\xae-\xf0\x9f\x9a\x80";
+#endif
+    const std::array<std::filesystem::path, 2> defaults{
+        "--workspace",
+        workspace,
+    };
+    const OptionFaultStressArguments parsed_defaults =
+        ParseOptionFaultStressArguments(defaults);
+    EXPECT_EQ(parsed_defaults.workspace, workspace);
+    EXPECT_EQ(parsed_defaults.seed, 301U);
+    EXPECT_EQ(parsed_defaults.operations, 250U);
+    EXPECT_EQ(parsed_defaults.liveness_writes, 2'000U);
+
+    const std::vector<std::filesystem::path> overrides{
+        "--workspace", workspace,
+        "--seed", "18446744073709551615",
+        "--operations", "42",
+        "--liveness-writes", "84",
+    };
+    const OptionFaultStressArguments parsed_overrides =
+        ParseOptionFaultStressArguments(overrides);
+    EXPECT_EQ(parsed_overrides.seed,
+              std::numeric_limits<std::uint64_t>::max());
+    EXPECT_EQ(parsed_overrides.operations, 42U);
+    EXPECT_EQ(parsed_overrides.liveness_writes, 84U);
+}
+
+TEST(OptionFaultStressArgumentsTest, RejectsMissingDuplicateAndInvalidOptions) {
+    const std::vector<std::vector<std::filesystem::path>> invalid{
+        {},
+        {"--workspace"},
+        {"--workspace", ""},
+        {"--workspace", "work", "--workspace", "other"},
+        {"--workspace", "work", "--seed"},
+        {"--workspace", "work", "--seed", "x"},
+        {"--workspace", "work", "--operations", "0"},
+        {"--workspace", "work", "--operations", "18446744073709551616"},
+        {"--workspace", "work", "--liveness-writes", "0"},
+        {"--workspace", "work", "--operations", "1", "--operations", "2"},
+        {"--workspace", "work", "--liveness-writes", "1",
+         "--liveness-writes", "2"},
+        {"--workspace", "work", "--unknown", "1"},
+    };
+    for (const auto& arguments : invalid) {
+        EXPECT_THROW(
+            static_cast<void>(ParseOptionFaultStressArguments(arguments)),
+            std::invalid_argument);
+    }
+
+    const std::array<std::filesystem::path, 1> help{"--help"};
+    EXPECT_TRUE(ParseOptionFaultStressArguments(help).help);
+}
+
+TEST(OptionFaultStressRunTest, PublishesDeterministicVersionedArtifacts) {
+    test_support::TemporaryDirectory root;
+    const StressBuildIdentity identity{"test-revision", false};
+    const std::array<OptionMatrixCell, 1> cells{EnumerateOptionMatrix().front()};
+    const std::array<FaultScenario, 1> faults{FaultScenario::Read};
+    const OptionFaultStressArguments first =
+        SmallOptionFaultRun(root.path(), "first");
+    const OptionFaultStressArguments second =
+        SmallOptionFaultRun(root.path(), "second");
+
+    const OptionFaultStressSummary first_summary =
+        RunOptionFaultStress(first, identity, cells, faults);
+    const OptionFaultStressSummary second_summary =
+        RunOptionFaultStress(second, identity, cells, faults);
+
+    EXPECT_EQ(first_summary, second_summary);
+    EXPECT_EQ(first_summary.option_cells, 1U);
+    EXPECT_EQ(first_summary.fault_scenarios, 1U);
+    EXPECT_EQ(first_summary.operations_per_cell, first.operations);
+    EXPECT_EQ(first_summary.liveness.writes, first.liveness_writes);
+    const std::array<std::filesystem::path, 5> artifacts{
+        "run.txt",
+        "cells.tsv",
+        "faults.tsv",
+        "liveness.txt",
+        "completion.txt",
+    };
+    for (const std::filesystem::path& artifact : artifacts) {
+        EXPECT_EQ(test_support::ReadTextFile(first.workspace / "artifacts" /
+                                             artifact),
+                  test_support::ReadTextFile(second.workspace / "artifacts" /
+                                             artifact));
+    }
+    const std::string run =
+        test_support::ReadTextFile(first.workspace / "artifacts" / "run.txt");
+    EXPECT_NE(run.find("revision=test-revision"), std::string::npos);
+    EXPECT_NE(run.find("option_cells=1"), std::string::npos);
+    EXPECT_NE(run.find("fault_scenarios=1"), std::string::npos);
+    EXPECT_TRUE(std::filesystem::exists(
+        first.workspace / "databases" / OptionMatrixCellId(cells.front()) /
+        "CURRENT"));
+    EXPECT_FALSE(std::filesystem::exists(first.workspace / "artifacts" /
+                                         "failure.txt"));
+}
+
+TEST(OptionFaultStressRunTest, RejectsUnsafeWorkspaceWithoutMutation) {
+    test_support::TemporaryDirectory root;
+    const StressBuildIdentity identity{"test-revision", false};
+    const std::array<OptionMatrixCell, 1> cells{EnumerateOptionMatrix().front()};
+    const std::array<FaultScenario, 1> faults{FaultScenario::Read};
+
+    OptionFaultStressArguments existing =
+        SmallOptionFaultRun(root.path(), "existing");
+    std::filesystem::create_directory(existing.workspace);
+    WriteStressText(existing.workspace / "sentinel", "keep");
+    EXPECT_THROW(
+        static_cast<void>(
+            RunOptionFaultStress(existing, identity, cells, faults)),
+        std::invalid_argument);
+    EXPECT_EQ(test_support::ReadTextFile(existing.workspace / "sentinel"),
+              "keep");
+
+    OptionFaultStressArguments missing_parent =
+        SmallOptionFaultRun(root.path(), "missing");
+    missing_parent.workspace =
+        root.path() / "absent-parent" / "workspace";
+    EXPECT_THROW(
+        static_cast<void>(
+            RunOptionFaultStress(missing_parent, identity, cells, faults)),
+        std::invalid_argument);
+    EXPECT_FALSE(std::filesystem::exists(missing_parent.workspace));
+}
+
+TEST(OptionFaultStressRunTest, PreservesFailureAndWithholdsCompletion) {
+    test_support::TemporaryDirectory root;
+    const StressBuildIdentity identity{"test-revision", true};
+    const std::array<OptionMatrixCell, 1> cells{EnumerateOptionMatrix().front()};
+    const std::array<FaultScenario, 1> faults{FaultScenario::Read};
+    const OptionFaultStressArguments arguments =
+        SmallOptionFaultRun(root.path(), "failure");
+    ThrowBeforeFault observer;
+
+    EXPECT_THROW(
+        static_cast<void>(
+            RunOptionFaultStress(arguments, identity, cells, faults, &observer)),
+        std::runtime_error);
+
+    const std::filesystem::path artifacts = arguments.workspace / "artifacts";
+    EXPECT_TRUE(std::filesystem::exists(artifacts / "cells.tsv"));
+    EXPECT_TRUE(std::filesystem::exists(artifacts / "faults.tsv"));
+    EXPECT_NE(test_support::ReadTextFile(artifacts / "failure.txt")
+                  .find("injected option-fault observer failure"),
+              std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(artifacts / "liveness.txt"));
+    EXPECT_FALSE(std::filesystem::exists(artifacts / "completion.txt"));
+}
+
+TEST(OptionFaultStressRunTest, UsageStatesLocalOnlySafetyBoundary) {
+    const std::string usage = OptionFaultStressUsage();
+
+    EXPECT_NE(usage.find("local"), std::string::npos);
+    EXPECT_NE(usage.find("disposable"), std::string::npos);
+    EXPECT_NE(usage.find("--workspace"), std::string::npos);
+    EXPECT_NE(usage.find("--liveness-writes"), std::string::npos);
 }
 
 }  // namespace
