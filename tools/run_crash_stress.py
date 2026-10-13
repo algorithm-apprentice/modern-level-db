@@ -111,6 +111,16 @@ def _read_one_line(pipe, result: queue.Queue) -> None:
         result.put(("error", error))
 
 
+def _read_and_close_streams(process: subprocess.Popen) -> tuple[str, str]:
+    assert process.stdout is not None
+    assert process.stderr is not None
+    try:
+        return process.stdout.read(), process.stderr.read()
+    finally:
+        process.stdout.close()
+        process.stderr.close()
+
+
 def _kill_and_collect(process: subprocess.Popen, reader: threading.Thread) -> HoldingResult:
     terminated_by_parent = process.poll() is None
     if terminated_by_parent:
@@ -122,7 +132,7 @@ def _kill_and_collect(process: subprocess.Popen, reader: threading.Thread) -> Ho
     reader.join(timeout=5)
     if reader.is_alive():
         raise RuntimeError("owned child protocol reader did not finish")
-    trailing_stdout, stderr = process.communicate(timeout=5)
+    trailing_stdout, stderr = _read_and_close_streams(process)
     return HoldingResult(
         process.returncode, trailing_stdout, stderr, terminated_by_parent
     )
@@ -173,7 +183,7 @@ def run_holding_child(
             pass
         else:
             reader.join(timeout=5)
-            trailing_stdout, stderr = process.communicate(timeout=5)
+            trailing_stdout, stderr = _read_and_close_streams(process)
             raise RuntimeError(
                 "child exited before termination; "
                 f"code={process.returncode} trailing={trailing_stdout!r} stderr={stderr!r}"

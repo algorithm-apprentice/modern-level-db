@@ -267,7 +267,10 @@ The implementation review found and fixed:
    mistaken for owned termination; the subprocess result now records whether
    the parent actually issued kill;
 5. the first runner used Python 3.10 union syntax despite the repository's
-   Python 3.9+ contract; annotations now remain Python 3.9 compatible.
+   Python 3.9+ contract; annotations now remain Python 3.9 compatible;
+6. mixing one reader thread with `Popen.communicate()` lost prefetched trailing
+   stdout on POSIX and leaked TextIO wrappers; the reader now continues from
+   and closes the same stdout/stderr streams after child reap.
 
 Validation completed:
 
