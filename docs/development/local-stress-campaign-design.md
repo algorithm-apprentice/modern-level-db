@@ -13,15 +13,16 @@ Long campaigns remain developer-owned and local. V5 adds no scheduled workflow,
 GitHub Actions campaign, or CTest stress run. A fast Python contract test may
 run in ordinary CI to prevent the orchestrator itself from rotting.
 
-## Planned entry point
+## Entry point
 
-The implementation will add one Python 3.9+ runner under `tools/`. Its exact
-maintained command is added to the usage guide only when the script exists.
+```text
+tools/run_local_stress_campaign.py
+```
 
 Planned command:
 
 ```console
-python3 CAMPAIGN_RUNNER \
+python3 tools/run_local_stress_campaign.py \
   --stress-dir BUILD_DIRECTORY/stress \
   --workspace NEW_OR_RECOGNIZED_CAMPAIGN_DIRECTORY \
   [--seeds 1,17,301] \
