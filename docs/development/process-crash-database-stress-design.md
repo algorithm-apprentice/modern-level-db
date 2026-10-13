@@ -238,3 +238,64 @@ Review must confirm no child survives timeout, failure, or normal completion.
 6. Run local native crash campaigns and review surviving processes.
 7. Update usage documentation and V1–V5 status.
 8. Deliver one PR without a hosted crash campaign.
+
+## V3 implementation record
+
+V3 is implemented through:
+
+- `modern_leveldb_crash_stress_worker` with identity, initialize, write-hold,
+  in-flight-hold, prefix verification, and optional-batch verification modes;
+- `tools/run_crash_stress.py` as the parent-owned subprocess, timeout,
+  acknowledgement-journal, kill/reap, recovery, and artifact controller;
+- a parent-fsynced contiguous acknowledgement journal independent of database
+  files;
+- one fresh child and one recovery verification for every acknowledged batch;
+- initialized empty baselines for optional in-flight whole-batch probes;
+- bounded fake-worker process tests plus native worker/database tests.
+
+The implementation review found and fixed:
+
+1. acknowledgement lines were initially fsynced after child termination rather
+   than before it; the journal append is now an after-record callback executed
+   while the child is still alive;
+2. fresh in-flight probe databases incorrectly coupled creation permission to
+   operation index zero; baseline creation and operation index are now separate;
+3. killing during initial database creation mixed database-creation recovery
+   with batch atomicity; every in-flight probe now starts from a cleanly closed
+   empty database;
+4. a child that exited between acknowledgement and the parent's kill could be
+   mistaken for owned termination; the subprocess result now records whether
+   the parent actually issued kill;
+5. the first runner used Python 3.10 union syntax despite the repository's
+   Python 3.9+ contract; annotations now remain Python 3.9 compatible.
+
+Validation completed:
+
+```text
+Windows Debug                       899/899
+Windows Release                     899/899
+Windows model/compatibility/crash    18/18
+native worker contracts               7/7
+Python parent contracts                7/7
+GCC strict object compilation        pass
+documentation routing tests          17/17
+documentation contract tests         13/13
+documentation validation             pass
+```
+
+Final native Windows campaigns:
+
+| Compression | Seed | Acknowledged kill/recover rounds | In-flight probes |
+|---|---:|---:|---:|
+| None | 1 | 25 | 3 complete |
+| Snappy | 17 | 25 | 3 complete |
+| Zstd | 301 | 25 | 3 complete |
+
+The Snappy campaign used Unicode/non-BMP database and artifact paths. No worker
+process survived any success, failure, or timeout test. Unit tests separately
+prove that an initialized in-flight database with no applied batch is accepted
+as absent; native Windows scheduling completed all observed probes before the
+parent kill, which is also a legal whole-batch result.
+
+V3 is complete at this boundary. It supplies process-crash evidence, not
+machine power-loss certification or injected filesystem-failure coverage.
