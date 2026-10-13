@@ -1,7 +1,11 @@
 from pathlib import Path
+import ctypes
 import os
 import sys
 import unittest
+import tempfile
+import textwrap
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import run_local_stress_campaign
@@ -236,6 +240,170 @@ class LocalStressCampaignPlannerTest(unittest.TestCase):
         self.assertEqual(parsed.job_timeout_seconds, 3600.0)
         self.assertEqual(parsed.max_duration_seconds, 0.0)
         self.assertTrue(parsed.resume)
+
+
+class LocalStressCampaignAttemptTest(unittest.TestCase):
+    def script(self, root: Path, source: str) -> Path:
+        script = root / "fake_job.py"
+        script.write_text(textwrap.dedent(source).lstrip(), encoding="utf-8")
+        return script
+
+    def job(self, command: list[str]) -> run_local_stress_campaign.CampaignJob:
+        return run_local_stress_campaign.CampaignJob(
+            index=0,
+            job_id="fake-job",
+            tier="v1",
+            seed=17,
+            argv_template=tuple(command),
+            run_artifact="artifacts/run.txt",
+            completion_artifact="artifacts/completion.txt",
+        )
+
+    def process_exists(self, process_id: int) -> bool:
+        if os.name != "nt":
+            try:
+                os.kill(process_id, 0)
+                return True
+            except ProcessLookupError:
+                return False
+        process_query_limited_information = 0x1000
+        still_active = 259
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(
+            process_query_limited_information, False, process_id
+        )
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return False
+            return exit_code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
+
+    def test_attempt_streams_output_and_publishes_success_result(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script = self.script(
+                root,
+                """
+                import sys
+                print("fake stdout", flush=True)
+                print("fake stderr", file=sys.stderr, flush=True)
+                """,
+            )
+            attempt = root / "attempt"
+            job = self.job([sys.executable, str(script), "{attempt}"])
+
+            result = run_local_stress_campaign.execute_attempt(
+                job, attempt, timeout_seconds=5.0
+            )
+
+            self.assertEqual(result.category, "exit_zero")
+            self.assertEqual(result.returncode, 0)
+            self.assertFalse(result.termination_sent)
+            self.assertEqual(
+                (attempt / "stdout.log").read_text(encoding="utf-8"),
+                "fake stdout\n",
+            )
+            self.assertEqual(
+                (attempt / "stderr.log").read_text(encoding="utf-8"),
+                "fake stderr\n",
+            )
+            command = run_local_stress_campaign.read_json(attempt / "command.json")
+            self.assertEqual(command["format"], "modern-leveldb-stress-command-v1")
+            self.assertEqual(command["argv"][-1], str(attempt))
+            published = run_local_stress_campaign.read_json(attempt / "result.json")
+            self.assertEqual(published["category"], "exit_zero")
+            self.assertEqual(published["returncode"], 0)
+
+    def test_attempt_classifies_nonzero_and_launch_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            failed_script = self.script(
+                root,
+                """
+                import sys
+                print("failed", file=sys.stderr, flush=True)
+                raise SystemExit(7)
+                """,
+            )
+
+            nonzero = run_local_stress_campaign.execute_attempt(
+                self.job([sys.executable, str(failed_script)]),
+                root / "nonzero",
+                timeout_seconds=5.0,
+            )
+            launched = run_local_stress_campaign.execute_attempt(
+                self.job([str(root / "missing-executable")]),
+                root / "launch",
+                timeout_seconds=5.0,
+            )
+
+            self.assertEqual(nonzero.category, "nonzero_exit")
+            self.assertEqual(nonzero.returncode, 7)
+            self.assertIn(
+                "failed",
+                (root / "nonzero" / "stderr.log").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(launched.category, "launch_failure")
+            self.assertIsNone(launched.returncode)
+            self.assertTrue(launched.error)
+            self.assertTrue((root / "launch" / "result.json").is_file())
+
+    def test_timeout_terminates_owned_process_group_and_child(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            child_pid = root / "child.pid"
+            script = self.script(
+                root,
+                """
+                from pathlib import Path
+                import subprocess
+                import sys
+                import time
+
+                child = subprocess.Popen(
+                    [sys.executable, "-c", "import time; time.sleep(60)"]
+                )
+                Path(sys.argv[1]).write_text(str(child.pid), encoding="utf-8")
+                print("ready", flush=True)
+                time.sleep(60)
+                """,
+            )
+
+            result = run_local_stress_campaign.execute_attempt(
+                self.job([sys.executable, str(script), str(child_pid)]),
+                root / "timeout",
+                timeout_seconds=0.2,
+                termination_grace_seconds=1.0,
+            )
+
+            self.assertEqual(result.category, "timed_out")
+            self.assertTrue(result.termination_sent)
+            self.assertTrue(child_pid.is_file())
+            process_id = int(child_pid.read_text(encoding="utf-8"))
+            deadline = time.monotonic() + 5.0
+            while self.process_exists(process_id) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertFalse(self.process_exists(process_id))
+
+    def test_attempt_rejects_existing_path_without_mutation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            attempt = root / "attempt"
+            attempt.mkdir()
+            sentinel = attempt / "sentinel"
+            sentinel.write_text("keep", encoding="utf-8")
+            job = self.job([sys.executable, "-c", "raise SystemExit(0)"])
+
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                run_local_stress_campaign.execute_attempt(
+                    job, attempt, timeout_seconds=5.0
+                )
+
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep")
 
 
 if __name__ == "__main__":
