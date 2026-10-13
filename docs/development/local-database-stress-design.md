@@ -176,7 +176,10 @@ Exit status:
 The driver uses:
 
 - `create_if_missing=true`;
-- `error_if_exists=false` after the explicit absent-path guard so reopen works;
+- `error_if_exists=true` for the first open so a path created after validation
+  is still rejected;
+- an internal client that disables `error_if_exists` only for its own later
+  reopen operations;
 - `write_buffer_size=64 KiB`;
 - `bloom_bits_per_key=10`;
 - selected block compression;

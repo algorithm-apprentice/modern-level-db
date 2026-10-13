@@ -25,7 +25,7 @@ constexpr std::uint32_t BloomBitsPerKey = 10;
 class CheckedOutput final {
 public:
     explicit CheckedOutput(const std::filesystem::path& path)
-        : path_(path), stream_(path, std::ios::binary | std::ios::trunc) {
+        : stream_(path, std::ios::binary | std::ios::trunc) {
         if (!stream_) {
             throw std::runtime_error("cannot create stress artifact");
         }
@@ -40,7 +40,6 @@ public:
     }
 
 private:
-    std::filesystem::path path_;
     std::ofstream stream_;
 };
 
@@ -80,50 +79,71 @@ bool StartsWithPath(const std::filesystem::path& path, const std::filesystem::pa
     return expected == prefix.end();
 }
 
+std::filesystem::path AbsoluteLexicalPath(const std::filesystem::path& path,
+                                          std::string_view name) {
+    if (path.empty()) {
+        throw std::invalid_argument(std::string(name) + " path is empty");
+    }
+    std::error_code error;
+    const std::filesystem::path absolute = std::filesystem::absolute(path, error);
+    if (error) {
+        throw std::runtime_error("cannot resolve " + std::string(name) + " path: " +
+                                 error.message());
+    }
+    return absolute.lexically_normal();
+}
+
 std::filesystem::path NormalizeAbsentPath(const std::filesystem::path& path,
                                           std::string_view name) {
     if (path.empty()) {
-        throw std::runtime_error(std::string(name) + " path is empty");
+        throw std::invalid_argument(std::string(name) + " path is empty");
     }
     std::error_code error;
+    if (!std::filesystem::is_directory(path.parent_path(), error)) {
+        if (error && error != std::errc::no_such_file_or_directory &&
+            error != std::errc::not_a_directory) {
+            throw std::runtime_error("cannot inspect " + std::string(name) + " parent: " +
+                                     error.message());
+        }
+        throw std::invalid_argument(std::string(name) + " parent directory does not exist");
+    }
     const std::filesystem::path normalized = std::filesystem::weakly_canonical(path, error);
     if (error) {
         throw std::runtime_error("cannot normalize " + std::string(name) + " path: " +
                                  error.message());
     }
     if (std::filesystem::exists(normalized, error)) {
-        throw std::runtime_error(std::string(name) + " path already exists");
+        throw std::invalid_argument(std::string(name) + " path already exists");
     }
     if (error) {
         throw std::runtime_error("cannot inspect " + std::string(name) + " path: " +
                                  error.message());
     }
-    const std::filesystem::path parent = normalized.parent_path();
-    if (!std::filesystem::is_directory(parent, error)) {
-        if (error) {
-            throw std::runtime_error("cannot inspect " + std::string(name) + " parent: " +
-                                     error.message());
-        }
-        throw std::runtime_error(std::string(name) + " parent directory does not exist");
-    }
     return normalized;
 }
 
 PreparedPaths PreparePaths(const StressArguments& arguments) {
+    const std::filesystem::path lexical_database =
+        AbsoluteLexicalPath(arguments.database, "database");
+    const std::filesystem::path lexical_output = AbsoluteLexicalPath(arguments.output, "output");
+    if (StartsWithPath(lexical_database, lexical_output) ||
+        StartsWithPath(lexical_output, lexical_database)) {
+        throw std::invalid_argument("database and output paths must be distinct and non-nested");
+    }
     PreparedPaths result{
-        NormalizeAbsentPath(arguments.database, "database"),
-        NormalizeAbsentPath(arguments.output, "output"),
+        NormalizeAbsentPath(lexical_database, "database"),
+        NormalizeAbsentPath(lexical_output, "output"),
     };
     if (StartsWithPath(result.database, result.output) ||
         StartsWithPath(result.output, result.database)) {
-        throw std::runtime_error("database and output paths must be distinct and non-nested");
+        throw std::invalid_argument("database and output paths must be distinct and non-nested");
     }
     std::error_code error;
     if (!std::filesystem::create_directory(result.output, error)) {
         if (error) {
             throw std::runtime_error("cannot create stress output directory: " + error.message());
         }
-        throw std::runtime_error("stress output directory was not created");
+        throw std::invalid_argument("stress output directory was not created");
     }
     return result;
 }
@@ -249,13 +269,15 @@ void WriteCompletion(const std::filesystem::path& output, const StressSummary& s
 
 void WriteFailure(const std::filesystem::path& output, std::string_view message) {
     const std::string text =
-        "format=" + std::string(ResultFormat) + "\nmessage=" + SanitizeMessage(message) + "\n";
+        "format=" + std::string(ResultFormat) +
+        "\ncategory=runtime\nmessage=" + SanitizeMessage(message) + "\n";
     WriteText(output / "failure.txt", text);
 }
 
 Options DatabaseOptions(Compression compression) {
     Options options;
     options.create_if_missing = true;
+    options.error_if_exists = true;
     options.write_buffer_size = WriteBufferSize;
     options.bloom_bits_per_key = BloomBitsPerKey;
     options.compression = compression;
@@ -300,11 +322,17 @@ StressArguments ParseStressArguments(std::span<const std::filesystem::path> argu
             if (have_database) {
                 throw std::invalid_argument("--db was provided more than once");
             }
+            if (value.empty()) {
+                throw std::invalid_argument("--db path is empty");
+            }
             result.database = value;
             have_database = true;
         } else if (option == std::filesystem::path("--output")) {
             if (have_output) {
                 throw std::invalid_argument("--output was provided more than once");
+            }
+            if (value.empty()) {
+                throw std::invalid_argument("--output path is empty");
             }
             result.output = value;
             have_output = true;

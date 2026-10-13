@@ -208,7 +208,14 @@ public:
     }
 
 private:
-    void Open() { database_.emplace(Take(Database::Open(options_, path_))); }
+    void Open() {
+        Options open_options = options_;
+        if (opened_once_) {
+            open_options.error_if_exists = false;
+        }
+        database_.emplace(Take(Database::Open(open_options, path_)));
+        opened_once_ = true;
+    }
     ReadOptions ReadAt(std::size_t slot) const {
         ReadOptions options;
         options.fill_cache = false;
@@ -222,6 +229,7 @@ private:
     Options options_;
     std::optional<Database> database_;
     std::array<std::optional<Snapshot>, SnapshotSlots> snapshots_;
+    bool opened_once_ = false;
 };
 
 inline std::string ModelContext(std::uint64_t seed, std::string_view operation) {

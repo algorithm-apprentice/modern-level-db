@@ -82,8 +82,14 @@ TEST(StressArgumentsTest, RejectsMissingDuplicateAndInvalidOptions) {
         {"--db", "db"},
         {"--output", "out"},
         {"--db", "db", "--output", "out", "--seed"},
+        {"--db", "", "--output", "out"},
+        {"--db", "db", "--output", ""},
         {"--db", "db", "--output", "out", "--seed", "x"},
+        {"--db", "db", "--db", "other", "--output", "out"},
+        {"--db", "db", "--output", "out", "--output", "other"},
         {"--db", "db", "--output", "out", "--seed", "1", "--seed", "2"},
+        {"--db", "db", "--output", "out", "--operations", "1", "--operations", "2"},
+        {"--db", "db", "--output", "out", "--compression", "none", "--compression", "zstd"},
         {"--db", "db", "--output", "out", "--operations", "0"},
         {"--db", "db", "--output", "out", "--operations", "18446744073709551616"},
         {"--db", "db", "--output", "out", "--compression", "brotli"},
@@ -105,23 +111,30 @@ TEST(StressRunTest, RejectsExistingEqualAndNestedPathsWithoutMutation) {
 
     StressArguments existing_database = SmallRun(root.path(), "existing-database");
     std::filesystem::create_directory(existing_database.database);
-    EXPECT_THROW(static_cast<void>(RunStress(existing_database, identity)), std::runtime_error);
+    EXPECT_THROW(static_cast<void>(RunStress(existing_database, identity)),
+                 std::invalid_argument);
     EXPECT_FALSE(std::filesystem::exists(existing_database.output));
 
     StressArguments existing_output = SmallRun(root.path(), "existing-output");
     std::filesystem::create_directory(existing_output.output);
-    EXPECT_THROW(static_cast<void>(RunStress(existing_output, identity)), std::runtime_error);
+    EXPECT_THROW(static_cast<void>(RunStress(existing_output, identity)), std::invalid_argument);
     EXPECT_FALSE(std::filesystem::exists(existing_output.database));
 
     StressArguments equal = SmallRun(root.path(), "equal");
     equal.output = equal.database;
-    EXPECT_THROW(static_cast<void>(RunStress(equal, identity)), std::runtime_error);
+    EXPECT_THROW(static_cast<void>(RunStress(equal, identity)), std::invalid_argument);
     EXPECT_FALSE(std::filesystem::exists(equal.database));
 
     StressArguments nested = SmallRun(root.path(), "nested");
     nested.output = nested.database / "artifacts";
-    EXPECT_THROW(static_cast<void>(RunStress(nested, identity)), std::runtime_error);
+    EXPECT_THROW(static_cast<void>(RunStress(nested, identity)), std::invalid_argument);
     EXPECT_FALSE(std::filesystem::exists(nested.database));
+
+    StressArguments missing_parent = SmallRun(root.path(), "missing-parent");
+    missing_parent.database = root.path() / "missing" / "database";
+    EXPECT_THROW(static_cast<void>(RunStress(missing_parent, identity)),
+                 std::invalid_argument);
+    EXPECT_FALSE(std::filesystem::exists(missing_parent.output));
 }
 
 TEST(StressRunTest, SameSeedProducesIdenticalSemanticArtifacts) {
@@ -135,7 +148,11 @@ TEST(StressRunTest, SameSeedProducesIdenticalSemanticArtifacts) {
 
     EXPECT_EQ(first_summary, second_summary);
     EXPECT_EQ(first_summary.operations, first.operations);
-    EXPECT_EQ(ReadText(first.output / "run.txt"), ReadText(second.output / "run.txt"));
+    const std::string run = ReadText(first.output / "run.txt");
+    EXPECT_EQ(run, ReadText(second.output / "run.txt"));
+    EXPECT_NE(run.find("revision=test-revision"), std::string::npos);
+    EXPECT_NE(run.find("dirty=false"), std::string::npos);
+    EXPECT_NE(run.find("write_buffer_size=65536"), std::string::npos);
     EXPECT_EQ(ReadText(first.output / "operations.log"),
               ReadText(second.output / "operations.log"));
     EXPECT_EQ(ReadText(first.output / "final-state.txt"),
@@ -161,6 +178,26 @@ TEST(StressRunTest, FailurePreservesAttemptAndDoesNotPublishCompletion) {
               std::string::npos);
     EXPECT_FALSE(std::filesystem::exists(arguments.output / "completion.txt"));
     EXPECT_FALSE(std::filesystem::exists(arguments.output / "final-state.txt"));
+}
+
+TEST(StressRunTest, PreservesNativeUnicodePaths) {
+    test_support::TemporaryDirectory root;
+    const StressBuildIdentity identity{"test-revision", false};
+    StressArguments arguments;
+#if defined(_WIN32)
+    arguments.database = root.path() / L"db-\u6570\u636e-\U0001f680";
+    arguments.output = root.path() / L"out-\u8bc1\u636e-\U0001f680";
+#else
+    arguments.database = root.path() / "db-\xe6\x95\xb0\xe6\x8d\xae-\xf0\x9f\x9a\x80";
+    arguments.output = root.path() / "out-\xe8\xaf\x81\xe6\x8d\xae-\xf0\x9f\x9a\x80";
+#endif
+    arguments.operations = 16;
+
+    const StressSummary summary = RunStress(arguments, identity);
+
+    EXPECT_EQ(summary.operations, 16U);
+    EXPECT_TRUE(std::filesystem::exists(arguments.database));
+    EXPECT_TRUE(std::filesystem::exists(arguments.output / "completion.txt"));
 }
 
 TEST(StressRunTest, UsageStatesLocalOnlySafetyBoundary) {
