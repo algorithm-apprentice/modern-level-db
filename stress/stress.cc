@@ -155,7 +155,8 @@ char HexDigit(unsigned value) {
 std::string Hex(std::string_view bytes) {
     std::string encoded(bytes.size() * 2, '\0');
     std::size_t output = 0;
-    for (const unsigned char byte : bytes) {
+    for (const char character : bytes) {
+        const auto byte = static_cast<unsigned char>(character);
         encoded[output++] = HexDigit(byte >> 4U);
         encoded[output++] = HexDigit(byte & 0x0fU);
     }
