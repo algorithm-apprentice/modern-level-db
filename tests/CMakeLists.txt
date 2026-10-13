@@ -85,6 +85,7 @@ add_executable(
   "${PROJECT_SOURCE_DIR}/stress/linearizability.cc"
   "${PROJECT_SOURCE_DIR}/stress/liveness_scenario.cc"
   "${PROJECT_SOURCE_DIR}/stress/mixed_stress.cc"
+  "${PROJECT_SOURCE_DIR}/stress/mixed_stress_runner.cc"
   "${PROJECT_SOURCE_DIR}/stress/option_fault_campaign.cc"
   "${PROJECT_SOURCE_DIR}/stress/option_fault_stress.cc"
   "${PROJECT_SOURCE_DIR}/stress/stress.cc"

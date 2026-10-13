@@ -62,11 +62,16 @@ std::string_view MixedKeyPrefix(std::string_view key) {
     return key.substr(0, 2);
 }
 
+std::uint64_t MixedRandom(std::uint64_t seed, std::size_t worker, std::size_t operation,
+                          std::uint64_t stream) {
+    return Mix(seed ^ Mix(static_cast<std::uint64_t>(worker)) ^
+               Mix(static_cast<std::uint64_t>(operation)) ^ Mix(stream));
+}
+
 std::string MixedValue(std::uint64_t seed, std::size_t worker, std::size_t operation,
                        std::uint64_t token) {
     const std::size_t length = (static_cast<std::size_t>(token % 3U) + 1U) * 8U;
-    std::uint64_t state = seed ^ Mix(static_cast<std::uint64_t>(worker)) ^
-                          Mix(static_cast<std::uint64_t>(operation)) ^ Mix(token);
+    std::uint64_t state = MixedRandom(seed, worker, operation, token);
     std::string result;
     result.reserve(length);
     while (result.size() != length) {

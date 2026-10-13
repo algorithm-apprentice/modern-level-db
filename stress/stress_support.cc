@@ -25,8 +25,8 @@ std::filesystem::path AbsoluteLexicalPath(const std::filesystem::path& path,
     std::error_code error;
     const std::filesystem::path absolute = std::filesystem::absolute(path, error);
     if (error) {
-        throw std::runtime_error("cannot resolve " + std::string(name) + " path: " +
-                                 error.message());
+        throw std::runtime_error("cannot resolve " + std::string(name) +
+                                 " path: " + error.message());
     }
     return absolute.lexically_normal();
 }
@@ -37,28 +37,56 @@ std::filesystem::path NormalizeAbsentPath(const std::filesystem::path& path,
     if (!std::filesystem::is_directory(path.parent_path(), error)) {
         if (error && error != std::errc::no_such_file_or_directory &&
             error != std::errc::not_a_directory) {
-            throw std::runtime_error("cannot inspect " + std::string(name) + " parent: " +
-                                     error.message());
+            throw std::runtime_error("cannot inspect " + std::string(name) +
+                                     " parent: " + error.message());
         }
         throw std::invalid_argument(std::string(name) + " parent directory does not exist");
     }
     const std::filesystem::path normalized = std::filesystem::weakly_canonical(path, error);
     if (error) {
-        throw std::runtime_error("cannot normalize " + std::string(name) + " path: " +
-                                 error.message());
+        throw std::runtime_error("cannot normalize " + std::string(name) +
+                                 " path: " + error.message());
     }
     if (std::filesystem::exists(normalized, error)) {
         throw std::invalid_argument(std::string(name) + " path already exists");
     }
     if (error) {
-        throw std::runtime_error("cannot inspect " + std::string(name) + " path: " +
-                                 error.message());
+        throw std::runtime_error("cannot inspect " + std::string(name) +
+                                 " path: " + error.message());
     }
     return normalized;
 }
 
 char HexDigit(unsigned value) {
     return static_cast<char>(value < 10 ? '0' + value : 'a' + (value - 10));
+}
+
+void HashByte(std::uint64_t& hash, std::uint8_t byte) {
+    constexpr std::uint64_t FnvPrime = 1099511628211ULL;
+    hash ^= byte;
+    hash *= FnvPrime;
+}
+
+void HashUnsigned(std::uint64_t& hash, std::uint64_t value) {
+    for (int shift = 0; shift < 64; shift += 8) {
+        HashByte(hash, static_cast<std::uint8_t>(value >> shift));
+    }
+}
+
+void HashBytes(std::uint64_t& hash, std::string_view bytes) {
+    for (const char character : bytes) {
+        HashByte(hash, static_cast<unsigned char>(character));
+    }
+}
+
+std::string HashHex(std::uint64_t value) {
+    constexpr std::string_view Digits = "0123456789abcdef";
+    std::string result(16, '0');
+    for (std::size_t index = result.size(); index > 0; --index) {
+        result[index - 1] = Digits[value & 0x0fU];
+        value >>= 4U;
+    }
+    return result;
 }
 
 }  // namespace
@@ -89,8 +117,7 @@ std::uint64_t ParseStressUnsigned(std::string_view text, std::string_view option
 
 PreparedStressPaths PrepareStressPaths(const std::filesystem::path& database,
                                        const std::filesystem::path& output) {
-    const std::filesystem::path lexical_database =
-        AbsoluteLexicalPath(database, "database");
+    const std::filesystem::path lexical_database = AbsoluteLexicalPath(database, "database");
     const std::filesystem::path lexical_output = AbsoluteLexicalPath(output, "output");
     if (StartsWithPath(lexical_database, lexical_output) ||
         StartsWithPath(lexical_output, lexical_database)) {
@@ -114,15 +141,13 @@ PreparedStressPaths PrepareStressPaths(const std::filesystem::path& database,
     return result;
 }
 
-std::filesystem::path PrepareStressWorkspace(
-    const std::filesystem::path& workspace) {
-    const std::filesystem::path normalized = NormalizeAbsentPath(
-        AbsoluteLexicalPath(workspace, "workspace"), "workspace");
+std::filesystem::path PrepareStressWorkspace(const std::filesystem::path& workspace) {
+    const std::filesystem::path normalized =
+        NormalizeAbsentPath(AbsoluteLexicalPath(workspace, "workspace"), "workspace");
     std::error_code error;
     if (!std::filesystem::create_directory(normalized, error)) {
         if (error) {
-            throw std::runtime_error("cannot create stress workspace: " +
-                                     error.message());
+            throw std::runtime_error("cannot create stress workspace: " + error.message());
         }
         throw std::invalid_argument("stress workspace was not created");
     }
@@ -163,6 +188,18 @@ std::string StressHex(std::string_view bytes) {
         encoded[output++] = HexDigit(byte & 0x0fU);
     }
     return encoded;
+}
+
+std::string StableStressFingerprint(const std::map<std::string, std::string>& entries) {
+    constexpr std::uint64_t FnvOffsetBasis = 14695981039346656037ULL;
+    std::uint64_t hash = FnvOffsetBasis;
+    for (const auto& [key, value] : entries) {
+        HashUnsigned(hash, key.size());
+        HashBytes(hash, key);
+        HashUnsigned(hash, value.size());
+        HashBytes(hash, value);
+    }
+    return HashHex(hash);
 }
 
 std::string SanitizeStressMessage(std::string_view message) {

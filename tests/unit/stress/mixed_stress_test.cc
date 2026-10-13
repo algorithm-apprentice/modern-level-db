@@ -94,7 +94,10 @@ private:
 
 TEST(MixedStressArgumentsTest, ParsesRocksDbAlignedDefaultsAndOverrides) {
     const std::vector<std::filesystem::path> defaults{
-        "--db", "db", "--output", "out",
+        "--db",
+        "db",
+        "--output",
+        "out",
     };
     const MixedStressArguments parsed_defaults = ParseMixedStressArguments(defaults);
     EXPECT_EQ(parsed_defaults.seed, 301U);
@@ -105,13 +108,12 @@ TEST(MixedStressArgumentsTest, ParsesRocksDbAlignedDefaultsAndOverrides) {
     EXPECT_EQ(parsed_defaults.compression, Compression::Snappy);
 
     const std::vector<std::filesystem::path> overrides{
-        "--db",          "db", "--output",              "out",
-        "--seed",        "18446744073709551615",
-        "--threads",     "256",
-        "--operations-per-thread", "42",
-        "--keys",        "1024",
-        "--reopens",     "3",
-        "--compression", "zstd",
+        "--db",      "db",     "--output",
+        "out",       "--seed", "18446744073709551615",
+        "--threads", "256",    "--operations-per-thread",
+        "42",        "--keys", "1024",
+        "--reopens", "3",      "--compression",
+        "zstd",
     };
     const MixedStressArguments parsed_overrides = ParseMixedStressArguments(overrides);
     EXPECT_EQ(parsed_overrides.seed, std::numeric_limits<std::uint64_t>::max());
@@ -153,9 +155,9 @@ TEST(MixedStressRunTest, ExecutesApplicableMixAcrossReopenEpochs) {
     EXPECT_EQ(summary.threads, 4U);
     EXPECT_EQ(summary.operations_per_thread, 100U);
     EXPECT_EQ(summary.reopens, 2U);
-    EXPECT_EQ(summary.reads + summary.prefixes + summary.writes + summary.deletes +
-                  summary.iterations,
-              400U);
+    EXPECT_EQ(
+        summary.reads + summary.prefixes + summary.writes + summary.deletes + summary.iterations,
+        400U);
     EXPECT_GT(summary.reads, 0U);
     EXPECT_GT(summary.prefixes, 0U);
     EXPECT_GT(summary.writes, 0U);
@@ -200,8 +202,7 @@ TEST(MixedStressRunTest, PreservesCompletedEpochsOnFailure) {
     EXPECT_THROW(static_cast<void>(RunMixedStress(arguments, identity, &observer)),
                  std::runtime_error);
 
-    const std::string epochs =
-        test_support::ReadTextFile(arguments.output / "epoch-summary.tsv");
+    const std::string epochs = test_support::ReadTextFile(arguments.output / "epoch-summary.tsv");
     EXPECT_NE(epochs.find("\n0\t"), std::string::npos);
     EXPECT_EQ(epochs.find("\n1\t"), std::string::npos);
     EXPECT_NE(test_support::ReadTextFile(arguments.output / "failure.txt")
