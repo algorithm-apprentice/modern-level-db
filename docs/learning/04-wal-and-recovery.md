@@ -12,8 +12,8 @@ Prerequisites: [formats](02-bytes-and-formats.md) and
 | What problem is this lesson about? | Making acknowledged state recoverable while distinguishing visibility, process recovery, and power-loss durability |
 | Who consumes this layer? | DatabaseEngine, VersionSet, recovery, and offline diagnostics |
 | What interface matters first? | WritableFile Append/Flush/Sync/Close, WalWriter, WalReader events, and recovery results |
-| What implementation will we open? | WAL fragmentation/checksums, crash tails, MANIFEST installation, directory sync, and cleanup protection |
-| What should you be able to do afterward? | Classify a crash point and predict which data or metadata recovery may accept |
+| What implementation will we open? | WAL fragmentation/checksums, crash tails, the VersionSet prepare/write/publish state machine, directory sync, and cleanup protection |
+| What should you be able to do afterward? | Classify a crash point, predict which data or metadata recovery may accept, and explain why a durable Version is published only after prepared I/O |
 
 ## Visibility is not durability
 
@@ -39,6 +39,8 @@ opening requires explicit weak-namespace consent: file-content flushes remain
 real, but directory/name persistence cannot claim the POSIX-equivalent
 guarantee. See
 [platform support and durability](../reference/platform-support-and-durability.md).
+The maintainer-level native owners and teardown sequences are covered in
+[lesson 12](12-native-filesystem-lifecycles.md).
 
 ## Append, Flush, Sync, Close
 
@@ -179,6 +181,89 @@ The selected MANIFEST contents must already be durable. Under the strict
 model, its directory name must be durable too. Native Windows retains the
 sequence but not an equivalent power-loss claim for the rename.
 
+## The VersionSet prepare, write, publish transaction
+
+`VersionSet::LogAndApply` must preserve two different kinds of state:
+
+- persistent metadata represented by the MANIFEST edit;
+- current in-memory topology and retention used by readers and cleanup.
+
+The runtime overload is called with the database mutex held. It deliberately
+does not hold that mutex during filesystem I/O:
+
+```text
+database mutex held
+    validate edit and counter bounds
+    build the candidate Version
+    capture log counters, compact pointers, next-file number, and last sequence
+    encode a current-Version snapshot if a new MANIFEST is needed
+    allocate the shared candidate and reserve installed-Version tracking
+        |
+        v
+database mutex released
+    append and sync the prepared edit
+    if this is a new MANIFEST:
+        sync its directory name
+        install CURRENT through its synced temporary file
+        |
+        v
+database mutex reacquired
+    typed write failure -> retain the first error and publish nothing
+    success -> publish captured pointers, log counters, and candidate Version
+```
+
+Unlocking does not make the candidate mutable. The edit state, optional
+snapshot bytes, candidate owner, and publication capacity were captured under
+the mutex. The local edit can be encoded during the unlocked write. The mutex
+is reacquired before every normal return and before a thrown exception leaves
+`WritePrepared`.
+
+Foreground work can still advance allocation and sequence counters while the
+I/O is in progress. The MANIFEST record contains the values captured before
+unlocking; publication does not roll newer in-memory `next_file_number_` or
+`last_sequence_` values backward. The test
+`RuntimeApplyUnlocksIoAndPreservesConcurrentCounters` makes this distinction
+observable.
+
+The candidate `shared_ptr` and vector capacity are prepared before I/O because
+success changes the recovery authority. Once a MANIFEST edit is durable,
+installing its in-memory counterpart must not depend on another allocation
+that could throw. The final publication is therefore assignments, moves, and
+prepared retention work rather than construction of a second candidate.
+
+A returned filesystem error is sticky because the edit may or may not become
+recoverable after a crash. The old in-memory Version stays current, later
+edits return the retained error without more I/O, and cleanup cannot treat the
+candidate as installed. Reopening resolves whether `CURRENT` and the MANIFEST
+select the old or new state. A C++ exception is a different channel:
+`WritePrepared` reacquires the mutex and propagates it; it does not translate
+that exception into a successful-looking or typed storage result.
+
+### Old Versions remain live for concrete reasons
+
+Publishing a new current Version does not immediately authorize deletion of
+every file absent from it:
+
+```text
+current_ shared owner        -> keeps the new Version live
+ReadPin on the old current   -> installation retains it in read_pinned_versions_
+iterator/compaction owner    -> keeps its shared Version live directly
+versions_ weak registry      -> observes every installed Version still owned
+LiveFiles()                  -> unions files from all observed live Versions
+```
+
+`ReadPin` is intentionally lighter than taking another shared owner.
+It increments a mutex-protected pin count. During installation,
+`RetainPinnedCurrent` gives a pinned old current Version a real owner before
+`current_` moves to the candidate. Releasing the last pin removes that retained
+owner once the Version is no longer current. Shared iterator or compaction
+owners keep their Versions live independently.
+
+This retention model connects metadata publication to file cleanup: a durable
+new Version may be current while older files remain protected by active
+readers. Cleanup uses `LiveFiles`, pending outputs, and table-cache eviction
+rather than assuming "not in current" means "unused."
+
 ## Think through crash points
 
 | Crash point | Safe recovery interpretation |
@@ -200,9 +285,10 @@ obsolete-file cleanup instead of guessing.
 | [`wal_format.cc`](../../src/format/wal_format.cc) | `WalFragmenter`, `DecodeWalFragment` | How does a logical record cross block boundaries without a partial commit? | [`wal_format_test.cc`](../../tests/unit/format/wal_format_test.cc) |
 | [`wal_io.cc`](../../src/wal/wal_io.cc) | `WalWriter`, `WalReader::ReadNext` | Which outcomes are record, crash tail, corruption, and terminal I/O? | [`wal_io_test.cc`](../../tests/unit/wal/wal_io_test.cc) |
 | [`recovery.cc`](../../src/engine/recovery.cc) | `RecoverDatabase`, `LogReplay`, `CreateRecoveryLog` | Which logs reconstruct state, and when does the new WAL become durable? | [`recovery_test.cc`](../../tests/unit/engine/recovery_test.cc) |
-| [`version_set.cc`](../../src/metadata/version_set.cc) | `Write`, `InstallCurrent` | What must be durable before a new Version is published? | [`power_loss_test.cc`](../../tests/crash/power_loss_test.cc) |
+| [`version_set.cc`](../../src/metadata/version_set.cc) | `LogAndApply`, `ApplyPrepared`, `WritePrepared`, `PublishPreparedEdit`, `LiveFiles` | What is captured before unlocking, what becomes durable, and which old Versions remain protected? | [`version_set_test.cc`](../../tests/unit/metadata/version_set_test.cc), [`power_loss_test.cc`](../../tests/crash/power_loss_test.cc) |
 
 Then read [ADR-0011](../adr/0011-filesystem-contracts.md),
+[ADR-0027](../adr/0027-version-set.md),
 [ADR-0029](../adr/0029-database-recovery.md), and
 [ADR-0040](../adr/0040-compatibility-and-crash-harness.md).
 
@@ -221,6 +307,10 @@ different path; it must preserve its old-WAL close and sticky-error protocol.
    though its caller never received success?
 4. If closing the old WAL throws during rotation, should the engine install
    the replacement log and memtable?
+5. Why does VersionSet allocate the candidate owner and reserve tracking
+   capacity before releasing the database mutex for MANIFEST I/O?
+6. Can cleanup delete every file absent from the newly published current
+   Version?
 
 <details>
 <summary>Answers</summary>
@@ -232,5 +322,11 @@ different path; it must preserve its old-WAL close and sticky-error protocol.
 4. No. It records a sticky error and leaves the installed state
    unchanged; otherwise the rotation would publish a partially completed
    transition.
+5. After the edit becomes durable, publishing its matching in-memory state
+   must not depend on an allocation that can throw. Preparation also freezes
+   the exact edit state and snapshot bytes before concurrent counters may
+   advance.
+6. No. Read pins and shared owners can keep older installed Versions live.
+   Cleanup must include their files, pending outputs, and cache ownership.
 
 </details>

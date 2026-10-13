@@ -59,9 +59,16 @@ not a complete C++ or operating-systems textbook.
 [The concept-to-code index](concept-index.md) is the maintenance map from a
 storage concept to its current contract, implementation entry points, tests,
 and decision history.
-[The LevelDB comparison appendix](11-leveldb-comparison.md) separates existing
-capabilities, intentional differences, and possible learning-oriented
-extensions. It is a proposal list, not an approved implementation roadmap.
+
+### Advanced deep dives and appendices
+
+| Reading | Use it when |
+|---|---|
+| [11. LevelDB comparison](11-leveldb-comparison.md) **(appendix)** | Separating existing capabilities, intentional differences, and unapproved learning-oriented proposals |
+| [12. Native filesystem lifecycles](12-native-filesystem-lifecycles.md) **(advanced)** | Auditing copied/mapped ownership, OVERLAPPED completion, teardown, locks, sync, and error priority |
+
+The comparison appendix is a proposal list, not an approved implementation
+roadmap. Lesson 12 is a maintainer deep dive, not a first-pass prerequisite.
 
 ## Choose a route
 
@@ -78,7 +85,8 @@ behind each function. For a concrete change, start from the
 
 **Deep pass:** do the labs, answer the self-checks without opening the
 answers, and then read the linked ADRs. Study the parity and profiling ADRs
-only after you understand the ordinary execution paths.
+only after you understand the ordinary execution paths. For native platform
+work, read lesson 12 after lessons 04, 05, and 08.
 
 Do not read all ADRs in numerical order as your introduction. Early ADRs
 describe historical implementation stages; later decisions, especially
@@ -118,7 +126,7 @@ map to implementation entry points and representative tests.
 | Public behavior and ownership | [`include/modern_leveldb/db.h`](../../include/modern_leveldb/db.h), [`src/api/api_internal.h`](../../src/api/api_internal.h) | [ADR-0004](../adr/0004-errors-ownership-and-runtime.md), [ADR-0038](../adr/0038-public-raii-api.md) |
 | Binary representation | [`src/format/`](../../src/format), [`src/base/`](../../src/base) | [ADR-0007](../adr/0007-checksum-and-hash-contracts.md), [ADR-0012](../adr/0012-internal-key-format.md), [ADR-0013](../adr/0013-wal-record-format.md), [ADR-0016](../adr/0016-write-batch-format.md), [ADR-0021](../adr/0021-manifest-version-edits.md) |
 | In-memory indexing | [`src/memory/`](../../src/memory) | [ADR-0008](../adr/0008-monotonic-arena.md), [ADR-0015](../adr/0015-concurrent-skiplist.md), [ADR-0017](../adr/0017-arena-backed-memtable.md), [ADR-0060](../adr/0060-leveldb-write-path-parity.md) |
-| Files and durability | [`src/platform/file_system.h`](../../src/platform/file_system.h), [`src/wal/`](../../src/wal) | [ADR-0011](../adr/0011-filesystem-contracts.md), [ADR-0018](../adr/0018-wal-stream-io.md), [ADR-0027](../adr/0027-version-set.md), [ADR-0029](../adr/0029-database-recovery.md) |
+| Files and durability | [`src/platform/file_system.h`](../../src/platform/file_system.h), [`src/wal/`](../../src/wal) | [ADR-0011](../adr/0011-filesystem-contracts.md), [ADR-0018](../adr/0018-wal-stream-io.md), [ADR-0027](../adr/0027-version-set.md), [ADR-0029](../adr/0029-database-recovery.md), [ADR-0056](../adr/0056-leveldb-table-mmap-parity.md), [ADR-0064](../adr/0064-windows-filesystem-and-delivery.md), [ADR-0068](../adr/0068-windows-mapped-read-parity.md) |
 | Sorted tables and caching | [`src/table/`](../../src/table), [`src/cache/`](../../src/cache) | [ADR-0022](../adr/0022-sstable-block-format.md) through [ADR-0026](../adr/0026-table-cache.md), [ADR-0039](../adr/0039-sstable-block-compression.md), [ADR-0054](../adr/0054-leveldb-cache-parity.md) through [ADR-0056](../adr/0056-leveldb-table-mmap-parity.md) |
 | Engine policy | [`src/engine/`](../../src/engine), [`src/metadata/`](../../src/metadata) | [ADR-0030](../adr/0030-point-reads.md) through [ADR-0037](../adr/0037-database-engine.md), [ADR-0053](../adr/0053-leveldb-read-path-parity.md), [ADR-0060](../adr/0060-leveldb-write-path-parity.md) |
 | Engineering evidence | [`tests/`](../../tests), [`fuzz/`](../../fuzz), [`benchmarks/`](../../benchmarks) | [ADR-0005](../adr/0005-test-driven-development.md), [ADR-0019](../adr/0019-test-coverage-policy.md), [ADR-0040](../adr/0040-compatibility-and-crash-harness.md) through [ADR-0045](../adr/0045-fixed-work-write-profiling.md), [ADR-0052](../adr/0052-cross-engine-read-gap-decomposition.md) |
@@ -139,5 +147,9 @@ You understand the core project when you can explain, without source open:
 5. Why level 0 needs different read and compaction treatment.
 6. Why an iterator or cache pin can delay reclamation.
 7. Why a clean benchmark or sanitizer run is evidence, not a proof.
+
+For the platform-maintainer deep pass, also explain why native resource
+cleanup must reach a terminal state before releasing a borrowed buffer,
+mapped view, lock identity, or capacity slot.
 
 Start with [lesson 01](01-the-engine-map.md).
