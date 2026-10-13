@@ -854,6 +854,46 @@ class LocalStressCampaignStateTest(unittest.TestCase):
                     config, plan=plan, working_directory=root
                 )
 
+    def test_artifact_identity_normalizes_boolean_and_worker_dirty_names(self):
+        cases = [("false", False), ("clean", False), ("true", True), ("dirty", True)]
+        for dirty, expected in cases:
+            with self.subTest(dirty=dirty):
+                with tempfile.TemporaryDirectory() as temporary:
+                    attempt = Path(temporary)
+                    artifacts = attempt / "artifacts"
+                    artifacts.mkdir()
+                    (artifacts / "run.txt").write_text(
+                        "\n".join(
+                            [
+                                "format=modern-leveldb-crash-run-v1",
+                                "revision=revision",
+                                f"dirty={dirty}",
+                                "",
+                            ]
+                        ),
+                        encoding="utf-8",
+                    )
+                    (artifacts / "completion.txt").write_text(
+                        "format=modern-leveldb-crash-result-v1\n",
+                        encoding="utf-8",
+                    )
+                    job = run_local_stress_campaign.CampaignJob(
+                        index=0,
+                        job_id="v3",
+                        tier="v3",
+                        seed=17,
+                        argv_template=(sys.executable, "-c", ""),
+                        run_artifact="artifacts/run.txt",
+                        completion_artifact="artifacts/completion.txt",
+                    )
+
+                    identity = run_local_stress_campaign.validate_job_artifacts(
+                        job, attempt
+                    )
+
+                    self.assertEqual(identity.revision, "revision")
+                    self.assertEqual(identity.dirty, expected)
+
 
 class LocalStressCampaignCliTest(unittest.TestCase):
     def arguments(self) -> list[str]:
