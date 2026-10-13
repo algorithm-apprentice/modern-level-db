@@ -248,7 +248,7 @@ The output directory contains:
 | `linearizability.log` | Per-round initial state, Put/Delete/Get/batch source, sync/yield plan, operation intervals/results, final read, and witness order |
 | `snapshot-summary.txt` | Writer generations, reader checks, iterator checks, and final partition state |
 | `final-state.txt` | Final reopened sorted database state |
-| `completion.txt` | Written only after both phases succeed |
+| `completion.txt` | Written only after every phase selected by the mode succeeds |
 | `failure.txt` | Failure message when reporting remains possible |
 
 Unlike V1, complete concurrent artifacts are not expected to be byte-identical
@@ -333,3 +333,42 @@ Local acceptance campaigns:
 V2 is complete at this boundary. V3 must use a parent-owned process and
 external acknowledgement journal; in-process exception injection cannot stand
 in for abrupt process death.
+
+## High-thread fanout implementation record
+
+The later fanout extension:
+
+- keeps `checked` mode's original 2-through-8 bounded linearizability and
+  snapshot phases unchanged;
+- makes `fanout` with 32 threads the ordinary default;
+- accepts any positive representable fanout thread count, leaving resource
+  exhaustion as an explicit campaign failure rather than an arbitrary cap;
+- skips Phase A only in fanout mode and records
+  `linearized_worker_operations=0`;
+- records mode in run/completion artifacts and command output;
+- makes every existing V5 V2 profile pass `--mode checked` explicitly.
+
+Validation completed:
+
+```text
+Windows Debug unit                  913/913
+Windows Release unit                913/913
+WSL Ubuntu GCC 13 Debug unit        880/880
+WSL Ubuntu GCC 13 Release unit      880/880
+focused concurrent contracts           8/8
+Python V5 campaign contracts          19/19
+documentation validation               pass
+```
+
+Local fanout campaigns:
+
+| Platform | Threads | Rounds | Compression | Batch writes | Snapshot checks | Final entries |
+|---|---:|---:|---|---:|---:|---:|
+| Windows | 1 | 4 | None | 4 | 0 | 2 |
+| Windows default | 32 | 20 | None | 320 | 413 | 32 |
+| Windows | 256 | 4 | Zstd | 512 | 6515 | 256 |
+| WSL Ubuntu | 256 | 2 | Snappy | 256 | 316 | 256 |
+
+The 256-thread results prove the selected scalable oracle completed at that
+fanout on both native backends. They do not turn Phase A into an unbounded
+linearizability proof.
