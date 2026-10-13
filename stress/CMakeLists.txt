@@ -1,28 +1,17 @@
-execute_process(
-  COMMAND git -C "${PROJECT_SOURCE_DIR}" rev-parse HEAD
-  RESULT_VARIABLE revision_status
-  OUTPUT_VARIABLE STRESS_SOURCE_REVISION
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-  ERROR_QUIET
+set(stress_build_header "${CMAKE_CURRENT_BINARY_DIR}/stress_build.h")
+add_custom_target(
+  modern_leveldb_stress_build_identity
+  COMMAND
+    "${CMAKE_COMMAND}"
+      "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+      "-DOUTPUT=${stress_build_header}"
+      -P "${PROJECT_SOURCE_DIR}/cmake/RefreshStressIdentity.cmake"
+  BYPRODUCTS "${stress_build_header}"
+  VERBATIM
 )
-execute_process(
-  COMMAND git -C "${PROJECT_SOURCE_DIR}" status --porcelain --untracked-files=normal
-  RESULT_VARIABLE dirty_status
-  OUTPUT_VARIABLE source_changes
-  ERROR_QUIET
-)
-set(STRESS_SOURCE_DIRTY 1)
-if(revision_status EQUAL 0 AND dirty_status EQUAL 0)
-  if(source_changes STREQUAL "")
-    set(STRESS_SOURCE_DIRTY 0)
-  endif()
-else()
-  set(STRESS_SOURCE_REVISION "unavailable")
-  message(STATUS "Stress source revision is unavailable in this checkout")
-endif()
-configure_file(stress_build.h.in stress_build.h @ONLY)
 
-add_executable(modern_leveldb_stress stress_main.cc stress.cc)
+add_executable(modern_leveldb_stress stress_main.cc stress.cc "${stress_build_header}")
+add_dependencies(modern_leveldb_stress modern_leveldb_stress_build_identity)
 target_include_directories(
   modern_leveldb_stress
   PRIVATE
