@@ -84,8 +84,11 @@ identity, compression policy, and disposable-data requirements.
 
 ## Phase A: same-key linearizability windows
 
-One long-lived worker thread exists per configured stress thread. A coordinator
-and all workers share start and finish barriers.
+Each round creates one exception-safe worker cohort. A cancellable start gate
+releases the complete cohort together; if thread creation fails partway, the
+gate cancels already-created workers before they join. Round-scoped workers
+make setup failure and checker failure unable to strand a long-lived pool at a
+barrier.
 
 For each round:
 
@@ -201,7 +204,7 @@ The output directory contains:
 | File | Contract |
 |---|---|
 | `run.txt` | Concurrent format, source identity, seed, threads, rounds, compression, and fixed policy |
-| `linearizability.log` | Per-round initial state, operation intervals/results, final read, and witness order |
+| `linearizability.log` | Per-round initial state, Put/Delete/Get/batch source, sync/yield plan, operation intervals/results, final read, and witness order |
 | `snapshot-summary.txt` | Writer generations, reader checks, iterator checks, and final partition state |
 | `final-state.txt` | Final reopened sorted database state |
 | `completion.txt` | Written only after both phases succeed |

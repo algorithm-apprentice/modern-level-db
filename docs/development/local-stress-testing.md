@@ -2,28 +2,35 @@
 
 [Development guide](README.md)
 
-Use the local stress driver to run a reproducible single-threaded operation
-stream against a native Modern LevelDB database and an independent ordered-map
-model.
+Use the local stress targets to compare native Modern LevelDB behavior with
+explicit single-thread and concurrent correctness oracles.
 
 The driver is optional and default-off. It is not a CTest, GitHub Actions job,
 or scheduled repository campaign.
 
 ## Current scope
 
-V1 covers:
+The local stress targets currently cover:
 
-- Put, Delete, atomic batches, point reads, seek/full scans;
-- snapshots and release;
-- repeated close/reopen recovery;
+- single-thread V1:
+  - Put, Delete, atomic batches, point reads, seek/full scans;
+  - snapshots and release;
+  - repeated close/reopen recovery;
+- concurrent V2:
+  - same-key Put/Delete/Get/batch histories checked for bounded linearizability;
+  - concurrent disjoint writer batches;
+  - snapshot point-read and iterator consistency;
+  - iterators retained after Snapshot and Database handles are destroyed;
 - WAL rotation, flush, and compaction pressure through a 64 KiB write buffer;
 - None, Snappy, and Zstd table compression;
 - versioned run, operation, final-state, completion, and failure artifacts.
 
-V1 is single-threaded. It does not establish concurrent correctness,
-process-crash safety, power-loss safety, randomized option compatibility, or
-fault-injection recovery. Those are separate later phases in the
-[stress design](local-database-stress-design.md).
+V1 remains the deterministic single-thread model. V2 adds bounded concurrent
+contracts; it does not claim unbounded linearizability for every API.
+Process-crash safety, power-loss safety, randomized option compatibility, and
+fault-injection recovery remain separate later phases in the
+[stress design](local-database-stress-design.md) and
+[concurrent design](concurrent-database-stress-design.md).
 
 ## Safety
 
@@ -45,14 +52,16 @@ Linux/macOS:
 
 ```bash
 cmake --preset local-stress
-cmake --build --preset local-stress --target modern_leveldb_stress
+cmake --build --preset local-stress \
+  --target modern_leveldb_stress modern_leveldb_concurrent_stress
 ```
 
 Windows, from an initialized x64 MSVC developer environment:
 
 ```powershell
 cmake --preset windows-local-stress
-cmake --build --preset windows-local-stress --target modern_leveldb_stress
+cmake --build --preset windows-local-stress `
+  --target modern_leveldb_stress modern_leveldb_concurrent_stress
 ```
 
 Building the target refreshes the source revision and dirty-worktree identity
@@ -99,7 +108,53 @@ Supported options:
 
 Use `--help` to print the command contract.
 
-## Artifacts
+## Run concurrent V2
+
+Linux/macOS:
+
+```bash
+./build/local-stress/stress/modern_leveldb_concurrent_stress \
+  --db /absolute/disposable/path/concurrent-db-01 \
+  --output /absolute/disposable/path/concurrent-output-01 \
+  --seed 301 \
+  --threads 4 \
+  --rounds 1000 \
+  --compression none
+```
+
+Windows:
+
+```powershell
+& .\build\windows-local-stress\stress\modern_leveldb_concurrent_stress.exe `
+  --db C:\absolute\disposable\path\concurrent-db-01 `
+  --output C:\absolute\disposable\path\concurrent-output-01 `
+  --seed 301 `
+  --threads 4 `
+  --rounds 1000 `
+  --compression none
+```
+
+Concurrent options:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `--db` | required | New disposable database directory |
+| `--output` | required | New artifact directory |
+| `--seed` | 301 | Reproducible operation/yield selection |
+| `--threads` | 4 | Worker count in the bounded range 2 through 8 |
+| `--rounds` | 1000 | Linearizability rounds and batch generations |
+| `--compression` | `none` | `none`, `snappy`, or `zstd` |
+
+Each linearizability round runs one operation per thread against one hot key,
+then performs a final read and searches for a legal sequential witness that
+respects real-time precedence. The second phase uses disjoint writer pairs to
+check atomic batch, snapshot, iterator, and retained-child lifetimes.
+
+The same seed chooses the same operations and yield counts. Native scheduling
+can still produce a different valid history; `linearizability.log` records the
+actual invocation/completion intervals and witness.
+
+## V1 artifacts
 
 | File | Interpretation |
 |---|---|
@@ -125,9 +180,22 @@ The tool returns:
 | 1 | Database, model, filesystem, or artifact failure |
 | 2 | Invalid command line or unsafe paths |
 
-## Local acceptance set
+## V2 artifacts
 
-Before reviewing stress-driver changes, run three fresh campaigns:
+| File | Interpretation |
+|---|---|
+| `run.txt` | Concurrent format, source identity, seed, threads, rounds, compression, and fixed policy |
+| `linearizability.log` | Per-round initial state, intervals/results, final read, witness order, and final value |
+| `snapshot-summary.txt` | Writer count, acknowledged batch writes, and snapshot/iterator checks |
+| `final-state.txt` | Reopened final state after all child handles release |
+| `completion.txt` | Exists only after both concurrent phases succeed |
+| `failure.txt` | Best available failure message |
+
+The concurrent executable uses the same exit-code meanings as V1.
+
+## Local acceptance sets
+
+Before reviewing V1 changes, run three fresh campaigns:
 
 ```text
 compression  seed
@@ -138,6 +206,19 @@ zstd         301
 
 Use an operation count large enough for the machine and review goal. Preserve
 any failure directory unchanged until the seed and operation index reproduce.
+
+Before reviewing V2 changes, run fresh combinations covering:
+
+```text
+threads  compression  seed
+2        none         1
+4        snappy       17
+8        zstd         301
+```
+
+Repeat at least one combination several times because scheduling, unlike the
+operation plan, is intentionally nondeterministic. Preserve every invalid
+history unchanged.
 
 These campaigns are local evidence. Do not add them to GitHub Actions or CTest
 without a separate cost, duration, flakiness, and ownership decision.

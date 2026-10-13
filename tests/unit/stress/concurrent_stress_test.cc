@@ -108,6 +108,9 @@ TEST(ConcurrentStressRunTest, CompletesLinearizableAndSnapshotPhases) {
     const std::string histories =
         test_support::ReadTextFile(arguments.output / "linearizability.log");
     EXPECT_EQ(Count(histories, "\nround="), arguments.rounds);
+    EXPECT_NE(histories.find("\tsource="), std::string::npos);
+    EXPECT_NE(histories.find("\tyields_before="), std::string::npos);
+    EXPECT_NE(histories.find("\tsource=final-read"), std::string::npos);
     const std::string snapshots =
         test_support::ReadTextFile(arguments.output / "snapshot-summary.txt");
     EXPECT_NE(snapshots.find("batch_writes="), std::string::npos);

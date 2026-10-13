@@ -209,8 +209,23 @@ std::string RegisterKindName(RegisterOperationKind kind) {
     throw std::invalid_argument("unknown register operation kind");
 }
 
+std::string PlannedKindName(PlannedKind kind) {
+    switch (kind) {
+        case PlannedKind::Store:
+            return "put";
+        case PlannedKind::Delete:
+            return "delete";
+        case PlannedKind::Read:
+            return "get";
+        case PlannedKind::Batch:
+            return "batch";
+    }
+    throw std::invalid_argument("unknown planned operation kind");
+}
+
 std::string DescribeHistory(std::size_t round, const std::optional<std::string>& initial,
                             std::span<const RegisterOperation> operations,
+                            std::span<const PlannedOperation> plans,
                             const std::optional<LinearizationWitness>& witness) {
     std::string result =
         "round=" + std::to_string(round) + "\tinitial=" + OptionalHex(initial) + "\n";
@@ -219,6 +234,15 @@ std::string DescribeHistory(std::size_t round, const std::optional<std::string>&
                   RegisterKindName(operation.kind) + "\tinvoke=" +
                   std::to_string(operation.invoke) + "\tcomplete=" +
                   std::to_string(operation.complete);
+        if (operation.id < plans.size()) {
+            const PlannedOperation& plan = plans[operation.id];
+            result += "\tsource=" + PlannedKindName(plan.kind) +
+                      "\tsync=" + std::to_string(plan.sync) +
+                      "\tyields_before=" + std::to_string(plan.yields_before) +
+                      "\tyields_after=" + std::to_string(plan.yields_after);
+        } else {
+            result += "\tsource=final-read";
+        }
         if (operation.value.has_value()) {
             result += "\tvalue=" + StressHex(*operation.value);
         }
@@ -298,7 +322,7 @@ LinearizabilityPhase RunLinearizabilityPhase(
         history.push_back(std::move(final_read));
 
         const auto witness = FindRegisterLinearization(state, history);
-        history_log.Write(DescribeHistory(round, state, history, witness));
+        history_log.Write(DescribeHistory(round, state, history, plans, witness));
         if (!witness.has_value()) {
             throw std::runtime_error("concurrent register history is not linearizable");
         }
