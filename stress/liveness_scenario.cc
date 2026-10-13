@@ -1,5 +1,3 @@
-#include "stress/option_fault_stress.h"
-
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -14,6 +12,7 @@
 #include "format/write_batch.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
+#include "stress/option_fault_stress.h"
 #include "support/manual_clock.h"
 #include "support/manual_executor.h"
 #include "support/memory_file_system.h"
@@ -39,11 +38,9 @@ public:
     }
 
     std::unique_ptr<DatabaseEngine> Open() {
-        Result<std::unique_ptr<DatabaseEngine>> opened =
-            DatabaseEngine::Open(options_, directory_);
+        Result<std::unique_ptr<DatabaseEngine>> opened = DatabaseEngine::Open(options_, directory_);
         if (!opened.has_value()) {
-            throw std::runtime_error("cannot open liveness database: " +
-                                     opened.error().ToString());
+            throw std::runtime_error("cannot open liveness database: " + opened.error().ToString());
         }
         return std::move(*opened);
     }
@@ -64,8 +61,7 @@ public:
     std::size_t TableOutputs() const {
         std::size_t count = 0;
         for (const std::string& operation : file_system_.operations()) {
-            if (operation.starts_with("open_writable ") &&
-                operation.ends_with(".ldb")) {
+            if (operation.starts_with("open_writable ") && operation.ends_with(".ldb")) {
                 ++count;
             }
         }
@@ -82,8 +78,7 @@ private:
 
 void RequireSuccess(const Status& status, std::string_view operation) {
     if (!status.has_value()) {
-        throw std::runtime_error(std::string(operation) + " failed: " +
-                                 status.error().ToString());
+        throw std::runtime_error(std::string(operation) + " failed: " + status.error().ToString());
     }
 }
 
@@ -94,8 +89,7 @@ std::string LivenessKey(std::size_t index) {
 }
 
 std::string LivenessValue(std::uint64_t seed, std::size_t index) {
-    std::uint64_t state =
-        seed ^ (static_cast<std::uint64_t>(index) * 0x9e3779b97f4a7c15ULL);
+    std::uint64_t state = seed ^ (static_cast<std::uint64_t>(index) * 0x9e3779b97f4a7c15ULL);
     std::string value(2'048, '\0');
     for (char& byte : value) {
         state ^= state >> 12U;
@@ -106,20 +100,17 @@ std::string LivenessValue(std::uint64_t seed, std::size_t index) {
     return value;
 }
 
-void Put(DatabaseEngine& database, std::string_view key,
-         std::string_view value) {
+void Put(DatabaseEngine& database, std::string_view key, std::string_view value) {
     EncodedWriteBatch batch;
     batch.Put(AsBytes(key), AsBytes(value));
     RequireSuccess(database.Write(batch, false), "liveness write");
 }
 
-void VerifyRead(DatabaseEngine& database, std::string_view key,
-                std::string_view expected) {
+void VerifyRead(DatabaseEngine& database, std::string_view key, std::string_view expected) {
     std::vector<std::byte> value;
     const Result<bool> found = database.Get(AsBytes(key), value);
     if (!found.has_value()) {
-        throw std::runtime_error("liveness read failed: " +
-                                 found.error().ToString());
+        throw std::runtime_error("liveness read failed: " + found.error().ToString());
     }
     if (!*found || AsStringView(value) != expected) {
         throw std::runtime_error("liveness point read differs from model");
@@ -134,28 +125,25 @@ Entries Scan(DatabaseEngine& database, std::size_t maximum_entries) {
         if (entries.size() >= maximum_entries) {
             throw std::runtime_error("liveness iterator did not terminate");
         }
-        entries.emplace_back(AsStringView(iterator->key()),
-                             AsStringView(iterator->value()));
+        entries.emplace_back(AsStringView(iterator->key()), AsStringView(iterator->value()));
         moved = iterator->Next();
     }
     if (!moved.has_value()) {
-        throw std::runtime_error("liveness scan failed: " +
-                                 moved.error().ToString());
+        throw std::runtime_error("liveness scan failed: " + moved.error().ToString());
     }
     return entries;
 }
 
 void VerifyScan(DatabaseEngine& database, const Model& model) {
-    test_support::RequireModelEqual(
-        Scan(database, model.size()), test_support::ExpectedEntries(model, false),
-        "liveness scan differs from model");
+    test_support::RequireModelEqual(Scan(database, model.size()),
+                                    test_support::ExpectedEntries(model, false),
+                                    "liveness scan differs from model");
 }
 
 void VerifyIdleState(DatabaseEngine& database) {
     const Result<DatabaseEngineState> state = database.GetState();
     if (!state.has_value()) {
-        throw std::runtime_error("cannot inspect liveness state: " +
-                                 state.error().ToString());
+        throw std::runtime_error("cannot inspect liveness state: " + state.error().ToString());
     }
     if (state->sticky_error.has_value()) {
         throw std::runtime_error("fault-free liveness retained a sticky error: " +
@@ -168,8 +156,7 @@ void VerifyIdleState(DatabaseEngine& database) {
 
 }  // namespace
 
-LivenessScenarioSummary RunLivenessScenario(std::uint64_t seed,
-                                            std::size_t writes) {
+LivenessScenarioSummary RunLivenessScenario(std::uint64_t seed, std::size_t writes) {
     if (writes == 0) {
         throw std::invalid_argument("liveness writes must be positive");
     }
@@ -210,14 +197,8 @@ LivenessScenarioSummary RunLivenessScenario(std::uint64_t seed,
     ++scans;
 
     return {
-        seed,
-        writes,
-        background_tasks,
-        harness.TableOutputs(),
-        point_reads,
-        scans,
-        model.size(),
-        StableModelFingerprint(model),
+        seed,        writes, background_tasks, harness.TableOutputs(),
+        point_reads, scans,  model.size(),     StableModelFingerprint(model),
     };
 }
 

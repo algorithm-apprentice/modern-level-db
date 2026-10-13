@@ -1,5 +1,3 @@
-#include "stress/option_fault_stress.h"
-
 #include <cstddef>
 #include <filesystem>
 #include <functional>
@@ -17,6 +15,7 @@
 #include "format/write_batch.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
+#include "stress/option_fault_stress.h"
 #include "support/manual_clock.h"
 #include "support/manual_executor.h"
 #include "support/memory_file_system.h"
@@ -78,11 +77,9 @@ public:
     }
 
     std::unique_ptr<DatabaseEngine> Open() {
-        Result<std::unique_ptr<DatabaseEngine>> opened =
-            DatabaseEngine::Open(options_, directory_);
+        Result<std::unique_ptr<DatabaseEngine>> opened = DatabaseEngine::Open(options_, directory_);
         if (!opened.has_value()) {
-            throw std::runtime_error("cannot open fault database: " +
-                                     opened.error().ToString());
+            throw std::runtime_error("cannot open fault database: " + opened.error().ToString());
         }
         return std::move(*opened);
     }
@@ -123,8 +120,7 @@ std::optional<std::string> ReadValue(DatabaseEngine& database, std::string_view 
     std::vector<std::byte> value;
     Result<bool> found = database.Get(AsBytes(key), value);
     if (!found.has_value()) {
-        throw std::runtime_error("fault recovery read failed: " +
-                                 found.error().ToString());
+        throw std::runtime_error("fault recovery read failed: " + found.error().ToString());
     }
     if (!*found) {
         return std::nullopt;
@@ -134,8 +130,7 @@ std::optional<std::string> ReadValue(DatabaseEngine& database, std::string_view 
 
 void RequireSuccess(const Status& status, std::string_view operation) {
     if (!status.has_value()) {
-        throw std::runtime_error(std::string(operation) + " failed: " +
-                                 status.error().ToString());
+        throw std::runtime_error(std::string(operation) + " failed: " + status.error().ToString());
     }
 }
 
@@ -151,10 +146,8 @@ Status Flush(FaultHarness& harness, DatabaseEngine& database) {
     return std::move(*result);
 }
 
-RecoveredBatchState RecoverBatch(FaultHarness& harness,
-                                 std::unique_ptr<DatabaseEngine>& database,
-                                 const BatchValues& old_values,
-                                 const BatchValues& new_values) {
+RecoveredBatchState RecoverBatch(FaultHarness& harness, std::unique_ptr<DatabaseEngine>& database,
+                                 const BatchValues& old_values, const BatchValues& new_values) {
     database.reset();
     database = harness.Open();
     harness.executor().RunAll();
@@ -192,13 +185,11 @@ FaultScenarioSummary ReadScenario() {
     if (failed.has_value()) {
         throw std::runtime_error("read fault unexpectedly succeeded");
     }
-    const bool retry_succeeded =
-        ReadValue(*database, FirstKey) == values.first &&
-        ReadValue(*database, SecondKey) == values.second;
+    const bool retry_succeeded = ReadValue(*database, FirstKey) == values.first &&
+                                 ReadValue(*database, SecondKey) == values.second;
     const Result<DatabaseEngineState> state = database->GetState();
     if (!state.has_value()) {
-        throw std::runtime_error("cannot inspect read-fault state: " +
-                                 state.error().ToString());
+        throw std::runtime_error("cannot inspect read-fault state: " + state.error().ToString());
     }
     return {
         FaultScenario::Read,
@@ -225,10 +216,8 @@ FaultScenarioSummary MutationScenario(FaultScenario scenario) {
     FaultHarness harness;
     std::unique_ptr<DatabaseEngine> database = harness.Open();
     const bool needs_rotation =
-        scenario == FaultScenario::OldWalClose ||
-        scenario == FaultScenario::Scheduling;
-    const BatchValues old_values =
-        needs_rotation ? LargeOldValues() : SmallValues("old");
+        scenario == FaultScenario::OldWalClose || scenario == FaultScenario::Scheduling;
+    const BatchValues old_values = needs_rotation ? LargeOldValues() : SmallValues("old");
     const BatchValues new_values = SmallValues("new");
     RequireSuccess(WritePair(*database, old_values), "baseline write");
 
@@ -239,27 +228,21 @@ FaultScenarioSummary MutationScenario(FaultScenario scenario) {
     switch (scenario) {
         case FaultScenario::WalAppend:
             failure.emplace(
-                [](std::string_view operation) {
-                    return IsLogOperation(operation, "append ");
-                },
+                [](std::string_view operation) { return IsLogOperation(operation, "append "); },
                 Error::Io(message));
             harness.file_system().SetOperationHook(std::ref(*failure));
             failed = WritePair(*database, new_values);
             break;
         case FaultScenario::WalSync:
             failure.emplace(
-                [](std::string_view operation) {
-                    return IsLogOperation(operation, "sync ");
-                },
+                [](std::string_view operation) { return IsLogOperation(operation, "sync "); },
                 Error::Io(message));
             harness.file_system().SetOperationHook(std::ref(*failure));
             failed = WritePair(*database, new_values, true);
             break;
         case FaultScenario::OldWalClose:
             failure.emplace(
-                [](std::string_view operation) {
-                    return IsLogOperation(operation, "close ");
-                },
+                [](std::string_view operation) { return IsLogOperation(operation, "close "); },
                 Error::Io(message));
             harness.file_system().SetOperationHook(std::ref(*failure));
             failed = WritePair(*database, new_values);
@@ -277,9 +260,7 @@ FaultScenarioSummary MutationScenario(FaultScenario scenario) {
         case FaultScenario::TableSync:
             RequireSuccess(WritePair(*database, new_values), "acknowledged write");
             failure.emplace(
-                [](std::string_view operation) {
-                    return IsTableOperation(operation, "sync ");
-                },
+                [](std::string_view operation) { return IsTableOperation(operation, "sync "); },
                 Error::Io(message));
             harness.file_system().SetOperationHook(std::ref(*failure));
             failed = Flush(harness, *database);
@@ -287,9 +268,7 @@ FaultScenarioSummary MutationScenario(FaultScenario scenario) {
         case FaultScenario::TableClose:
             RequireSuccess(WritePair(*database, new_values), "acknowledged write");
             failure.emplace(
-                [](std::string_view operation) {
-                    return IsTableOperation(operation, "close ");
-                },
+                [](std::string_view operation) { return IsTableOperation(operation, "close "); },
                 Error::Io(message));
             harness.file_system().SetOperationHook(std::ref(*failure));
             failed = Flush(harness, *database);
@@ -321,9 +300,7 @@ FaultScenarioSummary MutationScenario(FaultScenario scenario) {
         case FaultScenario::ManifestSync:
             RequireSuccess(WritePair(*database, new_values), "acknowledged write");
             failure.emplace(
-                [](std::string_view operation) {
-                    return operation.starts_with("sync MANIFEST-");
-                },
+                [](std::string_view operation) { return operation.starts_with("sync MANIFEST-"); },
                 Error::Io(message));
             harness.file_system().SetOperationHook(std::ref(*failure));
             failed = Flush(harness, *database);
@@ -358,19 +335,14 @@ FaultScenarioSummary MutationScenario(FaultScenario scenario) {
     const Status later = WritePair(*database, SmallValues("later"));
     const std::size_t after_later = harness.file_system().operations().size();
     const bool reused_without_io =
-        !later.has_value() &&
-        later.error().code() == failed.error().code() &&
-        later.error().message() == failed.error().message() &&
-        before_later == after_later;
-    const RecoveredBatchState recovered =
-        RecoverBatch(harness, database, old_values, new_values);
+        !later.has_value() && later.error().code() == failed.error().code() &&
+        later.error().message() == failed.error().message() && before_later == after_later;
+    const RecoveredBatchState recovered = RecoverBatch(harness, database, old_values, new_values);
 
     return {
         scenario,
         name,
-        scenario == FaultScenario::Scheduling
-            ? "schedule background"
-            : failure->operation(),
+        scenario == FaultScenario::Scheduling ? "schedule background" : failure->operation(),
         failed.error().code(),
         std::string(failed.error().message()),
         true,
@@ -384,16 +356,11 @@ FaultScenarioSummary MutationScenario(FaultScenario scenario) {
 
 std::vector<FaultScenario> EnumerateFaultScenarios() {
     return {
-        FaultScenario::Read,
-        FaultScenario::WalAppend,
-        FaultScenario::WalSync,
-        FaultScenario::OldWalClose,
-        FaultScenario::TableOpen,
-        FaultScenario::TableSync,
-        FaultScenario::TableClose,
-        FaultScenario::TableDirectorySync,
-        FaultScenario::ManifestAppend,
-        FaultScenario::ManifestSync,
+        FaultScenario::Read,           FaultScenario::WalAppend,
+        FaultScenario::WalSync,        FaultScenario::OldWalClose,
+        FaultScenario::TableOpen,      FaultScenario::TableSync,
+        FaultScenario::TableClose,     FaultScenario::TableDirectorySync,
+        FaultScenario::ManifestAppend, FaultScenario::ManifestSync,
         FaultScenario::Scheduling,
     };
 }

@@ -42,17 +42,11 @@ std::string HashHex(std::uint64_t value) {
     return result;
 }
 
-std::string AccessName(bool allow_mmap_reads) {
-    return allow_mmap_reads ? "map" : "copy";
-}
+std::string AccessName(bool allow_mmap_reads) { return allow_mmap_reads ? "map" : "copy"; }
 
-std::string BloomName(std::uint32_t bits_per_key) {
-    return std::to_string(bits_per_key);
-}
+std::string BloomName(std::uint32_t bits_per_key) { return std::to_string(bits_per_key); }
 
-std::string WalCreationName(bool sync_wal_creation) {
-    return sync_wal_creation ? "sync" : "async";
-}
+std::string WalCreationName(bool sync_wal_creation) { return sync_wal_creation ? "sync" : "async"; }
 
 }  // namespace
 
@@ -70,8 +64,8 @@ std::vector<OptionMatrixCell> EnumerateOptionMatrix() {
     };
 
     std::vector<OptionMatrixCell> cells;
-    cells.reserve(Compressions.size() * Booleans.size() * BloomBits.size() *
-                  WriteBuffers.size() * Booleans.size());
+    cells.reserve(Compressions.size() * Booleans.size() * BloomBits.size() * WriteBuffers.size() *
+                  Booleans.size());
     for (const Compression compression : Compressions) {
         for (const bool allow_mmap_reads : Booleans) {
             for (const std::uint32_t bloom_bits_per_key : BloomBits) {
@@ -93,15 +87,13 @@ std::vector<OptionMatrixCell> EnumerateOptionMatrix() {
 }
 
 std::string OptionMatrixCellId(const OptionMatrixCell& cell) {
-    return "c-" + StressCompressionName(cell.compression) +
-           "_access-" + AccessName(cell.allow_mmap_reads) +
-           "_bloom-" + BloomName(cell.bloom_bits_per_key) +
-           "_wb-" + std::to_string(cell.write_buffer_size) +
-           "_wal-create-" + WalCreationName(cell.sync_wal_creation);
+    return "c-" + StressCompressionName(cell.compression) + "_access-" +
+           AccessName(cell.allow_mmap_reads) + "_bloom-" + BloomName(cell.bloom_bits_per_key) +
+           "_wb-" + std::to_string(cell.write_buffer_size) + "_wal-create-" +
+           WalCreationName(cell.sync_wal_creation);
 }
 
-std::uint64_t DeriveOptionMatrixSeed(std::uint64_t campaign_seed,
-                                     const OptionMatrixCell& cell) {
+std::uint64_t DeriveOptionMatrixSeed(std::uint64_t campaign_seed, const OptionMatrixCell& cell) {
     std::uint64_t hash = FnvOffsetBasis;
     HashUnsigned(hash, campaign_seed);
     HashByte(hash, 0);
@@ -123,10 +115,9 @@ std::string StableModelFingerprint(const test_support::Model& model) {
 Options OptionMatrixDatabaseOptions(const OptionMatrixCell& cell) {
     Options options = StressDatabaseOptions(cell.compression);
     options.allow_mmap_reads = cell.allow_mmap_reads;
-    options.bloom_bits_per_key =
-        cell.bloom_bits_per_key == 0
-            ? std::optional<std::uint32_t>()
-            : std::optional<std::uint32_t>(cell.bloom_bits_per_key);
+    options.bloom_bits_per_key = cell.bloom_bits_per_key == 0
+                                     ? std::optional<std::uint32_t>()
+                                     : std::optional<std::uint32_t>(cell.bloom_bits_per_key);
     options.write_buffer_size = cell.write_buffer_size;
     options.sync_wal_creation = cell.sync_wal_creation;
     return options;
@@ -134,24 +125,17 @@ Options OptionMatrixDatabaseOptions(const OptionMatrixCell& cell) {
 
 OptionMatrixCellSummary RunOptionMatrixCell(const std::filesystem::path& database,
                                             const OptionMatrixCell& cell,
-                                            std::uint64_t campaign_seed,
-                                            std::size_t operations) {
+                                            std::uint64_t campaign_seed, std::size_t operations) {
     const std::uint64_t seed = DeriveOptionMatrixSeed(campaign_seed, cell);
     test_support::ModernClient client(database, OptionMatrixDatabaseOptions(cell));
     const test_support::Model model = test_support::RunModel(seed, operations, client);
     client.Reopen();
-    test_support::RequireModelEqual(
-        client.Scan(false), test_support::ExpectedEntries(model, false),
-        "option matrix reopened forward scan differs from model");
-    test_support::RequireModelEqual(
-        client.Scan(true), test_support::ExpectedEntries(model, true),
-        "option matrix reopened reverse scan differs from model");
+    test_support::RequireModelEqual(client.Scan(false), test_support::ExpectedEntries(model, false),
+                                    "option matrix reopened forward scan differs from model");
+    test_support::RequireModelEqual(client.Scan(true), test_support::ExpectedEntries(model, true),
+                                    "option matrix reopened reverse scan differs from model");
     return {
-        OptionMatrixCellId(cell),
-        seed,
-        operations,
-        model.size(),
-        StableModelFingerprint(model),
+        OptionMatrixCellId(cell), seed, operations, model.size(), StableModelFingerprint(model),
     };
 }
 

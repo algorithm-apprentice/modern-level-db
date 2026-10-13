@@ -67,8 +67,7 @@ struct FaultScenarioSummary {
     bool retry_succeeded = false;
     std::optional<RecoveredBatchState> recovered_batch;
 
-    friend bool operator==(const FaultScenarioSummary&,
-                           const FaultScenarioSummary&) = default;
+    friend bool operator==(const FaultScenarioSummary&, const FaultScenarioSummary&) = default;
 };
 
 struct LivenessScenarioSummary {
@@ -113,10 +112,8 @@ public:
     OptionFaultStressObserver& operator=(OptionFaultStressObserver&&) = delete;
     virtual ~OptionFaultStressObserver() = default;
 
-    virtual void BeforeOptionCell(std::size_t index,
-                                  const OptionMatrixCell& cell) = 0;
-    virtual void BeforeFaultScenario(std::size_t index,
-                                     FaultScenario scenario) = 0;
+    virtual void BeforeOptionCell(std::size_t index, const OptionMatrixCell& cell) = 0;
+    virtual void BeforeFaultScenario(std::size_t index, FaultScenario scenario) = 0;
     virtual void BeforeLiveness() = 0;
 };
 
@@ -126,25 +123,22 @@ public:
                                                    const OptionMatrixCell& cell);
 [[nodiscard]] std::string StableModelFingerprint(const test_support::Model& model);
 [[nodiscard]] Options OptionMatrixDatabaseOptions(const OptionMatrixCell& cell);
-[[nodiscard]] OptionMatrixCellSummary RunOptionMatrixCell(
-    const std::filesystem::path& database, const OptionMatrixCell& cell,
-    std::uint64_t campaign_seed, std::size_t operations);
+[[nodiscard]] OptionMatrixCellSummary RunOptionMatrixCell(const std::filesystem::path& database,
+                                                          const OptionMatrixCell& cell,
+                                                          std::uint64_t campaign_seed,
+                                                          std::size_t operations);
 [[nodiscard]] std::vector<FaultScenario> EnumerateFaultScenarios();
 [[nodiscard]] std::string FaultScenarioName(FaultScenario scenario);
 [[nodiscard]] FaultScenarioSummary RunFaultScenario(FaultScenario scenario);
-[[nodiscard]] LivenessScenarioSummary RunLivenessScenario(
-    std::uint64_t seed, std::size_t writes);
+[[nodiscard]] LivenessScenarioSummary RunLivenessScenario(std::uint64_t seed, std::size_t writes);
 [[nodiscard]] OptionFaultStressArguments ParseOptionFaultStressArguments(
     std::span<const std::filesystem::path> arguments);
 [[nodiscard]] OptionFaultStressSummary RunOptionFaultStress(
-    const OptionFaultStressArguments& arguments,
-    const StressBuildIdentity& identity,
+    const OptionFaultStressArguments& arguments, const StressBuildIdentity& identity,
     OptionFaultStressObserver* observer = nullptr);
 [[nodiscard]] OptionFaultStressSummary RunOptionFaultStress(
-    const OptionFaultStressArguments& arguments,
-    const StressBuildIdentity& identity,
-    std::span<const OptionMatrixCell> option_cells,
-    std::span<const FaultScenario> fault_scenarios,
+    const OptionFaultStressArguments& arguments, const StressBuildIdentity& identity,
+    std::span<const OptionMatrixCell> option_cells, std::span<const FaultScenario> fault_scenarios,
     OptionFaultStressObserver* observer = nullptr);
 [[nodiscard]] std::string OptionFaultStressUsage();
 

@@ -26,9 +26,8 @@ TEST(OptionMatrixTest, EnumeratesCompleteCartesianProductWithStableIds) {
     for (const OptionMatrixCell& cell : cells) {
         EXPECT_TRUE(ids.insert(OptionMatrixCellId(cell)).second);
         EXPECT_TRUE(tuples
-                        .insert({cell.compression, cell.allow_mmap_reads,
-                                 cell.bloom_bits_per_key, cell.write_buffer_size,
-                                 cell.sync_wal_creation})
+                        .insert({cell.compression, cell.allow_mmap_reads, cell.bloom_bits_per_key,
+                                 cell.write_buffer_size, cell.sync_wal_creation})
                         .second);
     }
 
@@ -45,8 +44,8 @@ TEST(OptionMatrixTest, EnumeratesCompleteCartesianProductWithStableIds) {
             for (const std::uint32_t bloom : bloom_bits) {
                 for (const std::size_t write_buffer : write_buffers) {
                     for (const bool sync_wal_creation : booleans) {
-                        EXPECT_EQ(tuples.count({compression, allow_mmap_reads, bloom,
-                                               write_buffer, sync_wal_creation}),
+                        EXPECT_EQ(tuples.count({compression, allow_mmap_reads, bloom, write_buffer,
+                                                sync_wal_creation}),
                                   1U);
                     }
                 }
@@ -74,11 +73,7 @@ TEST(OptionMatrixTest, DerivesStableCellSpecificSeeds) {
 
 TEST(OptionMatrixTest, MapsEveryCellFieldToPublicOptions) {
     const OptionMatrixCell cell{
-        Compression::Zstd,
-        false,
-        10,
-        256U * 1024U,
-        false,
+        Compression::Zstd, false, 10, 256U * 1024U, false,
     };
 
     const Options options = OptionMatrixDatabaseOptions(cell);
@@ -107,15 +102,10 @@ TEST(OptionMatrixTest, FingerprintsSortedBinaryStateWithStableFormat) {
 TEST(OptionMatrixCellTest, ReopensAndProducesDeterministicSemanticSummary) {
     test_support::TemporaryDirectory root;
     const OptionMatrixCell cell{
-        Compression::None,
-        false,
-        0,
-        64U * 1024U,
-        false,
+        Compression::None, false, 0, 64U * 1024U, false,
     };
 
-    const OptionMatrixCellSummary first =
-        RunOptionMatrixCell(root.path() / "first", cell, 17, 96);
+    const OptionMatrixCellSummary first = RunOptionMatrixCell(root.path() / "first", cell, 17, 96);
     const OptionMatrixCellSummary second =
         RunOptionMatrixCell(root.path() / "second", cell, 17, 96);
 
@@ -131,20 +121,19 @@ TEST(OptionMatrixCellTest, ReopensAndProducesDeterministicSemanticSummary) {
 TEST(FaultScenarioTest, EnumeratesStableNamedBoundaries) {
     const std::vector<FaultScenario> scenarios = EnumerateFaultScenarios();
 
-    EXPECT_EQ(scenarios,
-              (std::vector<FaultScenario>{
-                  FaultScenario::Read,
-                  FaultScenario::WalAppend,
-                  FaultScenario::WalSync,
-                  FaultScenario::OldWalClose,
-                  FaultScenario::TableOpen,
-                  FaultScenario::TableSync,
-                  FaultScenario::TableClose,
-                  FaultScenario::TableDirectorySync,
-                  FaultScenario::ManifestAppend,
-                  FaultScenario::ManifestSync,
-                  FaultScenario::Scheduling,
-              }));
+    EXPECT_EQ(scenarios, (std::vector<FaultScenario>{
+                             FaultScenario::Read,
+                             FaultScenario::WalAppend,
+                             FaultScenario::WalSync,
+                             FaultScenario::OldWalClose,
+                             FaultScenario::TableOpen,
+                             FaultScenario::TableSync,
+                             FaultScenario::TableClose,
+                             FaultScenario::TableDirectorySync,
+                             FaultScenario::ManifestAppend,
+                             FaultScenario::ManifestSync,
+                             FaultScenario::Scheduling,
+                         }));
     EXPECT_EQ(FaultScenarioName(FaultScenario::Read), "read");
     EXPECT_EQ(FaultScenarioName(FaultScenario::WalAppend), "wal-append");
     EXPECT_EQ(FaultScenarioName(FaultScenario::WalSync), "wal-sync");
@@ -152,8 +141,7 @@ TEST(FaultScenarioTest, EnumeratesStableNamedBoundaries) {
     EXPECT_EQ(FaultScenarioName(FaultScenario::TableOpen), "table-open");
     EXPECT_EQ(FaultScenarioName(FaultScenario::TableSync), "table-sync");
     EXPECT_EQ(FaultScenarioName(FaultScenario::TableClose), "table-close");
-    EXPECT_EQ(FaultScenarioName(FaultScenario::TableDirectorySync),
-              "table-directory-sync");
+    EXPECT_EQ(FaultScenarioName(FaultScenario::TableDirectorySync), "table-directory-sync");
     EXPECT_EQ(FaultScenarioName(FaultScenario::ManifestAppend), "manifest-append");
     EXPECT_EQ(FaultScenarioName(FaultScenario::ManifestSync), "manifest-sync");
     EXPECT_EQ(FaultScenarioName(FaultScenario::Scheduling), "scheduling");
@@ -168,8 +156,49 @@ TEST_P(FaultScenarioContractTest, EnforcesRetryStickyAndWholeBatchOracles) {
     EXPECT_EQ(summary.scenario, scenario);
     EXPECT_EQ(summary.name, FaultScenarioName(scenario));
     EXPECT_FALSE(summary.injected_operation.empty());
-    EXPECT_EQ(summary.error_message,
-              "injected " + FaultScenarioName(scenario) + " failure");
+    EXPECT_EQ(summary.error_message, "injected " + FaultScenarioName(scenario) + " failure");
+    switch (scenario) {
+        case FaultScenario::Read:
+            EXPECT_TRUE(summary.injected_operation.starts_with("read "));
+            EXPECT_TRUE(summary.injected_operation.ends_with(".ldb"));
+            break;
+        case FaultScenario::WalAppend:
+            EXPECT_TRUE(summary.injected_operation.starts_with("append "));
+            EXPECT_TRUE(summary.injected_operation.ends_with(".log"));
+            break;
+        case FaultScenario::WalSync:
+            EXPECT_TRUE(summary.injected_operation.starts_with("sync "));
+            EXPECT_TRUE(summary.injected_operation.ends_with(".log"));
+            break;
+        case FaultScenario::OldWalClose:
+            EXPECT_TRUE(summary.injected_operation.starts_with("close "));
+            EXPECT_TRUE(summary.injected_operation.ends_with(".log"));
+            break;
+        case FaultScenario::TableOpen:
+            EXPECT_TRUE(summary.injected_operation.starts_with("open_writable "));
+            EXPECT_TRUE(summary.injected_operation.ends_with(".ldb"));
+            break;
+        case FaultScenario::TableSync:
+            EXPECT_TRUE(summary.injected_operation.starts_with("sync "));
+            EXPECT_TRUE(summary.injected_operation.ends_with(".ldb"));
+            break;
+        case FaultScenario::TableClose:
+            EXPECT_TRUE(summary.injected_operation.starts_with("close "));
+            EXPECT_TRUE(summary.injected_operation.ends_with(".ldb"));
+            break;
+        case FaultScenario::TableDirectorySync:
+            EXPECT_EQ(summary.injected_operation, "sync_directory db");
+            break;
+        case FaultScenario::ManifestAppend:
+            EXPECT_TRUE(summary.injected_operation.starts_with("append MANIFEST-"));
+            break;
+        case FaultScenario::ManifestSync:
+            EXPECT_TRUE(summary.injected_operation.starts_with("sync MANIFEST-"));
+            break;
+        case FaultScenario::Scheduling:
+            EXPECT_EQ(summary.injected_operation, "schedule background");
+            break;
+    }
     if (scenario == FaultScenario::Read) {
         EXPECT_EQ(summary.error_code, ErrorCode::Io);
         EXPECT_FALSE(summary.sticky);
@@ -180,14 +209,12 @@ TEST_P(FaultScenarioContractTest, EnforcesRetryStickyAndWholeBatchOracles) {
     }
 
     EXPECT_EQ(summary.error_code,
-              scenario == FaultScenario::Scheduling ? ErrorCode::Busy
-                                                    : ErrorCode::Io);
+              scenario == FaultScenario::Scheduling ? ErrorCode::Busy : ErrorCode::Io);
     EXPECT_TRUE(summary.sticky);
     EXPECT_TRUE(summary.later_write_reused_error_without_io);
     EXPECT_FALSE(summary.retry_succeeded);
     ASSERT_TRUE(summary.recovered_batch.has_value());
-    if (scenario == FaultScenario::WalAppend ||
-        scenario == FaultScenario::OldWalClose ||
+    if (scenario == FaultScenario::WalAppend || scenario == FaultScenario::OldWalClose ||
         scenario == FaultScenario::Scheduling) {
         EXPECT_EQ(*summary.recovered_batch, RecoveredBatchState::Old);
     } else {
@@ -195,18 +222,17 @@ TEST_P(FaultScenarioContractTest, EnforcesRetryStickyAndWholeBatchOracles) {
     }
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    NamedBoundary, FaultScenarioContractTest,
-    testing::ValuesIn(EnumerateFaultScenarios()),
-    [](const testing::TestParamInfo<FaultScenario>& information) {
-        std::string name = FaultScenarioName(information.param);
-        for (char& character : name) {
-            if (character == '-') {
-                character = '_';
-            }
-        }
-        return name;
-    });
+INSTANTIATE_TEST_SUITE_P(NamedBoundary, FaultScenarioContractTest,
+                         testing::ValuesIn(EnumerateFaultScenarios()),
+                         [](const testing::TestParamInfo<FaultScenario>& information) {
+                             std::string name = FaultScenarioName(information.param);
+                             for (char& character : name) {
+                                 if (character == '-') {
+                                     character = '_';
+                                 }
+                             }
+                             return name;
+                         });
 
 TEST(LivenessScenarioTest, DrainsWorkAndVerifiesFinalAndReopenedModel) {
     const LivenessScenarioSummary first = RunLivenessScenario(17, 256);
@@ -221,12 +247,11 @@ TEST(LivenessScenarioTest, DrainsWorkAndVerifiesFinalAndReopenedModel) {
     EXPECT_GT(first.scans, 0U);
     EXPECT_EQ(first.entries, first.writes);
     EXPECT_EQ(first.fingerprint.size(), 16U);
-    EXPECT_THROW(static_cast<void>(RunLivenessScenario(17, 0)),
-                 std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(RunLivenessScenario(17, 0)), std::invalid_argument);
 }
 
-OptionFaultStressArguments SmallOptionFaultRun(
-    const std::filesystem::path& root, std::string_view name) {
+OptionFaultStressArguments SmallOptionFaultRun(const std::filesystem::path& root,
+                                               std::string_view name) {
     OptionFaultStressArguments result;
     result.workspace = root / std::string(name);
     result.seed = 17;
@@ -248,30 +273,24 @@ TEST(OptionFaultStressArgumentsTest, ParsesDefaultsOverridesAndNativePaths) {
 #if defined(_WIN32)
     const std::filesystem::path workspace = L"matrix-\u6570\u636e-\U0001f680";
 #else
-    const std::filesystem::path workspace =
-        "matrix-\xe6\x95\xb0\xe6\x8d\xae-\xf0\x9f\x9a\x80";
+    const std::filesystem::path workspace = "matrix-\xe6\x95\xb0\xe6\x8d\xae-\xf0\x9f\x9a\x80";
 #endif
     const std::array<std::filesystem::path, 2> defaults{
         "--workspace",
         workspace,
     };
-    const OptionFaultStressArguments parsed_defaults =
-        ParseOptionFaultStressArguments(defaults);
+    const OptionFaultStressArguments parsed_defaults = ParseOptionFaultStressArguments(defaults);
     EXPECT_EQ(parsed_defaults.workspace, workspace);
     EXPECT_EQ(parsed_defaults.seed, 301U);
     EXPECT_EQ(parsed_defaults.operations, 250U);
     EXPECT_EQ(parsed_defaults.liveness_writes, 2'000U);
 
     const std::vector<std::filesystem::path> overrides{
-        "--workspace", workspace,
-        "--seed", "18446744073709551615",
-        "--operations", "42",
-        "--liveness-writes", "84",
+        "--workspace", workspace,           "--seed", "18446744073709551615", "--operations",
+        "42",          "--liveness-writes", "84",
     };
-    const OptionFaultStressArguments parsed_overrides =
-        ParseOptionFaultStressArguments(overrides);
-    EXPECT_EQ(parsed_overrides.seed,
-              std::numeric_limits<std::uint64_t>::max());
+    const OptionFaultStressArguments parsed_overrides = ParseOptionFaultStressArguments(overrides);
+    EXPECT_EQ(parsed_overrides.seed, std::numeric_limits<std::uint64_t>::max());
     EXPECT_EQ(parsed_overrides.operations, 42U);
     EXPECT_EQ(parsed_overrides.liveness_writes, 84U);
 }
@@ -288,14 +307,12 @@ TEST(OptionFaultStressArgumentsTest, RejectsMissingDuplicateAndInvalidOptions) {
         {"--workspace", "work", "--operations", "18446744073709551616"},
         {"--workspace", "work", "--liveness-writes", "0"},
         {"--workspace", "work", "--operations", "1", "--operations", "2"},
-        {"--workspace", "work", "--liveness-writes", "1",
-         "--liveness-writes", "2"},
+        {"--workspace", "work", "--liveness-writes", "1", "--liveness-writes", "2"},
         {"--workspace", "work", "--unknown", "1"},
     };
     for (const auto& arguments : invalid) {
-        EXPECT_THROW(
-            static_cast<void>(ParseOptionFaultStressArguments(arguments)),
-            std::invalid_argument);
+        EXPECT_THROW(static_cast<void>(ParseOptionFaultStressArguments(arguments)),
+                     std::invalid_argument);
     }
 
     const std::array<std::filesystem::path, 1> help{"--help"};
@@ -307,16 +324,13 @@ TEST(OptionFaultStressRunTest, PublishesDeterministicVersionedArtifacts) {
     const StressBuildIdentity identity{"test-revision", false};
     const std::array<OptionMatrixCell, 1> cells{EnumerateOptionMatrix().front()};
     const std::array<FaultScenario, 1> faults{FaultScenario::Read};
-    OptionFaultStressArguments first =
-        SmallOptionFaultRun(root.path(), "first");
+    OptionFaultStressArguments first = SmallOptionFaultRun(root.path(), "first");
 #if defined(_WIN32)
     first.workspace = root.path() / L"first-\u6570\u636e-\U0001f680";
 #else
-    first.workspace =
-        root.path() / "first-\xe6\x95\xb0\xe6\x8d\xae-\xf0\x9f\x9a\x80";
+    first.workspace = root.path() / "first-\xe6\x95\xb0\xe6\x8d\xae-\xf0\x9f\x9a\x80";
 #endif
-    const OptionFaultStressArguments second =
-        SmallOptionFaultRun(root.path(), "second");
+    const OptionFaultStressArguments second = SmallOptionFaultRun(root.path(), "second");
 
     const OptionFaultStressSummary first_summary =
         RunOptionFaultStress(first, identity, cells, faults);
@@ -329,28 +343,19 @@ TEST(OptionFaultStressRunTest, PublishesDeterministicVersionedArtifacts) {
     EXPECT_EQ(first_summary.operations_per_cell, first.operations);
     EXPECT_EQ(first_summary.liveness.writes, first.liveness_writes);
     const std::array<std::filesystem::path, 5> artifacts{
-        "run.txt",
-        "cells.tsv",
-        "faults.tsv",
-        "liveness.txt",
-        "completion.txt",
+        "run.txt", "cells.tsv", "faults.tsv", "liveness.txt", "completion.txt",
     };
     for (const std::filesystem::path& artifact : artifacts) {
-        EXPECT_EQ(test_support::ReadTextFile(first.workspace / "artifacts" /
-                                             artifact),
-                  test_support::ReadTextFile(second.workspace / "artifacts" /
-                                             artifact));
+        EXPECT_EQ(test_support::ReadTextFile(first.workspace / "artifacts" / artifact),
+                  test_support::ReadTextFile(second.workspace / "artifacts" / artifact));
     }
-    const std::string run =
-        test_support::ReadTextFile(first.workspace / "artifacts" / "run.txt");
+    const std::string run = test_support::ReadTextFile(first.workspace / "artifacts" / "run.txt");
     EXPECT_NE(run.find("revision=test-revision"), std::string::npos);
     EXPECT_NE(run.find("option_cells=1"), std::string::npos);
     EXPECT_NE(run.find("fault_scenarios=1"), std::string::npos);
-    EXPECT_TRUE(std::filesystem::exists(
-        first.workspace / "databases" / OptionMatrixCellId(cells.front()) /
-        "CURRENT"));
-    EXPECT_FALSE(std::filesystem::exists(first.workspace / "artifacts" /
-                                         "failure.txt"));
+    EXPECT_TRUE(std::filesystem::exists(first.workspace / "databases" /
+                                        OptionMatrixCellId(cells.front()) / "CURRENT"));
+    EXPECT_FALSE(std::filesystem::exists(first.workspace / "artifacts" / "failure.txt"));
 }
 
 TEST(OptionFaultStressRunTest, RejectsUnsafeWorkspaceWithoutMutation) {
@@ -359,25 +364,17 @@ TEST(OptionFaultStressRunTest, RejectsUnsafeWorkspaceWithoutMutation) {
     const std::array<OptionMatrixCell, 1> cells{EnumerateOptionMatrix().front()};
     const std::array<FaultScenario, 1> faults{FaultScenario::Read};
 
-    OptionFaultStressArguments existing =
-        SmallOptionFaultRun(root.path(), "existing");
+    OptionFaultStressArguments existing = SmallOptionFaultRun(root.path(), "existing");
     std::filesystem::create_directory(existing.workspace);
     WriteStressText(existing.workspace / "sentinel", "keep");
-    EXPECT_THROW(
-        static_cast<void>(
-            RunOptionFaultStress(existing, identity, cells, faults)),
-        std::invalid_argument);
-    EXPECT_EQ(test_support::ReadTextFile(existing.workspace / "sentinel"),
-              "keep");
+    EXPECT_THROW(static_cast<void>(RunOptionFaultStress(existing, identity, cells, faults)),
+                 std::invalid_argument);
+    EXPECT_EQ(test_support::ReadTextFile(existing.workspace / "sentinel"), "keep");
 
-    OptionFaultStressArguments missing_parent =
-        SmallOptionFaultRun(root.path(), "missing");
-    missing_parent.workspace =
-        root.path() / "absent-parent" / "workspace";
-    EXPECT_THROW(
-        static_cast<void>(
-            RunOptionFaultStress(missing_parent, identity, cells, faults)),
-        std::invalid_argument);
+    OptionFaultStressArguments missing_parent = SmallOptionFaultRun(root.path(), "missing");
+    missing_parent.workspace = root.path() / "absent-parent" / "workspace";
+    EXPECT_THROW(static_cast<void>(RunOptionFaultStress(missing_parent, identity, cells, faults)),
+                 std::invalid_argument);
     EXPECT_FALSE(std::filesystem::exists(missing_parent.workspace));
 }
 
@@ -386,13 +383,11 @@ TEST(OptionFaultStressRunTest, PreservesFailureAndWithholdsCompletion) {
     const StressBuildIdentity identity{"test-revision", true};
     const std::array<OptionMatrixCell, 1> cells{EnumerateOptionMatrix().front()};
     const std::array<FaultScenario, 1> faults{FaultScenario::Read};
-    const OptionFaultStressArguments arguments =
-        SmallOptionFaultRun(root.path(), "failure");
+    const OptionFaultStressArguments arguments = SmallOptionFaultRun(root.path(), "failure");
     ThrowBeforeFault observer;
 
     EXPECT_THROW(
-        static_cast<void>(
-            RunOptionFaultStress(arguments, identity, cells, faults, &observer)),
+        static_cast<void>(RunOptionFaultStress(arguments, identity, cells, faults, &observer)),
         std::runtime_error);
 
     const std::filesystem::path artifacts = arguments.workspace / "artifacts";
