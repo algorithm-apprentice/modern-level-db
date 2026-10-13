@@ -132,4 +132,27 @@ Options OptionMatrixDatabaseOptions(const OptionMatrixCell& cell) {
     return options;
 }
 
+OptionMatrixCellSummary RunOptionMatrixCell(const std::filesystem::path& database,
+                                            const OptionMatrixCell& cell,
+                                            std::uint64_t campaign_seed,
+                                            std::size_t operations) {
+    const std::uint64_t seed = DeriveOptionMatrixSeed(campaign_seed, cell);
+    test_support::ModernClient client(database, OptionMatrixDatabaseOptions(cell));
+    const test_support::Model model = test_support::RunModel(seed, operations, client);
+    client.Reopen();
+    test_support::RequireModelEqual(
+        client.Scan(false), test_support::ExpectedEntries(model, false),
+        "option matrix reopened forward scan differs from model");
+    test_support::RequireModelEqual(
+        client.Scan(true), test_support::ExpectedEntries(model, true),
+        "option matrix reopened reverse scan differs from model");
+    return {
+        OptionMatrixCellId(cell),
+        seed,
+        operations,
+        model.size(),
+        StableModelFingerprint(model),
+    };
+}
+
 }  // namespace modern_leveldb::stress
