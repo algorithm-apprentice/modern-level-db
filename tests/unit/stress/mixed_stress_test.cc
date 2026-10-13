@@ -21,8 +21,7 @@ TEST(MixedWorkloadPlanTest, SelectsThePinnedApplicableOperationPercentages) {
     }
 
     EXPECT_EQ(counts, (std::array<std::size_t, 5>{10, 20, 45, 15, 10}));
-    EXPECT_THROW(static_cast<void>(SelectMixedOperation(100)),
-                 std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(SelectMixedOperation(100)), std::invalid_argument);
 }
 
 TEST(MixedWorkloadPlanTest, PermutesSlotsIntoUniqueBinaryKeysAndPrefixes) {
@@ -38,8 +37,7 @@ TEST(MixedWorkloadPlanTest, PermutesSlotsIntoUniqueBinaryKeysAndPrefixes) {
         prefixes.emplace(prefix);
     }
     EXPECT_GT(prefixes.size(), 4000U);
-    EXPECT_THROW(static_cast<void>(MixedKeyPrefix("short")),
-                 std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(MixedKeyPrefix("short")), std::invalid_argument);
 }
 
 TEST(MixedWorkloadPlanTest, GeneratesDeterministicVariableLengthBinaryValues) {
@@ -57,16 +55,11 @@ TEST(MixedWorkloadPlanTest, GeneratesDeterministicVariableLengthBinaryValues) {
 }
 
 TEST(MixedWorkloadPlanTest, DistributesOperationsAcrossReopenEpochs) {
-    EXPECT_EQ(MixedEpochOperationCounts(10, 2),
-              (std::vector<std::size_t>{4, 3, 3}));
-    EXPECT_EQ(MixedEpochOperationCounts(11, 0),
-              (std::vector<std::size_t>{11}));
-    EXPECT_EQ(MixedEpochOperationCounts(11, 10),
-              (std::vector<std::size_t>(11, 1)));
-    EXPECT_THROW(static_cast<void>(MixedEpochOperationCounts(0, 0)),
-                 std::invalid_argument);
-    EXPECT_THROW(static_cast<void>(MixedEpochOperationCounts(10, 10)),
-                 std::invalid_argument);
+    EXPECT_EQ(MixedEpochOperationCounts(10, 2), (std::vector<std::size_t>{4, 3, 3}));
+    EXPECT_EQ(MixedEpochOperationCounts(11, 0), (std::vector<std::size_t>{11}));
+    EXPECT_EQ(MixedEpochOperationCounts(11, 10), (std::vector<std::size_t>(11, 1)));
+    EXPECT_THROW(static_cast<void>(MixedEpochOperationCounts(0, 0)), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(MixedEpochOperationCounts(10, 10)), std::invalid_argument);
 }
 
 }  // namespace

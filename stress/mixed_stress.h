@@ -20,11 +20,10 @@ enum class MixedOperationKind : std::uint8_t {
 [[nodiscard]] MixedOperationKind SelectMixedOperation(std::uint32_t percentile);
 [[nodiscard]] std::string MixedKey(std::uint64_t slot);
 [[nodiscard]] std::string_view MixedKeyPrefix(std::string_view key);
-[[nodiscard]] std::string MixedValue(std::uint64_t seed, std::size_t worker,
-                                     std::size_t operation,
+[[nodiscard]] std::string MixedValue(std::uint64_t seed, std::size_t worker, std::size_t operation,
                                      std::uint64_t token);
-[[nodiscard]] std::vector<std::size_t> MixedEpochOperationCounts(
-    std::size_t operations_per_thread, std::size_t reopens);
+[[nodiscard]] std::vector<std::size_t> MixedEpochOperationCounts(std::size_t operations_per_thread,
+                                                                 std::size_t reopens);
 
 }  // namespace modern_leveldb::stress
 
