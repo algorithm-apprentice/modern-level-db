@@ -315,19 +315,28 @@ lower-level-overlap rule. "Deleted means garbage" is not a sufficient answer.
 
 Predict whether an old cache handle stays valid after its key is replaced.
 Predict whether pinned entries can exceed configured capacity.
+Then predict what happens if an evicted value's destructor erases another key
+from the same shard.
 
 ```console
 # Linux/macOS
-ctest --preset dev-debug -L unit -R 'ShardedLruCacheTest\.(ReplacementKeepsOldHandleAlive|PinnedEntriesMayExceedCapacity)'
+ctest --preset dev-debug -L unit -R 'ShardedLruCacheTest\.(ReplacementKeepsOldHandleAlive|PinnedEntriesMayExceedCapacity|DestroysEvictedValuesOutsideShardLock|LastErasedPinReclaimsOutsideItsShardLock|ReplacementReclamationCanEraseTheNewMappingBeforePinReturn)'
 # Windows
-ctest --preset windows-debug -L unit -R 'ShardedLruCacheTest\.(ReplacementKeepsOldHandleAlive|PinnedEntriesMayExceedCapacity)'
+ctest --preset windows-debug -L unit -R 'ShardedLruCacheTest\.(ReplacementKeepsOldHandleAlive|PinnedEntriesMayExceedCapacity|DestroysEvictedValuesOutsideShardLock|LastErasedPinReclaimsOutsideItsShardLock|ReplacementReclamationCanEraseTheNewMappingBeforePinReturn)'
 ```
 
 Read [`sharded_lru_cache_test.cc`](../../tests/unit/cache/sharded_lru_cache_test.cc).
 Draw two lifetimes: membership in the cache and ownership through a handle.
+For the reentrant cases, add a third timeline:
+
+```text
+shard mutation under mutex -> retired entry -> unlock -> value deleter reenters
+```
 
 **Completion:** explain why an eviction budget is not a process-wide hard
-memory limit, and identify the owner of an uncompressed mapped block.
+memory limit, identify the owner of an uncompressed mapped block, and explain
+why a replacement pin can remain valid even when the old value's deleter
+erases the new mapping before `Insert` returns.
 
 ## Lab 7: observe LSM and maintenance state
 

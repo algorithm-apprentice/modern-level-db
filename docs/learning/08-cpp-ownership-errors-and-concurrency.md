@@ -170,6 +170,26 @@ room conditions.
 Spurious wakeups or another thread consuming progress must not break those
 loops.
 
+### Unknown destruction belongs outside a mutex
+
+Removing an owning pointer or intrusive reference can execute a destructor.
+When the value type belongs to a caller, that destructor is effectively a
+callback: it can acquire locks, call another component, or reenter the
+container that released it.
+
+Commit the protected state transition first:
+
+```text
+under mutex: detach object, update indexes/accounting, record it for retirement
+after unlock: run its destructor or deleter
+```
+
+The sharded LRU cache is the concrete example. It makes a zero-reference entry
+unreachable under its shard mutex and destroys the retired value afterward.
+See [lesson 05](05-tables-filters-and-caches.md#retire-under-the-mutex-reclaim-after-it).
+The same question applies whenever a lock-protected container releases
+user-visible ownership: identify whether that release can invoke unknown code.
+
 ## Background ownership and shutdown
 
 The serial executor owns a `std::jthread` and uses stop-aware waiting.
@@ -221,6 +241,7 @@ useful advanced exercise in making those arguments explicit.
 | [`database_read.cc`](../../src/engine/database_read.cc) | lock release and typed read pins | What keeps read sources alive while slow I/O runs without the mutex? | [`database_read_test.cc`](../../tests/unit/engine/database_read_test.cc) |
 | [`database_background.cc`](../../src/engine/database_background.cc) | sticky failure, unlocked maintenance, shutdown | How do background transitions regain the mutex and preserve failure ownership? | [`database_background_test.cc`](../../tests/unit/engine/database_background_test.cc) |
 | [`serial_executor.cc`](../../src/platform/serial_executor.cc) | queue ownership and stop/join | Who owns accepted work during teardown? | [`serial_executor_test.cc`](../../tests/unit/platform/serial_executor_test.cc) |
+| [`sharded_lru_cache_core.cc`](../../src/cache/sharded_lru_cache_core.cc) | retired-entry reclamation | Which mutation must finish under the shard mutex before a user value deleter may reenter the cache? | [`sharded_lru_cache_test.cc`](../../tests/unit/cache/sharded_lru_cache_test.cc) |
 
 Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),
 [ADR-0038](../adr/0038-public-raii-api.md), and
@@ -234,6 +255,8 @@ Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),
 4. Can an arbitrary disk buffer be passed to `OpenTrusted`?
 5. Why should an object set its terminal state after, rather than before, a
    cleanup operation that can throw?
+6. Why is moving an owning value out of a mutex-protected container not
+   automatically enough to make destruction safe?
 
 <details>
 <summary>Answers</summary>
@@ -246,5 +269,8 @@ Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),
 5. If cleanup throws after the state was committed, the owner can retain an
    object that claims to be closed although the surrounding transition never
    completed.
+6. Destroying the moved value can still run external code. The protected
+   indexes, references, and accounting must already describe a complete state,
+   and the destructor itself must run after unlocking.
 
 </details>

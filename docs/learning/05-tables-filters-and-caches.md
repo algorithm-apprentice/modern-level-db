@@ -167,6 +167,57 @@ the cache also matter. The public facade currently creates an internal
 `fill_cache=false` avoids admitting newly read data blocks.
 It does not disable existing cache hits, the table cache, or the OS cache.
 
+## Retire under the mutex, reclaim after it
+
+An LRU entry has two independent relationships:
+
+```text
+indexed membership -> lookup can find the entry; cache owns one reference
+external pin       -> a handle owns another reference and may use the value
+```
+
+Replacement, erasure, and eviction first change membership under the shard
+mutex. They remove the hash-table/list links, subtract the indexed charge, and
+release the cache reference. If that was the final reference, they put the
+entry on a local retired chain instead of destroying it immediately:
+
+```text
+under shard mutex:
+    remove mapping and list links
+    update charge and references
+    zero references -> append unreachable entry to retired chain
+
+after unlocking:
+    invoke the typed value deleter
+    destroy the entry
+    release its allocation
+```
+
+The typed value is caller-owned application or engine state. Its destructor
+is external code from the core cache's point of view and can call back into
+the same cache. Running it under a non-recursive shard mutex could deadlock.
+Even a recursive mutex would expose partially completed list, hash, or charge
+transitions to the reentrant operation. The retired entry is therefore made
+unreachable and the shard invariant is restored before destruction begins.
+
+`Insert`, `Erase`, and final pin release all use this two-phase pattern. If an
+erased entry still has a pin, erasure removes membership but does not retire
+the value. The last handle later decrements the final reference under the
+mutex, then reclaims it after unlocking.
+
+Reentrancy can produce a result that looks surprising but is ownership-safe.
+During replacement, the old value's deleter may erase the newly installed
+mapping before `Insert` returns. A later `Lookup` can therefore miss, while
+the `Insert` result still contains a valid pin to the replacement value.
+Membership changed; retained ownership did not. The test
+`ReplacementReclamationCanEraseTheNewMappingBeforePinReturn` fixes this exact
+behavior.
+
+Cache destruction has a stronger precondition: its owner has already stopped
+concurrent cache operations and released every handle. It can detach all
+remaining entries and then run their deleters without promising that a cache
+being destroyed is reentrant-safe.
+
 ## Mapped files and borrowed blocks
 
 On supported native platforms, default table reads can use an exact-size
@@ -195,9 +246,10 @@ unsupported.
 | [`table_builder.cc`](../../src/table/table_builder.cc) | `Add`, `Finish`, pending index entry | How are data, filter, metaindex, index, and footer ordered? | [`table_builder_test.cc`](../../tests/unit/table/table_builder_test.cc) |
 | [`bloom_filter.cc`](../../src/table/bloom_filter.cc) | `CreateFilter`, `KeyMayMatch` | Why can a filter reject but not prove presence? | [`bloom_filter_test.cc`](../../tests/unit/table/bloom_filter_test.cc) |
 | [`table.cc`](../../src/table/table.cc) | `Open`, `Get`, data-block lookup | Which objects own or borrow index, filter, and block bytes? | [`table_test.cc`](../../tests/unit/table/table_test.cc) |
-| [`sharded_lru_cache_core.cc`](../../src/cache/sharded_lru_cache_core.cc) | insert, lookup, pin, eviction | How do membership and retained ownership differ? | [`sharded_lru_cache_test.cc`](../../tests/unit/cache/sharded_lru_cache_test.cc) |
+| [`sharded_lru_cache_core.cc`](../../src/cache/sharded_lru_cache_core.cc) | `CommitAdmission`, `FinishErase`, `Retire`, `DeleteRetired`, `Release` | How are membership and references committed under the mutex while a reentrant value deleter runs after unlocking? | [`sharded_lru_cache_test.cc`](../../tests/unit/cache/sharded_lru_cache_test.cc) |
 
-Follow with [ADR-0022](../adr/0022-sstable-block-format.md),
+Follow with [ADR-0014](../adr/0014-sharded-lru-cache.md),
+[ADR-0022](../adr/0022-sstable-block-format.md),
 [ADR-0023](../adr/0023-sstable-filter-blocks.md),
 [ADR-0039](../adr/0039-sstable-block-compression.md), and
 [ADR-0056](../adr/0056-leveldb-table-mmap-parity.md).
@@ -210,6 +262,8 @@ Follow with [ADR-0022](../adr/0022-sstable-block-format.md),
 4. Does a mapped read necessarily come from RAM without a storage access?
 5. Why is an uncompressed block that borrows mapped file bytes not inserted
    into an independently owning block cache?
+6. Why does the cache retire a zero-reference entry under the shard mutex but
+   invoke its value deleter only after unlocking?
 
 <details>
 <summary>Answers</summary>
@@ -221,5 +275,8 @@ Follow with [ADR-0022](../adr/0022-sstable-block-format.md),
 4. No. The kernel may need to fault in file pages from storage.
 5. Its bytes are owned by the table/file mapping. Caching it independently
    would require copying or otherwise retaining that owner.
+6. The deleter is external code and may reenter the cache. The shard must first
+   make the entry unreachable and restore its hash/list/charge invariants;
+   otherwise destruction could deadlock or observe a partial mutation.
 
 </details>
