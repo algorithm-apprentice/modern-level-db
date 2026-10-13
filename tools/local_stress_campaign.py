@@ -19,6 +19,7 @@ from typing import Optional, Sequence
 PLAN_FORMAT = "modern-leveldb-stress-plan-v1"
 COMMAND_FORMAT = "modern-leveldb-stress-command-v1"
 ATTEMPT_RESULT_FORMAT = "modern-leveldb-stress-attempt-result-v1"
+VALIDATION_FORMAT = "modern-leveldb-stress-validation-v1"
 STATE_FORMAT = "modern-leveldb-stress-state-v1"
 SUMMARY_FORMAT = "modern-leveldb-stress-summary-v1"
 CAMPAIGN_RESULT_FORMAT = "modern-leveldb-stress-campaign-result-v1"
@@ -623,14 +624,14 @@ def execute_attempt(
         except OSError as error:
             category = "launch_failure"
             error_text = str(error)
-        except BaseException as error:
+        except Exception as error:
             if process is not None and process.poll() is None:
                 try:
                     termination_sent = _terminate_owned_process(
                         process, termination_grace_seconds
                     )
                     returncode = process.returncode
-                except BaseException as termination_error:
+                except Exception as termination_error:
                     error_text = (
                         f"{error}; process containment failed: "
                         f"{termination_error}"
@@ -653,7 +654,7 @@ def execute_attempt(
     _atomic_write_json(
         attempt / "result.json",
         {
-            "format": ATTEMPT_RESULT_FORMAT,
+            "format": VALIDATION_FORMAT,
             "job_id": job.job_id,
             "category": result.category,
             "returncode": result.returncode,
@@ -1154,7 +1155,7 @@ def _record_attempt_result(
         _atomic_write_json(
             attempt / "validation.json",
             {
-                "format": ATTEMPT_RESULT_FORMAT,
+                "format": VALIDATION_FORMAT,
                 "category": "passed",
                 "revision": found.revision,
                 "dirty": found.dirty,
