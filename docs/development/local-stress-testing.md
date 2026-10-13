@@ -35,6 +35,10 @@ The local stress targets currently cover:
   - deterministic multi-seed V1 through V4 job plans;
   - bounded owned subprocesses and retained attempt bundles;
   - source-identity validation, durable summaries, and exact-plan resume;
+- RocksDB-applicable mixed workload:
+  - pinned 10/20/45/15/10 read/prefix/write/delete/iterate mix;
+  - striped exact expected state under concurrent point operations;
+  - exact snapshot prefix/iterator checks and repeated reopen epochs;
 - WAL rotation, flush, and compaction pressure through a 64 KiB write buffer;
 - None, Snappy, and Zstd table compression;
 - versioned run, operation, final-state, completion, and failure artifacts.
@@ -72,7 +76,8 @@ Linux/macOS:
 cmake --preset local-stress
 cmake --build --preset local-stress \
   --target modern_leveldb_stress modern_leveldb_concurrent_stress \
-    modern_leveldb_crash_stress_worker modern_leveldb_option_fault_stress
+    modern_leveldb_crash_stress_worker modern_leveldb_option_fault_stress \
+    modern_leveldb_mixed_stress
 ```
 
 Windows, from an initialized x64 MSVC developer environment:
@@ -81,7 +86,8 @@ Windows, from an initialized x64 MSVC developer environment:
 cmake --preset windows-local-stress
 cmake --build --preset windows-local-stress `
   --target modern_leveldb_stress modern_leveldb_concurrent_stress `
-    modern_leveldb_crash_stress_worker modern_leveldb_option_fault_stress
+    modern_leveldb_crash_stress_worker modern_leveldb_option_fault_stress `
+    modern_leveldb_mixed_stress
 ```
 
 Building the target refreshes the source revision and dirty-worktree identity
@@ -353,6 +359,79 @@ allowed batch state.
 Each native database remains under `workspace/databases/<cell-id>`. Preserve
 the complete workspace when any phase fails.
 
+## Run RocksDB-applicable mixed stress
+
+Linux/macOS:
+
+```bash
+./build/local-stress/stress/modern_leveldb_mixed_stress \
+  --db /absolute/disposable/path/mixed-db-01 \
+  --output /absolute/disposable/path/mixed-output-01 \
+  --seed 301 \
+  --threads 32 \
+  --operations-per-thread 10000 \
+  --keys 1048576 \
+  --reopens 10 \
+  --compression snappy
+```
+
+Windows:
+
+```powershell
+& .\build\windows-local-stress\stress\modern_leveldb_mixed_stress.exe `
+  --db C:\absolute\disposable\path\mixed-db-01 `
+  --output C:\absolute\disposable\path\mixed-output-01 `
+  --seed 301 `
+  --threads 32 `
+  --operations-per-thread 10000 `
+  --keys 1048576 `
+  --reopens 10 `
+  --compression snappy
+```
+
+The executable's aligned long-run defaults are 32 threads, 1,200,000
+operations per thread, 1,048,576 logical key slots, 10 reopens, and Snappy.
+Use an explicit lower operation budget for smoke and review runs.
+
+Mixed options:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `--db` | required | New disposable native database |
+| `--output` | required | New artifact directory |
+| `--seed` | 301 | Per-worker deterministic operation plan |
+| `--threads` | 32 | Positive worker count |
+| `--operations-per-thread` | 1200000 | Operations assigned to every worker |
+| `--keys` | 1048576 | Sparse logical key slots |
+| `--reopens` | 10 | Reopen epochs; must be below operations/thread |
+| `--compression` | `snappy` | `none`, `snappy`, or `zstd` |
+
+The fixed operation profile is:
+
+```text
+Get 10% | Prefix iterator 20% | Put 45% | Delete 15% | Iterator 10%
+```
+
+Point operations use a striped independent model. Prefix and bounded
+forward/reverse iterator operations temporarily quiesce mutations and compare
+against exact model ranges. Every epoch performs full forward/reverse
+verification, then every requested reopen repeats that exact verification.
+
+This is the applicable subset of a pinned RocksDB workload, not full
+`db_stress` parity. Unsupported APIs and the complete classification are in
+[RocksDB-applicable mixed stress workload](rocksdb-applicable-stress-workload-design.md).
+
+## Mixed stress artifacts
+
+| File | Interpretation |
+|---|---|
+| `run.txt` | Source identity, pinned profile, scale, reopens, compression, and percentages |
+| `operation-summary.txt` | Completed operation counts, fresh-write plans, and exact checks |
+| `epoch-summary.tsv` | Per-epoch budget, entries, exact-check count, and reopen result |
+| `final-state.txt` | Final entry count and stable sorted-state fingerprint |
+| `completion.txt` | Exists only after every epoch and reopen succeeds |
+| `failure.txt` | Worker/epoch/operation context and failure message |
+
 ## Run multi-tier campaign orchestration V5
 
 Linux/macOS:
@@ -398,7 +477,7 @@ Campaign options:
 | `--stress-dir` | required | Directory containing all four current-platform stress executables |
 | `--workspace` | required | New campaign root, or recognized root with `--resume` |
 | `--seeds` | `1,17,301` | Ordered, unique uint64 seeds |
-| `--tiers` | `v1,v2,v3,v4` | Complete tiers to include |
+| `--tiers` | `v1,v2,v3,v4` | Complete tiers to include; add `mixed` for the RocksDB-applicable workload |
 | `--v1-operations` | 5000 | V1 operations per compression/seed |
 | `--v2-rounds` | 300 | V2 rounds per thread/compression profile/seed |
 | `--v3-rounds` | 25 | V3 acknowledged crash rounds per compression/seed |
@@ -406,6 +485,10 @@ Campaign options:
 | `--v3-timeout-seconds` | 30 | V3 child protocol timeout |
 | `--v4-operations` | 250 | V4 operations per native option cell |
 | `--v4-liveness-writes` | 2000 | V4 fault-free liveness writes |
+| `--mixed-threads` | 32 | Mixed workload worker count |
+| `--mixed-operations-per-thread` | 10000 | Mixed operations assigned to each worker |
+| `--mixed-keys` | 1048576 | Mixed sparse logical key-space |
+| `--mixed-reopens` | 10 | Mixed reopen count |
 | `--job-timeout-seconds` | 3600 | Outer timeout for one complete job |
 | `--max-duration-seconds` | 0 | Invocation budget; zero is unlimited |
 | `--resume` | off | Revalidate and continue an exact recorded plan |
@@ -420,6 +503,10 @@ Passed jobs are skipped only after their completion format and normalized
 revision/dirty identity are revalidated. Failed, timed-out, interrupted, or
 stale-running jobs receive a new attempt directory; earlier attempts are never
 deleted or overwritten.
+
+To orchestrate the mixed workload with the same failure bundles and resume
+policy, include `mixed` in `--tiers`. The default remains the original
+V1-through-V4 30-job plan.
 
 ## V5 artifacts
 
@@ -481,6 +568,11 @@ Before reviewing V5 changes, run a low-budget all-tier campaign, preserve and
 resume one real failed attempt, exercise a contained timeout, and run at least
 one equivalent campaign on POSIX. Confirm every completed job reports one
 source identity and no process survives timeout or interruption.
+
+Before reviewing mixed-workload changes, run 32 threads with at least 10,000
+operations per thread and 10 reopens, plus a bounded 256-thread run. Cover
+None, Snappy, and Zstd across Windows and POSIX campaigns, including one
+Unicode/non-BMP path.
 
 These campaigns are local evidence. Do not add them to GitHub Actions or CTest
 without a separate cost, duration, flakiness, and ownership decision.

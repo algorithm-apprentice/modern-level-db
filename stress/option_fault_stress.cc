@@ -32,16 +32,6 @@ void HashBytes(std::uint64_t& hash, std::string_view bytes) {
     }
 }
 
-std::string HashHex(std::uint64_t value) {
-    constexpr std::string_view Digits = "0123456789abcdef";
-    std::string result(16, '0');
-    for (std::size_t index = result.size(); index > 0; --index) {
-        result[index - 1] = Digits[value & 0x0fU];
-        value >>= 4U;
-    }
-    return result;
-}
-
 std::string AccessName(bool allow_mmap_reads) { return allow_mmap_reads ? "map" : "copy"; }
 
 std::string BloomName(std::uint32_t bits_per_key) { return std::to_string(bits_per_key); }
@@ -102,14 +92,7 @@ std::uint64_t DeriveOptionMatrixSeed(std::uint64_t campaign_seed, const OptionMa
 }
 
 std::string StableModelFingerprint(const test_support::Model& model) {
-    std::uint64_t hash = FnvOffsetBasis;
-    for (const auto& [key, value] : model) {
-        HashUnsigned(hash, key.size());
-        HashBytes(hash, key);
-        HashUnsigned(hash, value.size());
-        HashBytes(hash, value);
-    }
-    return HashHex(hash);
+    return StableStressFingerprint(model);
 }
 
 Options OptionMatrixDatabaseOptions(const OptionMatrixCell& cell) {

@@ -95,3 +95,26 @@ target_link_libraries(
 modern_leveldb_set_project_warnings(
   modern_leveldb_option_fault_stress PRIVATE
 )
+
+add_executable(
+  modern_leveldb_mixed_stress
+  mixed_stress_main.cc
+  mixed_stress.cc
+  mixed_stress_runner.cc
+  stress_support.cc
+  "${stress_build_header}"
+)
+add_dependencies(
+  modern_leveldb_mixed_stress modern_leveldb_stress_build_identity
+)
+target_include_directories(
+  modern_leveldb_mixed_stress
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}"
+    "${PROJECT_SOURCE_DIR}/tests"
+    "${CMAKE_CURRENT_BINARY_DIR}"
+)
+target_link_libraries(
+  modern_leveldb_mixed_stress PRIVATE modern_leveldb::modern_leveldb
+)
+modern_leveldb_set_project_warnings(modern_leveldb_mixed_stress PRIVATE)

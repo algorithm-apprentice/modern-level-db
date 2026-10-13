@@ -58,11 +58,15 @@ class LocalStressCampaignPlannerTest(unittest.TestCase):
 
     def test_selected_tiers_keep_canonical_profiles_and_commands(self):
         config = self.config()
-        config.tiers = ("v4", "v2")
+        config.tiers = ("mixed", "v4", "v2")
         config.seeds = (17,)
         config.v2_rounds = 41
         config.v4_operations = 42
         config.v4_liveness_writes = 84
+        config.mixed_threads = 32
+        config.mixed_operations_per_thread = 42
+        config.mixed_keys = 1024
+        config.mixed_reopens = 3
 
         plan = run_local_stress_campaign.build_plan(config)
 
@@ -73,6 +77,7 @@ class LocalStressCampaignPlannerTest(unittest.TestCase):
                 "seed-17-v2-t4-snappy",
                 "seed-17-v2-t8-zstd",
                 "seed-17-v4",
+                "seed-17-mixed",
             ],
         )
         suffix = ".exe" if os.name == "nt" else ""
@@ -99,7 +104,7 @@ class LocalStressCampaignPlannerTest(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            run_local_stress_campaign.command_for_attempt(plan.jobs[-1], attempt),
+            run_local_stress_campaign.command_for_attempt(plan.jobs[-2], attempt),
             [
                 str(stress_dir / f"modern_leveldb_option_fault_stress{suffix}"),
                 "--workspace",
@@ -110,6 +115,28 @@ class LocalStressCampaignPlannerTest(unittest.TestCase):
                 "42",
                 "--liveness-writes",
                 "84",
+            ],
+        )
+        self.assertEqual(
+            run_local_stress_campaign.command_for_attempt(plan.jobs[-1], attempt),
+            [
+                str(stress_dir / f"modern_leveldb_mixed_stress{suffix}"),
+                "--db",
+                str(attempt / "database"),
+                "--output",
+                str(attempt / "artifacts"),
+                "--seed",
+                "17",
+                "--threads",
+                "32",
+                "--operations-per-thread",
+                "42",
+                "--keys",
+                "1024",
+                "--reopens",
+                "3",
+                "--compression",
+                "snappy",
             ],
         )
 
@@ -212,6 +239,24 @@ class LocalStressCampaignPlannerTest(unittest.TestCase):
                 "--max-duration-seconds",
                 "-1",
             ],
+            [
+                "--stress-dir",
+                "stress",
+                "--workspace",
+                "work",
+                "--mixed-threads",
+                "0",
+            ],
+            [
+                "--stress-dir",
+                "stress",
+                "--workspace",
+                "work",
+                "--mixed-operations-per-thread",
+                "10",
+                "--mixed-reopens",
+                "10",
+            ],
         ]
         for arguments in invalid:
             with self.subTest(arguments=arguments):
@@ -247,6 +292,10 @@ class LocalStressCampaignPlannerTest(unittest.TestCase):
         self.assertEqual(parsed.v4_liveness_writes, 2000)
         self.assertEqual(parsed.job_timeout_seconds, 3600.0)
         self.assertEqual(parsed.max_duration_seconds, 0.0)
+        self.assertEqual(parsed.mixed_threads, 32)
+        self.assertEqual(parsed.mixed_operations_per_thread, 10000)
+        self.assertEqual(parsed.mixed_keys, 1_048_576)
+        self.assertEqual(parsed.mixed_reopens, 10)
         self.assertTrue(parsed.resume)
 
 
