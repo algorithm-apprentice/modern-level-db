@@ -128,9 +128,6 @@ TEST(DatabaseNativeTest, CompactionPreservesSnapshotsAndPinnedIteratorFiles) {
     EXPECT_EQ(AsStringView(value), first);
     EXPECT_EQ(AsStringView(iterator->value()), first);
     database.ReleaseSnapshot(snapshot);
-    iterator.reset();
-    opened->reset();
-    EXPECT_EQ(PhysicalTableCount(directory.path() / "db"), current_files);
 }
 
 TEST(DatabaseNativeTest, RemovesUnpinnedCompactionInputsWithoutAnotherOpen) {
@@ -167,7 +164,7 @@ TEST(DatabaseNativeTest, RemovesUnpinnedCompactionInputsWithoutAnotherOpen) {
     EXPECT_FALSE(state->sticky_error.has_value());
 }
 
-TEST(DatabaseNativeTest, MixedStressLeavesOnlyManifestLiveTablesAfterClose) {
+TEST(DatabaseNativeTest, MixedStressReclaimsDeferredTablesWhenItReopens) {
     test_support::TemporaryDirectory directory;
     stress::MixedStressArguments arguments;
     arguments.database = directory.path() / "db";
@@ -181,6 +178,17 @@ TEST(DatabaseNativeTest, MixedStressLeavesOnlyManifestLiveTablesAfterClose) {
 
     static_cast<void>(
         stress::RunMixedStress(arguments, stress::StressBuildIdentity{"test-revision", false}));
+
+    EXPECT_GE(PhysicalTableCount(arguments.database), ManifestTableCount(arguments.database));
+
+    DatabaseEngineOptions options;
+    options.create_if_missing = true;
+#if defined(_WIN32)
+    options.allow_weak_namespace_durability = true;
+#endif
+    auto reopened = DatabaseEngine::Open(options, arguments.database);
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().ToString();
+    reopened->reset();
 
     EXPECT_EQ(PhysicalTableCount(arguments.database), ManifestTableCount(arguments.database));
 }

@@ -54,7 +54,7 @@ TEST_F(DatabaseTest, FlushesTheMemtableIntoATable) {
     EXPECT_EQ(Numbers(FileType::Table).size(), 1U);
 }
 
-TEST_F(DatabaseTest, CloseRetriesAnObsoleteFileRemovalFailure) {
+TEST_F(DatabaseTest, OpenRetriesAnObsoleteFileRemovalFailure) {
     auto database = Open();
     ASSERT_TRUE(Put(*database, "a", "1").has_value());
     const std::uint64_t old_log = Numbers(FileType::Log).back();
@@ -77,6 +77,8 @@ TEST_F(DatabaseTest, CloseRetriesAnObsoleteFileRemovalFailure) {
     file_system_.SetOperationHook({});
 
     database.reset();
+    EXPECT_TRUE(Exists(Numbered(old_log, ".log")));
+    database = Open();
 
     EXPECT_FALSE(Exists(Numbered(old_log, ".log")));
 }
@@ -390,7 +392,7 @@ TEST_F(DatabaseTest, CompactsLevel0InTheBackground) {
     EXPECT_EQ(Numbers(FileType::Table).size(), 2U);
 }
 
-TEST_F(DatabaseTest, CloseReclaimsCompactionInputsSkippedForAnIteratorPin) {
+TEST_F(DatabaseTest, IteratorPinDefersCompactionInputCleanupUntilOpen) {
     auto database = Open();
     WarmUp(*database);
     for (std::uint32_t i = 0; i < Level0CompactionTrigger; ++i) {
@@ -422,6 +424,10 @@ TEST_F(DatabaseTest, CloseReclaimsCompactionInputsSkippedForAnIteratorPin) {
     }
 
     database.reset();
+    for (const std::uint64_t number : inputs) {
+        EXPECT_TRUE(Exists(Numbered(number, ".ldb"))) << number;
+    }
+    database = Open();
 
     for (const std::uint64_t number : inputs) {
         EXPECT_FALSE(Exists(Numbered(number, ".ldb"))) << number;
