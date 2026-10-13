@@ -104,6 +104,10 @@ separate artifact streams under one disposable workspace.
 - Optional developer-owned nightly execution outside repository CI.
 - Trend summaries and corpus promotion for every discovered reproducer.
 
+The detailed deterministic plan, subprocess ownership, durable state, and
+resume contract are in
+[Local stress campaign orchestration](local-stress-campaign-design.md).
+
 Advancing phases requires the preceding artifact and reproduction contract to
 remain stable. Do not combine V2 through V5 into the first implementation.
 
