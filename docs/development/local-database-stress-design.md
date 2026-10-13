@@ -91,6 +91,9 @@ filesystem fault matrix and the existing deterministic power-loss simulator.
 - Separate campaigns for ordinary correctness, fault recovery, and liveness so
   injected errors do not make the oracle ambiguous.
 
+The detailed bounded matrix and fault/liveness oracle are in
+[Option and fault matrix database stress testing](option-fault-database-stress-design.md).
+
 ### V5: campaign orchestration
 
 - Multi-seed local runner with duration limits and retained failure bundles.
