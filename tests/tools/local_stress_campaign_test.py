@@ -1,8 +1,12 @@
 from pathlib import Path
 import ctypes
+import contextlib
+import io
+import json
 import os
 import sys
 import unittest
+from unittest import mock
 import tempfile
 import textwrap
 import time
@@ -726,6 +730,174 @@ class LocalStressCampaignStateTest(unittest.TestCase):
             self.assertEqual(
                 sorted(path.name for path in attempts.iterdir()), ["001"]
             )
+
+    def test_resume_converts_stale_running_and_revalidates_passed_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script = self.fake_job(root)
+            first = self.control(root, "first", "pass")
+            second = self.control(root, "second", "fail")
+            plan = self.plan(
+                root,
+                [
+                    self.job(0, script, first, "job-one"),
+                    self.job(1, script, second, "job-two"),
+                ],
+            )
+            config = self.config(root)
+            run_local_stress_campaign.run_campaign(
+                config, plan=plan, working_directory=root
+            )
+
+            first_attempt = (
+                config.workspace / "jobs" / "000-job-one" / "attempts" / "001"
+            )
+            (first_attempt / "artifacts" / "completion.txt").unlink()
+            state_path = config.workspace / "state.json"
+            state = run_local_stress_campaign.read_json(state_path)
+            state["status"] = "running"
+            state["jobs"][1]["status"] = "running"
+            state["jobs"][1]["attempts"][-1]["status"] = "running"
+            state["jobs"][1]["attempts"][-1]["category"] = "running"
+            state_path.write_text(
+                json.dumps(state, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            second.write_text("pass", encoding="utf-8")
+            config.resume = True
+
+            summary = run_local_stress_campaign.run_campaign(
+                config, plan=plan, working_directory=root
+            )
+
+            self.assertEqual(summary.status, "completed")
+            state = run_local_stress_campaign.read_json(state_path)
+            self.assertEqual(
+                state["jobs"][1]["attempts"][0]["category"],
+                "orchestrator_interrupted",
+            )
+            self.assertEqual(len(state["jobs"][0]["attempts"]), 2)
+            self.assertEqual(len(state["jobs"][1]["attempts"]), 2)
+
+    def test_duration_budget_stops_before_next_job_and_resume_finishes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script = self.fake_job(root)
+            first = self.control(root, "first", "pass")
+            second = self.control(root, "second", "pass")
+            plan = self.plan(
+                root,
+                [
+                    self.job(0, script, first, "job-one"),
+                    self.job(1, script, second, "job-two"),
+                ],
+            )
+            config = self.config(root)
+            config.max_duration_seconds = 1.0
+            times = iter([0.0, 0.0, 2.0])
+
+            exhausted = run_local_stress_campaign.run_campaign(
+                config,
+                plan=plan,
+                working_directory=root,
+                monotonic=lambda: next(times),
+            )
+
+            self.assertEqual(exhausted.status, "budget_exhausted")
+            self.assertEqual(exhausted.passed, 1)
+            self.assertEqual(exhausted.pending, 1)
+            self.assertFalse((config.workspace / "completion.txt").exists())
+
+            config.resume = True
+            config.max_duration_seconds = 0.0
+            completed = run_local_stress_campaign.run_campaign(
+                config, plan=plan, working_directory=root
+            )
+            self.assertEqual(completed.status, "completed")
+
+    def test_workspace_modes_reject_existing_new_and_missing_resume(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script = self.fake_job(root)
+            control = self.control(root, "first", "pass")
+            plan = self.plan(
+                root, [self.job(0, script, control, "job-one")]
+            )
+            config = self.config(root)
+            config.workspace.mkdir()
+            sentinel = config.workspace / "sentinel"
+            sentinel.write_text("keep", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                run_local_stress_campaign.run_campaign(
+                    config, plan=plan, working_directory=root
+                )
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep")
+
+            config.workspace = root / "missing"
+            config.resume = True
+            with self.assertRaisesRegex(ValueError, "does not exist"):
+                run_local_stress_campaign.run_campaign(
+                    config, plan=plan, working_directory=root
+                )
+
+
+class LocalStressCampaignCliTest(unittest.TestCase):
+    def arguments(self) -> list[str]:
+        return [
+            "--stress-dir",
+            "stress",
+            "--workspace",
+            "workspace",
+            "--seeds",
+            "17",
+            "--tiers",
+            "v4",
+        ]
+
+    def summary(self, status: str) -> run_local_stress_campaign.CampaignSummary:
+        return run_local_stress_campaign.CampaignSummary(
+            status=status,
+            total=1,
+            passed=1 if status == "completed" else 0,
+            failed=1 if status == "failed" else 0,
+            pending=1 if status == "budget_exhausted" else 0,
+            revision="revision",
+            dirty=False,
+            blocking_job="job" if status == "failed" else None,
+        )
+
+    def test_main_maps_completed_failed_and_budget_statuses(self):
+        cases = [("completed", 0), ("failed", 1), ("budget_exhausted", 3)]
+        for status, expected in cases:
+            with self.subTest(status=status):
+                output = io.StringIO()
+                with mock.patch.object(
+                    run_local_stress_campaign,
+                    "run_campaign",
+                    return_value=self.summary(status),
+                ), contextlib.redirect_stdout(output):
+                    result = run_local_stress_campaign.main(self.arguments())
+                self.assertEqual(result, expected)
+                self.assertIn(f"status={status}", output.getvalue())
+
+    def test_main_maps_usage_runtime_and_interrupt_failures(self):
+        cases = [
+            (ValueError("bad usage"), 2, "bad usage"),
+            (RuntimeError("broken"), 1, "broken"),
+            (KeyboardInterrupt(), 130, "interrupted"),
+        ]
+        for error, expected, message in cases:
+            with self.subTest(expected=expected):
+                output = io.StringIO()
+                with mock.patch.object(
+                    run_local_stress_campaign,
+                    "run_campaign",
+                    side_effect=error,
+                ), contextlib.redirect_stderr(output):
+                    result = run_local_stress_campaign.main(self.arguments())
+                self.assertEqual(result, expected)
+                self.assertIn(message, output.getvalue())
 
 
 if __name__ == "__main__":
