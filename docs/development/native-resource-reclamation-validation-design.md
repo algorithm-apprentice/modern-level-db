@@ -174,3 +174,57 @@ Passing one row does not imply the others.
 5. Add bounded native campaign evidence and documentation.
 6. Run Windows/WSL/full CI and deliver the tests/documentation without a
    production behavior divergence.
+
+## Implementation record
+
+The audit confirmed the original production mechanism matches LevelDB:
+
+- `NewInternalIterator` gives level iterators a shared owner of the current
+  Version;
+- `VersionSet` tracks installed Versions weakly and includes every still-owned
+  Version in `LiveFiles()`;
+- compaction cleanup therefore skips input SSTs while an Iterator owns the old
+  Version;
+- Iterator destruction releases the Version owner but does not trigger file
+  GC;
+- close releases process resources but is not an obsolete-file cleanup
+  boundary;
+- the next open/recovery enumerates the directory and removes the now-obsolete
+  files.
+
+No production reclamation trigger or destructor behavior was changed.
+
+Added characterization:
+
+1. no-pin native compaction converges physical `.ldb` count to current Version
+   file count without another open;
+2. an Iterator-pinned old Version causes compaction cleanup to make no removal
+   attempt for its input tables;
+3. releasing the Iterator and closing leaves those filenames deferred;
+4. the next open removes every deferred input;
+5. a one-time obsolete WAL removal error is non-sticky and is retried on open;
+6. a real mixed native run permits scheduling-dependent deferred tables after
+   close and always converges to MANIFEST live-table count after reopen;
+7. pinned Snapshot/Iterator value semantics, public child-handle engine
+   retention, Windows handles/views/locks, and POSIX descriptor RAII remain
+   covered by their existing tests.
+
+Validation completed:
+
+```text
+Windows Debug unit                  928/928
+Windows Release unit                928/928
+Windows model/compatibility/crash     18/18
+WSL Ubuntu GCC 13 Debug unit        895/895
+WSL Ubuntu GCC 13 Release unit      895/895
+WSL model/compatibility/crash         10/10
+targeted cleanup/resource tests       14/14
+documentation validation               pass
+production diff versus main            none
+```
+
+The mixed-campaign directory that initiated this audit contained three
+deferred final-compaction inputs. A later fixed-seed run sometimes had no
+deferred files, confirming that overlap between iterator lifetime and
+compaction cleanup is scheduling-dependent. The deterministic MemoryFileSystem
+test, not a required physical-count inequality, is the root-cause authority.
