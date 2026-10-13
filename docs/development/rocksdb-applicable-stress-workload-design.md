@@ -319,3 +319,70 @@ added without changing the oracle.
 7. Run small contracts, 32-thread baseline, and 256-thread bounded campaign.
 8. Run Windows/WSL suites and review every exclusion/nonclaim.
 9. Deliver one PR without a hosted long campaign.
+
+## Implementation record
+
+The RocksDB-applicable mixed workload is implemented through:
+
+- `modern_leveldb_mixed_stress`, built only by the existing default-off local
+  stress option;
+- the pinned 10/20/45/15/10 operation selector and 60-percent fresh-slot
+  preference;
+- deterministic eight-byte binary key permutation, two-byte prefixes, and
+  8/16/24-byte binary values;
+- 256 striped exact-state maps that serialize one logical key while preserving
+  concurrency across keys;
+- exact point-read validation under the key stripe;
+- quiesced Snapshot prefix and bounded forward/reverse iterator validation;
+- exception-safe worker cohorts across reopen epochs;
+- exact forward/reverse verification before every reopen and immediately after
+  every reopen;
+- stable summaries/fingerprints and an optional V5 `mixed` tier with the same
+  timeout, failure-bundle, source-identity, and resume policy.
+
+The implementation review found and fixed:
+
+1. an initial prefix/iterator oracle copied the complete model for 30 percent
+   of operations, which was unusable at the aligned 38.4-million-operation
+   default; the key's first byte now selects its model stripe, and bounded
+   iterator expectations traverse only the target and adjacent stripes;
+2. the initial `fresh_writes` name implied a stronger guarantee than the
+   key-space can provide after contention or exhaustion; artifacts now report
+   deterministic `fresh_write_plans`;
+3. mixed mode initially sat outside campaign ownership; an optional V5 tier
+   now provides multi-seed plans, timeout containment, retained attempts, and
+   exact-plan resume without changing the original 30-job default;
+4. state fingerprint logic would otherwise have been duplicated; the existing
+   V4 golden fingerprint was moved into shared stress support and retained its
+   exact vectors.
+
+Validation completed:
+
+```text
+Windows Debug unit                  924/924
+Windows Release unit                924/924
+Windows model/compatibility/crash     18/18
+WSL Ubuntu GCC 13 Debug unit        891/891
+WSL Ubuntu GCC 13 Release unit      891/891
+WSL model/compatibility/crash         10/10
+focused mixed/V4 fingerprint          12/12
+Python campaign contracts             19/19
+clang-format                           pass
+documentation validation               pass
+```
+
+Local campaigns:
+
+| Platform | Threads | Operations/thread | Reopens | Compression | Completed operations | Final entries |
+|---|---:|---:|---:|---|---:|---:|
+| Windows smoke | 4 | 1000 | 2 | None | 4000 | 982 |
+| Windows Unicode/non-BMP | 32 | 10000 | 10 | Snappy | 320000 | 136425 |
+| Windows | 256 | 500 | 1 | Zstd | 128000 | 50858 |
+| WSL Ubuntu ext4 | 32 | 2000 | 2 | None | 64000 | 28513 |
+
+A real V5 `mixed`-only campaign also completed with one retained job,
+validated source identity, summary aggregation, and campaign completion.
+
+This delivery broadens workload composition for the currently expressible API;
+it does not convert the exclusions above into tested behavior or full RocksDB
+parity.
