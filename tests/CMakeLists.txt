@@ -37,6 +37,7 @@ add_executable(
   unit/engine/database_lifecycle_test.cc
   unit/engine/database_read_test.cc
   unit/engine/database_write_test.cc
+  unit/engine/dependency_test.cc
   unit/engine/db_iterator_test.cc
   unit/engine/flush_test.cc
   unit/engine/iterators_test.cc
