@@ -1,6 +1,6 @@
 # ADR-0078: Uniform Engine Dependency Ownership
 
-- Status: Accepted
+- Status: Implemented
 - Date: 2026-10-19
 
 This amendment replaces the first implementation's smart-pointer
@@ -226,3 +226,14 @@ Retained dependency tests exercised owned/borrowed cleanup, move construction
 and assignment, and every four-service ownership mixture across partial
 construction failures and normal shutdown. Existing engine and public
 dependency tests retain their original service-lifetime contracts.
+
+## Value-member outcome
+
+The amended implementation stores the pointer and a const ownership flag
+directly in `Dependency<T>`. Its destructor uses `delete`; its only resource
+accessor is `get()`. The four engine members keep their original declaration
+positions, and public injection is unchanged.
+
+Retained tests cover owning and borrowed moves, empty/moved-from owners for
+each actual service kind, and all 96 ownership/failure combinations from the
+earlier tests. Copying and all assignment are compile-time errors.

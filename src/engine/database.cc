@@ -98,7 +98,7 @@ DatabaseEngine::DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options,
               .table_options = options.table_options},  // GCOVR_EXCL_LINE: GCC constructor clone
       directory_(std::move(directory)),
       comparator_(*options.comparator),
-      table_cache_(*file_system_, directory_, comparator_,
+      table_cache_(*file_system_.get(), directory_, comparator_,
                    ReadTableOptions(options, block_cache_.get()),
                    options.max_open_files - ReservedNonTableFileCount),
       executor_(PrepareExecutor(options)) {}
@@ -125,7 +125,7 @@ Status DatabaseEngine::Recover(const DatabaseEngineOptions& options) {
                              .memtable_size_threshold = options.memtable_size_threshold,
                              .table_options = options.table_options};
     Result<RecoveredDatabase> recovered =
-        RecoverDatabase(*file_system_, directory_, comparator_, recovery, table_cache_);
+        RecoverDatabase(*file_system_.get(), directory_, comparator_, recovery, table_cache_);
     if (!recovered.has_value()) {
         return std::unexpected(std::move(recovered).error());
     }

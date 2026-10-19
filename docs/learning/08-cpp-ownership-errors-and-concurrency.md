@@ -91,10 +91,12 @@ It also means an unreleased child can keep the directory lock held.
 
 ### One handle can own or borrow
 
-An engine dependency uses `Dependency<T>`, a standard `unique_ptr` with a
-deleter containing one ownership flag. A default resource is deleted; an
-injected resource is left to its retaining owner. Moving the handle moves
-both its pointer and its policy, without duplicating ownership.
+An engine dependency uses an ordinary `Dependency<T>` member containing a
+pointer and one fixed ownership flag. Its own destructor directly deletes a
+default resource; an injected resource is left to its retaining owner.
+Copying and assignment are forbidden. A move constructor transfers the pointer
+and empties its source, without duplicating ownership. There is no callable
+deleter: consumers explicitly access the resource through `get()`.
 
 Every constructed owning member participates in exception unwinding even if
 a later member fails and the engine's complete-object destructor never runs.
