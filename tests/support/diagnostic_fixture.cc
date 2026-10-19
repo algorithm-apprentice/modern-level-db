@@ -8,7 +8,7 @@
 int CreateFixture(const std::filesystem::path& path) {
     modern_leveldb::DatabaseEngineOptions options;
     options.create_if_missing = true;
-    options.write_buffer_size = 64 * 1'024;
+    options.memtable_size_threshold = 64 * 1'024;
 #if defined(_WIN32)
     options.allow_weak_namespace_durability = true;
 #endif

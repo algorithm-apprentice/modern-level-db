@@ -62,8 +62,8 @@ TableOptions ReadTableOptions(const DatabaseEngineOptions& options, BlockCache* 
 DatabaseEngineOptions SanitizeOptions(DatabaseEngineOptions options) {
     options.max_open_files =
         std::clamp<std::size_t>(options.max_open_files, 64 + ReservedNonTableFileCount, 50000);
-    options.write_buffer_size = std::clamp<std::size_t>(
-        options.write_buffer_size, std::size_t{64} << 10U, std::size_t{1} << 30U);
+    options.memtable_size_threshold = std::clamp<std::size_t>(
+        options.memtable_size_threshold, std::size_t{64} << 10U, std::size_t{1} << 30U);
     options.max_file_size = std::clamp<std::uint64_t>(
         options.max_file_size, std::uint64_t{1} << 20U, std::uint64_t{1} << 30U);
     options.table_options.block_size = std::clamp<std::size_t>(
@@ -93,7 +93,7 @@ DatabaseEngine::DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options,
     : owned_file_system_(std::move(owned_file_system)),
       owned_block_cache_(OwnedBlockCache(options)),
       owned_clock_(OwnedClock(options)),
-      policy_{.write_buffer_size = options.write_buffer_size,
+      policy_{.memtable_size_threshold = options.memtable_size_threshold,
               .max_file_size = options.max_file_size,
               .sync_wal_creation = options.sync_wal_creation,
               .table_options = options.table_options},  // GCOVR_EXCL_LINE: GCC constructor clone
@@ -126,7 +126,7 @@ Status DatabaseEngine::Recover(const DatabaseEngineOptions& options) {
     RecoveryOptions recovery{.create_if_missing = options.create_if_missing,
                              .error_if_exists = options.error_if_exists,
                              .sync_wal_creation = options.sync_wal_creation,
-                             .write_buffer_size = options.write_buffer_size,
+                             .memtable_size_threshold = options.memtable_size_threshold,
                              .table_options = options.table_options};
     Result<RecoveredDatabase> recovered =
         RecoverDatabase(*file_system_, directory_, comparator_, recovery, table_cache_);

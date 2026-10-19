@@ -155,8 +155,8 @@ protected:
         options_.executor = &executor_;
         options_.clock = &clock_;
         options_.create_if_missing = true;
-        // Clipped to the smallest write buffer, 64 KiB.
-        options_.write_buffer_size = 1;
+        // Clipped to the smallest memtable threshold, 64 KiB.
+        options_.memtable_size_threshold = 1;
     }
 
     Result<std::unique_ptr<DatabaseEngine>> TryOpen() {

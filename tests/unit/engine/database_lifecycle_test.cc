@@ -6,30 +6,30 @@ namespace database_test {
 TEST(DatabaseOptionsTest, ClipsOptionsToLevelDbsRanges) {
     DatabaseEngineOptions small;
     small.max_open_files = 1;
-    small.write_buffer_size = 1;
+    small.memtable_size_threshold = 1;
     small.max_file_size = 1;
     small.table_options.block_size = 1;
     const DatabaseEngineOptions low = SanitizeOptions(small);
     EXPECT_EQ(low.max_open_files, 74U);
-    EXPECT_EQ(low.write_buffer_size, std::size_t{64} << 10U);
+    EXPECT_EQ(low.memtable_size_threshold, std::size_t{64} << 10U);
     EXPECT_EQ(low.max_file_size, std::uint64_t{1} << 20U);
     EXPECT_EQ(low.table_options.block_size, std::size_t{1} << 10U);
 
     DatabaseEngineOptions large;
     large.max_open_files = 1000000;
-    large.write_buffer_size = std::size_t{1} << 40U;
+    large.memtable_size_threshold = std::size_t{1} << 40U;
     large.max_file_size = std::uint64_t{1} << 40U;
     large.table_options.block_size = std::size_t{1} << 30U;
     const DatabaseEngineOptions high = SanitizeOptions(large);
     EXPECT_EQ(high.max_open_files, 50000U);
-    EXPECT_EQ(high.write_buffer_size, std::size_t{1} << 30U);
+    EXPECT_EQ(high.memtable_size_threshold, std::size_t{1} << 30U);
     EXPECT_EQ(high.max_file_size, std::uint64_t{1} << 30U);
     EXPECT_EQ(high.table_options.block_size, std::size_t{4} << 20U);
 
     const DatabaseEngineOptions defaults = SanitizeOptions(DatabaseEngineOptions());
     EXPECT_TRUE(defaults.sync_wal_creation);
     EXPECT_EQ(defaults.max_open_files, 1000U);
-    EXPECT_EQ(defaults.write_buffer_size, std::size_t{4} << 20U);
+    EXPECT_EQ(defaults.memtable_size_threshold, std::size_t{4} << 20U);
     EXPECT_EQ(defaults.max_file_size, std::uint64_t{2} << 20U);
     EXPECT_EQ(defaults.table_options.block_size, std::size_t{4} << 10U);
 }
@@ -117,7 +117,7 @@ TEST_F(DatabaseTest, IgnoresAnExceptionWhileClosingTheCurrentLog) {
             options.executor = &executor;
             options.clock = &clock;
             options.create_if_missing = true;
-            options.write_buffer_size = 1;
+            options.memtable_size_threshold = 1;
             Result<std::unique_ptr<DatabaseEngine>> opened =
                 DatabaseEngine::Open(options, "database");
             if (!opened.has_value()) {
