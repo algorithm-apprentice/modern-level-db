@@ -3,32 +3,15 @@
 
 #include <condition_variable>
 #include <deque>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <source_location>
 #include <stop_token>
 #include <thread>
 
-#include "modern_leveldb/base/result.h"
+#include "modern_leveldb/background_executor.h"
 
 namespace modern_leveldb {
-
-using BackgroundTask = std::function<void(std::stop_token)>;
-
-// Scheduling boundary, not a database lock. Engine injection requires deferred
-// execution (never inline in Schedule) and eventual execution of accepted tasks
-// while the engine is open. The injected executor must outlive that engine.
-class BackgroundExecutor {
-public:
-    BackgroundExecutor() = default;
-    BackgroundExecutor(const BackgroundExecutor&) = delete;
-    BackgroundExecutor& operator=(const BackgroundExecutor&) = delete;
-    BackgroundExecutor(BackgroundExecutor&&) = delete;
-    BackgroundExecutor& operator=(BackgroundExecutor&&) = delete;
-    virtual ~BackgroundExecutor() = default;
-    [[nodiscard]] virtual Status Schedule(BackgroundTask task) = 0;
-};
 
 // One worker runs queued callbacks in order. Destruction stops/joins the worker
 // and discards unstarted callbacks; it does not drain the queue. Tasks must contain

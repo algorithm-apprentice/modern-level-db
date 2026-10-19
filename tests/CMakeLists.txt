@@ -190,6 +190,7 @@ gtest_discover_tests(
 
 add_executable(
   modern_leveldb_public_api_tests
+  unit/api/dependency_api_test.cc
   unit/api/public_api_test.cc
 )
 if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
