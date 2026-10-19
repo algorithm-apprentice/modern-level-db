@@ -26,7 +26,7 @@ struct SeekCharge {
 
 // Reads the value of the newest entry of the key's user key whose sequence is
 // at most the key's sequence, and nothing if that entry is a deletion or there
-// is none. The memtable is searched first, then the immutable memtable if there
+// is none. The mutable memtable is searched first, then the immutable memtable if there
 // is one, then the version: its level-0 files whose range holds the user key
 // from newest to oldest, then at most one file in each deeper level. The first
 // source with an entry decides, and later tables are not opened. A read that
@@ -36,13 +36,14 @@ struct SeekCharge {
 //
 // Every source and the table cache must use the comparator. The caller captures
 // the memtables and the version together and keeps them alive during the call.
-[[nodiscard]] Result<bool> LookupValue(const MemTable& memtable, const MemTable* immutable,
-                                       const Version& version, TableCache& table_cache,
+[[nodiscard]] Result<bool> LookupValue(const MemTable& mutable_memtable,
+                                       const MemTable* immutable_memtable, const Version& version,
+                                       TableCache& table_cache,
                                        const InternalKeyComparator& comparator,
                                        const LookupKey& key, std::vector<std::byte>& value,
                                        std::optional<SeekCharge>& seek,
                                        const TableReadOptions& options = {});
-Result<bool> LookupValue(const MemTable& memtable, const MemTable* immutable,
+Result<bool> LookupValue(const MemTable& mutable_memtable, const MemTable* immutable_memtable,
                          const Version& version, TableCache& table_cache,
                          const InternalKeyComparator&& comparator, const LookupKey& key,
                          std::vector<std::byte>& value, std::optional<SeekCharge>& seek,

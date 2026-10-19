@@ -38,27 +38,27 @@ Result<std::uint64_t> LevelFileBytes(std::span<const Version::File> files, std::
 
 // GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
 DatabaseEngine::ReadSources::ReadSources(DatabaseEngine& engine) noexcept : engine_(&engine) {
-    memtable_.emplace(engine.write_buffers_.mutable_table().PinRead());
+    mutable_memtable_.emplace(engine.write_buffers_.mutable_table().PinRead());
     if (engine.write_buffers_.has_immutable()) {
-        immutable_.emplace(engine.write_buffers_.immutable_owner()->PinRead());
+        immutable_memtable_.emplace(engine.write_buffers_.immutable_owner()->PinRead());
     }
     version_.emplace(engine.versions_->PinCurrent());
 }
 
 DatabaseEngine::ReadSources::~ReadSources() {
     version_.reset();
-    immutable_.reset();
-    memtable_.reset();
+    immutable_memtable_.reset();
+    mutable_memtable_.reset();
     engine_->write_buffers_.ReleaseReadPinnedMemtables();
 }
 // GCOVR_EXCL_STOP
 
-const MemTable& DatabaseEngine::ReadSources::memtable() const noexcept {
-    return memtable_->value();
+const MemTable& DatabaseEngine::ReadSources::mutable_memtable() const noexcept {
+    return mutable_memtable_->value();
 }
 
-const MemTable* DatabaseEngine::ReadSources::immutable() const noexcept {
-    return immutable_.has_value() ? &immutable_->value() : nullptr;
+const MemTable* DatabaseEngine::ReadSources::immutable_memtable() const noexcept {
+    return immutable_memtable_.has_value() ? &immutable_memtable_->value() : nullptr;
 }
 
 const Version& DatabaseEngine::ReadSources::version() const noexcept { return version_->value(); }
@@ -75,9 +75,9 @@ Result<bool> DatabaseEngine::Get(ByteView key, std::vector<std::byte>& value,
         lock.unlock();
         try {
             LookupKey lookup_key = LookupKey::CreateTrusted(key, sequence);
-            read = LookupValue(sources.memtable(), sources.immutable(), sources.version(),
-                               table_cache_, comparator_, lookup_key, value, seek,
-                               ReadOptionsFor(options));
+            read = LookupValue(sources.mutable_memtable(), sources.immutable_memtable(),
+                               sources.version(), table_cache_, comparator_, lookup_key, value,
+                               seek, ReadOptionsFor(options));
         } catch (...) {
             lock.lock();
             throw;

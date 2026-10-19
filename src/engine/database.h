@@ -171,8 +171,8 @@ public:
     [[nodiscard]] Status WaitForBackgroundWork();
 
 private:
-    // Pins sources across unlocked reads. Construction and destruction require
-    // the caller to hold the engine's mutex_.
+    // Pins captured mutable/immutable memtables and a Version across unlocked reads.
+    // Construction and destruction require the caller to hold the engine's mutex_.
     class ReadSources final {
     public:
         explicit ReadSources(DatabaseEngine& engine) noexcept;
@@ -180,14 +180,14 @@ private:
         ReadSources& operator=(const ReadSources&) = delete;
         ~ReadSources();
 
-        [[nodiscard]] const MemTable& memtable() const noexcept;
-        [[nodiscard]] const MemTable* immutable() const noexcept;
+        [[nodiscard]] const MemTable& mutable_memtable() const noexcept;
+        [[nodiscard]] const MemTable* immutable_memtable() const noexcept;
         [[nodiscard]] const Version& version() const noexcept;
 
     private:
         DatabaseEngine* engine_;
-        std::optional<MemTable::ReadPin> memtable_;
-        std::optional<MemTable::ReadPin> immutable_;
+        std::optional<MemTable::ReadPin> mutable_memtable_;
+        std::optional<MemTable::ReadPin> immutable_memtable_;
         std::optional<VersionSet::ReadPin> version_;
     };
 
