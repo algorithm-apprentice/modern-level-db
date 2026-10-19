@@ -71,12 +71,12 @@ struct DatabaseEngineOptions {
     Clock* clock = nullptr;
     // Applies only to the owned Windows backend, never to an injected filesystem.
     bool allow_weak_namespace_durability = false;
-};
 
-// Clips resource policy to supported ranges: max_open_files to 74
-// through 50,000, memtable_size_threshold to 64 KiB through 1 GiB, max_file_size to
-// 1 MiB through 1 GiB, and the block size to 1 KiB through 4 MiB.
-[[nodiscard]] DatabaseEngineOptions SanitizeOptions(DatabaseEngineOptions options);
+    // Clips resource policy to supported ranges: max_open_files to 74
+    // through 50,000, memtable_size_threshold to 64 KiB through 1 GiB, max_file_size to
+    // 1 MiB through 1 GiB, and the block size to 1 KiB through 4 MiB.
+    void Sanitize() noexcept;
+};
 
 struct DatabaseEngineReadOptions {
     // The sequence of a GetSnapshot registration that is not yet released;

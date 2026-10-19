@@ -59,16 +59,14 @@ TableOptions ReadTableOptions(const DatabaseEngineOptions& options, BlockCache* 
 
 }  // namespace
 
-DatabaseEngineOptions SanitizeOptions(DatabaseEngineOptions options) {
-    options.max_open_files =
-        std::clamp<std::size_t>(options.max_open_files, 64 + ReservedNonTableFileCount, 50000);
-    options.memtable_size_threshold = std::clamp<std::size_t>(
-        options.memtable_size_threshold, std::size_t{64} << 10U, std::size_t{1} << 30U);
-    options.max_file_size = std::clamp<std::uint64_t>(
-        options.max_file_size, std::uint64_t{1} << 20U, std::uint64_t{1} << 30U);
-    options.table_options.block_size = std::clamp<std::size_t>(
-        options.table_options.block_size, std::size_t{1} << 10U, std::size_t{4} << 20U);
-    return options;
+void DatabaseEngineOptions::Sanitize() noexcept {
+    max_open_files = std::clamp<std::size_t>(max_open_files, 64 + ReservedNonTableFileCount, 50000);
+    memtable_size_threshold = std::clamp<std::size_t>(
+        memtable_size_threshold, std::size_t{64} << 10U, std::size_t{1} << 30U);
+    max_file_size =
+        std::clamp<std::uint64_t>(max_file_size, std::uint64_t{1} << 20U, std::uint64_t{1} << 30U);
+    table_options.block_size = std::clamp<std::size_t>(
+        table_options.block_size, std::size_t{1} << 10U, std::size_t{4} << 20U);
 }
 
 Result<std::unique_ptr<DatabaseEngine>> DatabaseEngine::Open(DatabaseEngineOptions options,
@@ -76,7 +74,7 @@ Result<std::unique_ptr<DatabaseEngine>> DatabaseEngine::Open(DatabaseEngineOptio
     return PrepareOwnedFileSystem(options, directory)
         .and_then([&](std::unique_ptr<FileSystem> file_system)
                       -> Result<std::unique_ptr<DatabaseEngine>> {
-            options = SanitizeOptions(std::move(options));
+            options.Sanitize();
             auto database = std::make_unique<DatabaseEngine>(
                 PrivateTag(), options, std::move(directory), std::move(file_system));
             const Status recovered = database->Recover(options);

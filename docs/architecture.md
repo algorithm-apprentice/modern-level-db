@@ -328,9 +328,11 @@ Two internal state owners make cross-field invariants explicit:
   immutable-presence mirror. File creation, WAL close policy, scheduling, and
   VersionEdit installation remain DatabaseEngine responsibilities.
 
-`EnginePolicy` groups the immutable write-buffer, target-file, WAL-creation, and
-table-building settings retained after option sanitization. Resource
-owner/borrower fields remain explicit. For fallback resources owned by the
+`DatabaseEngineOptions::Sanitize()` clips numeric resource settings in place.
+`EnginePolicy` then retains the memtable size threshold, target-file size,
+WAL-creation policy, and table-building settings. The public
+`Options::write_buffer_size` maps to the internal `memtable_size_threshold`.
+Resource owner/borrower fields remain explicit. For fallback resources owned by the
 database, reverse declaration order stops the owned executor first and destroys
 users before their owned filesystem/cache/clock. Injected services remain
 externally owned, are not stopped by DatabaseEngine, and must outlive it; the
