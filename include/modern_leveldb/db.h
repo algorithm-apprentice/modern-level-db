@@ -9,7 +9,7 @@
 
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
-#include "modern_leveldb/database_state.h"
+#include "modern_leveldb/database_state_snapshot.h"
 #include "modern_leveldb/iterator.h"
 #include "modern_leveldb/options.h"
 #include "modern_leveldb/snapshot.h"
@@ -65,7 +65,7 @@ public:
     [[nodiscard]] Result<Snapshot> GetSnapshot();
     // Copies topology/maintenance state without I/O or waiting for background work.
     // This observation is not a visibility pin and cannot be passed to ReadOptions.
-    [[nodiscard]] Result<DatabaseState> GetState();
+    [[nodiscard]] Result<DatabaseStateSnapshot> GetState();
 
 private:
     explicit Database(std::shared_ptr<detail::DatabaseState> state) noexcept;

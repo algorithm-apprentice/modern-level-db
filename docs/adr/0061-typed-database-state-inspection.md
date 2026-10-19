@@ -11,6 +11,14 @@ compatibility, model, crash, ASan/UBSan, TSan, fuzz smoke, benchmark,
 profiling-contract, and changed-code coverage evidence passed. A bounded
 GPT-5.6 Sol implementation review found no actionable issue.
 
+### Public naming amendment
+
+The public value type is now `DatabaseStateSnapshot`, declared in
+`database_state_snapshot.h`, to distinguish the captured observation from the
+internal shared `detail::DatabaseState` owner. `GetState()` and its behavior
+are unchanged. The original decision below retains its historical names;
+the [API reference](../reference/api-and-options.md) describes the current API.
+
 ## Context
 
 Modern LevelDB now implements and verifies the complete initial LSM pipeline:

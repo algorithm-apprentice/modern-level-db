@@ -350,7 +350,7 @@ rejected broader extractions.
 ```text
 include/modern_leveldb/
   base/
-  database_state.h
+  database_state_snapshot.h
   db.h
   iterator.h
   options.h

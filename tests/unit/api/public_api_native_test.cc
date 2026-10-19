@@ -247,7 +247,7 @@ TEST(PublicDatabaseTest, ReportsOwningDatabaseStateAndRetainedSnapshotRegistrati
     ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
     Database database = std::move(*opened);
 
-    Result<DatabaseState> initial = database.GetState();
+    Result<DatabaseStateSnapshot> initial = database.GetState();
     ASSERT_TRUE(initial.has_value()) << initial.error().ToString();
     EXPECT_EQ(initial->last_sequence, 0U);
     EXPECT_EQ(initial->snapshot_count, 0U);
@@ -265,7 +265,7 @@ TEST(PublicDatabaseTest, ReportsOwningDatabaseStateAndRetainedSnapshotRegistrati
 
     const std::string large(5000, 'v');
     ASSERT_TRUE(database.Put(AsBytes("a"), AsBytes(large)).has_value());
-    Result<DatabaseState> written = database.GetState();
+    Result<DatabaseStateSnapshot> written = database.GetState();
     ASSERT_TRUE(written.has_value()) << written.error().ToString();
     EXPECT_EQ(written->last_sequence, 1U);
     EXPECT_GT(written->mutable_memtable_bytes, initial->mutable_memtable_bytes);
@@ -274,7 +274,7 @@ TEST(PublicDatabaseTest, ReportsOwningDatabaseStateAndRetainedSnapshotRegistrati
     {
         Result<Snapshot> snapshot = database.GetSnapshot();
         ASSERT_TRUE(snapshot.has_value()) << snapshot.error().ToString();
-        Result<DatabaseState> snapshotted = database.GetState();
+        Result<DatabaseStateSnapshot> snapshotted = database.GetState();
         ASSERT_TRUE(snapshotted.has_value()) << snapshotted.error().ToString();
         EXPECT_EQ(snapshotted->snapshot_count, 1U);
         EXPECT_EQ(snapshotted->oldest_snapshot_sequence, 1U);
@@ -285,20 +285,20 @@ TEST(PublicDatabaseTest, ReportsOwningDatabaseStateAndRetainedSnapshotRegistrati
         retained_iterator.emplace(std::move(*iterator));
     }
 
-    Result<DatabaseState> retained = database.GetState();
+    Result<DatabaseStateSnapshot> retained = database.GetState();
     ASSERT_TRUE(retained.has_value()) << retained.error().ToString();
     EXPECT_EQ(retained->snapshot_count, 1U);
     EXPECT_EQ(retained->oldest_snapshot_sequence, 1U);
     retained_iterator.reset();
 
-    Result<DatabaseState> released = database.GetState();
+    Result<DatabaseStateSnapshot> released = database.GetState();
     ASSERT_TRUE(released.has_value()) << released.error().ToString();
     EXPECT_EQ(released->snapshot_count, 0U);
     EXPECT_FALSE(released->oldest_snapshot_sequence.has_value());
 
-    const DatabaseState saved = *released;
+    const DatabaseStateSnapshot saved = *released;
     ASSERT_TRUE(database.Put(AsBytes("b"), AsBytes("later")).has_value());
-    Result<DatabaseState> later = database.GetState();
+    Result<DatabaseStateSnapshot> later = database.GetState();
     ASSERT_TRUE(later.has_value()) << later.error().ToString();
     EXPECT_EQ(later->last_sequence, 2U);
     EXPECT_EQ(saved.last_sequence, 1U);
@@ -317,13 +317,13 @@ TEST(PublicDatabaseTest, DatabaseStateOutlivesItsDatabase) {
         ASSERT_TRUE(opened->Put(AsBytes("trigger"), AsBytes("value")).has_value());
     }
 
-    DatabaseState saved;
+    DatabaseStateSnapshot saved;
     std::optional<std::size_t> nonempty_level;
     DatabaseLevelState projected_level;
     {
         Result<Database> opened = Database::Open(OpeningOptions(), directory.path());
         ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
-        Result<DatabaseState> state = opened->GetState();
+        Result<DatabaseStateSnapshot> state = opened->GetState();
         ASSERT_TRUE(state.has_value()) << state.error().ToString();
         saved = *state;
         for (std::size_t level = 0; level < state->levels.size(); ++level) {

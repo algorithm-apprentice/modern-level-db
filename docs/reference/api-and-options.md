@@ -19,6 +19,12 @@ exceptions.
 | `GetSnapshot` | Returns an RAII visibility pin |
 | `GetState` | Returns an owning, no-I/O snapshot of LSM and maintenance state |
 
+`GetState()` returns a `DatabaseStateSnapshot`, an independent point-in-time
+value that remains valid after later database activity or destruction.
+Its fields can be modified without affecting the database. Unlike the
+`Snapshot` returned by `GetSnapshot()`, it does not pin read visibility and
+cannot be supplied through `ReadOptions`.
+
 An iterator is initially invalid. Call `SeekToFirst`, `SeekToLast`, or `Seek`
 before reading it; `key()` and `value()` require `valid()==true`. Their
 `ByteView` values remain valid only until the iterator moves or is destroyed.

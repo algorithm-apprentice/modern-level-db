@@ -28,7 +28,7 @@ Modern is not missing the basic LSM pipeline:
 | Leveled and seek-triggered compaction | Yes | Yes |
 | Concurrent API callers and grouped writes | Yes | Yes |
 | Table/block caches and native mapped reads | Yes | Yes on admitted POSIX and Windows backends, with an explicit copied-read option |
-| Public state/properties | Formatted string `GetProperty` | Typed owning `DatabaseState` snapshot; no arbitrary property strings |
+| Public state/properties | Formatted string `GetProperty` | Typed owning `DatabaseStateSnapshot`; no arbitrary property strings |
 | Storage-file diagnostics | `DumpFile` and `leveldbutil dump` | Versioned `modern_leveldb_tool dump` for WAL, MANIFEST, and SSTable files |
 | Approximate disk usage by key range | `GetApproximateSizes` | Not exposed |
 | Manual range compaction | `CompactRange` | Not implemented as a public/manual operation |

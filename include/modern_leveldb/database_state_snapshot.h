@@ -1,5 +1,5 @@
-#ifndef MODERN_LEVELDB_DATABASE_STATE_H_
-#define MODERN_LEVELDB_DATABASE_STATE_H_
+#ifndef MODERN_LEVELDB_DATABASE_STATE_SNAPSHOT_H_
+#define MODERN_LEVELDB_DATABASE_STATE_SNAPSHOT_H_
 
 #include <array>
 #include <cstddef>
@@ -20,7 +20,8 @@ struct DatabaseLevelState {
 };
 
 // An owning point-in-time copy of database topology and maintenance state.
-struct DatabaseState {
+// It remains valid after database destruction; changing it does not affect the database.
+struct DatabaseStateSnapshot {
     std::array<DatabaseLevelState, DatabaseLevelCount> levels{};
 
     // The sequence published to latest reads.
@@ -48,4 +49,4 @@ struct DatabaseState {
 
 }  // namespace modern_leveldb
 
-#endif  // MODERN_LEVELDB_DATABASE_STATE_H_
+#endif  // MODERN_LEVELDB_DATABASE_STATE_SNAPSHOT_H_
