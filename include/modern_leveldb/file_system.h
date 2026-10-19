@@ -121,9 +121,9 @@ public:
     [[nodiscard]] virtual Result<std::uint64_t> FileSize(
         const std::filesystem::path& path) const = 0;
 
-    [[nodiscard]] virtual Status CreateDirectory(const std::filesystem::path& path) = 0;
+    [[nodiscard]] virtual Status CreateDir(const std::filesystem::path& path) = 0;
     [[nodiscard]] virtual Status RemoveFile(const std::filesystem::path& path) = 0;
-    [[nodiscard]] virtual Status RemoveDirectory(const std::filesystem::path& path) = 0;
+    [[nodiscard]] virtual Status RemoveDir(const std::filesystem::path& path) = 0;
     [[nodiscard]] virtual Status RenameFile(const std::filesystem::path& source,
                                             const std::filesystem::path& destination) = 0;
     // Requests persistence of namespace changes where supported. Native Windows

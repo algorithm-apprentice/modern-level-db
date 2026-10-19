@@ -122,9 +122,9 @@ public:
     Result<std::uint64_t> FileSize(const std::filesystem::path&) const override {
         return Fail<std::uint64_t>();
     }
-    Status CreateDirectory(const std::filesystem::path&) override { return Fail<void>(); }
+    Status CreateDir(const std::filesystem::path&) override { return Fail<void>(); }
     Status RemoveFile(const std::filesystem::path&) override { return Fail<void>(); }
-    Status RemoveDirectory(const std::filesystem::path&) override { return Fail<void>(); }
+    Status RemoveDir(const std::filesystem::path&) override { return Fail<void>(); }
     Status RenameFile(const std::filesystem::path&, const std::filesystem::path&) override {
         return Fail<void>();
     }

@@ -128,7 +128,7 @@ TEST(NativeDumpCommandTest, PreservesWideUnicodePathsAndInputBytes) {
     test_support::TemporaryDirectory directory;
     const auto native = directory.path() / std::filesystem::path{u8"\u6570\u636e-\U0001f4be"};
     WindowsFileSystem file_system;
-    ASSERT_TRUE(file_system.CreateDirectory(native).has_value());
+    ASSERT_TRUE(file_system.CreateDir(native).has_value());
     const auto path = native / "000001.log";
     EncodedWriteBatch batch;
     batch.Put(AsBytes("key"), AsBytes("value"));

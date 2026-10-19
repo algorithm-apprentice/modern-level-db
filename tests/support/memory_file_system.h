@@ -67,9 +67,9 @@ public:
         const std::filesystem::path& path) const override;
     [[nodiscard]] Result<std::uint64_t> FileSize(const std::filesystem::path& path) const override;
 
-    [[nodiscard]] Status CreateDirectory(const std::filesystem::path& path) override;
+    [[nodiscard]] Status CreateDir(const std::filesystem::path& path) override;
     [[nodiscard]] Status RemoveFile(const std::filesystem::path& path) override;
-    [[nodiscard]] Status RemoveDirectory(const std::filesystem::path& path) override;
+    [[nodiscard]] Status RemoveDir(const std::filesystem::path& path) override;
     [[nodiscard]] Status RenameFile(const std::filesystem::path& source,
                                     const std::filesystem::path& destination) override;
     [[nodiscard]] Status SyncDirectory(const std::filesystem::path& path) override;

@@ -54,7 +54,7 @@ Status PrepareDirectory(FileSystem& file_system, const std::filesystem::path& di
             Error::InvalidArgument("database directory does not exist: " +
                                    PathUtf8(directory).value_or("<unrepresentable>")));
     }
-    return file_system.CreateDirectory(directory);
+    return file_system.CreateDir(directory);
 }
 
 Result<std::unique_ptr<VersionSet>> OpenVersions(FileSystem& file_system,

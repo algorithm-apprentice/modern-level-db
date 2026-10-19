@@ -422,7 +422,7 @@ bool RunLockChild(const std::filesystem::path& path, bool expect_busy) {
 
 Status CreateJunction(const std::filesystem::path& link, const std::filesystem::path& target) {
     WindowsFileSystem file_system;
-    const Status created = file_system.CreateDirectory(link);
+    const Status created = file_system.CreateDir(link);
     if (!created.has_value()) {
         return created;
     }
@@ -975,8 +975,8 @@ TEST(WindowsFileSystemTest, CreatesListsReplacesAndRemovesNames) {
     TemporaryDirectory directory;
     WindowsFileSystem file_system(true);
     const auto child = directory.path() / "child";
-    ASSERT_TRUE(file_system.CreateDirectory(child).has_value());
-    ASSERT_TRUE(file_system.CreateDirectory(child).has_value());
+    ASSERT_TRUE(file_system.CreateDir(child).has_value());
+    ASSERT_TRUE(file_system.CreateDir(child).has_value());
     auto names = file_system.ListDirectory(child);
     ASSERT_TRUE(names.has_value());
     EXPECT_TRUE(names->empty());
@@ -990,7 +990,7 @@ TEST(WindowsFileSystemTest, CreatesListsReplacesAndRemovesNames) {
     EXPECT_EQ(*names, std::vector<std::filesystem::path>{"target"});
     ASSERT_TRUE(file_system.SyncDirectory(child).has_value());
     ASSERT_TRUE(file_system.RemoveFile(child / "target").has_value());
-    ASSERT_TRUE(file_system.RemoveDirectory(child).has_value());
+    ASSERT_TRUE(file_system.RemoveDir(child).has_value());
     EXPECT_FALSE(file_system.FileExists(child).value());
 }
 
@@ -1000,7 +1000,7 @@ TEST(WindowsFileSystemTest, RejectsCreateDirectoryOverExistingFile) {
     const auto path = directory.path() / "file";
     WriteFixture(path, "");
 
-    const Status status = file_system.CreateDirectory(path);
+    const Status status = file_system.CreateDir(path);
 
     ASSERT_FALSE(status.has_value());
     EXPECT_EQ(status.error().code(), ErrorCode::InvalidArgument);
@@ -1008,7 +1008,7 @@ TEST(WindowsFileSystemTest, RejectsCreateDirectoryOverExistingFile) {
     EXPECT_TRUE(std::string_view(status.error().location().file_name())
                     .ends_with("windows_file_system.cc"));
     EXPECT_NE(std::string_view(status.error().location().function_name())
-                  .find("WindowsFileSystem::CreateDirectory"),
+                  .find("WindowsFileSystem::CreateDir"),
               std::string_view::npos);
 }
 
@@ -1034,7 +1034,7 @@ TEST(WindowsFileSystemTest, PreservesNativeUnicodeNames) {
     const std::filesystem::path name{u8"\u6570\u636e-\U0001f4be"};
     const auto child = directory.path() / name;
     WindowsFileSystem file_system(true);
-    ASSERT_TRUE(file_system.CreateDirectory(child).has_value());
+    ASSERT_TRUE(file_system.CreateDir(child).has_value());
     auto writer = file_system.OpenWritable(child / name);
     ASSERT_TRUE(writer.has_value()) << writer.error().ToString();
     ASSERT_TRUE((*writer)->Append(AsBytes("unicode")).has_value());
@@ -1088,7 +1088,7 @@ TEST(WindowsFileSystemTest, DefaultFactoryPreparesDirectoryAndPreservesMmapPolic
         EXPECT_TRUE(path.is_absolute());
         EXPECT_FALSE(std::filesystem::exists(path));
         auto& file_system = **created;
-        ASSERT_TRUE(file_system.CreateDirectory(path).has_value());
+        ASSERT_TRUE(file_system.CreateDir(path).has_value());
         auto file = file_system.OpenWritable(path / "data");
         ASSERT_TRUE(file.has_value()) << file.error().ToString();
         ASSERT_TRUE((*file)->Append(AsBytes("value")).has_value());
@@ -1176,7 +1176,7 @@ TEST(WindowsFileSystemTest, ResolvesLongOrdinaryAndExtendedPaths) {
     auto path = directory.path();
     for (unsigned index = 0; index < 6; ++index) {
         path /= std::string(45, 'a') + std::to_string(index);
-        ASSERT_TRUE(file_system.CreateDirectory(path).has_value());
+        ASSERT_TRUE(file_system.CreateDir(path).has_value());
     }
     ASSERT_GT(path.native().size(), static_cast<std::size_t>(MAX_PATH));
     const auto ordinary = path / "file";
@@ -1641,7 +1641,7 @@ TEST(WindowsFileSystemTest, NamespaceChecksDoNotHideWrongKindOrCloseFailure) {
     const auto path = directory.path() / "file";
     WriteFixture(path, "content");
     WindowsFileSystem file_system(true);
-    EXPECT_EQ(file_system.CreateDirectory(path).error().code(), ErrorCode::InvalidArgument);
+    EXPECT_EQ(file_system.CreateDir(path).error().code(), ErrorCode::InvalidArgument);
     EXPECT_EQ(file_system.SyncDirectory(path).error().code(), ErrorCode::InvalidArgument);
     auto operations = std::make_shared<FaultOperations>();
     operations->fail_close = true;
@@ -1783,7 +1783,7 @@ TEST(WindowsFileSystemTest, JunctionAliasesShareLocksAndResolveTheActualDatabase
     WindowsFileSystem file_system(true);
     const auto target = directory.path() / "target";
     const auto alias = directory.path() / "alias";
-    ASSERT_TRUE(file_system.CreateDirectory(target).has_value());
+    ASSERT_TRUE(file_system.CreateDir(target).has_value());
     const auto junction = CreateJunction(alias, target);
     ASSERT_TRUE(junction.has_value()) << junction.error().ToString();
     {
@@ -1797,7 +1797,7 @@ TEST(WindowsFileSystemTest, JunctionAliasesShareLocksAndResolveTheActualDatabase
         EXPECT_EQ(*direct, *resolved);
         EXPECT_FALSE(std::filesystem::exists(target / "new"));
     }
-    ASSERT_TRUE(file_system.RemoveDirectory(alias).has_value());
+    ASSERT_TRUE(file_system.RemoveDir(alias).has_value());
     EXPECT_TRUE(std::filesystem::exists(target));
 }
 
@@ -1948,7 +1948,7 @@ TEST(WindowsFileSystemTest, DirectoryAdmissionResolvesExistingAndSingleMissingAl
     EXPECT_EQ(operations->volume_calls, 0U);
     EXPECT_EQ(operations->close_calls, 0U);
     EXPECT_FALSE(std::filesystem::exists(absent_parent));
-    ASSERT_TRUE(file_system.RemoveDirectory(alias).has_value());
+    ASSERT_TRUE(file_system.RemoveDir(alias).has_value());
 }
 
 TEST(WindowsFileSystemTest, DirectoryAdmissionRetainsFirstFailureAndReleasesItsHandleOnce) {

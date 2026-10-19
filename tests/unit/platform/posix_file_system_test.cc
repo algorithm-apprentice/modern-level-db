@@ -174,9 +174,9 @@ TEST(PosixFileSystemTest, RejectsEmptyAndEmbeddedNullPaths) {
     expect_invalid(file_system.FileExists(embedded_null));
     expect_invalid(file_system.ListDirectory(embedded_null));
     expect_invalid(file_system.FileSize(embedded_null));
-    expect_invalid(file_system.CreateDirectory(embedded_null));
+    expect_invalid(file_system.CreateDir(embedded_null));
     expect_invalid(file_system.RemoveFile(embedded_null));
-    expect_invalid(file_system.RemoveDirectory(embedded_null));
+    expect_invalid(file_system.RemoveDir(embedded_null));
     expect_invalid(file_system.RenameFile(embedded_null, "destination"));
     expect_invalid(file_system.RenameFile("source", embedded_null));
     expect_invalid(file_system.SyncDirectory(embedded_null));
@@ -672,8 +672,8 @@ TEST(PosixFileSystemTest, SupportsNamespaceOperationsAndExplicitDirectorySync) {
     TemporaryDirectory root;
     PosixFileSystem file_system;
     const auto directory = root.path() / "db";
-    ASSERT_TRUE(file_system.CreateDirectory(directory));
-    ASSERT_TRUE(file_system.CreateDirectory(directory));
+    ASSERT_TRUE(file_system.CreateDir(directory));
+    ASSERT_TRUE(file_system.CreateDir(directory));
 
     const auto source = directory / "source";
     const auto destination = directory / "destination";
@@ -700,11 +700,11 @@ TEST(PosixFileSystemTest, SupportsNamespaceOperationsAndExplicitDirectorySync) {
     EXPECT_EQ(AsStringView(ReadFixture(destination)), "source-data");
     ASSERT_TRUE(file_system.SyncDirectory(directory));
 
-    const Status non_empty = file_system.RemoveDirectory(directory);
+    const Status non_empty = file_system.RemoveDir(directory);
     EXPECT_FALSE(non_empty.has_value());
     ASSERT_TRUE(file_system.RemoveFile(destination));
     ASSERT_TRUE(file_system.SyncDirectory(directory));
-    ASSERT_TRUE(file_system.RemoveDirectory(directory));
+    ASSERT_TRUE(file_system.RemoveDir(directory));
 }
 
 TEST(PosixFileSystemTest, RejectsCreateDirectoryOverExistingFile) {
@@ -713,7 +713,7 @@ TEST(PosixFileSystemTest, RejectsCreateDirectoryOverExistingFile) {
     const auto path = directory.path() / "file";
     WriteFixture(path, {});
 
-    const Status status = file_system.CreateDirectory(path);
+    const Status status = file_system.CreateDir(path);
 
     ASSERT_FALSE(status.has_value());
     EXPECT_EQ(status.error().code(), ErrorCode::InvalidArgument);
@@ -722,7 +722,7 @@ TEST(PosixFileSystemTest, RejectsCreateDirectoryOverExistingFile) {
     EXPECT_TRUE(
         std::string_view(status.error().location().file_name()).ends_with("posix_file_system.cc"));
     EXPECT_NE(std::string_view(status.error().location().function_name())
-                  .find("PosixFileSystem::CreateDirectory"),
+                  .find("PosixFileSystem::CreateDir"),
               std::string_view::npos);
 }
 
@@ -732,7 +732,7 @@ TEST(PosixFileSystemTest, ReportsExistingDirectoryInspectionFailure) {
     const auto path = directory.path() / "dangling";
     ASSERT_EQ(::symlink((directory.path() / "missing").c_str(), path.c_str()), 0);
 
-    const Status status = file_system.CreateDirectory(path);
+    const Status status = file_system.CreateDir(path);
 
     ASSERT_FALSE(status.has_value());
     EXPECT_EQ(status.error().code(), ErrorCode::NotFound);
@@ -809,7 +809,7 @@ TEST(PosixFileSystemTest, ReportsDeterministicNamespaceFailures) {
 
     expect_not_found(file_system.OpenWritable(missing));
     expect_not_found(file_system.OpenAppendable(missing));
-    expect_not_found(file_system.CreateDirectory(missing));
+    expect_not_found(file_system.CreateDir(missing));
     expect_not_found(file_system.RemoveFile(missing));
     expect_not_found(file_system.RenameFile(missing, directory.path() / "destination"));
     expect_not_found(file_system.SyncDirectory(missing_parent));
@@ -926,7 +926,7 @@ TEST(PosixFileSystemTest, TreatsSymlinkedDatabasePathsAsOneProcessLock) {
     PosixFileSystem second_file_system;
     const auto real_directory = root.path() / "real-db";
     const auto alias_directory = root.path() / "alias-db";
-    ASSERT_TRUE(first_file_system.CreateDirectory(real_directory));
+    ASSERT_TRUE(first_file_system.CreateDir(real_directory));
     ASSERT_EQ(::symlink(real_directory.c_str(), alias_directory.c_str()), 0);
 
     auto first = first_file_system.LockFile(real_directory / "LOCK");

@@ -71,7 +71,7 @@ public:
 
 TEST(CrashFileSystemTest, SyncingNamesDoesNotSyncBytesAndFlushDoesNotPersist) {
     CrashFileSystem fs;
-    Check(fs.CreateDirectory("db"));
+    Check(fs.CreateDir("db"));
     Check(fs.SyncDirectory("."));
     auto file = Take(fs.OpenWritable("db/data"));
     Check(file->Append(AsBytes("first")));
@@ -86,7 +86,7 @@ TEST(CrashFileSystemTest, SyncingNamesDoesNotSyncBytesAndFlushDoesNotPersist) {
 
 TEST(CrashFileSystemTest, UnsyncedReplacementAndRemovalPreserveDurableNames) {
     CrashFileSystem fs;
-    Check(fs.CreateDirectory("db"));
+    Check(fs.CreateDir("db"));
     Check(fs.SyncDirectory("."));
     auto original = Take(fs.OpenWritable("db/CURRENT"));
     Check(original->Append(AsBytes("old")));
@@ -110,7 +110,7 @@ TEST(CrashFileSystemTest, UnsyncedReplacementAndRemovalPreserveDurableNames) {
 
 TEST(CrashFileSystemTest, PowerLossFreezesLaterSyncAndCleanup) {
     CrashFileSystem fs;
-    Check(fs.CreateDirectory("db"));
+    Check(fs.CreateDir("db"));
     Check(fs.SyncDirectory("."));
     auto file = Take(fs.OpenWritable("db/data"));
     Check(file->Append(AsBytes("unsynced")));

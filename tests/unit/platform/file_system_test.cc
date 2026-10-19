@@ -67,13 +67,13 @@ static_assert(
     std::same_as<decltype(std::declval<const FileSystem&>().FileSize(std::declval<const Path&>())),
                  Result<std::uint64_t>>);
 static_assert(
-    std::same_as<decltype(std::declval<FileSystem&>().CreateDirectory(std::declval<const Path&>())),
+    std::same_as<decltype(std::declval<FileSystem&>().CreateDir(std::declval<const Path&>())),
                  Status>);
 static_assert(
     std::same_as<decltype(std::declval<FileSystem&>().RemoveFile(std::declval<const Path&>())),
                  Status>);
 static_assert(
-    std::same_as<decltype(std::declval<FileSystem&>().RemoveDirectory(std::declval<const Path&>())),
+    std::same_as<decltype(std::declval<FileSystem&>().RemoveDir(std::declval<const Path&>())),
                  Status>);
 static_assert(std::same_as<decltype(std::declval<FileSystem&>().RenameFile(
                                std::declval<const Path&>(), std::declval<const Path&>())),

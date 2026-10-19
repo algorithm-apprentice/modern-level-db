@@ -10,10 +10,6 @@
 #include <windows.h>
 #include <winioctl.h>
 
-// FileSystem uses these names; native calls always use explicit W spellings.
-#undef CreateDirectory
-#undef RemoveDirectory
-
 #include <algorithm>
 #include <cstddef>
 #include <limits>

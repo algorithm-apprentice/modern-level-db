@@ -110,12 +110,12 @@ Result<std::unique_ptr<WritableFile>> CrashFileSystem::OpenWritable(
     return std::make_unique<File>(*this, path, std::move(state), std::move(*file));
 }
 
-Status CrashFileSystem::CreateDirectory(const std::filesystem::path& path) {
+Status CrashFileSystem::CreateDir(const std::filesystem::path& path) {
     const Status ready = BeforeMutation();
     if (!ready.has_value()) {
         return ready;
     }
-    const Status created = MemoryFileSystem::CreateDirectory(path);
+    const Status created = MemoryFileSystem::CreateDir(path);
     if (created.has_value()) {
         live_directories_.insert(path);
     }

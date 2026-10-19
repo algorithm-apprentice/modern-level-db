@@ -993,7 +993,7 @@ Result<std::uint64_t> WindowsFileSystem::FileSize(const std::filesystem::path& p
     return static_cast<std::uint64_t>(size.QuadPart);
 }
 
-Status WindowsFileSystem::CreateDirectory(const std::filesystem::path& path) {
+Status WindowsFileSystem::CreateDir(const std::filesystem::path& path) {
     auto native = NativePath(path);
     if (!native.has_value()) {
         return std::unexpected(native.error());
@@ -1019,7 +1019,7 @@ Status WindowsFileSystem::RemoveFile(const std::filesystem::path& path) {
     return {};
 }
 
-Status WindowsFileSystem::RemoveDirectory(const std::filesystem::path& path) {
+Status WindowsFileSystem::RemoveDir(const std::filesystem::path& path) {
     auto native = NativePath(path);
     if (!native.has_value()) {
         return std::unexpected(native.error());

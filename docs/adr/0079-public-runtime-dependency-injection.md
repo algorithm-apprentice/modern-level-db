@@ -78,6 +78,12 @@ Expose the existing std-only filesystem and file-handle contracts in
 `include/modern_leveldb/file_system.h`: sequential files, random-access files,
 writable files, file locks, and `FileSystem`.
 
+Name the directory operations `CreateDir` and `RemoveDir`. The former private
+names collide with the Windows SDK's `CreateDirectory` and `RemoveDirectory`
+macros. Public consumers must compile with either header order without
+undefining the SDK's macros. Update internal adapters and callers to the same
+virtual names; explicit native W-function calls are unchanged.
+
 Keep `CreateDefaultFileSystem` publicly available with its existing explicit
 path/admission arguments. This lets users delegate to an admitted native
 backend rather than reimplement every filesystem operation. It does not grant
@@ -170,6 +176,7 @@ background-policy, cache-algorithm, or persistent-format changes.
 Public-consumer tests must build using supported include directories, without
 private engine/platform/cache headers. Cover:
 
+- both include orders with the Windows SDK, preserving its directory macros;
 - independently empty/supplied option fields and legacy aggregate ordering;
 - a supplied filesystem's explicit error reaching `Database::Open`;
 - real injected executor scheduling, clock use, and block-cache charge;

@@ -259,7 +259,7 @@ Result<std::uint64_t> MemoryFileSystem::FileSize(const std::filesystem::path& pa
     return found->second.size();
 }
 
-Status MemoryFileSystem::CreateDirectory(const std::filesystem::path& path) {
+Status MemoryFileSystem::CreateDir(const std::filesystem::path& path) {
     const Status recorded = Record("create_directory " + path.string());
     if (recorded.has_value()) {
         const std::lock_guard lock(mutex_);
@@ -280,9 +280,9 @@ Status MemoryFileSystem::RemoveFile(const std::filesystem::path& path) {
     return {};
 }
 
-Status MemoryFileSystem::RemoveDirectory(const std::filesystem::path& path) {
+Status MemoryFileSystem::RemoveDir(const std::filesystem::path& path) {
     static_cast<void>(Record("remove_directory " + path.string()));
-    return Unsupported("RemoveDirectory");
+    return Unsupported("RemoveDir");
 }
 
 Status MemoryFileSystem::RenameFile(const std::filesystem::path& source,
