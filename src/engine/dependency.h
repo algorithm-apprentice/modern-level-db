@@ -11,7 +11,7 @@ struct DependencyDeleter {
 
     void operator()(T* dependency) const noexcept {
         if (owns) {
-            delete dependency;
+            std::default_delete<T>{}(dependency);
         }
     }
 };
