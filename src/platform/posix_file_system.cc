@@ -348,8 +348,7 @@ public:
         if (budget_ == nullptr) {
             return;
         }
-        if (mapping_ !=
-            MAP_FAILED) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 mmap failure needs OS pressure
+        if (mapping_ != MAP_FAILED) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 OS-pressure mmap failure
             (void)::munmap(mapping_, length_);
         }
         budget_->Release();
