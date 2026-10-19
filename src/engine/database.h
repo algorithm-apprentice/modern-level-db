@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "engine/db_iterator.h"
+#include "engine/dependency.h"
 #include "engine/seek_statistics.h"
 #include "engine/snapshot_registry.h"
 #include "engine/table_cache.h"
@@ -130,7 +131,7 @@ public:
         DatabaseEngineOptions options, std::filesystem::path directory);
 
     DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options,
-                   std::filesystem::path directory, std::unique_ptr<FileSystem> owned_file_system);
+                   std::filesystem::path directory, Dependency<FileSystem> file_system);
     DatabaseEngine(const DatabaseEngine&) = delete;
     DatabaseEngine& operator=(const DatabaseEngine&) = delete;
     DatabaseEngine(DatabaseEngine&&) = delete;
@@ -231,16 +232,14 @@ private:
     void RecordStickyError(Error error);
     [[nodiscard]] std::unexpected<Error> StickyError() const;
 
-    // Owned resources, destroyed after everything that uses them.
-    std::unique_ptr<FileSystem> owned_file_system_;
-    std::unique_ptr<BlockCache> owned_block_cache_;
-    std::unique_ptr<Clock> owned_clock_;
+    // Dependencies outlive their users; injected objects remain borrowed.
+    Dependency<FileSystem> file_system_;
+    Dependency<BlockCache> block_cache_;
+    Dependency<Clock> clock_;
     std::unique_ptr<FileLock> lock_;
 
     const EnginePolicy policy_;
     std::filesystem::path directory_;
-    FileSystem* file_system_;
-    Clock* clock_;
     InternalKeyComparator comparator_;
     TableCache table_cache_;
 
@@ -260,8 +259,7 @@ private:
     std::atomic<bool> closing_ = false;
 
     // Destroyed first, so that it stops before anything that its tasks use.
-    std::unique_ptr<BackgroundExecutor> owned_executor_;
-    BackgroundExecutor* executor_;
+    Dependency<BackgroundExecutor> executor_;
 };
 
 }  // namespace modern_leveldb

@@ -30,7 +30,7 @@ public:
     [[nodiscard]] CrashImage DurableImage() const;
 
     Result<std::unique_ptr<WritableFile>> OpenWritable(const std::filesystem::path& path) override;
-    Status CreateDirectory(const std::filesystem::path& path) override;
+    Status CreateDir(const std::filesystem::path& path) override;
     Status RemoveFile(const std::filesystem::path& path) override;
     Status RenameFile(const std::filesystem::path& source,
                       const std::filesystem::path& destination) override;

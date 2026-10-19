@@ -47,6 +47,7 @@ modern_leveldb_crc32c_dependency(MODERN_LEVELDB_CRC32C_TARGET)
 
 set(
   MODERN_LEVELDB_LIBRARY_SOURCES
+    src/api/block_cache.cc
     src/api/database.cc
     src/api/iterator.cc
     src/api/snapshot.cc

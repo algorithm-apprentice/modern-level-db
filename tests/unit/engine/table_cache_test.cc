@@ -114,9 +114,9 @@ public:
         return Unused();
     }
     Result<std::uint64_t> FileSize(const std::filesystem::path&) const override { return Unused(); }
-    Status CreateDirectory(const std::filesystem::path&) override { return Unused(); }
+    Status CreateDir(const std::filesystem::path&) override { return Unused(); }
     Status RemoveFile(const std::filesystem::path&) override { return Unused(); }
-    Status RemoveDirectory(const std::filesystem::path&) override { return Unused(); }
+    Status RemoveDir(const std::filesystem::path&) override { return Unused(); }
     Status RenameFile(const std::filesystem::path&, const std::filesystem::path&) override {
         return Unused();
     }

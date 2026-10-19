@@ -2,6 +2,11 @@
 
 - Status: Accepted
 
+On 2026-10-19, [ADR-0079](0079-public-runtime-dependency-injection.md) exposes
+filesystem, block-cache, clock, and executor injection with retained owner
+lifetimes. It amends the internal-only injection boundary below; the original
+facade rationale is retained as history.
+
 ## Status
 
 Accepted

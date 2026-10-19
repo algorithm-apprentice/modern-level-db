@@ -273,7 +273,9 @@ flowchart TD
 
 ### Required dependency rules
 
-1. The public API is a facade and is never included by lower layers.
+1. The database facade is never included by lower layers. Public base and
+   service headers retain their lower-layer responsibility despite living
+   under `include/modern_leveldb`.
 2. Format modules are pure encoders and decoders and perform no filesystem I/O.
 3. Platform modules know nothing about LSM concepts.
 4. Cache and platform primitives remain below formats/tables/engine policy.
@@ -332,12 +334,23 @@ Two internal state owners make cross-field invariants explicit:
 `EnginePolicy` then retains the memtable size threshold, target-file size,
 WAL-creation policy, and table-building settings. The public
 `Options::write_buffer_size` maps to the internal `memtable_size_threshold`.
-Resource owner/borrower fields remain explicit. For fallback resources owned by the
-database, reverse declaration order stops the owned executor first and destroys
+Each service is stored once as `Dependency<T>`: a pointer with a boolean
+conditional deleter. Fully constructed handles provide exception cleanup
+without a separate default-owner pointer or ownership-publication phase.
+Reverse declaration order stops the owned executor first and destroys
 users before their owned filesystem/cache/clock. Injected services remain
 externally owned, are not stopped by DatabaseEngine, and must outlive it; the
 engine only waits for its accepted background task to finish. Operational state
-is released before the directory lock.
+is released before the directory lock. See
+[ADR-0078](adr/0078-uniform-engine-dependency-ownership.md).
+
+Public `Options` can supply shared filesystem, cache, clock, and executor
+owners. The facade passes their raw pointers to the engine and retains the
+complete options in `DatabaseState`, before the engine member. Iterators and
+snapshots retain that state, so the engine closes before supplied owners are
+released. Platform contracts are public, native implementations remain private,
+and the public block-cache factory hides decoded-block types. See
+[ADR-0079](adr/0079-public-runtime-dependency-injection.md).
 
 Small shared rules do not create additional state owners:
 `api/database.cc` prepares read options independently of snapshot retention,
@@ -352,8 +365,12 @@ rejected broader extractions.
 ```text
 include/modern_leveldb/
   base/
+  background_executor.h
+  block_cache.h
+  clock.h
   database_state_snapshot.h
   db.h
+  file_system.h
   iterator.h
   options.h
   snapshot.h

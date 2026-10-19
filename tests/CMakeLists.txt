@@ -37,6 +37,7 @@ add_executable(
   unit/engine/database_lifecycle_test.cc
   unit/engine/database_read_test.cc
   unit/engine/database_write_test.cc
+  unit/engine/dependency_test.cc
   unit/engine/db_iterator_test.cc
   unit/engine/flush_test.cc
   unit/engine/iterators_test.cc
@@ -189,10 +190,16 @@ gtest_discover_tests(
 
 add_executable(
   modern_leveldb_public_api_tests
+  unit/api/dependency_api_test.cc
   unit/api/public_api_test.cc
 )
 if(MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
-  target_sources(modern_leveldb_public_api_tests PRIVATE unit/api/public_api_windows_test.cc)
+  target_sources(
+    modern_leveldb_public_api_tests PRIVATE
+      unit/api/file_system_windows_first_test.cc
+      unit/api/file_system_windows_last_test.cc
+      unit/api/public_api_windows_test.cc
+  )
 endif()
 if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux" OR MODERN_LEVELDB_HAVE_WINDOWS_FILE_SYSTEM)
   target_sources(

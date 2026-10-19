@@ -9,6 +9,7 @@
 #include "engine/db_iterator.h"
 #include "format/write_batch.h"
 #include "modern_leveldb/iterator.h"
+#include "modern_leveldb/options.h"
 #include "modern_leveldb/write_batch.h"
 
 namespace modern_leveldb {
@@ -30,15 +31,14 @@ namespace detail {
 
 class DatabaseState final {
 public:
-    DatabaseState(std::shared_ptr<const Comparator> comparator,
-                  std::unique_ptr<DatabaseEngine> engine) noexcept
-        : comparator_(std::move(comparator)), engine_(std::move(engine)) {}
+    DatabaseState(Options options, std::unique_ptr<DatabaseEngine> engine) noexcept
+        : options_(std::move(options)), engine_(std::move(engine)) {}
 
     [[nodiscard]] DatabaseEngine& engine() const noexcept { return *engine_; }
 
 private:
-    // Reverse destruction closes the engine before releasing its comparator.
-    std::shared_ptr<const Comparator> comparator_;
+    // Reverse destruction closes the engine before releasing supplied services.
+    Options options_;
     std::unique_ptr<DatabaseEngine> engine_;
 };
 

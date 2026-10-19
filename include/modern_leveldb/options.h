@@ -10,6 +10,10 @@
 
 namespace modern_leveldb {
 
+class BackgroundExecutor;
+class BlockCache;
+class Clock;
+class FileSystem;
 class Snapshot;
 
 enum class Compression {
@@ -49,6 +53,14 @@ struct Options {
     // durably synchronized. File Sync still flushes bytes, but OS crash/power
     // loss may lose names and acknowledged writes. POSIX behavior is unchanged.
     bool allow_weak_namespace_durability = false;
+    // Empty selects the default. Supplied services are retained by the database
+    // and every iterator/snapshot that keeps its engine alive. See each service
+    // header for concurrency and scheduling obligations. An injected filesystem
+    // controls its own admission, mapping, and durability policy.
+    std::shared_ptr<FileSystem> file_system{};
+    std::shared_ptr<BlockCache> block_cache{};
+    std::shared_ptr<Clock> clock{};
+    std::shared_ptr<BackgroundExecutor> executor{};
 };
 
 struct ReadOptions {

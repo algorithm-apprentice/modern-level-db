@@ -33,7 +33,7 @@ Modern is not missing the basic LSM pipeline:
 | Approximate disk usage by key range | `GetApproximateSizes` | Not exposed |
 | Manual range compaction | `CompactRange` | Not implemented as a public/manual operation |
 | Destroy and lossy repair helpers | `DestroyDB`, `RepairDB` | Not exposed |
-| Public environment/cache/filter extension objects | Yes | Narrower facade; engine injection remains internal |
+| Public environment/cache/filter extension objects | Yes | Separate filesystem/clock/executor interfaces, a shared opaque block cache, and built-in Bloom configuration |
 
 Read-path and write-path baseline parity are recorded as complete in
 [ADR-0053](../adr/0053-leveldb-read-path-parity.md) and
@@ -53,9 +53,11 @@ WAL-creation namespace durability and explicit sticky uncertain-write
 handling. Production table reads verify stored block checksums rather than
 exposing LevelDB's per-read `verify_checksums` switch.
 
-Filesystem, cache, clock, and executor injection exist internally for
-concrete engine/test callers. Exposing all of those as a general plugin
-framework would add public contracts, not implement a missing LSM concept.
+Filesystem, cache, clock, and executor injection are available through public
+options, with supplied owners retained for the complete engine/child lifetime.
+This is not a combined Env or arbitrary cache/filter plugin framework; see
+[API reference](../reference/api-and-options.md#supplying-runtime-dependencies)
+and [ADR-0079](../adr/0079-public-runtime-dependency-injection.md).
 
 Snappy, Zstd, snapshots, Bloom filters, and compaction should not be proposed
 as new features: they are already implemented.
@@ -70,7 +72,6 @@ harder to understand.
 |---|---|---|---|
 | Next | Public deterministic flush | WAL/memtable/table transitions and installation barriers | Reuse the internal flush mechanism with explicit blocking/error semantics |
 | Next, separate task | Manual range compaction | Input selection, tombstone retention, and physical reclamation | Define scheduling/range/completion contracts before implementing |
-| When experiments need it | Public block-cache capacity | Eviction, working sets, pins, and memory/read tradeoffs | A per-database size option, not arbitrary shared cache plugins |
 | Lower priority | Approximate range disk sizes | Logical versus compressed physical space | Clearly approximate SSTable accounting; not exact live-value size |
 
 ### Typed state inspection is now implemented

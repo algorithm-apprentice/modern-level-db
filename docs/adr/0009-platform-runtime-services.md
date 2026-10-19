@@ -3,6 +3,10 @@
 - Status: Accepted
 - Date: 2026-09-21
 
+[ADR-0079](0079-public-runtime-dependency-injection.md) later exposes the clock
+and executor contracts through the public facade with retained supplied owners.
+The concrete system clock and serial executor remain private implementations.
+
 ## Context
 
 The original LevelDB `Env` combines files, clocks, sleeping, detached threads,

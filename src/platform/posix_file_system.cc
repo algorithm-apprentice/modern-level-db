@@ -348,7 +348,7 @@ public:
         if (budget_ == nullptr) {
             return;
         }
-        if (mapping_ != MAP_FAILED) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 mmap failure needs OS pressure
+        if (mapping_ != MAP_FAILED) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 OS-pressure mmap failure
             (void)::munmap(mapping_, length_);
         }
         budget_->Release();
@@ -784,7 +784,7 @@ Result<std::uint64_t> PosixFileSystem::FileSize(const std::filesystem::path& pat
     return static_cast<std::uint64_t>(file_status.st_size);
 }
 
-Status PosixFileSystem::CreateDirectory(const std::filesystem::path& path) {
+Status PosixFileSystem::CreateDir(const std::filesystem::path& path) {
     if (const auto error = ValidatePath(path); error.has_value()) {
         return std::unexpected(*error);
     }
@@ -808,7 +808,7 @@ Status PosixFileSystem::RemoveFile(const std::filesystem::path& path) {
     return {};
 }
 
-Status PosixFileSystem::RemoveDirectory(const std::filesystem::path& path) {
+Status PosixFileSystem::RemoveDir(const std::filesystem::path& path) {
     if (const auto error = ValidatePath(path); error.has_value()) {
         return std::unexpected(*error);
     }

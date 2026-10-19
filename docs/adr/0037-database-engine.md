@@ -3,6 +3,10 @@
 - Status: Accepted
 - Date: 2026-09-24
 
+[ADR-0078](0078-uniform-engine-dependency-ownership.md) later replaces separate
+default-owner/effective-pointer members with uniform conditional ownership.
+Injected objects remain borrowed and their lifetime positions are unchanged.
+
 [ADR-0057](0057-leveldb-version-output-parity.md) replaces synchronous Get's
 temporary shared source captures with typed mutex-protected read pins and
 writes into caller-owned reusable output.

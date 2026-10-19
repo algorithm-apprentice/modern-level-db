@@ -85,6 +85,10 @@ DatabaseEngineOptions EngineOptions(const Options& options, BlockCompression com
     engine.max_file_size = options.max_file_size;
     engine.max_open_files = options.max_open_files;
     engine.allow_mmap_reads = options.allow_mmap_reads;
+    engine.file_system = options.file_system.get();
+    engine.block_cache = options.block_cache.get();
+    engine.clock = options.clock.get();
+    engine.executor = options.executor.get();
     engine.table_options.block_size = options.block_size;
     engine.table_options.restart_interval = options.block_restart_interval;
     engine.table_options.compression = compression;
@@ -123,8 +127,7 @@ Result<Database> Database::Open(Options options, std::filesystem::path directory
     if (!engine.has_value()) {
         return std::unexpected(std::move(engine).error());
     }
-    auto state =
-        std::make_shared<detail::DatabaseState>(std::move(options.comparator), std::move(*engine));
+    auto state = std::make_shared<detail::DatabaseState>(std::move(options), std::move(*engine));
     return Database(std::move(state));
 }
 

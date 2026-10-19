@@ -8,19 +8,17 @@
 #include <utility>
 #include <vector>
 
-#include "cache/sharded_lru_cache.h"
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
 #include "platform/file_system.h"
 #include "table/block.h"
+#include "table/block_cache.h"
 #include "table/block_format.h"
 #include "table/bloom_filter.h"
 #include "table/filter_block.h"
 
 namespace modern_leveldb {
-
-using BlockCache = ShardedLruCache<Block>;
 
 struct TableOptions {
     // Used only if the table was built with the same policy. A policy requires a

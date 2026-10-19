@@ -34,8 +34,8 @@ These questions explain more of the design than "smart pointers are modern."
 |---|---|---|
 | Value | Encoded metadata, options, stack writers | Define valid copy/move behavior |
 | `unique_ptr` | Files, engines, iterator implementations | Exactly one owner controls destruction |
-| `shared_ptr` | Engine state retained by public children, source ownership | Shared lifetime must have a concrete reason |
-| Borrowed pointer/reference | Injected filesystem/comparator, active queue batch | Owner must outlive every borrower |
+| `shared_ptr` | Engine state retained by public children, supplied service owners, source ownership | Shared lifetime must have a concrete reason |
+| Borrowed pointer/reference | Engine's injected services/comparator, active queue batch | Owner must outlive every borrower |
 | `span<const byte>` | Input bytes and iterator values | Storage must remain alive and unchanged |
 | RAII pin | Cache entries and read sources | Releasing the handle ends a documented retention |
 
@@ -61,7 +61,10 @@ compatibility.
 
 ### Destruction order is part of the design
 
-C++ destroys members in reverse declaration order.
+C++ initializes members in declaration order before executing the constructor
+body. The initializer list does not change that order. Destruction first
+executes the destructor body and destroys its locals, then destroys members
+in reverse declaration order.
 `Iterator::Impl` declares:
 
 ```text
@@ -78,10 +81,30 @@ private iterator -> snapshot registration -> engine state
 
 The iterator releases source/cache references while the engine still exists.
 The snapshot releases its sequence before its engine lifetime ends.
-Likewise, `DatabaseState` destroys the engine before its retained comparator.
+Likewise, `DatabaseState` destroys the engine before its retained `Options`.
+Those options own any supplied comparator, filesystem, block cache, clock,
+and executor. The engine borrows their objects, while the facade and its
+children retain the owners.
 
 This is why a child can safely outlive the public Database handle.
 It also means an unreleased child can keep the directory lock held.
+
+### One handle can own or borrow
+
+An engine dependency uses `Dependency<T>`, a standard `unique_ptr` with a
+deleter containing one ownership flag. A default resource is deleted; an
+injected resource is left to its retaining owner. Moving the handle moves
+both its pointer and its policy, without duplicating ownership.
+
+Every constructed owning member participates in exception unwinding even if
+a later member fails and the engine's complete-object destructor never runs.
+The same handle type works at different lifetime positions: filesystem,
+cache, and clock precede their users, while executor is declared last and
+is destroyed first. The destructor's local database lock has already been
+released when executor deletion joins its worker.
+
+This separates cleanup mechanism from cleanup order; it does not make a
+borrowed object owned or extend its lifetime.
 
 ## Explicit error types
 
@@ -201,8 +224,9 @@ The database destructor marks closing, prevents new background work, closes
 its WAL, and waits for scheduled engine work to finish.
 Accepted engine tasks must run while the engine is open; the owner cannot
 destroy an injected executor too early.
-Executor teardown stops and joins its worker before callback-visible state
-is destroyed.
+The engine-owned executor stops and joins its worker before callback-visible
+state is destroyed. A supplied executor is not stopped by the engine; it must
+continue making progress until the engine's accepted work has finished.
 
 Public handles must not be moved or destroyed concurrently with operations
 on those same objects. "Database methods support concurrent calls" does not
@@ -236,6 +260,7 @@ useful advanced exercise in making those arguments explicit.
 |---|---|---|---|
 | [`result.h`](../../include/modern_leveldb/base/result.h) | `Error`, `Result`, `Status` | Which failures are ordinary typed results, and what may still throw? | [`result_test.cc`](../../tests/unit/base/result_test.cc) |
 | [`api_internal.h`](../../src/api/api_internal.h) | public handle implementations | Which owner keeps the engine and child state alive? | [`public_api_test.cc`](../../tests/unit/api/public_api_test.cc) |
+| [`dependency.h`](../../src/engine/dependency.h) | conditional dependency ownership | How do one pointer and one flag preserve ownership through moves and partial construction? | [`dependency_test.cc`](../../tests/unit/engine/dependency_test.cc) |
 | [`skiplist.h`](../../src/memory/skiplist.h) | node initialization and publication | Which writes happen before a reader's acquire load can observe the node? | [`skiplist_test.cc`](../../tests/unit/memory/skiplist_test.cc) |
 | [`write_path.h`](../../src/engine/write_path.h) | stack writer and leader/sequence guards | How does exception unwinding restore queue and batch state? | [`write_path_test.cc`](../../tests/unit/engine/write_path_test.cc) |
 | [`database_read.cc`](../../src/engine/database_read.cc) | lock release and typed read pins | What keeps read sources alive while slow I/O runs without the mutex? | [`database_read_test.cc`](../../tests/unit/engine/database_read_test.cc) |

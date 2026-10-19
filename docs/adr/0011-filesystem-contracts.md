@@ -6,6 +6,10 @@
   its only planned caller.
 - Date: 2026-09-22
 
+[ADR-0079](0079-public-runtime-dependency-injection.md) later exposes the
+filesystem contracts and native-backend factory through public headers.
+Native implementation and test-operation hooks remain private.
+
 [ADR-0050](0050-posix-mmap-table-reads.md) added an optional exact borrowed
 random-access view and the first bounded POSIX mmap implementation.
 [ADR-0056](0056-leveldb-table-mmap-parity.md) makes mmap the 64-bit POSIX

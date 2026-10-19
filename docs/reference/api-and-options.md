@@ -53,6 +53,10 @@ when supplied through `ReadOptions`.
 | `zstd_compression_level` | 1 | Zstd level in the supported -5 through 22 range |
 | `sync_wal_creation` | `true` | Sync the initial empty WAL and request the backend namespace barrier before it accepts writes; later rotation requests the namespace barrier |
 | `allow_weak_namespace_durability` | `false` | Required for the owned native Windows backend |
+| `file_system` | null | Retain and use a supplied filesystem instead of creating a native backend |
+| `block_cache` | null | Retain a supplied decoded-block cache instead of creating an 8 MiB cache |
+| `clock` | null | Retain a supplied monotonic clock instead of using the system clock |
+| `executor` | null | Retain a supplied executor instead of creating a serial worker |
 
 The engine clips `max_open_files` to 74 through 50,000,
 `write_buffer_size` to 64 KiB through 1 GiB, `max_file_size` to 1 MiB through
@@ -64,6 +68,51 @@ types and defaults.
 `write_buffer_size` is measured using memtable arena reservations, including
 per-block pointer accounting. It is not exact payload size or a hard allocation
 cap; one write group can exceed the threshold.
+
+## Supplying runtime dependencies
+
+The four dependency fields are independent `shared_ptr` values. Opening copies
+or moves those owners into the database's retained state. Iterators and
+snapshots retain that state too, so supplied services can safely outlive the
+original `Database` handle without requiring the caller to keep another owner.
+The engine closes before those retained owners are released. Sharing protects
+lifetime, not the thread safety of a custom implementation.
+
+The public contracts are
+[`file_system.h`](../../include/modern_leveldb/file_system.h),
+[`clock.h`](../../include/modern_leveldb/clock.h), and
+[`background_executor.h`](../../include/modern_leveldb/background_executor.h).
+Implementations can derive from these interfaces. `CreateDefaultFileSystem`
+returns an admitted native backend that a wrapper can delegate to; its returned
+exclusive owner can also be moved into `Options::file_system`.
+
+An injected filesystem controls its own mapping, admission, and durability
+policy. `allow_mmap_reads` and `allow_weak_namespace_durability` configure the
+default backend, not a replacement backend. All returned file handles must
+be destroyed before their backend.
+
+An executor must accept work for deferred, exactly-once eventual execution,
+including during database shutdown. It must never run work inline in
+`Schedule`; a failed or throwing schedule must not retain or execute it.
+Do not destroy a database while blocking the only event loop that can run its
+accepted work. The engine waits for its tasks but does not stop a supplied
+executor that other owners may still use.
+
+Create an opaque block cache through
+[`block_cache.h`](../../include/modern_leveldb/block_cache.h):
+
+```cpp
+modern_leveldb::Options options;
+options.block_cache = modern_leveldb::CreateBlockCache(16 * 1024 * 1024);
+auto second_database_options = options;
+```
+
+Both option sets share the same cache budget; table-specific namespace IDs
+keep entries from different databases distinct. Capacity is an eviction
+target, not an exact memory cap, and pinned entries can postpone eviction.
+Zero capacity disables cache retention. `BlockCacheCharge` observes retained
+block charges, not total process or allocator memory. Private decoded blocks
+and custom eviction-policy plugins are not part of this public interface.
 
 ## Read and write options
 
@@ -93,5 +142,6 @@ otherwise a Bloom filter can report equivalent keys missing.
 Modern uses RAII snapshots and iterators instead of manual release/delete.
 It exposes typed `GetState()` rather than arbitrary string properties.
 The public facade does not currently expose manual range compaction,
-approximate range sizes, repair/destroy helpers, a custom Env, an injected
-block cache/logger/filter object, log reuse, or a checksum-disable switch.
+approximate range sizes, repair/destroy helpers, a combined Env, injected
+logger/filter objects, custom cache-policy implementations, log reuse, or a
+checksum-disable switch.
