@@ -22,9 +22,9 @@ DatabaseLevelState PublicLevelState(const DatabaseEngineLevelState& state) noexc
     };
 }
 
-DatabaseState PublicState(DatabaseEngineState state) {
+DatabaseStateSnapshot PublicState(DatabaseEngineState state) {
     static_assert(DatabaseLevelCount == NumLevels);
-    DatabaseState result;
+    DatabaseStateSnapshot result;
     for (std::size_t level = 0; level < DatabaseLevelCount; ++level) {
         result.levels[level] = PublicLevelState(state.levels[level]);
     }
@@ -235,7 +235,7 @@ Result<Snapshot> Database::GetSnapshot() {
     return Snapshot(std::move(registration));
 }
 
-Result<DatabaseState> Database::GetState() {
+Result<DatabaseStateSnapshot> Database::GetState() {
     detail::DatabaseState* const state = state_.get();
     if (state == nullptr) {
         return std::unexpected(MovedFromDatabase("GetState"));

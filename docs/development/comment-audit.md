@@ -114,7 +114,7 @@ file, and both workflows are included.
 - [Comparator contracts](../../include/modern_leveldb/base/comparator.h),
   lines 12-39, describe semantic identity, concurrency, separator bounds,
   and static lifetime rather than restating signatures.
-- [Database-state comments](../../include/modern_leveldb/database_state.h),
+- [Database-state comments](../../include/modern_leveldb/database_state_snapshot.h),
   lines 22-45, distinguish an owning observation from exact process-memory
   accounting and a complete error history.
 - [Options warnings](../../include/modern_leveldb/options.h), lines 30-50,

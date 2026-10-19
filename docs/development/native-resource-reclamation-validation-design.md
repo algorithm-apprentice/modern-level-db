@@ -135,7 +135,7 @@ File cleanup and process-resource cleanup use separate evidence:
 | Resource | Required evidence |
 |---|---|
 | SST/WAL/MANIFEST/temp names | live-versus-physical native ledger |
-| Pending output numbers | `DatabaseState::protected_output_count` |
+| Pending output numbers | `DatabaseStateSnapshot::protected_output_count` |
 | Background task | scheduled/queued state reaches zero |
 | Snapshot registrations | count reaches zero after release/destruction |
 | Table/cache pins | eviction plus owner-destruction tests |

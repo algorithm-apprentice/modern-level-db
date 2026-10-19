@@ -25,7 +25,7 @@ Public headers are the compile-time API contract:
 - [`iterator.h`](../../include/modern_leveldb/iterator.h)
 - [`snapshot.h`](../../include/modern_leveldb/snapshot.h)
 - [`write_batch.h`](../../include/modern_leveldb/write_batch.h)
-- [`database_state.h`](../../include/modern_leveldb/database_state.h)
+- [`database_state_snapshot.h`](../../include/modern_leveldb/database_state_snapshot.h)
 
 The [architecture guide](../architecture.md) explains implementation
 boundaries. The [learning path](../learning/README.md) teaches the engine.
