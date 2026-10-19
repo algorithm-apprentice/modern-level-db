@@ -33,7 +33,7 @@ public:
         options.executor = &executor;
         options.clock = &clock;
         options.create_if_missing = create;
-        options.write_buffer_size = 64 * 1024;
+        options.memtable_size_threshold = 64 * 1024;
         options.table_options.compression = compression;
         auto opened = DatabaseEngine::Open(options, "db");
         if (!opened.has_value()) {

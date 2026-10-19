@@ -33,7 +33,7 @@ public:
         options_.executor = &executor_;
         options_.clock = &clock_;
         options_.create_if_missing = true;
-        options_.write_buffer_size = 1;
+        options_.memtable_size_threshold = 1;
         options_.max_file_size = 1;
     }
 

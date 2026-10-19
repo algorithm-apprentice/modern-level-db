@@ -38,7 +38,8 @@ Status DatabaseEngine::MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool
             allow_delay = false;
             continue;
         }
-        if (!force && write_buffers_.mutable_table().memory_usage() <= policy_.write_buffer_size) {
+        if (!force &&
+            write_buffers_.mutable_table().memory_usage() <= policy_.memtable_size_threshold) {
             return {};
         }
         if (write_buffers_.has_immutable() || level0_files >= WriteStallLevel0FileCountThreshold) {

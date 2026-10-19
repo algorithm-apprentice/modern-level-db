@@ -81,7 +81,7 @@ DatabaseEngineOptions EngineOptions(const Options& options, BlockCompression com
     engine.error_if_exists = options.error_if_exists;
     engine.sync_wal_creation = options.sync_wal_creation;
     engine.allow_weak_namespace_durability = options.allow_weak_namespace_durability;
-    engine.write_buffer_size = options.write_buffer_size;
+    engine.memtable_size_threshold = options.write_buffer_size;
     engine.max_file_size = options.max_file_size;
     engine.max_open_files = options.max_open_files;
     engine.allow_mmap_reads = options.allow_mmap_reads;

@@ -1,37 +1,111 @@
+#include <type_traits>
+
 #include "database_test_support.h"
 
 namespace modern_leveldb {
 namespace database_test {
 
+static_assert(std::is_aggregate_v<DatabaseEngineOptions>);
+static_assert(std::is_same_v<decltype(&DatabaseEngineOptions::Sanitize),
+                             void (DatabaseEngineOptions::*)() noexcept>);
+
 TEST(DatabaseOptionsTest, ClipsOptionsToLevelDbsRanges) {
     DatabaseEngineOptions small;
     small.max_open_files = 1;
-    small.write_buffer_size = 1;
+    small.memtable_size_threshold = 1;
     small.max_file_size = 1;
     small.table_options.block_size = 1;
-    const DatabaseEngineOptions low = SanitizeOptions(small);
-    EXPECT_EQ(low.max_open_files, 74U);
-    EXPECT_EQ(low.write_buffer_size, std::size_t{64} << 10U);
-    EXPECT_EQ(low.max_file_size, std::uint64_t{1} << 20U);
-    EXPECT_EQ(low.table_options.block_size, std::size_t{1} << 10U);
+    small.Sanitize();
+    EXPECT_EQ(small.max_open_files, 74U);
+    EXPECT_EQ(small.memtable_size_threshold, std::size_t{64} << 10U);
+    EXPECT_EQ(small.max_file_size, std::uint64_t{1} << 20U);
+    EXPECT_EQ(small.table_options.block_size, std::size_t{1} << 10U);
 
     DatabaseEngineOptions large;
     large.max_open_files = 1000000;
-    large.write_buffer_size = std::size_t{1} << 40U;
+    large.memtable_size_threshold = std::size_t{1} << 40U;
     large.max_file_size = std::uint64_t{1} << 40U;
     large.table_options.block_size = std::size_t{1} << 30U;
-    const DatabaseEngineOptions high = SanitizeOptions(large);
-    EXPECT_EQ(high.max_open_files, 50000U);
-    EXPECT_EQ(high.write_buffer_size, std::size_t{1} << 30U);
-    EXPECT_EQ(high.max_file_size, std::uint64_t{1} << 30U);
-    EXPECT_EQ(high.table_options.block_size, std::size_t{4} << 20U);
+    large.Sanitize();
+    EXPECT_EQ(large.max_open_files, 50000U);
+    EXPECT_EQ(large.memtable_size_threshold, std::size_t{1} << 30U);
+    EXPECT_EQ(large.max_file_size, std::uint64_t{1} << 30U);
+    EXPECT_EQ(large.table_options.block_size, std::size_t{4} << 20U);
 
-    const DatabaseEngineOptions defaults = SanitizeOptions(DatabaseEngineOptions());
+    DatabaseEngineOptions defaults;
+    defaults.Sanitize();
     EXPECT_TRUE(defaults.sync_wal_creation);
     EXPECT_EQ(defaults.max_open_files, 1000U);
-    EXPECT_EQ(defaults.write_buffer_size, std::size_t{4} << 20U);
+    EXPECT_EQ(defaults.memtable_size_threshold, std::size_t{4} << 20U);
     EXPECT_EQ(defaults.max_file_size, std::uint64_t{2} << 20U);
     EXPECT_EQ(defaults.table_options.block_size, std::size_t{4} << 10U);
+}
+
+TEST(DatabaseOptionsTest, PreservesUnrelatedOptionsAndIsIdempotent) {
+    BlockingComparator comparator;
+    BlockCache cache(1024);
+    MemoryFileSystem file_system;
+    ManualExecutor executor;
+    ManualClock clock;
+    DatabaseEngineOptions options;
+    options.comparator = &comparator;
+    options.create_if_missing = true;
+    options.error_if_exists = true;
+    options.sync_wal_creation = false;
+    options.memtable_size_threshold = 1;
+    options.max_file_size = std::uint64_t{1} << 40U;
+    options.max_open_files = 1;
+    options.allow_mmap_reads = false;
+    options.table_options.block_size = std::size_t{1} << 30U;
+    options.table_options.restart_interval = 23;
+    options.table_options.filter_policy.emplace(11);
+    options.table_options.compression = BlockCompression::Zstd;
+    options.table_options.zstd_compression_level = 3;
+    options.block_cache = &cache;
+    options.file_system = &file_system;
+    options.executor = &executor;
+    options.clock = &clock;
+    options.allow_weak_namespace_durability = true;
+    const auto filter_size = options.table_options.filter_policy->FilterSize(128);
+
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        SCOPED_TRACE(repeat);
+        options.Sanitize();
+
+        EXPECT_EQ(options.max_open_files, 74U);
+        EXPECT_EQ(options.memtable_size_threshold, std::size_t{64} << 10U);
+        EXPECT_EQ(options.max_file_size, std::uint64_t{1} << 30U);
+        EXPECT_EQ(options.table_options.block_size, std::size_t{4} << 20U);
+        EXPECT_EQ(options.comparator, &comparator);
+        EXPECT_TRUE(options.create_if_missing);
+        EXPECT_TRUE(options.error_if_exists);
+        EXPECT_FALSE(options.sync_wal_creation);
+        EXPECT_FALSE(options.allow_mmap_reads);
+        EXPECT_EQ(options.table_options.restart_interval, 23U);
+        ASSERT_TRUE(options.table_options.filter_policy.has_value());
+        EXPECT_EQ(options.table_options.filter_policy->FilterSize(128), filter_size);
+        EXPECT_EQ(options.table_options.compression, BlockCompression::Zstd);
+        EXPECT_EQ(options.table_options.zstd_compression_level, 3);
+        EXPECT_EQ(options.block_cache, &cache);
+        EXPECT_EQ(options.file_system, &file_system);
+        EXPECT_EQ(options.executor, &executor);
+        EXPECT_EQ(options.clock, &clock);
+        EXPECT_TRUE(options.allow_weak_namespace_durability);
+    }
+}
+
+TEST_F(DatabaseTest, SanitizesACopyOfTheCallerOptions) {
+    options_.max_open_files = 1;
+    options_.max_file_size = 1;
+    options_.table_options.block_size = 1;
+
+    const auto database = Open();
+    ASSERT_NE(database, nullptr);
+
+    EXPECT_EQ(options_.max_open_files, 1U);
+    EXPECT_EQ(options_.memtable_size_threshold, 1U);
+    EXPECT_EQ(options_.max_file_size, 1U);
+    EXPECT_EQ(options_.table_options.block_size, 1U);
 }
 
 TEST_F(DatabaseTest, OpensNewAndExistingDatabases) {
@@ -117,7 +191,7 @@ TEST_F(DatabaseTest, IgnoresAnExceptionWhileClosingTheCurrentLog) {
             options.executor = &executor;
             options.clock = &clock;
             options.create_if_missing = true;
-            options.write_buffer_size = 1;
+            options.memtable_size_threshold = 1;
             Result<std::unique_ptr<DatabaseEngine>> opened =
                 DatabaseEngine::Open(options, "database");
             if (!opened.has_value()) {

@@ -42,7 +42,7 @@ when supplied through `ReadOptions`.
 | `comparator` | null | Uses the bytewise comparator; a custom shared comparator is retained |
 | `create_if_missing` | `false` | Create an absent database |
 | `error_if_exists` | `false` | Reject opening an existing database |
-| `write_buffer_size` | 4 MiB | Memtable switch threshold |
+| `write_buffer_size` | 4 MiB | Soft memtable arena-memory threshold |
 | `max_file_size` | 2 MiB | Target compaction output size |
 | `max_open_files` | 1000 | Database open-file budget before non-table reservations |
 | `allow_mmap_reads` | `true` | Permit exact-size immutable table mappings |
@@ -60,6 +60,10 @@ The engine clips `max_open_files` to 74 through 50,000,
 values, invalid Zstd levels, and invalid table/filter settings return explicit
 errors. See [`options.h`](../../include/modern_leveldb/options.h) for public
 types and defaults.
+
+`write_buffer_size` is measured using memtable arena reservations, including
+per-block pointer accounting. It is not exact payload size or a hard allocation
+cap; one write group can exceed the threshold.
 
 ## Read and write options
 

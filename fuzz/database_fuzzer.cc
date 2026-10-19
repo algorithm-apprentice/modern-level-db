@@ -35,7 +35,7 @@ void FuzzDatabase(ByteView input) {
     options.executor = &executor;
     options.clock = &clock;
     options.create_if_missing = true;
-    options.write_buffer_size = 64 * 1024;
+    options.memtable_size_threshold = 64 * 1024;
     options.table_options.compression =
         static_cast<BlockCompression>(std::to_integer<unsigned>(input[0]) % 3);
     input = input.subspan(1);

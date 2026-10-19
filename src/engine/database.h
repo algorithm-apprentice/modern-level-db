@@ -52,8 +52,8 @@ struct DatabaseEngineOptions {
     bool create_if_missing = false;
     bool error_if_exists = false;
     bool sync_wal_creation = true;
-    // The memtable switches to a new one once it uses more than this.
-    std::size_t write_buffer_size = std::size_t{4} << 20U;
+    // Soft threshold for memtable arena-reserved bytes; a write group can exceed it.
+    std::size_t memtable_size_threshold = std::size_t{4} << 20U;
     // Compaction splits its outputs at this size.
     std::uint64_t max_file_size = std::uint64_t{2} << 20U;
     // Ten are kept for files other than tables.
@@ -71,12 +71,12 @@ struct DatabaseEngineOptions {
     Clock* clock = nullptr;
     // Applies only to the owned Windows backend, never to an injected filesystem.
     bool allow_weak_namespace_durability = false;
-};
 
-// Clips resource policy to supported ranges: max_open_files to 74
-// through 50,000, write_buffer_size to 64 KiB through 1 GiB, max_file_size to
-// 1 MiB through 1 GiB, and the block size to 1 KiB through 4 MiB.
-[[nodiscard]] DatabaseEngineOptions SanitizeOptions(DatabaseEngineOptions options);
+    // Clips resource policy to supported ranges: max_open_files to 74
+    // through 50,000, memtable_size_threshold to 64 KiB through 1 GiB, max_file_size to
+    // 1 MiB through 1 GiB, and the block size to 1 KiB through 4 MiB.
+    void Sanitize() noexcept;
+};
 
 struct DatabaseEngineReadOptions {
     // The sequence of a GetSnapshot registration that is not yet released;
@@ -116,7 +116,7 @@ class DatabaseEngine final {
     };
 
     struct EnginePolicy {
-        std::size_t write_buffer_size;
+        std::size_t memtable_size_threshold;
         std::uint64_t max_file_size;
         bool sync_wal_creation;
         TableBuilderOptions table_options;
@@ -171,8 +171,8 @@ public:
     [[nodiscard]] Status WaitForBackgroundWork();
 
 private:
-    // Pins sources across unlocked reads. Construction and destruction require
-    // the caller to hold the engine's mutex_.
+    // Pins captured mutable/immutable memtables and a Version across unlocked reads.
+    // Construction and destruction require the caller to hold the engine's mutex_.
     class ReadSources final {
     public:
         explicit ReadSources(DatabaseEngine& engine) noexcept;
@@ -180,14 +180,14 @@ private:
         ReadSources& operator=(const ReadSources&) = delete;
         ~ReadSources();
 
-        [[nodiscard]] const MemTable& memtable() const noexcept;
-        [[nodiscard]] const MemTable* immutable() const noexcept;
+        [[nodiscard]] const MemTable& mutable_memtable() const noexcept;
+        [[nodiscard]] const MemTable* immutable_memtable() const noexcept;
         [[nodiscard]] const Version& version() const noexcept;
 
     private:
         DatabaseEngine* engine_;
-        std::optional<MemTable::ReadPin> memtable_;
-        std::optional<MemTable::ReadPin> immutable_;
+        std::optional<MemTable::ReadPin> mutable_memtable_;
+        std::optional<MemTable::ReadPin> immutable_memtable_;
         std::optional<VersionSet::ReadPin> version_;
     };
 

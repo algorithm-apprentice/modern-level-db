@@ -305,7 +305,7 @@ TEST_F(RecoveryTest, SplitsTablesAtTheWriteBufferSize) {
     WriteLog(2, {Batch(1, {Put{"a", "1"}}), Batch(2, {}), Batch(2, {Put{"b", "2"}, Put{"c", "3"}}),
                  Batch(4, {Delete{"a"}})});
     RecoveryOptions options;
-    options.write_buffer_size = 1;
+    options.memtable_size_threshold = 1;
 
     const RecoveredDatabase recovered = Recover(options);
 
@@ -446,7 +446,7 @@ TEST_F(RecoveryTest, SkipsDamagedRecordsAndTruncatedTails) {
 TEST_F(RecoveryTest, RejectsRecordsThatNoWriterProduces) {
     static_cast<void>(Recover());
     RecoveryOptions splitting;
-    splitting.write_buffer_size = 0;
+    splitting.memtable_size_threshold = 0;
     const std::vector<std::pair<std::vector<std::vector<std::byte>>, RecoveryOptions>> cases{
         {{{std::byte{1}, std::byte{2}, std::byte{3}}}, {}},
         {{Batch(0, {Put{"a", "1"}})}, {}},
@@ -557,9 +557,9 @@ TEST_F(RecoveryTest, RecoversEveryEntryAfterAFailure) {
     // With a one-byte write buffer, every record is written to its own table
     // while the logs are replayed; by default, the last memtable holds them all.
     RecoveryOptions splitting;
-    splitting.write_buffer_size = 1;
+    splitting.memtable_size_threshold = 1;
     for (const RecoveryOptions& options : {splitting, RecoveryOptions{}}) {
-        SCOPED_TRACE(options.write_buffer_size);
+        SCOPED_TRACE(options.memtable_size_threshold);
         ExpectRecoveryAfterEveryFailure(options);
     }
 }

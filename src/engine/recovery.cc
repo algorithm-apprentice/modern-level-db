@@ -279,7 +279,7 @@ private:
         InsertBatch(*batch, *memtable_);
         last_sequence_ = batch->sequence() + batch->count() - 1;
         has_entries_ = true;
-        if (memtable_->memory_usage() > options_->write_buffer_size) {
+        if (memtable_->memory_usage() > options_->memtable_size_threshold) {
             return Flush();
         }
         return {};

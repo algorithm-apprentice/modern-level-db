@@ -41,9 +41,10 @@ Decision SearchMemTable(const MemTable& source, const LookupKey& key,
     return Decision::Missing;
 }
 
-std::optional<bool> SearchMemory(const MemTable& memtable, const MemTable* immutable,
-                                 const LookupKey& key, std::vector<std::byte>& value) {
-    for (const MemTable* source : {&memtable, immutable}) {
+std::optional<bool> SearchMemory(const MemTable& mutable_memtable,
+                                 const MemTable* immutable_memtable, const LookupKey& key,
+                                 std::vector<std::byte>& value) {
+    for (const MemTable* source : {&mutable_memtable, immutable_memtable}) {
         if (source == nullptr) {
             continue;
         }
@@ -247,7 +248,7 @@ Status ForEachOverlapping(const Version& version, const InternalKeyComparator& c
 
 }  // namespace
 
-Result<bool> LookupValue(const MemTable& memtable, const MemTable* immutable,
+Result<bool> LookupValue(const MemTable& mutable_memtable, const MemTable* immutable_memtable,
                          const Version& version, TableCache& table_cache,
                          const InternalKeyComparator& comparator, const LookupKey& key,
                          std::vector<std::byte>& value, std::optional<SeekCharge>& seek,
@@ -255,7 +256,8 @@ Result<bool> LookupValue(const MemTable& memtable, const MemTable* immutable,
     seek.reset();
     // Newest source with a visible entry decides. A tombstone decides absence,
     // unlike Missing, which permits searching older sources.
-    if (const auto decision = SearchMemory(memtable, immutable, key, value); decision.has_value()) {
+    if (const auto decision = SearchMemory(mutable_memtable, immutable_memtable, key, value);
+        decision.has_value()) {
         return *decision;
     }
 
