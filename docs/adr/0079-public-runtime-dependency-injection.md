@@ -1,6 +1,6 @@
 # ADR-0079: Public Runtime Dependency Injection
 
-- Status: Accepted
+- Status: Implemented
 - Date: 2026-10-19
 
 ## Context
@@ -193,3 +193,17 @@ Local supported-platform tests and documentation checks complement, but do not
 replace, the existing cross-platform and sanitizer CI gates. No performance,
 strict-memory-bound, arbitrary-plugin, or new durability guarantee follows
 merely from exposing these inputs.
+
+## Implementation outcome
+
+Public options now accept all four supplied owners. `DatabaseState` retains
+the complete options before its engine member, preserving the same shared
+lifetime through both iterator and snapshot handles. Platform contract
+headers and the opaque block-cache factory compile in the public consumer
+target without private include directories.
+
+Retained tests verify supplied filesystem error/exception propagation,
+cleanup after failed opens, real executor/clock/cache use across reopen,
+retention until the last child, and cache sharing between distinct databases.
+No internal fault/crash caller was converted from borrowing to exclusive
+ownership.

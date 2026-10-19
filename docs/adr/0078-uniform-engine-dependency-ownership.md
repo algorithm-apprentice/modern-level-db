@@ -1,6 +1,6 @@
 # ADR-0078: Uniform Engine Dependency Ownership
 
-- Status: Accepted
+- Status: Implemented
 - Date: 2026-10-19
 
 ## Context
@@ -201,3 +201,16 @@ Standalone lifetime experiments support the design, but are not evidence that
 the integrated engine has passed regression tests. Record retained test and
 CI evidence only after executing it. Make no object-size or performance claim
 without a corresponding measurement.
+
+## Implementation outcome
+
+The engine now uses the same conditional-deleter handle for all four services.
+Filesystem admission returns the prepared handle, and successful member
+initialization immediately establishes its deletion policy. There are no
+`owned_*` service members, post-construction flag mutations, or executor-only
+manual deletion paths.
+
+Retained dependency tests exercise owned/borrowed cleanup, move construction
+and assignment, and every four-service ownership mixture across partial
+construction failures and normal shutdown. Existing engine and public
+dependency tests retain their original service-lifetime contracts.

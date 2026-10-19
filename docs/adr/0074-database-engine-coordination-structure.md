@@ -2,6 +2,9 @@
 
 - Status: Accepted
 
+[ADR-0078](0078-uniform-engine-dependency-ownership.md) later unifies the service
+handles without changing the member-order lifetimes described here.
+
 ## Context
 
 `DatabaseEngine` is the coordination root for the database. It owns the mutex

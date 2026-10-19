@@ -20,40 +20,42 @@ constexpr std::size_t ReservedNonTableFileCount = 10;
 // The block cache that a database owns when it is given none.
 constexpr std::size_t DefaultBlockCacheSize = std::size_t{8} << 20U;
 
-Result<std::unique_ptr<FileSystem>> PrepareOwnedFileSystem(const DatabaseEngineOptions& options,
-                                                           std::filesystem::path& directory) {
+Result<Dependency<FileSystem>> PrepareFileSystem(const DatabaseEngineOptions& options,
+                                                 std::filesystem::path& directory) {
     if (options.file_system != nullptr) {
-        return std::unique_ptr<FileSystem>{};
+        return BorrowDependency(*options.file_system);
     }
     return CreateDefaultFileSystem(directory, options.allow_weak_namespace_durability,
-                                   options.allow_mmap_reads);
+                                   options.allow_mmap_reads)
+        .transform([](std::unique_ptr<FileSystem> file_system) {
+            return OwnDependency(std::move(file_system));
+        });
 }
 
-std::unique_ptr<BlockCache> OwnedBlockCache(const DatabaseEngineOptions& options) {
+Dependency<BlockCache> PrepareBlockCache(const DatabaseEngineOptions& options) {
     if (options.block_cache != nullptr) {
-        return nullptr;
+        return BorrowDependency(*options.block_cache);
     }
-    return std::make_unique<BlockCache>(DefaultBlockCacheSize);
+    return OwnDependency(std::make_unique<BlockCache>(DefaultBlockCacheSize));
 }
 
-std::unique_ptr<BackgroundExecutor> OwnedExecutor(const DatabaseEngineOptions& options) {
+Dependency<BackgroundExecutor> PrepareExecutor(const DatabaseEngineOptions& options) {
     if (options.executor != nullptr) {
-        return nullptr;
+        return BorrowDependency(*options.executor);
     }
-    return std::make_unique<SerialExecutor>();
+    return OwnDependency<BackgroundExecutor>(std::make_unique<SerialExecutor>());
 }
 
-std::unique_ptr<Clock> OwnedClock(const DatabaseEngineOptions& options) {
+Dependency<Clock> PrepareClock(const DatabaseEngineOptions& options) {
     if (options.clock != nullptr) {
-        return nullptr;
+        return BorrowDependency(*options.clock);
     }
-    return std::make_unique<SystemClock>();
+    return OwnDependency<Clock>(std::make_unique<SystemClock>());
 }
 
-TableOptions ReadTableOptions(const DatabaseEngineOptions& options, BlockCache* owned_block_cache) {
-    TableOptions table_options{
-        .filter_policy = options.table_options.filter_policy,
-        .block_cache = options.block_cache != nullptr ? options.block_cache : owned_block_cache};
+TableOptions ReadTableOptions(const DatabaseEngineOptions& options, BlockCache* block_cache) {
+    TableOptions table_options{.filter_policy = options.table_options.filter_policy,
+                               .block_cache = block_cache};
     return table_options;
 }
 
@@ -71,39 +73,35 @@ void DatabaseEngineOptions::Sanitize() noexcept {
 
 Result<std::unique_ptr<DatabaseEngine>> DatabaseEngine::Open(DatabaseEngineOptions options,
                                                              std::filesystem::path directory) {
-    return PrepareOwnedFileSystem(options, directory)
-        .and_then([&](std::unique_ptr<FileSystem> file_system)
-                      -> Result<std::unique_ptr<DatabaseEngine>> {
-            options.Sanitize();
-            auto database = std::make_unique<DatabaseEngine>(
-                PrivateTag(), options, std::move(directory), std::move(file_system));
-            const Status recovered = database->Recover(options);
-            if (!recovered.has_value()) {
-                return std::unexpected(recovered.error());
-            }
-            return database;
-        });
+    return PrepareFileSystem(options, directory)
+        .and_then(
+            [&](Dependency<FileSystem> file_system) -> Result<std::unique_ptr<DatabaseEngine>> {
+                options.Sanitize();
+                auto database = std::make_unique<DatabaseEngine>(
+                    PrivateTag(), options, std::move(directory), std::move(file_system));
+                const Status recovered = database->Recover(options);
+                if (!recovered.has_value()) {
+                    return std::unexpected(recovered.error());
+                }
+                return database;
+            });
 }
 
 DatabaseEngine::DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options,
-                               std::filesystem::path directory,
-                               std::unique_ptr<FileSystem> owned_file_system)
-    : owned_file_system_(std::move(owned_file_system)),
-      owned_block_cache_(OwnedBlockCache(options)),
-      owned_clock_(OwnedClock(options)),
+                               std::filesystem::path directory, Dependency<FileSystem> file_system)
+    : file_system_(std::move(file_system)),
+      block_cache_(PrepareBlockCache(options)),
+      clock_(PrepareClock(options)),
       policy_{.memtable_size_threshold = options.memtable_size_threshold,
               .max_file_size = options.max_file_size,
               .sync_wal_creation = options.sync_wal_creation,
               .table_options = options.table_options},  // GCOVR_EXCL_LINE: GCC constructor clone
       directory_(std::move(directory)),
-      file_system_(options.file_system != nullptr ? options.file_system : owned_file_system_.get()),
-      clock_(options.clock != nullptr ? options.clock : owned_clock_.get()),
       comparator_(*options.comparator),
       table_cache_(*file_system_, directory_, comparator_,
-                   ReadTableOptions(options, owned_block_cache_.get()),
+                   ReadTableOptions(options, block_cache_.get()),
                    options.max_open_files - ReservedNonTableFileCount),
-      owned_executor_(OwnedExecutor(options)),
-      executor_(options.executor != nullptr ? options.executor : owned_executor_.get()) {}
+      executor_(PrepareExecutor(options)) {}
 
 DatabaseEngine::~DatabaseEngine() {
     std::unique_lock lock(mutex_);

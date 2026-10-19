@@ -334,12 +334,15 @@ Two internal state owners make cross-field invariants explicit:
 `EnginePolicy` then retains the memtable size threshold, target-file size,
 WAL-creation policy, and table-building settings. The public
 `Options::write_buffer_size` maps to the internal `memtable_size_threshold`.
-Resource owner/borrower fields remain explicit. For fallback resources owned by the
-database, reverse declaration order stops the owned executor first and destroys
+Each service is stored once as `Dependency<T>`: a pointer with a boolean
+conditional deleter. Fully constructed handles provide exception cleanup
+without a separate default-owner pointer or ownership-publication phase.
+Reverse declaration order stops the owned executor first and destroys
 users before their owned filesystem/cache/clock. Injected services remain
 externally owned, are not stopped by DatabaseEngine, and must outlive it; the
 engine only waits for its accepted background task to finish. Operational state
-is released before the directory lock.
+is released before the directory lock. See
+[ADR-0078](adr/0078-uniform-engine-dependency-ownership.md).
 
 Public `Options` can supply shared filesystem, cache, clock, and executor
 owners. The facade passes their raw pointers to the engine and retains the

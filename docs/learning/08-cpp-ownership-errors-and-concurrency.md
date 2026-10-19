@@ -61,7 +61,10 @@ compatibility.
 
 ### Destruction order is part of the design
 
-C++ destroys members in reverse declaration order.
+C++ initializes members in declaration order before executing the constructor
+body. The initializer list does not change that order. Destruction first
+executes the destructor body and destroys its locals, then destroys members
+in reverse declaration order.
 `Iterator::Impl` declares:
 
 ```text
@@ -85,6 +88,23 @@ children retain the owners.
 
 This is why a child can safely outlive the public Database handle.
 It also means an unreleased child can keep the directory lock held.
+
+### One handle can own or borrow
+
+An engine dependency uses `Dependency<T>`, a standard `unique_ptr` with a
+deleter containing one ownership flag. A default resource is deleted; an
+injected resource is left to its retaining owner. Moving the handle moves
+both its pointer and its policy, without duplicating ownership.
+
+Every constructed owning member participates in exception unwinding even if
+a later member fails and the engine's complete-object destructor never runs.
+The same handle type works at different lifetime positions: filesystem,
+cache, and clock precede their users, while executor is declared last and
+is destroyed first. The destructor's local database lock has already been
+released when executor deletion joins its worker.
+
+This separates cleanup mechanism from cleanup order; it does not make a
+borrowed object owned or extend its lifetime.
 
 ## Explicit error types
 
@@ -240,6 +260,7 @@ useful advanced exercise in making those arguments explicit.
 |---|---|---|---|
 | [`result.h`](../../include/modern_leveldb/base/result.h) | `Error`, `Result`, `Status` | Which failures are ordinary typed results, and what may still throw? | [`result_test.cc`](../../tests/unit/base/result_test.cc) |
 | [`api_internal.h`](../../src/api/api_internal.h) | public handle implementations | Which owner keeps the engine and child state alive? | [`public_api_test.cc`](../../tests/unit/api/public_api_test.cc) |
+| [`dependency.h`](../../src/engine/dependency.h) | conditional dependency ownership | How do one pointer and one flag preserve ownership through moves and partial construction? | [`dependency_test.cc`](../../tests/unit/engine/dependency_test.cc) |
 | [`skiplist.h`](../../src/memory/skiplist.h) | node initialization and publication | Which writes happen before a reader's acquire load can observe the node? | [`skiplist_test.cc`](../../tests/unit/memory/skiplist_test.cc) |
 | [`write_path.h`](../../src/engine/write_path.h) | stack writer and leader/sequence guards | How does exception unwinding restore queue and batch state? | [`write_path_test.cc`](../../tests/unit/engine/write_path_test.cc) |
 | [`database_read.cc`](../../src/engine/database_read.cc) | lock release and typed read pins | What keeps read sources alive while slow I/O runs without the mutex? | [`database_read_test.cc`](../../tests/unit/engine/database_read_test.cc) |
