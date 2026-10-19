@@ -273,7 +273,9 @@ flowchart TD
 
 ### Required dependency rules
 
-1. The public API is a facade and is never included by lower layers.
+1. The database facade is never included by lower layers. Public base and
+   service headers retain their lower-layer responsibility despite living
+   under `include/modern_leveldb`.
 2. Format modules are pure encoders and decoders and perform no filesystem I/O.
 3. Platform modules know nothing about LSM concepts.
 4. Cache and platform primitives remain below formats/tables/engine policy.
@@ -339,6 +341,14 @@ externally owned, are not stopped by DatabaseEngine, and must outlive it; the
 engine only waits for its accepted background task to finish. Operational state
 is released before the directory lock.
 
+Public `Options` can supply shared filesystem, cache, clock, and executor
+owners. The facade passes their raw pointers to the engine and retains the
+complete options in `DatabaseState`, before the engine member. Iterators and
+snapshots retain that state, so the engine closes before supplied owners are
+released. Platform contracts are public, native implementations remain private,
+and the public block-cache factory hides decoded-block types. See
+[ADR-0079](adr/0079-public-runtime-dependency-injection.md).
+
 Small shared rules do not create additional state owners:
 `api/database.cc` prepares read options independently of snapshot retention,
 `engine/iterators` composes supplied file runs for both reads and compaction, and
@@ -352,8 +362,12 @@ rejected broader extractions.
 ```text
 include/modern_leveldb/
   base/
+  background_executor.h
+  block_cache.h
+  clock.h
   database_state_snapshot.h
   db.h
+  file_system.h
   iterator.h
   options.h
   snapshot.h

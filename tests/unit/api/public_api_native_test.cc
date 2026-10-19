@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -11,9 +12,11 @@
 #include <string_view>
 #include <utility>
 
+#include "dependency_test_support.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/comparator.h"
 #include "modern_leveldb/base/result.h"
+#include "modern_leveldb/block_cache.h"
 #include "modern_leveldb/db.h"
 
 namespace modern_leveldb {
@@ -88,6 +91,128 @@ public:
 private:
     std::shared_ptr<std::atomic<bool>> destroyed_;
 };
+
+TEST(PublicDependencyTest, RetainsSuppliedServicesUntilTheLastIteratorOrSnapshot) {
+    for (bool keep_snapshot : {false, true}) {
+        SCOPED_TRACE(keep_snapshot);
+        TemporaryDatabaseDirectory directory;
+        std::filesystem::path path = directory.path();
+        Options options = CreatingOptions();
+        auto filesystem =
+            CreateDefaultFileSystem(path, options.allow_weak_namespace_durability, false);
+        ASSERT_TRUE(filesystem.has_value()) << filesystem.error().ToString();
+        options.file_system = std::move(*filesystem);
+        options.block_cache = CreateBlockCache(4096);
+        options.clock = std::make_shared<dependency_test_support::CountingClock>();
+        options.executor = std::make_shared<dependency_test_support::QueuedExecutor>();
+        const std::array<std::weak_ptr<void>, 4> lifetimes{options.file_system, options.block_cache,
+                                                           options.clock, options.executor};
+        std::optional<Snapshot> snapshot;
+        std::optional<Iterator> iterator;
+        {
+            auto opened = Database::Open(std::move(options), path);
+            ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+            ASSERT_TRUE(opened->Put(AsBytes("key"), AsBytes("value")).has_value());
+            auto acquired_snapshot = opened->GetSnapshot();
+            ASSERT_TRUE(acquired_snapshot.has_value());
+            snapshot.emplace(std::move(*acquired_snapshot));
+            auto acquired_iterator = opened->NewIterator({.snapshot = &*snapshot});
+            ASSERT_TRUE(acquired_iterator.has_value());
+            iterator.emplace(std::move(*acquired_iterator));
+        }
+
+        for (const auto& lifetime : lifetimes) {
+            EXPECT_FALSE(lifetime.expired());
+        }
+        if (keep_snapshot) {
+            iterator.reset();
+        } else {
+            snapshot.reset();
+            ASSERT_TRUE(iterator->SeekToFirst().has_value());
+            ASSERT_TRUE(iterator->valid());
+            EXPECT_EQ(AsStringView(iterator->value()), "value");
+        }
+        for (const auto& lifetime : lifetimes) {
+            EXPECT_FALSE(lifetime.expired());
+        }
+        iterator.reset();
+        snapshot.reset();
+        for (const auto& lifetime : lifetimes) {
+            EXPECT_TRUE(lifetime.expired());
+        }
+    }
+}
+
+TEST(PublicDependencyTest, UsesInjectedSchedulingClockAndCacheAcrossReopen) {
+    TemporaryDatabaseDirectory directory;
+    std::filesystem::path path = directory.path();
+    auto executor = std::make_shared<dependency_test_support::QueuedExecutor>();
+    auto clock = std::make_shared<dependency_test_support::CountingClock>();
+    Options options = CreatingOptions();
+    options.write_buffer_size = 64 * 1024;
+    options.allow_mmap_reads = false;
+    options.compression = Compression::None;
+    options.executor = executor;
+    options.clock = clock;
+    options.block_cache = CreateBlockCache(4 * 1024 * 1024);
+    auto filesystem = CreateDefaultFileSystem(path, options.allow_weak_namespace_durability, false);
+    ASSERT_TRUE(filesystem.has_value()) << filesystem.error().ToString();
+    options.file_system = std::move(*filesystem);
+    {
+        auto opened = Database::Open(options, path);
+        ASSERT_TRUE(opened.has_value()) << opened.error().ToString();
+        dependency_test_support::DrainExecutor drain(*executor);
+        for (int generation = 0; generation < 12; ++generation) {
+            const std::string value(80 * 1024, static_cast<char>('a' + generation));
+            ASSERT_TRUE(opened->Put(AsBytes("key"), AsBytes(value)).has_value());
+            static_cast<void>(executor->RunOne());
+        }
+        EXPECT_GT(executor->scheduled(), 0U);
+        EXPECT_GT(clock->sleep_count(), 0U);
+    }
+    {
+        auto reopened = Database::Open(options, path);
+        ASSERT_TRUE(reopened.has_value()) << reopened.error().ToString();
+        dependency_test_support::DrainExecutor drain(*executor);
+        executor->RunAll();
+        const auto value = reopened->Get(AsBytes("key"));
+        ASSERT_TRUE(value.has_value() && value->has_value());
+        EXPECT_EQ(AsStringView(**value), std::string(80 * 1024, 'l'));
+        EXPECT_GT(BlockCacheCharge(*options.block_cache), 0U);
+    }
+}
+
+TEST(PublicDependencyTest, SharesOneCacheAcrossDatabasesWithoutMixingValues) {
+    TemporaryDatabaseDirectory directory;
+    ASSERT_TRUE(std::filesystem::create_directory(directory.path()));
+    Options options = CreatingOptions();
+    options.allow_mmap_reads = false;
+    options.block_cache = CreateBlockCache(1024 * 1024);
+    const auto first_path = directory.path() / "first";
+    const auto second_path = directory.path() / "second";
+    {
+        auto first = Database::Open(options, first_path);
+        auto second = Database::Open(options, second_path);
+        ASSERT_TRUE(first.has_value()) << first.error().ToString();
+        ASSERT_TRUE(second.has_value()) << second.error().ToString();
+        ASSERT_TRUE(first->Put(AsBytes("key"), AsBytes("first")).has_value());
+        ASSERT_TRUE(second->Put(AsBytes("key"), AsBytes("other")).has_value());
+    }
+    auto first = Database::Open(options, first_path);
+    auto second = Database::Open(options, second_path);
+    ASSERT_TRUE(first.has_value()) << first.error().ToString();
+    ASSERT_TRUE(second.has_value()) << second.error().ToString();
+
+    for (int pass = 0; pass < 2; ++pass) {
+        const auto first_value = first->Get(AsBytes("key"));
+        const auto second_value = second->Get(AsBytes("key"));
+        ASSERT_TRUE(first_value.has_value() && first_value->has_value());
+        ASSERT_TRUE(second_value.has_value() && second_value->has_value());
+        EXPECT_EQ(AsStringView(**first_value), "first");
+        EXPECT_EQ(AsStringView(**second_value), "other");
+    }
+    EXPECT_GT(BlockCacheCharge(*options.block_cache), 0U);
+}
 
 TEST(PublicDatabaseTest, WritesReadsDeletesBatchesAndReopens) {
     TemporaryDatabaseDirectory directory;

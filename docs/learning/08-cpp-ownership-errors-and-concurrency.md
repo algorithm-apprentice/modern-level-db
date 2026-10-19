@@ -34,8 +34,8 @@ These questions explain more of the design than "smart pointers are modern."
 |---|---|---|
 | Value | Encoded metadata, options, stack writers | Define valid copy/move behavior |
 | `unique_ptr` | Files, engines, iterator implementations | Exactly one owner controls destruction |
-| `shared_ptr` | Engine state retained by public children, source ownership | Shared lifetime must have a concrete reason |
-| Borrowed pointer/reference | Injected filesystem/comparator, active queue batch | Owner must outlive every borrower |
+| `shared_ptr` | Engine state retained by public children, supplied service owners, source ownership | Shared lifetime must have a concrete reason |
+| Borrowed pointer/reference | Engine's injected services/comparator, active queue batch | Owner must outlive every borrower |
 | `span<const byte>` | Input bytes and iterator values | Storage must remain alive and unchanged |
 | RAII pin | Cache entries and read sources | Releasing the handle ends a documented retention |
 
@@ -78,7 +78,10 @@ private iterator -> snapshot registration -> engine state
 
 The iterator releases source/cache references while the engine still exists.
 The snapshot releases its sequence before its engine lifetime ends.
-Likewise, `DatabaseState` destroys the engine before its retained comparator.
+Likewise, `DatabaseState` destroys the engine before its retained `Options`.
+Those options own any supplied comparator, filesystem, block cache, clock,
+and executor. The engine borrows their objects, while the facade and its
+children retain the owners.
 
 This is why a child can safely outlive the public Database handle.
 It also means an unreleased child can keep the directory lock held.
@@ -201,8 +204,9 @@ The database destructor marks closing, prevents new background work, closes
 its WAL, and waits for scheduled engine work to finish.
 Accepted engine tasks must run while the engine is open; the owner cannot
 destroy an injected executor too early.
-Executor teardown stops and joins its worker before callback-visible state
-is destroyed.
+The engine-owned executor stops and joins its worker before callback-visible
+state is destroyed. A supplied executor is not stopped by the engine; it must
+continue making progress until the engine's accepted work has finished.
 
 Public handles must not be moved or destroyed concurrently with operations
 on those same objects. "Database methods support concurrent calls" does not
