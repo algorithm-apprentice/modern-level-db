@@ -334,8 +334,10 @@ Two internal state owners make cross-field invariants explicit:
 `EnginePolicy` then retains the memtable size threshold, target-file size,
 WAL-creation policy, and table-building settings. The public
 `Options::write_buffer_size` maps to the internal `memtable_size_threshold`.
-Each service is stored once as `Dependency<T>`: a pointer with a boolean
-conditional deleter. Fully constructed handles provide exception cleanup
+Each service is stored once as an ordinary `Dependency<T>` value member:
+a pointer and a fixed ownership flag, with direct deletion in its destructor.
+Moves empty the source pointer, and consumers explicitly use `get()`.
+Fully constructed members provide exception cleanup
 without a separate default-owner pointer or ownership-publication phase.
 Reverse declaration order stops the owned executor first and destroys
 users before their owned filesystem/cache/clock. Injected services remain

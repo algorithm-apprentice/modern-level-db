@@ -9,6 +9,11 @@
 #include <type_traits>
 #include <utility>
 
+#include "modern_leveldb/background_executor.h"
+#include "modern_leveldb/clock.h"
+#include "modern_leveldb/file_system.h"
+#include "table/block_cache.h"
+
 namespace modern_leveldb {
 namespace {
 
@@ -46,7 +51,7 @@ struct Resource {
 static_assert(!std::is_copy_constructible_v<Dependency<Resource>>);
 static_assert(!std::is_copy_assignable_v<Dependency<Resource>>);
 static_assert(std::is_nothrow_move_constructible_v<Dependency<Resource>>);
-static_assert(std::is_nothrow_move_assignable_v<Dependency<Resource>>);
+static_assert(!std::is_move_assignable_v<Dependency<Resource>>);
 static_assert(noexcept(OwnDependency(std::declval<std::unique_ptr<Resource>>())));
 static_assert(noexcept(BorrowDependency(std::declval<Resource&>())));
 
@@ -55,7 +60,7 @@ TEST(DependencyTest, DeletesOwnedObjectsExactlyOnce) {
     {
         auto dependency = OwnDependency(std::make_unique<Resource>(lifetime, 0));
         EXPECT_TRUE(lifetime.alive[0]);
-        EXPECT_EQ(dependency->index, 0U);
+        EXPECT_EQ(dependency.get()->index, 0U);
     }
     EXPECT_EQ(lifetime.destroyed[0], 1);
 }
@@ -80,40 +85,43 @@ TEST(DependencyTest, MovesOwningPointersWithoutDuplicatingOwnership) {
         auto first = OwnDependency(std::make_unique<Resource>(lifetime, 0));
         Resource* pointer = first.get();
         auto second = std::move(first);
-        EXPECT_EQ(first, nullptr);
+        EXPECT_EQ(first.get(), nullptr);
         EXPECT_EQ(second.get(), pointer);
         EXPECT_EQ(lifetime.destroyed[0], 0);
     }
     EXPECT_EQ(lifetime.destroyed[0], 1);
 }
 
-TEST(DependencyTest, MoveAssignmentReleasesAnOwnerAndPreservesABorrow) {
+TEST(DependencyTest, MovesBorrowedPointersWithoutTakingOwnership) {
     Lifetime lifetime;
-    Resource borrowed(lifetime, 1);
-    auto target = OwnDependency(std::make_unique<Resource>(lifetime, 0));
-    auto source = BorrowDependency(borrowed);
-
-    target = std::move(source);
-
-    EXPECT_EQ(source, nullptr);
-    EXPECT_EQ(target.get(), &borrowed);
+    {
+        Resource borrowed(lifetime, 0);
+        {
+            auto first = BorrowDependency(borrowed);
+            auto second = std::move(first);
+            EXPECT_EQ(first.get(), nullptr);
+            EXPECT_EQ(second.get(), &borrowed);
+        }
+        EXPECT_EQ(lifetime.destroyed[0], 0);
+        EXPECT_TRUE(lifetime.alive[0]);
+    }
     EXPECT_EQ(lifetime.destroyed[0], 1);
-    target.reset();
-    EXPECT_EQ(lifetime.destroyed[1], 0);
 }
 
-TEST(DependencyTest, MoveAssignmentReplacesABorrowWithAnOwner) {
-    Lifetime lifetime;
-    Resource borrowed(lifetime, 0);
-    auto target = BorrowDependency(borrowed);
-    auto source = OwnDependency(std::make_unique<Resource>(lifetime, 1));
+template <typename T>
+void ExpectEmptyOwner() {
+    auto first = OwnDependency(std::unique_ptr<T>{});
+    EXPECT_EQ(first.get(), nullptr);
+    auto second = std::move(first);
+    EXPECT_EQ(first.get(), nullptr);
+    EXPECT_EQ(second.get(), nullptr);
+}
 
-    target = std::move(source);
-
-    EXPECT_EQ(source, nullptr);
-    EXPECT_EQ(lifetime.destroyed[0], 0);
-    target.reset();
-    EXPECT_EQ(lifetime.destroyed[1], 1);
+TEST(DependencyTest, PreservesEmptyOwnersAndMovedFromStatesForEveryServiceKind) {
+    ExpectEmptyOwner<FileSystem>();
+    ExpectEmptyOwner<BlockCache>();
+    ExpectEmptyOwner<Clock>();
+    ExpectEmptyOwner<BackgroundExecutor>();
 }
 
 struct ResourceSelection {

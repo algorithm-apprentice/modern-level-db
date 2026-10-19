@@ -33,7 +33,7 @@ Status DatabaseEngine::MakeRoomForWrite(std::unique_lock<std::mutex>& lock, bool
             // Near the stop, each write waits a little once rather than a few
             // writes waiting long, and the compaction gets the time.
             lock.unlock();
-            static_cast<void>(clock_->SleepFor(std::chrono::milliseconds(1)));
+            static_cast<void>(clock_.get()->SleepFor(std::chrono::milliseconds(1)));
             lock.lock();
             allow_delay = false;
             continue;
@@ -69,7 +69,7 @@ Status DatabaseEngine::SwitchMemTable() {
 Result<DatabaseEngine::PreparedRotation> DatabaseEngine::PrepareRotation() {
     const std::uint64_t number = versions_->NewFileNumber();
     const std::filesystem::path path = LogFileName(directory_, number);
-    Result<std::unique_ptr<WritableFile>> file = file_system_->OpenWritable(path);
+    Result<std::unique_ptr<WritableFile>> file = file_system_.get()->OpenWritable(path);
     if (!file.has_value()) {
         return std::unexpected(std::move(file).error());
     }
@@ -80,7 +80,7 @@ Result<DatabaseEngine::PreparedRotation> DatabaseEngine::PrepareRotation() {
     if (policy_.sync_wal_creation) {
         // The flush of the old memtable makes this the oldest log that recovery
         // replays, so its directory entry is durable before it takes writes.
-        const Status synced = file_system_->SyncDirectory(directory_);
+        const Status synced = file_system_.get()->SyncDirectory(directory_);
         if (!synced.has_value()) {
             return std::unexpected(synced.error());
         }

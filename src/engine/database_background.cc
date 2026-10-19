@@ -71,7 +71,7 @@ void DatabaseEngine::MaybeScheduleBackgroundWork() {
     background_scheduled_ = true;
     Status scheduled;
     try {
-        scheduled = executor_->Schedule([this](std::stop_token) { BackgroundCall(); });
+        scheduled = executor_.get()->Schedule([this](std::stop_token) { BackgroundCall(); });
     } catch (...) {
         scheduled =
             std::unexpected(Error::Aborted("scheduling background work threw an exception"));
@@ -116,8 +116,8 @@ void DatabaseEngine::FlushImmutable(std::unique_lock<std::mutex>& lock) {
     options.table_options = policy_.table_options;
     options.target_file_size = policy_.max_file_size;
     Result<VersionEdit> edit =
-        modern_leveldb::FlushMemTable(*file_system_, directory_, comparator_, options, table_cache_,
-                                      *immutable, number, *base, log_number);
+        modern_leveldb::FlushMemTable(*file_system_.get(), directory_, comparator_, options,
+                                      table_cache_, *immutable, number, *base, log_number);
     lock.lock();
     const Status applied =
         ApplyBackgroundEdit(std::move(edit), lock, "the database closed during a flush");
@@ -187,8 +187,8 @@ void DatabaseEngine::RewriteCompaction(const Compaction& compaction,
     CompactionHooks hooks = MakeCompactionHooks(outputs);
     lock.unlock();
     Result<VersionEdit> edit =
-        RunCompaction(*file_system_, directory_, comparator_, options, table_cache_, compaction,
-                      *input, smallest_snapshot, hooks);
+        RunCompaction(*file_system_.get(), directory_, comparator_, options, table_cache_,
+                      compaction, *input, smallest_snapshot, hooks);
     lock.lock();
     const Status applied =
         ApplyBackgroundEdit(std::move(edit), lock, "the database closed during a compaction");
@@ -253,7 +253,7 @@ void DatabaseEngine::RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock) {
     }
     lock.unlock();
     for (const std::filesystem::path& path : *obsolete) {
-        static_cast<void>(file_system_->RemoveFile(path));
+        static_cast<void>(file_system_.get()->RemoveFile(path));
     }
     lock.lock();
 }
@@ -263,7 +263,7 @@ Result<std::vector<std::filesystem::path>> DatabaseEngine::CollectObsoleteFiles(
     std::set<std::uint64_t> live = versions_->LiveFiles();
     live.insert(pending_outputs_.begin(), pending_outputs_.end());
     const Result<std::vector<std::filesystem::path>> children =
-        file_system_->ListDirectory(directory_);
+        file_system_.get()->ListDirectory(directory_);
     if (!children.has_value()) {
         return std::unexpected(children.error());
     }

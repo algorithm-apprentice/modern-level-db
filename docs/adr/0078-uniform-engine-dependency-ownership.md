@@ -3,6 +3,10 @@
 - Status: Implemented
 - Date: 2026-10-19
 
+This amendment replaces the first implementation's smart-pointer
+specialization with an ordinary value member. Public injection and all
+service-lifetime positions remain unchanged.
+
 ## Context
 
 `DatabaseEngine` accepts borrowed filesystem, block-cache, clock, and executor
@@ -38,23 +42,31 @@ member-order lifetime constraints.
 
 ## Decision
 
-Represent all four services with the same internal `Dependency<T>` handle:
-a standard `std::unique_ptr<T, DependencyDeleter<T>>`, whose deleter contains
-one `bool owns` and deletes the pointer only when that flag is true.
+Represent all four services with the same ordinary `Dependency<T>` value
+member. It stores one `T*` and one ownership flag. Its destructor directly
+deletes the pointer only when the flag is true.
 
 Define the small standard-library-only helper in `src/engine/dependency.h`:
 
-- `DependencyDeleter<T>` supplies conditional deletion; its default flag is
-  false.
-- `Dependency<T>` names the smart-pointer specialization.
+- `Dependency<T>` owns or borrows one object and exposes only `get()`.
+- Copy construction and all assignment are deleted. Selected services are
+  not replaceable during the engine lifetime.
+- A non-throwing move constructor transfers the pointer and copies the fixed
+  ownership flag, leaving the source pointer null. The existing expected-based
+  filesystem factory and engine construction require this transfer.
 - `BorrowDependency(T&)` constructs a non-owning handle.
 - `OwnDependency(std::unique_ptr<T>)` consumes an existing exclusive owner and
   constructs an owning handle.
 
 Both construction helpers are `noexcept`. They perform no allocation;
-`OwnDependency` releases its input only into a non-throwing smart-pointer
-construction. Moving a handle moves its pointer and ownership policy together.
-Do not manually modify the deleter's flag after construction.
+`OwnDependency` releases its input only into non-throwing member construction.
+The ownership flag does not change after construction. An empty owner and a
+moved-from owner are valid: deleting a null pointer has no effect.
+
+There is no custom deleter callback, function-call operator, pointer-access
+operator, `reset`, `release`, or move assignment. Consumers explicitly access
+the selected service through `get()`. Temporary factory owners still use
+`unique_ptr` to guard allocations before the value member takes ownership.
 
 This engine handle is not a public shared owner or general runtime framework.
 It does not introduce an `Env`, an executor shutdown method, or another
@@ -152,25 +164,24 @@ Executor shutdown needs a different lifetime position, not a different
 ownership mechanism. The common handle and reverse member destruction already
 express the required order.
 
-### Custom owning-or-borrowing smart-pointer class
+### Standard unique pointer with a conditional deleter
 
-The standard smart pointer already supplies move-only ownership, dereferencing,
-exception-safe construction, and stateful deletion. Reimplementing those
-operations would add code without meeting another current requirement.
+The first implementation used `unique_ptr<T, DependencyDeleter<T>>`. It
+correctly handled lifetime and moves, but exposed a callable deleter and a full
+smart-pointer interface for services that are only selected, accessed, and
+destroyed. The value member makes the pointer/flag/destructor relationship
+direct, without recreating the unused reset/release/assignment operations.
 
 ## Bounded implementation map
 
-- `src/engine/dependency.h`: conditional deleter, alias, and two constructors.
-- `src/engine/database.h`: one handle per service and preserved member order.
-- `src/engine/database.cc`: lazy service selection, prepared filesystem handle,
-  and direct use of the effective block-cache pointer.
+- `src/engine/dependency.h`: the value member and two construction helpers.
+- `src/engine/database{,_write,_background}.cc`: explicit service access.
 - `tests/unit/engine/dependency_test.cc`: observable lifecycle tests.
-- `tests/CMakeLists.txt`: register the new unit-test source.
 - `docs/architecture.md`: update the current representation description.
 - This ADR and the ADR index: record review and implementation outcome.
 
-Other engine call sites already dereference the effective dependency pointers;
-smart-pointer dereferencing preserves those expressions.
+The four declarations in `database.h` retain their existing positions.
+No public options, cache, filesystem, or executor interface changes are needed.
 ADR-0079 owns the additional public contracts, facade wiring, and consumer tests.
 
 ## Validation and delivery
@@ -182,6 +193,7 @@ Start with failing lifecycle tests, then implement the helper. Verify:
 
 - owned objects are deleted exactly once, while borrowed objects survive;
 - moves preserve both pointer identity and deletion policy;
+- borrowed moves and empty/moved-from owners remain safe for each service kind;
 - a later throwing member cleans earlier owning handles but not borrowed ones;
 - mixed ownership choices preserve each resource's independent lifetime;
 - executor cleanup precedes dependent state, and filesystem/cache/clock
@@ -202,15 +214,26 @@ the integrated engine has passed regression tests. Record retained test and
 CI evidence only after executing it. Make no object-size or performance claim
 without a corresponding measurement.
 
-## Implementation outcome
+## Earlier implementation
 
-The engine now uses the same conditional-deleter handle for all four services.
-Filesystem admission returns the prepared handle, and successful member
-initialization immediately establishes its deletion policy. There are no
-`owned_*` service members, post-construction flag mutations, or executor-only
-manual deletion paths.
+The first implementation used the same conditional-deleter handle for all four
+services. Filesystem admission returned the prepared handle, and successful
+member initialization immediately established its deletion policy. There were
+no `owned_*` service members, post-construction flag mutations, or executor-only
+manual deletion paths. The amendment preserves those lifetime rules.
 
-Retained dependency tests exercise owned/borrowed cleanup, move construction
+Retained dependency tests exercised owned/borrowed cleanup, move construction
 and assignment, and every four-service ownership mixture across partial
 construction failures and normal shutdown. Existing engine and public
 dependency tests retain their original service-lifetime contracts.
+
+## Value-member outcome
+
+The amended implementation stores the pointer and a const ownership flag
+directly in `Dependency<T>`. Its destructor uses `delete`; its only resource
+accessor is `get()`. The four engine members keep their original declaration
+positions, and public injection is unchanged.
+
+Retained tests cover owning and borrowed moves, empty/moved-from owners for
+each actual service kind, and all 96 ownership/failure combinations from the
+earlier tests. Copying and all assignment are compile-time errors.
