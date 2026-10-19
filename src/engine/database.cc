@@ -23,7 +23,7 @@ constexpr std::size_t DefaultBlockCacheSize = std::size_t{8} << 20U;
 Result<Dependency<FileSystem>> PrepareFileSystem(const DatabaseEngineOptions& options,
                                                  std::filesystem::path& directory) {
     if (options.file_system != nullptr) {
-        return BorrowDependency(*options.file_system);
+        return BorrowDependency(options.file_system);
     }
     return CreateDefaultFileSystem(directory, options.allow_weak_namespace_durability,
                                    options.allow_mmap_reads)
@@ -34,21 +34,21 @@ Result<Dependency<FileSystem>> PrepareFileSystem(const DatabaseEngineOptions& op
 
 Dependency<BlockCache> PrepareBlockCache(const DatabaseEngineOptions& options) {
     if (options.block_cache != nullptr) {
-        return BorrowDependency(*options.block_cache);
+        return BorrowDependency(options.block_cache);
     }
     return OwnDependency(std::make_unique<BlockCache>(DefaultBlockCacheSize));
 }
 
 Dependency<BackgroundExecutor> PrepareExecutor(const DatabaseEngineOptions& options) {
     if (options.executor != nullptr) {
-        return BorrowDependency(*options.executor);
+        return BorrowDependency(options.executor);
     }
     return OwnDependency<BackgroundExecutor>(std::make_unique<SerialExecutor>());
 }
 
 Dependency<Clock> PrepareClock(const DatabaseEngineOptions& options) {
     if (options.clock != nullptr) {
-        return BorrowDependency(*options.clock);
+        return BorrowDependency(options.clock);
     }
     return OwnDependency<Clock>(std::make_unique<SystemClock>());
 }

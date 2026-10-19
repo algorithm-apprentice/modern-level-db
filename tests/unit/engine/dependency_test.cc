@@ -53,7 +53,7 @@ static_assert(!std::is_copy_assignable_v<Dependency<Resource>>);
 static_assert(std::is_nothrow_move_constructible_v<Dependency<Resource>>);
 static_assert(!std::is_move_assignable_v<Dependency<Resource>>);
 static_assert(noexcept(OwnDependency(std::declval<std::unique_ptr<Resource>>())));
-static_assert(noexcept(BorrowDependency(std::declval<Resource&>())));
+static_assert(noexcept(BorrowDependency(std::declval<Resource*>())));
 
 TEST(DependencyTest, DeletesOwnedObjectsExactlyOnce) {
     Lifetime lifetime;
@@ -70,7 +70,7 @@ TEST(DependencyTest, DoesNotDeleteBorrowedObjects) {
     {
         Resource resource(lifetime, 0);
         {
-            auto dependency = BorrowDependency(resource);
+            auto dependency = BorrowDependency(&resource);
             EXPECT_EQ(dependency.get(), &resource);
         }
         EXPECT_EQ(lifetime.destroyed[0], 0);
@@ -97,7 +97,7 @@ TEST(DependencyTest, MovesBorrowedPointersWithoutTakingOwnership) {
     {
         Resource borrowed(lifetime, 0);
         {
-            auto first = BorrowDependency(borrowed);
+            auto first = BorrowDependency(&borrowed);
             auto second = std::move(first);
             EXPECT_EQ(first.get(), nullptr);
             EXPECT_EQ(second.get(), &borrowed);
@@ -124,6 +124,14 @@ TEST(DependencyTest, PreservesEmptyOwnersAndMovedFromStatesForEveryServiceKind) 
     ExpectEmptyOwner<BackgroundExecutor>();
 }
 
+TEST(DependencyTest, PreservesAnEmptyBorrowThroughMove) {
+    auto first = BorrowDependency<Resource>(nullptr);
+    EXPECT_EQ(first.get(), nullptr);
+    auto second = std::move(first);
+    EXPECT_EQ(first.get(), nullptr);
+    EXPECT_EQ(second.get(), nullptr);
+}
+
 struct ResourceSelection {
     Lifetime& lifetime;
     std::array<std::unique_ptr<Resource>, 4>& supplied;
@@ -137,7 +145,7 @@ struct ResourceSelection {
         if ((owned_mask & (1U << index)) != 0) {
             return OwnDependency(std::make_unique<Resource>(lifetime, index, index == 3));
         }
-        return BorrowDependency(*supplied[index]);
+        return BorrowDependency(supplied[index].get());
     }
 };
 
