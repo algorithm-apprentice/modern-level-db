@@ -54,7 +54,9 @@ Define the small standard-library-only helper in `src/engine/dependency.h`:
 - A non-throwing move constructor transfers the pointer and copies the fixed
   ownership flag, leaving the source pointer null. The existing expected-based
   filesystem factory and engine construction require this transfer.
-- `BorrowDependency(T&)` constructs a non-owning handle.
+- `BorrowDependency(T*)` constructs a non-owning handle directly from the
+  supplied pointer. Null is an empty borrow; engine preparation selects a
+  default before constructing a required dependency from a null option.
 - `OwnDependency(std::unique_ptr<T>)` consumes an existing exclusive owner and
   constructs an owning handle.
 

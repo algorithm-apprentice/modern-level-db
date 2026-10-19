@@ -33,8 +33,8 @@ private:
 };
 
 template <typename T>
-[[nodiscard]] Dependency<T> BorrowDependency(T& dependency) noexcept {
-    return {&dependency, false};
+[[nodiscard]] Dependency<T> BorrowDependency(T* dependency) noexcept {
+    return {dependency, false};
 }
 
 template <typename T>
