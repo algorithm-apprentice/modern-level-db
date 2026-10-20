@@ -62,13 +62,22 @@ TableOptions ReadTableOptions(const DatabaseEngineOptions& options, BlockCache* 
 }  // namespace
 
 void DatabaseEngineOptions::Sanitize() noexcept {
-    max_open_files = std::clamp<std::size_t>(max_open_files, 64 + ReservedNonTableFileCount, 50000);
-    memtable_size_threshold = std::clamp<std::size_t>(
-        memtable_size_threshold, std::size_t{64} << 10U, std::size_t{1} << 30U);
-    max_file_size =
-        std::clamp<std::uint64_t>(max_file_size, std::uint64_t{1} << 20U, std::uint64_t{1} << 30U);
-    table_options.block_size = std::clamp<std::size_t>(
-        table_options.block_size, std::size_t{1} << 10U, std::size_t{4} << 20U);
+    constexpr std::size_t MinTableCacheCapacity = 64;
+    constexpr std::size_t MinOpenFiles = MinTableCacheCapacity + ReservedNonTableFileCount;
+    constexpr std::size_t MaxOpenFiles = 50000;
+    constexpr std::size_t MinMemTableSizeThreshold = std::size_t{64} << 10U;
+    constexpr std::size_t MaxMemTableSizeThreshold = std::size_t{1} << 30U;
+    constexpr std::uint64_t MinTargetFileSize = std::uint64_t{1} << 20U;
+    constexpr std::uint64_t MaxTargetFileSize = std::uint64_t{1} << 30U;
+    constexpr std::size_t MinTableBlockSize = std::size_t{1} << 10U;
+    constexpr std::size_t MaxTableBlockSize = std::size_t{4} << 20U;
+
+    max_open_files = std::clamp(max_open_files, MinOpenFiles, MaxOpenFiles);
+    memtable_size_threshold =
+        std::clamp(memtable_size_threshold, MinMemTableSizeThreshold, MaxMemTableSizeThreshold);
+    max_file_size = std::clamp(max_file_size, MinTargetFileSize, MaxTargetFileSize);
+    table_options.block_size =
+        std::clamp(table_options.block_size, MinTableBlockSize, MaxTableBlockSize);
 }
 
 Result<std::unique_ptr<DatabaseEngine>> DatabaseEngine::Open(DatabaseEngineOptions options,
