@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -270,6 +271,12 @@ TEST_F(RecoveryTest, ReplaysLogsIntoALevel0Table) {
     {
         const RecoveredDatabase recovered = Recover({});
 
+        const auto& tables = recovered.versions->current()->files(0);
+        ASSERT_EQ(tables.size(), 1U);
+        const std::size_t before_lookup = file_system_.operations().size();
+        ASSERT_TRUE(
+            table_cache_.Find(tables.front()->number, tables.front()->file_size).has_value());
+        EXPECT_EQ(file_system_.operations().size(), before_lookup);
         EXPECT_EQ(TableEntries(*recovered.versions), expected);
         EXPECT_EQ(TableNumbers(*recovered.versions, 0), (std::vector<std::uint64_t>{4}));
         EXPECT_EQ(recovered.versions->last_sequence(), 3U);
@@ -561,6 +568,73 @@ TEST_F(RecoveryTest, RecoversEveryEntryAfterAFailure) {
     for (const RecoveryOptions& options : {splitting, RecoveryOptions{}}) {
         SCOPED_TRACE(options.memtable_size_threshold);
         ExpectRecoveryAfterEveryFailure(options);
+    }
+}
+
+TEST_F(RecoveryTest, EvictsBuiltTablesAndReleasesTheLockAfterAnException) {
+    const std::vector<std::pair<std::string_view, std::size_t>> failure_points{
+        {"open_sequential 000003.log", 1},
+        {"sync MANIFEST-000003", 2},
+    };
+    for (const auto& [throwing_operation, expected_tables] : failure_points) {
+        SCOPED_TRACE(throwing_operation);
+        MemoryFileSystem file_system;
+        TableCache cache(file_system, directory_, comparator_, {}, 10);
+        {
+            const auto created =
+                RecoverDatabase(file_system, directory_, comparator_, Creating(), cache);
+            ASSERT_TRUE(created.has_value());
+        }
+        const std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> records{
+            {2, Batch(1, {Put{"a", "1"}})},
+            {3, Batch(2, {Put{"b", "2"}})},
+        };
+        for (const auto& [number, record] : records) {
+            auto file = file_system.OpenWritable(LogFileName(directory_, number));
+            ASSERT_TRUE(file.has_value());
+            WalWriter writer(std::move(*file));
+            ASSERT_TRUE(writer.AddRecord(record).has_value());
+        }
+        RecoveryOptions options;
+        options.memtable_size_threshold = 1;
+        bool injected = false;
+        file_system.SetOperationHook([&](std::string_view operation) -> Status {
+            if (operation == throwing_operation) {
+                injected = true;
+                throw std::runtime_error("injected recovery exception");
+            }
+            return {};
+        });
+
+        EXPECT_THROW(static_cast<void>(
+                         RecoverDatabase(file_system, directory_, comparator_, options, cache)),
+                     std::runtime_error);
+        file_system.SetOperationHook({});
+        ASSERT_TRUE(injected);
+
+        const auto names = file_system.ListDirectory(directory_);
+        ASSERT_TRUE(names.has_value());
+        std::size_t table_count = 0;
+        for (const auto& name : *names) {
+            const auto parsed = ParseFileName(name.string());
+            if (!parsed.has_value() || parsed->type != FileType::Table) {
+                continue;
+            }
+            ++table_count;
+            const auto contents = file_system.Contents(directory_ / name);
+            ASSERT_TRUE(contents.has_value());
+            const std::size_t before_lookup = file_system.operations().size();
+            ASSERT_TRUE(cache.Find(parsed->number, contents->size()).has_value());
+            ASSERT_GT(file_system.operations().size(), before_lookup);
+            EXPECT_EQ(file_system.operations()[before_lookup],
+                      "open_random_access " + name.string());
+            cache.Evict(parsed->number);
+        }
+        EXPECT_EQ(table_count, expected_tables);
+        const auto recovered =
+            RecoverDatabase(file_system, directory_, comparator_, options, cache);
+        ASSERT_TRUE(recovered.has_value()) << recovered.error().ToString();
+        EXPECT_EQ(TableEntries(*recovered->versions, cache), (Entries{{"a@1", "1"}, {"b@2", "2"}}));
     }
 }
 
