@@ -57,6 +57,16 @@ Status PrepareDirectory(FileSystem& file_system, const std::filesystem::path& di
     return file_system.CreateDir(directory);
 }
 
+Result<std::unique_ptr<FileLock>> PrepareAndLockDirectory(FileSystem& file_system,
+                                                          const std::filesystem::path& directory,
+                                                          const RecoveryOptions& options) {
+    const Status prepared = PrepareDirectory(file_system, directory, options);
+    if (!prepared.has_value()) {
+        return std::unexpected(prepared.error());
+    }
+    return file_system.LockFile(LockFileName(directory));
+}
+
 Result<std::unique_ptr<VersionSet>> OpenVersions(FileSystem& file_system,
                                                  const std::filesystem::path& directory,
                                                  const InternalKeyComparator& comparator,
@@ -357,17 +367,44 @@ Result<RecoveryLog> InstallRecoveryLog(FileSystem& file_system,
     return installed;
 }
 
+Result<RecoveryLog> ReplayAndInstallLogs(FileSystem& file_system,
+                                         const std::filesystem::path& directory,
+                                         const InternalKeyComparator& comparator,
+                                         const RecoveryOptions& options, TableCache& table_cache,
+                                         VersionSet& versions) {
+    const Result<std::vector<std::uint64_t>> logs =
+        PrepareLogsForReplay(file_system, directory, versions);
+    if (!logs.has_value()) {
+        return std::unexpected(logs.error());
+    }
+
+    VersionEdit edit;
+    BuiltTables built(table_cache);
+    LogReplay replay(file_system, directory, comparator, options, table_cache, versions, edit,
+                     built);
+    Result<SequenceNumber> last_sequence = ReplayLogs(replay, *logs);
+    if (!last_sequence.has_value()) {
+        return std::unexpected(std::move(last_sequence).error());
+    }
+    versions.SetLastSequence(std::max(versions.last_sequence(), *last_sequence));
+
+    Result<RecoveryLog> log =
+        InstallRecoveryLog(file_system, directory, versions, edit, options.sync_wal_creation);
+    if (!log.has_value()) {
+        return std::unexpected(std::move(log).error());
+    }
+    built.Keep();
+    return log;
+}
+
 }  // namespace
 
 Result<RecoveredDatabase> RecoverDatabase(FileSystem& file_system,
                                           const std::filesystem::path& directory,
                                           const InternalKeyComparator& comparator,
                                           const RecoveryOptions& options, TableCache& table_cache) {
-    const Status prepared = PrepareDirectory(file_system, directory, options);
-    if (!prepared.has_value()) {
-        return std::unexpected(prepared.error());
-    }
-    Result<std::unique_ptr<FileLock>> lock = file_system.LockFile(LockFileName(directory));
+    Result<std::unique_ptr<FileLock>> lock =
+        PrepareAndLockDirectory(file_system, directory, options);
     if (!lock.has_value()) {
         return std::unexpected(std::move(lock).error());
     }
@@ -376,28 +413,11 @@ Result<RecoveredDatabase> RecoverDatabase(FileSystem& file_system,
     if (!versions.has_value()) {
         return std::unexpected(std::move(versions).error());
     }
-    VersionSet& set = **versions;
-    const Result<std::vector<std::uint64_t>> logs =
-        PrepareLogsForReplay(file_system, directory, set);
-    if (!logs.has_value()) {
-        return std::unexpected(logs.error());
-    }
-
-    VersionEdit edit;
-    BuiltTables built(table_cache);
-    LogReplay replay(file_system, directory, comparator, options, table_cache, set, edit, built);
-    Result<SequenceNumber> last_sequence = ReplayLogs(replay, *logs);
-    if (!last_sequence.has_value()) {
-        return std::unexpected(std::move(last_sequence).error());
-    }
-    set.SetLastSequence(std::max(set.last_sequence(), *last_sequence));
-
     Result<RecoveryLog> log =
-        InstallRecoveryLog(file_system, directory, set, edit, options.sync_wal_creation);
+        ReplayAndInstallLogs(file_system, directory, comparator, options, table_cache, **versions);
     if (!log.has_value()) {
         return std::unexpected(std::move(log).error());
     }
-    built.Keep();
     RecoveredDatabase recovered{
         .lock = std::move(*lock),
         .versions = std::move(*versions),

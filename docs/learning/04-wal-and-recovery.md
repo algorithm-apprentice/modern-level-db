@@ -284,7 +284,7 @@ obsolete-file cleanup instead of guessing.
 | [`file_system.h`](../../src/platform/file_system.h) | `WritableFile`, `SyncDirectory` | Which operation provides visibility, content durability, or namespace durability? | [`file_system_test.cc`](../../tests/unit/platform/file_system_test.cc) |
 | [`wal_format.cc`](../../src/format/wal_format.cc) | `WalFragmenter`, `DecodeWalFragment` | How does a logical record cross block boundaries without a partial commit? | [`wal_format_test.cc`](../../tests/unit/format/wal_format_test.cc) |
 | [`wal_io.cc`](../../src/wal/wal_io.cc) | `WalWriter`, `WalReader::ReadNext` | Which outcomes are record, crash tail, corruption, and terminal I/O? | [`wal_io_test.cc`](../../tests/unit/wal/wal_io_test.cc) |
-| [`recovery.cc`](../../src/engine/recovery.cc) | `RecoverDatabase`, `LogReplay`, `CreateRecoveryLog` | Which logs reconstruct state, and when does the new WAL become durable? | [`recovery_test.cc`](../../tests/unit/engine/recovery_test.cc) |
+| [`recovery.cc`](../../src/engine/recovery.cc) | `RecoverDatabase`, `PrepareAndLockDirectory`, `ReplayAndInstallLogs`, `LogReplay`, `CreateRecoveryLog` | How do preparation/locking, metadata opening, and replay/installation compose without shortening cleanup lifetimes? | [`recovery_test.cc`](../../tests/unit/engine/recovery_test.cc) |
 | [`version_set.cc`](../../src/metadata/version_set.cc) | `LogAndApply`, `ApplyPrepared`, `WritePrepared`, `PublishPreparedEdit`, `LiveFiles` | What is captured before unlocking, what becomes durable, and which old Versions remain protected? | [`version_set_test.cc`](../../tests/unit/metadata/version_set_test.cc), [`power_loss_test.cc`](../../tests/crash/power_loss_test.cc) |
 
 Then read [ADR-0011](../adr/0011-filesystem-contracts.md),
@@ -292,12 +292,16 @@ Then read [ADR-0011](../adr/0011-filesystem-contracts.md),
 [ADR-0029](../adr/0029-database-recovery.md), and
 [ADR-0040](../adr/0040-compatibility-and-crash-harness.md).
 
-Within recovery, `CreateRecoveryLog` owns acquisition and the optional
-file-sync-before-directory-sync barriers. `RecoverDatabase` retains the larger
-commit: reserve the log number after replay, create the writer, apply the
-MANIFEST edit, then keep built tables and return the new owners. Failure before
-publication leaves RAII cleanup in charge. Runtime rotation is deliberately a
-different path; it must preserve its old-WAL close and sticky-error protocol.
+`RecoverDatabase` prepares and locks the directory, opens the version set, then
+delegates replay and installation before transferring the recovered owners.
+Its directory lock remains alive while all phase-local cleanup runs.
+`ReplayAndInstallLogs` retains the built-table guard across replay and MANIFEST
+installation: reserve the new log number after replay, create the writer, apply
+the edit, then keep built tables. A failure evicts cached recovery outputs
+without deleting disk files that an uncertain edit may already reference.
+`CreateRecoveryLog` owns acquisition and the optional file-sync-before-directory-sync
+barriers. Runtime rotation is deliberately a different path; it must preserve
+its old-WAL close and sticky-error protocol.
 
 ## Self-check
 
