@@ -55,6 +55,8 @@ public:
     }
 
 private:
+    // Alternatives are only constructed or moved without throwing, never
+    // reassigned, so data() cannot visit a valueless variant.
     using Storage = std::variant<ByteView, std::vector<std::byte>, DecodedBlockBytes>;
 
     explicit BlockContents(std::vector<std::byte> contents) noexcept

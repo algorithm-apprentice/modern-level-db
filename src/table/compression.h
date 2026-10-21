@@ -45,9 +45,9 @@ struct DecodedBlockBytes final {
 [[nodiscard]] bool TryCompressBlock(ByteView raw, BlockCompression requested, int zstd_level,
                                     std::vector<std::byte>& scratch);
 
-// Decompresses a raw Snappy block or a self-describing Zstd frame.
-[[nodiscard]] Result<std::vector<std::byte>> DecompressBlock(ByteView stored,
-                                                             BlockCompression type);
+// Decompresses into final, address-stable owned storage. Partial output is
+// discarded on failure.
+[[nodiscard]] Result<DecodedBlockBytes> DecompressBlock(ByteView stored, BlockCompression type);
 
 }  // namespace modern_leveldb
 

@@ -29,6 +29,7 @@ DecodedBlockBytes::DecodedBlockBytes(DecodedBlockBytes&& other) noexcept
 namespace {
 
 constexpr std::size_t MaxBlockSize = std::numeric_limits<std::uint32_t>::max();
+constexpr std::size_t MaxDecodedSize = std::min(MaxBlockSize, std::vector<std::byte>{}.max_size());
 
 Error CorruptCompression(const char* message) { return Error::Corruption(message); }
 
@@ -68,41 +69,43 @@ bool CompressZstdBlock(ByteView raw, int zstd_level, std::vector<std::byte>& scr
     return true;
 }
 
-Result<std::vector<std::byte>> DecompressSnappyBlock(ByteView stored) {
+Result<DecodedBlockBytes> DecompressSnappyBlock(ByteView stored) {
     std::size_t uncompressed_size = 0;
     if (!snappy::GetUncompressedLength(reinterpret_cast<const char*>(stored.data()), stored.size(),
                                        &uncompressed_size)) {
         return std::unexpected(CorruptCompression("compressed Snappy block has an invalid length"));
     }
-    std::vector<std::byte> output;
-    if (!PrepareOutput(uncompressed_size, output)) {
+    if (uncompressed_size > MaxDecodedSize) {
         return std::unexpected(CorruptCompression("compressed Snappy block is too large"));
+    }
+    std::unique_ptr<std::byte[]> output;
+    if (uncompressed_size != 0) {
+        output = std::make_unique_for_overwrite<std::byte[]>(uncompressed_size);
     }
     char empty_output = '\0';
     char* const destination =
-        output.empty() ? &empty_output : reinterpret_cast<char*>(output.data());
+        uncompressed_size == 0 ? &empty_output : reinterpret_cast<char*>(output.get());
     if (!snappy::RawUncompress(reinterpret_cast<const char*>(stored.data()), stored.size(),
                                destination)) {
         return std::unexpected(CorruptCompression("compressed Snappy block has invalid contents"));
     }
-    return output;
+    return DecodedBlockBytes(std::move(output), uncompressed_size);
 }
 
-Result<std::vector<std::byte>> DecompressZstdBlock(ByteView stored) {
+Result<DecodedBlockBytes> DecompressZstdBlock(ByteView stored) {
     const unsigned long long declared = ZSTD_getFrameContentSize(stored.data(), stored.size());
-    std::vector<std::byte> output;
     // The two Zstd error sentinels also exceed the block-size bound.
     static_assert(ZSTD_CONTENTSIZE_ERROR > MaxBlockSize && ZSTD_CONTENTSIZE_UNKNOWN > MaxBlockSize);
-    if (declared == 0 || declared > std::min(MaxBlockSize, output.max_size())) {
+    if (declared == 0 || declared > MaxDecodedSize) {
         return std::unexpected(CorruptCompression("compressed Zstd block has an invalid size"));
     }
-    output.resize(static_cast<std::size_t>(declared));
-    const std::size_t actual =
-        ZSTD_decompress(output.data(), output.size(), stored.data(), stored.size());
-    if (ZSTD_isError(actual) != 0U || actual != output.size()) {
+    const auto size = static_cast<std::size_t>(declared);
+    auto output = std::make_unique_for_overwrite<std::byte[]>(size);
+    const std::size_t actual = ZSTD_decompress(output.get(), size, stored.data(), stored.size());
+    if (ZSTD_isError(actual) != 0U || actual != size) {
         return std::unexpected(CorruptCompression("compressed Zstd block has invalid contents"));
     }
-    return output;
+    return DecodedBlockBytes(std::move(output), size);
 }
 
 }  // namespace
@@ -152,7 +155,7 @@ bool TryCompressBlock(ByteView raw, BlockCompression requested, int zstd_level,
     return true;
 }
 
-Result<std::vector<std::byte>> DecompressBlock(ByteView stored, BlockCompression type) {
+Result<DecodedBlockBytes> DecompressBlock(ByteView stored, BlockCompression type) {
     if (type == BlockCompression::Snappy) {
         return DecompressSnappyBlock(stored);
     }

@@ -177,7 +177,7 @@ Result<BlockContents> DecodeStoredBlock(std::vector<std::byte> stored) {
         stored.resize(decoded->contents.size());
         return BlockContents::Owned(std::move(stored));
     }
-    Result<std::vector<std::byte>> decompressed =
+    Result<DecodedBlockBytes> decompressed =
         DecompressBlock(decoded->contents, decoded->compression);
     if (!decompressed.has_value()) {
         return std::unexpected(std::move(decompressed).error());
@@ -193,7 +193,7 @@ Result<BlockContents> DecodeStoredBlock(ByteView stored) {
     if (decoded->compression == BlockCompression::None) {
         return BlockContents::Borrowed(decoded->contents);
     }
-    Result<std::vector<std::byte>> decompressed =
+    Result<DecodedBlockBytes> decompressed =
         DecompressBlock(decoded->contents, decoded->compression);
     if (!decompressed.has_value()) {
         return std::unexpected(std::move(decompressed).error());

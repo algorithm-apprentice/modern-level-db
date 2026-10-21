@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -22,6 +23,10 @@ std::vector<std::byte> Bytes(std::initializer_list<unsigned int> values) {
         result.push_back(static_cast<std::byte>(value));
     }
     return result;
+}
+
+ByteView DecodedView(const DecodedBlockBytes& bytes) noexcept {
+    return {bytes.data.get(), bytes.size};
 }
 
 template <typename T>
@@ -53,9 +58,9 @@ TEST(BlockCompressionTest, CompressesAndDecompressesSnappyAndZstd) {
         ASSERT_TRUE(TryCompressBlock(raw, type, 1, scratch));
         EXPECT_TRUE(CompressionIsWorthwhile(raw.size(), scratch.size()));
 
-        const Result<std::vector<std::byte>> decoded = DecompressBlock(scratch, type);
+        const Result<DecodedBlockBytes> decoded = DecompressBlock(scratch, type);
         ASSERT_TRUE(decoded.has_value()) << decoded.error().ToString();
-        EXPECT_EQ(*decoded, raw);
+        EXPECT_TRUE(std::ranges::equal(DecodedView(*decoded), raw));
     }
 }
 
@@ -81,24 +86,24 @@ TEST(BlockCompressionTest, FallsBackForNoneEmptyAndIncompressibleInput) {
 
 TEST(BlockCompressionTest, DecodesIndependentRawSnappyStreams) {
     const std::vector<std::byte> literal = Bytes({0x05, 0x10, 'h', 'e', 'l', 'l', 'o'});
-    const Result<std::vector<std::byte>> decoded =
-        DecompressBlock(literal, BlockCompression::Snappy);
+    const Result<DecodedBlockBytes> decoded = DecompressBlock(literal, BlockCompression::Snappy);
     ASSERT_TRUE(decoded.has_value()) << decoded.error().ToString();
-    EXPECT_EQ(*decoded, Bytes({'h', 'e', 'l', 'l', 'o'}));
+    EXPECT_TRUE(std::ranges::equal(DecodedView(*decoded), Bytes({'h', 'e', 'l', 'l', 'o'})));
 
-    const Result<std::vector<std::byte>> empty =
+    const Result<DecodedBlockBytes> empty =
         DecompressBlock(Bytes({0x00}), BlockCompression::Snappy);
     ASSERT_TRUE(empty.has_value()) << empty.error().ToString();
-    EXPECT_TRUE(empty->empty());
+    EXPECT_EQ(empty->size, 0U);
+    EXPECT_EQ(empty->data, nullptr);
 }
 
 TEST(BlockCompressionTest, DecodesIndependentSizedZstdFrames) {
     const std::vector<std::byte> frame =
         Bytes({0x28, 0xb5, 0x2f, 0xfd, 0x24, 0x05, 0x29, 0x00, 0x00, 'h', 'e', 'l', 'l', 'o', 0xa3,
                0x6d, 0x9f, 0x88});
-    const Result<std::vector<std::byte>> decoded = DecompressBlock(frame, BlockCompression::Zstd);
+    const Result<DecodedBlockBytes> decoded = DecompressBlock(frame, BlockCompression::Zstd);
     ASSERT_TRUE(decoded.has_value()) << decoded.error().ToString();
-    EXPECT_EQ(*decoded, Bytes({'h', 'e', 'l', 'l', 'o'}));
+    EXPECT_TRUE(std::ranges::equal(DecodedView(*decoded), Bytes({'h', 'e', 'l', 'l', 'o'})));
 }
 
 TEST(BlockCompressionTest, RejectsMalformedAndUnboundedStreams) {

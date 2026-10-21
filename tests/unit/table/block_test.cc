@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -21,6 +22,7 @@
 #include "modern_leveldb/base/comparator.h"
 #include "modern_leveldb/base/result.h"
 #include "table/block_builder.h"
+#include "table/compression.h"
 
 namespace modern_leveldb {
 namespace {
@@ -877,6 +879,46 @@ TEST(BlockIteratorTest, RemainsValidWhenTheBlockMoves) {
     ExpectAt(iterator, "applesauce", "2");
     ExpectOk(iterator.SeekToLast());
     ExpectAt(iterator, "banana", "3");
+}
+
+TEST(BlockIteratorTest, DecodedStorageSurvivesSourceDestructionAndBlockMoves) {
+    const std::string value(256, 'v');
+    BlockBuilder builder(2);
+    builder.Add(AsBytes("a"), AsBytes(value));
+    builder.Add(AsBytes("b"), AsBytes("next"));
+    const auto raw = Materialize(builder.Finish());
+    const auto found = std::ranges::search(raw, AsBytes(value));
+    ASSERT_FALSE(found.empty());
+    const auto value_offset = static_cast<std::size_t>(found.begin() - raw.begin());
+
+    for (const auto type : {BlockCompression::Snappy, BlockCompression::Zstd}) {
+        SCOPED_TRACE(static_cast<int>(type));
+        std::optional<Block> owner;
+        std::optional<Block::Iterator> iterator;
+        const std::byte* expected_value = nullptr;
+        {
+            std::vector<std::byte> compressed;
+            ASSERT_TRUE(TryCompressBlock(raw, type, 1, compressed));
+            auto decoded = DecompressBlock(compressed, type);
+            ASSERT_TRUE(decoded.has_value()) << decoded.error().ToString();
+            expected_value = decoded->data.get() + value_offset;
+            auto block = Block::Create(BlockContents::Owned(std::move(*decoded)));
+            ASSERT_TRUE(block.has_value()) << block.error().ToString();
+            EXPECT_EQ(block->size(), raw.size());
+            iterator.emplace(*block, BytewiseComparator());
+            ASSERT_TRUE(iterator->SeekToFirst().has_value());
+            EXPECT_EQ(iterator->value().data(), expected_value);
+            owner.emplace(std::move(*block));
+        }
+
+        ExpectAt(*iterator, "a", value);
+        EXPECT_EQ(iterator->value().data(), expected_value);
+        ExpectOk(iterator->Next());
+        ExpectAt(*iterator, "b", "next");
+        ExpectOk(iterator->Prev());
+        ExpectAt(*iterator, "a", value);
+        EXPECT_EQ(iterator->value().data(), expected_value);
+    }
 }
 
 TEST(BlockIteratorTest, EmptyBlockHasNoPositions) {
