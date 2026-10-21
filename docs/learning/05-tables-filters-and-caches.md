@@ -76,6 +76,13 @@ Table-open validation walks all index entries. When a filter policy is
 configured, it also reads and validates the metaindex entries.
 A valid block envelope is not a certificate that every data entry is valid.
 
+The checked entry decoder returns the key-delta pointer and three lengths.
+Private iterator loops advance with a boolean position result and latch
+corruption locally; the public movement call returns the corresponding
+`Status`. End-of-block is not an error. Key capacity is reserved before
+committing a reconstructed entry, preserving a consistent position if
+allocation throws.
+
 ## Index separators
 
 An index key need not repeat the complete last data key if a shorter key
@@ -166,6 +173,12 @@ the cache also matter. The public facade currently creates an internal
 
 `fill_cache=false` avoids admitting newly read data blocks.
 It does not disable existing cache hits, the table cache, or the OS cache.
+
+A positioned table iterator also retains its current data block and cursor.
+If another positioning operation selects the same encoded block handle, it
+reuses them without a cache lookup or file read. This iterator-local reuse
+works without a block cache; exhaustion or a returned error releases the
+retained block.
 
 ## Retire under the mutex, reclaim after it
 

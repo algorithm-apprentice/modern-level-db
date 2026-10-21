@@ -122,6 +122,13 @@ compaction; each caller still selects its own sources and cache options.
 The implementation selects among children directly; do not assume every
 merging iterator uses a heap.
 
+For multiple children, each child caches its validity and borrowed key view.
+Only moving that child refreshes the cache; choosing the next stream does not
+repeatedly call through its iterator interface. Key views still expire when
+their child moves. A single child passes through without another iterator layer.
+The merger clears its selected position before fallible child movement and
+publishes a new selection only after success, including during direction changes.
+
 The **DB iterator** turns internal history into user-visible keys:
 
 1. Ignore entries newer than its captured sequence.
@@ -157,6 +164,13 @@ children so they do not repeat or skip a user key.
 
 The reverse DB iterator saves key/value bytes because its internal iterator
 can already be positioned before the returned user's entries.
+
+The saved key also supplies reusable storage for an internal seek target:
+the requested user key followed by the iterator's fixed sequence and seek kind.
+Copy the user key before appending the trailer, including when the request
+borrows the iterator's own saved key. Capacity survives subsequent clears.
+Movement invalidates the public position before changing storage or children,
+so an exception cannot expose a stale key/value pair as a valid position.
 
 ## Lifetimes and range scans
 

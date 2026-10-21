@@ -10,6 +10,48 @@ reusable output work. The integrated Milestone 5 audit closed two residual
 cost-model gaps and one scan-control implementation deviation. The final
 frozen-binary matrix passes every completion gate.
 
+### Follow-up mechanism audit and million-record measurement
+
+The October 21, 2026 follow-up audit found four finer-grained mechanisms that
+the original baseline had not fully matched:
+
+- Reusing a table iterator's data-block cursor when its encoded handle is unchanged.
+- Reusing the DB iterator's saved key storage for internal seek targets.
+- Caching child validity and key views in the linear merger, with single-child passthrough.
+- Using scalar checked entry decoding and private boolean block movement,
+  constructing public errors only at the movement boundary.
+
+These mechanisms are aligned at implementation revision `7e37b7d`. Lazy
+corruption checks, recovery on a later seek, allocation-before-entry-commit
+safety, and the public `Status` API remain intact. Native LevelDB's disabled
+exceptions and sticky public iterator status are not adopted.
+
+A fixed six-round comparison ran all six orders of original Modern, aligned
+Modern, and native LevelDB in 54 fresh processes. It used one million 11-byte
+keys with 256-byte values, the same closed SST image, an 8 MiB block cache,
+mapped reads, enabled checksums, identical compression/checksum libraries,
+and one foreground thread pinned to one logical CPU on a Windows x64 host.
+Accepted background work was queued until timing ended. Every process
+verified complete data before/after timing and unchanged per-level topology.
+The common timing object was unchanged; normalized compiler commands matched
+for all 54 Modern library source files.
+
+| Workload | Original Modern (`3068ea3`) | Aligned Modern | Native LevelDB | Aligned versus original elapsed time |
+|---|---:|---:|---:|---:|
+| Full scan of one million records | 295.185 ms | 261.267 ms | 291.108 ms | -11.49% |
+| Reused-iterator random Seek | 7.384 us/op | 7.332 us/op | 6.737 us/op | -0.69% |
+| Random Get with reusable output | 6.961 us/op | 7.104 us/op | 6.106 us/op | +2.06% |
+
+These are medians of per-process mean costs, not tail latencies. Scan elapsed
+time decreased in every paired round. Seek and Get each improved in only
+three of six pairs, so neither establishes a consistent gain over the original
+Modern implementation. Aligned Seek/Get remain 8.83%/16.34% slower than native
+in this run; mechanism alignment has not eliminated the point-read gap.
+The warm shared-image results do not establish cold-storage, write-layout,
+mixed-load, or multi-core behavior. Raw samples, input hashes, source/build
+audit, and fixed plan are retained locally under
+`build/native-read-alignment-20261021/million`.
+
 ## Context
 
 The original read-performance strategy was to use pinned Google LevelDB as the

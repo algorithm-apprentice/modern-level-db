@@ -20,8 +20,8 @@ namespace {
 
 constexpr std::size_t Fixed32Size = sizeof(std::uint32_t);
 
-const std::byte* DecodeVarint32(const std::byte* input, const std::byte* limit,
-                                std::uint32_t& value) noexcept {
+const std::byte* DecodeVarint32Fallback(const std::byte* input, const std::byte* limit,
+                                        std::uint32_t& value) noexcept {
     value = 0;
     for (unsigned int index = 0; index < 5; ++index) {
         if (input == limit) {
@@ -34,6 +34,15 @@ const std::byte* DecodeVarint32(const std::byte* input, const std::byte* limit,
         }
     }
     return nullptr;
+}
+
+const std::byte* DecodeVarint32(const std::byte* input, const std::byte* limit,
+                                std::uint32_t& value) noexcept {
+    if (input != limit && std::to_integer<unsigned int>(*input) < 128U) {
+        value = std::to_integer<unsigned int>(*input);
+        return input + 1;
+    }
+    return DecodeVarint32Fallback(input, limit, value);
 }
 
 bool DecodeEntryHeader(const std::byte*& input, const std::byte* limit, std::uint32_t& shared,
@@ -79,39 +88,41 @@ ByteView StringBytes(const std::string& value) noexcept {
 }  // namespace
 
 const std::byte* Block::DecodeEntry(const std::byte* input, const std::byte* limit,
-                                    DecodedEntry& entry) noexcept {
-    const std::byte* begin = input;
+                                    std::uint32_t& shared, std::uint32_t& non_shared,
+                                    std::uint32_t& value_size) noexcept {
     if (static_cast<std::size_t>(limit - input) < 3) {
         return nullptr;
     }
 
-    std::uint32_t shared = std::to_integer<unsigned int>(input[0]);
-    std::uint32_t non_shared = std::to_integer<unsigned int>(input[1]);
-    std::uint32_t value_size = std::to_integer<unsigned int>(input[2]);
+    shared = std::to_integer<unsigned int>(input[0]);
+    non_shared = std::to_integer<unsigned int>(input[1]);
+    value_size = std::to_integer<unsigned int>(input[2]);
     if (!DecodeEntryHeader(input, limit, shared, non_shared, value_size)) {
         return nullptr;
     }
     if (!HasEntryPayload(input, limit, non_shared, value_size)) {
         return nullptr;
     }
-    entry = {
-        .shared = shared,
-        .key_delta = ByteView(input, non_shared),
-        .value = ByteView(input + non_shared, value_size),
-        .header_size = static_cast<std::size_t>(input - begin),
-    };
     return input;
 }
 
 std::optional<Block::DecodedEntry> Block::ReadEntry(const Layout& layout, std::size_t offset,
                                                     std::size_t previous_key_size) noexcept {
-    DecodedEntry entry{};
     const std::byte* begin = layout.contents.data() + offset;
     const std::byte* limit = layout.contents.data() + layout.entries_end;
-    if (DecodeEntry(begin, limit, entry) == nullptr || entry.shared > previous_key_size) {
+    std::uint32_t shared = 0;
+    std::uint32_t non_shared = 0;
+    std::uint32_t value_size = 0;
+    const std::byte* key = DecodeEntry(begin, limit, shared, non_shared, value_size);
+    if (key == nullptr || shared > previous_key_size) {
         return std::nullopt;
     }
-    return entry;
+    return DecodedEntry{
+        .shared = shared,
+        .key_delta = ByteView(key, non_shared),
+        .value = ByteView(key + non_shared, value_size),
+        .header_size = static_cast<std::size_t>(key - begin),
+    };
 }
 
 void Block::ReconstructKey(std::string& key, const DecodedEntry& entry) {
@@ -222,11 +233,10 @@ Status Block::Iterator::SeekToFirst() {
         Invalidate();
         return {};
     }
-    const Status sought = SeekToRestartPoint(0);
-    if (!sought.has_value()) {
-        return sought;
+    if (SeekToRestartPoint(0)) {
+        ParseNextEntry();
     }
-    return ParseNextEntry();
+    return CurrentStatus();
 }
 
 Status Block::Iterator::SeekToLast() {
@@ -235,27 +245,22 @@ Status Block::Iterator::SeekToLast() {
         Invalidate();
         return {};
     }
-    const Status sought = SeekToRestartPoint(layout_.restart_count - 1);
-    if (!sought.has_value()) {
-        return sought;
+    if (SeekToRestartPoint(layout_.restart_count - 1)) {
+        ScanToLastEntry();
     }
-    return ScanToLastEntry();
+    return CurrentStatus();
 }
 
-Status Block::Iterator::ScanToLastEntry() {
-    do {
-        const Status parsed = ParseNextEntry();
-        if (!parsed.has_value()) {
-            return parsed;
-        }
-    } while (valid() && next_ < layout_.entries_end);
-    return {};
+void Block::Iterator::ScanToLastEntry() {
+    while (ParseNextEntry() && next_ < layout_.entries_end) {
+    }
 }
 
 Status Block::Iterator::Seek(ByteView target) {
     BeginPositioning();
     if (!AcceptsKeySize(target.size())) {
-        return Corruption();
+        Corruption();
+        return CurrentStatus();
     }
     if (layout_.restart_count == 0) {
         Invalidate();
@@ -276,27 +281,24 @@ Status Block::Iterator::Seek(ByteView target) {
         }
     }
 
-    auto restart = FindRestart(target, left, right);
-    if (!restart.has_value()) {
-        return std::unexpected(std::move(restart).error());
+    std::size_t restart = 0;
+    if (!FindRestart(target, left, right, restart) ||
+        !RestoreCheckpoint(restart, current_key_compare)) {
+        return CurrentStatus();
     }
-    Status restored = RestoreCheckpoint(*restart, current_key_compare);
-    if (!restored.has_value()) {
-        return restored;
-    }
-    return ScanToLowerBound(target);
+    ScanToLowerBound(target);
+    return CurrentStatus();
 }
 
-Result<std::size_t> Block::Iterator::FindRestart(ByteView target, std::size_t left,
-                                                 std::size_t right) {
+bool Block::Iterator::FindRestart(ByteView target, std::size_t left, std::size_t right,
+                                  std::size_t& index) noexcept {
     // Prefix-compressed entries require reconstruction from the last restart
     // strictly before the target, rather than a binary search over all entries.
     while (left < right) {
         const std::size_t middle = left + (right - left + 1) / 2;
         ByteView middle_key;
-        const Status decoded = RestartKey(middle, middle_key);
-        if (!decoded.has_value()) {
-            return std::unexpected(decoded.error());
+        if (!RestartKey(middle, middle_key)) {
+            return false;
         }
         if (Compare(middle_key, target) < 0) {
             left = middle;
@@ -304,106 +306,95 @@ Result<std::size_t> Block::Iterator::FindRestart(ByteView target, std::size_t le
             right = middle - 1;
         }
     }
-    return left;
+    index = left;
+    return true;
 }
 
-Status Block::Iterator::RestoreCheckpoint(std::size_t index, int current_key_compare) {
+bool Block::Iterator::RestoreCheckpoint(std::size_t index, int current_key_compare) noexcept {
     // Reuse a current forward position only when the checkpoint is unchanged;
     // otherwise rebuild the full key from its restart before applying suffixes.
     if (!(index == restart_index_ && current_key_compare < 0)) {
-        const Status sought = SeekToRestartPoint(index);
-        if (!sought.has_value()) {
-            return sought;
-        }
+        return SeekToRestartPoint(index);
     }
-    return {};
+    return true;
 }
 
-Status Block::Iterator::ScanToLowerBound(ByteView target) {
-    while (true) {
-        const Status parsed = ParseNextEntry();
-        if (!parsed.has_value() || !valid() || Compare(key(), target) >= 0) {
-            return parsed;
-        }
+void Block::Iterator::ScanToLowerBound(ByteView target) {
+    while (ParseNextEntry() && Compare(key(), target) < 0) {
     }
 }
 
-Status Block::Iterator::Next() { return ParseNextEntry(); }
+Status Block::Iterator::Next() {
+    ParseNextEntry();
+    return CurrentStatus();
+}
 
 Status Block::Iterator::Prev() {
     // Entries have no backward link/full key at every offset. Reconstruct from
     // a preceding restart until the next entry would be the current one.
     const std::size_t original = current_;
-    bool found = false;
-    Status searched = FindPreviousRestart(original, found);
-    if (!searched.has_value()) {
-        return searched;
-    }
-    if (!found) {
-        return {};
+    if (!FindPreviousRestart(original)) {
+        return CurrentStatus();
     }
 
-    const Status sought = SeekToRestartPoint(restart_index_);
+    const bool sought = SeekToRestartPoint(restart_index_);
     // GCOVR_EXCL_START: restart < original proves that this bounded seek succeeds
-    if (!sought.has_value()) {
-        return sought;
+    if (!sought) {
+        return CurrentStatus();
     }
     // GCOVR_EXCL_STOP
-    return ScanToPreviousEntry(original);
+    ScanToPreviousEntry(original);
+    return CurrentStatus();
 }
 
-Status Block::Iterator::FindPreviousRestart(std::size_t original, bool& found) {
+bool Block::Iterator::FindPreviousRestart(std::size_t original) noexcept {
     while (true) {
         std::size_t restart = 0;
         if (!RestartPoint(restart_index_, restart)) {
             return Corruption();
         }
         if (restart < original) {
-            found = true;
-            return {};
+            return true;
         }
         if (restart_index_ == 0) {
             Invalidate();
-            return {};
+            return false;
         }
         --restart_index_;
     }
 }
 
-Status Block::Iterator::ScanToPreviousEntry(std::size_t original) {
-    do {
-        const Status parsed = ParseNextEntry();
-        if (!parsed.has_value()) {
-            return parsed;
-        }
-    } while (next_ < original);
-    return {};
+void Block::Iterator::ScanToPreviousEntry(std::size_t original) {
+    while (ParseNextEntry() && next_ < original) {
+    }
 }
 
-void Block::Iterator::BeginPositioning() noexcept { error_.reset(); }
+void Block::Iterator::BeginPositioning() noexcept { corrupted_ = false; }
 
 bool Block::Iterator::RestartPoint(std::size_t index, std::size_t& offset) const noexcept {
     offset = layout_.RestartPoint(index);
     return offset <= layout_.entries_end;
 }
 
-Status Block::Iterator::RestartKey(std::size_t index, ByteView& key) {
+bool Block::Iterator::RestartKey(std::size_t index, ByteView& key) noexcept {
     std::size_t offset = 0;
     if (!RestartPoint(index, offset) || offset >= layout_.entries_end) {
         return Corruption();
     }
-    DecodedEntry entry{};
     const std::byte* begin = layout_.contents.data() + offset;
     const std::byte* limit = layout_.contents.data() + layout_.entries_end;
-    if (DecodeEntry(begin, limit, entry) == nullptr || entry.shared != 0 ||
-        !AcceptsKeySize(entry.key_delta.size())) {
+    std::uint32_t shared = 0;
+    std::uint32_t non_shared = 0;
+    std::uint32_t value_size = 0;
+    const std::byte* decoded = DecodeEntry(begin, limit, shared, non_shared, value_size);
+    if (decoded == nullptr || shared != 0 || !AcceptsKeySize(non_shared)) {
         return Corruption();
     }
-    key = entry.key_delta;
-    return {};
+    key = ByteView(decoded, non_shared);
+    return true;
 }
 
-Status Block::Iterator::SeekToRestartPoint(std::size_t index) {
+bool Block::Iterator::SeekToRestartPoint(std::size_t index) noexcept {
     std::size_t offset = 0;
     if (!RestartPoint(index, offset)) {
         return Corruption();
@@ -413,39 +404,43 @@ Status Block::Iterator::SeekToRestartPoint(std::size_t index) {
     next_ = offset;
     key_.clear();
     value_ = {};
-    return {};
+    return true;
 }
 
-Status Block::Iterator::ParseNextEntry() {
+bool Block::Iterator::ParseNextEntry() {
     if (next_ >= layout_.entries_end) {
         Invalidate();
-        return {};
+        return false;
     }
 
-    const auto entry = ReadEntry(layout_, next_, key_.size());
-    if (!entry.has_value()) {
+    const std::byte* begin = layout_.contents.data() + next_;
+    const std::byte* limit = layout_.contents.data() + layout_.entries_end;
+    std::uint32_t shared = 0;
+    std::uint32_t non_shared = 0;
+    std::uint32_t value_size = 0;
+    const std::byte* key = DecodeEntry(begin, limit, shared, non_shared, value_size);
+    if (key == nullptr || shared > key_.size()) {
         return Corruption();
     }
-    const std::size_t key_size = entry->shared + entry->key_delta.size();
+    const std::size_t key_size = std::size_t{shared} + non_shared;
     if (!AcceptsKeySize(key_size)) {
         return Corruption();
     }
-    const std::size_t entry_end =
-        next_ + entry->header_size + entry->key_delta.size() + entry->value.size();
-    return CommitEntry(*entry, key_size, entry_end);
+    return CommitEntry(key, shared, non_shared, value_size);
 }
 
-Status Block::Iterator::CommitEntry(const DecodedEntry& entry, std::size_t key_size,
-                                    std::size_t entry_end) {
-    key_.reserve(key_size);
+bool Block::Iterator::CommitEntry(const std::byte* key, std::uint32_t shared,
+                                  std::uint32_t non_shared, std::uint32_t value_size) {
+    key_.reserve(std::size_t{shared} + non_shared);
     current_ = next_;
-    ReconstructKey(key_, entry);
-    value_ = entry.value;
-    next_ = entry_end;
+    key_.resize(shared);
+    key_.append(reinterpret_cast<const char*>(key), non_shared);
+    value_ = ByteView(key + non_shared, value_size);
+    next_ = static_cast<std::size_t>(value_.data() + value_.size() - layout_.contents.data());
     return AdvanceRestartIndex();
 }
 
-Status Block::Iterator::AdvanceRestartIndex() {
+bool Block::Iterator::AdvanceRestartIndex() noexcept {
     while (restart_index_ + 1 < layout_.restart_count) {
         std::size_t restart = 0;
         if (!RestartPoint(restart_index_ + 1, restart)) {
@@ -456,13 +451,20 @@ Status Block::Iterator::AdvanceRestartIndex() {
         }
         ++restart_index_;
     }
-    return {};
+    return true;
 }
 
-Status Block::Iterator::Corruption() {
+bool Block::Iterator::Corruption() noexcept {
     Invalidate();
-    error_.emplace(Error::Corruption("bad entry in block"));
-    return std::unexpected(*error_);
+    corrupted_ = true;
+    return false;
+}
+
+Status Block::Iterator::CurrentStatus() const {
+    if (corrupted_) {
+        return std::unexpected(Error::Corruption("bad entry in block"));
+    }
+    return {};
 }
 
 bool Block::Iterator::AcceptsKeySize(std::size_t size) const noexcept {

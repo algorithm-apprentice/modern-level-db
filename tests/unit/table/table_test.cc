@@ -530,6 +530,71 @@ TEST_F(TableTest, IteratesAcrossBlocksInBothDirections) {
     EXPECT_FALSE(Get(*table, "applesauce", MaxSequenceNumber).has_value());
 }
 
+TEST_F(TableTest, ReusesTheCurrentDataBlockAcrossPositioningWithoutACache) {
+    TableBuilderOptions options;
+    options.compression = BlockCompression::Snappy;
+    const std::string value(256, 'v');
+    const auto table = Open(BuildTable({{Key("a", 3), Materialize(AsBytes("new"))},
+                                        {Key("a", 1), Materialize(AsBytes("old"))},
+                                        {Key("b", 2), Materialize(AsBytes(value))},
+                                        {Key("c", 1), Materialize(AsBytes("last"))}},
+                                       options, comparator_));
+    ASSERT_NE(table, nullptr);
+    Table::Iterator iterator(*table);
+    ASSERT_TRUE(iterator.SeekToFirst().has_value());
+    ASSERT_TRUE(iterator.valid());
+    const int reads = state_->read_calls;
+
+    ASSERT_TRUE(iterator.Seek(Key("b", MaxSequenceNumber)).has_value());
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(Materialize(iterator.key()), Key("b", 2));
+    EXPECT_EQ(AsStringView(iterator.value()), value);
+    ASSERT_TRUE(iterator.Seek(Key("a", 1)).has_value());
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(AsStringView(iterator.value()), "old");
+    ASSERT_TRUE(iterator.SeekToFirst().has_value());
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(AsStringView(iterator.value()), "new");
+    ASSERT_TRUE(iterator.SeekToLast().has_value());
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(AsStringView(iterator.value()), "last");
+    ASSERT_TRUE(iterator.Prev().has_value());
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(AsStringView(iterator.value()), value);
+    ASSERT_TRUE(iterator.Next().has_value());
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(AsStringView(iterator.value()), "last");
+    EXPECT_EQ(state_->read_calls.load(), reads);
+}
+
+TEST_F(TableTest, ReleasesTheRetainedBlockAtExhaustionAndAfterReadFailure) {
+    const auto table = Open(FromHex(ThreeBlockTable));
+    ASSERT_NE(table, nullptr);
+    Table::Iterator iterator(*table);
+    ASSERT_TRUE(iterator.SeekToFirst().has_value());
+    const int reads = state_->read_calls;
+    ASSERT_TRUE(iterator.SeekToFirst().has_value());
+    EXPECT_EQ(state_->read_calls.load(), reads);
+
+    ASSERT_TRUE(iterator.SeekToLast().has_value());
+    EXPECT_EQ(state_->read_calls.load(), reads + 1);
+    ASSERT_TRUE(iterator.SeekToLast().has_value());
+    EXPECT_EQ(state_->read_calls.load(), reads + 1);
+    ASSERT_TRUE(iterator.Next().has_value());
+    EXPECT_FALSE(iterator.valid());
+    ASSERT_TRUE(iterator.SeekToLast().has_value());
+    EXPECT_EQ(state_->read_calls.load(), reads + 2);
+
+    state_->fail_read_call = reads + 3;
+    ExpectError(iterator.Prev(), ErrorCode::Io);
+    EXPECT_FALSE(iterator.valid());
+    state_->fail_read_call.reset();
+    ASSERT_TRUE(iterator.SeekToLast().has_value());
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(Materialize(iterator.key()), Key("banana", 1, ValueKind::Deletion));
+    EXPECT_EQ(state_->read_calls.load(), reads + 4);
+}
+
 TEST_F(TableTest, EmptyTablesHaveNoPositions) {
     const auto table = Open(BuildTable({}, {}, comparator_));
     ASSERT_NE(table, nullptr);

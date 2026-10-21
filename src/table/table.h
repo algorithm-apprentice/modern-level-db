@@ -157,6 +157,8 @@ private:
     const Table* table_;
     TableReadOptions options_;
     Block::Iterator index_;
+    // Index values borrow immutable table bytes, so this view survives index moves.
+    ByteView block_handle_;
     // The current data block outlives its iterator, which is declared after it.
     std::optional<BlockReference> block_;
     std::optional<Block::Iterator> data_;

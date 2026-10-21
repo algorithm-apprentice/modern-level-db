@@ -476,17 +476,24 @@ Status Table::Iterator::Prev() {
 }
 
 Status Table::Iterator::LoadBlock() {
-    data_.reset();
-    block_.reset();
     if (!index_.valid()) {
+        data_.reset();
+        block_.reset();
         return {};
     }
-    Result<BlockReference> block = table_->ReadDataBlock(IndexHandle(index_.value()), options_);
+    const ByteView handle = index_.value();
+    if (data_.has_value() && std::ranges::equal(handle, block_handle_)) {
+        return {};
+    }
+    data_.reset();
+    block_.reset();
+    Result<BlockReference> block = table_->ReadDataBlock(IndexHandle(handle), options_);
     if (!block.has_value()) {
         return std::unexpected(std::move(block).error());
     }
     block_.emplace(std::move(*block));
     data_.emplace(block_->block(), *table_->block_comparator_, table_->block_key_format_);
+    block_handle_ = handle;
     return {};
 }
 
