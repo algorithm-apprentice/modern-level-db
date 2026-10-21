@@ -85,6 +85,7 @@ private:
 // Requires sorted keys under the borrowed comparator. Backing block storage and
 // comparator must outlive the iterator, including after an owning block is moved.
 // A new iterator is not positioned. Keys and values remain valid until it moves.
+// Complete keys borrow block bytes; prefix-compressed keys use reusable storage.
 // Positioning calls recover from an earlier corruption and start over.
 class Block::Iterator final {
 public:
@@ -143,6 +144,8 @@ private:
     std::size_t next_;
     std::size_t restart_index_;
     std::string key_;
+    // A non-null pointer selects borrowed bytes, including a complete empty key.
+    ByteView borrowed_key_;
     ByteView value_;
     // Corruption invalidates the position before setting this error-only latch.
     bool corrupted_ = false;

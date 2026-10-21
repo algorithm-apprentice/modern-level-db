@@ -86,6 +86,13 @@ corruption locally; the public movement call returns the corresponding
 committing a reconstructed entry, preserving a consistent position if
 allocation throws.
 
+An entry with shared length zero already contains its complete key. The
+iterator borrows those bytes directly, including an empty complete key.
+Only dependent entries materialize a key in reusable iterator storage.
+Switching back to a complete key retains that storage's capacity for later
+reconstruction. Both representations have the same movement-limited view
+lifetime, and moving the owning block preserves its backing addresses.
+
 ## Index separators
 
 An index key need not repeat the complete last data key if a shorter key

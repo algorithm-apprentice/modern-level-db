@@ -218,6 +218,7 @@ TEST(BlockTest, LiteralHeaderPathsKeepBorrowedValuesAcrossBackingMoves) {
             ASSERT_TRUE(iterator.SeekToFirst().has_value());
             ASSERT_TRUE(iterator.valid());
             EXPECT_EQ(AsStringView(iterator.key()), "a");
+            EXPECT_EQ(iterator.key().data(), retained_value.data() - 1);
             EXPECT_EQ(iterator.value().data(), retained_value.data());
             EXPECT_EQ(Materialize(retained_value), Bytes({0xff}));
             EXPECT_TRUE(iterator.Next().has_value());
@@ -529,6 +530,54 @@ TEST(BlockIteratorTest, StartsUnpositioned) {
     const Block::Iterator iterator(block, BytewiseComparator());
 
     EXPECT_FALSE(iterator.valid());
+}
+
+TEST(BlockIteratorTest, CompleteKeysBorrowEncodedBytesAcrossPositioningAndBackingMoves) {
+    const std::array keys{std::string{}, std::string(19, 'a'), std::string(128, 'a'),
+                          std::string(512, 'a'), std::string("b\0\xff", 3)};
+    BlockBuilder builder(1);
+    for (const auto& key : keys) {
+        builder.Add(AsBytes(key), AsBytes("value"));
+    }
+    const auto finished = Materialize(builder.Finish());
+
+    for (const bool owned : {false, true}) {
+        SCOPED_TRACE(owned);
+        auto encoded = finished;
+        auto block = Block::Create(owned ? BlockContents::Owned(std::move(encoded))
+                                         : BlockContents::Borrowed(encoded));
+        ASSERT_TRUE(block.has_value());
+        std::optional<Block> moved;
+        Block::Iterator iterator(*block, BytewiseComparator());
+        ExpectOk(iterator.SeekToFirst());
+        const std::byte* first_key = iterator.key().data();
+        moved.emplace(std::move(*block));
+        EXPECT_EQ(iterator.key().data(), first_key);
+
+        for (const auto& key : keys) {
+            ExpectAt(iterator, key, "value");
+            EXPECT_EQ(iterator.key().data(), iterator.value().data() - key.size());
+            ExpectOk(iterator.Next());
+        }
+        EXPECT_FALSE(iterator.valid());
+        EXPECT_TRUE(iterator.key().empty());
+
+        for (const auto& key : keys) {
+            ExpectOk(iterator.Seek(AsBytes(key)));
+            ExpectAt(iterator, key, "value");
+            EXPECT_EQ(iterator.key().data(), iterator.value().data() - key.size());
+        }
+
+        ExpectOk(iterator.SeekToLast());
+        for (std::size_t remaining = keys.size(); remaining > 0; --remaining) {
+            const auto& key = keys[remaining - 1];
+            ExpectAt(iterator, key, "value");
+            EXPECT_EQ(iterator.key().data(), iterator.value().data() - key.size());
+            ExpectOk(iterator.Prev());
+        }
+        EXPECT_FALSE(iterator.valid());
+        EXPECT_TRUE(iterator.key().empty());
+    }
 }
 
 TEST(BlockIteratorTest, IteratesForwardAndBackward) {

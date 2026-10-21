@@ -223,7 +223,9 @@ Block::Iterator::Iterator(const Block& block, const Comparator& comparator,
       restart_index_(layout_.restart_count) {}
 // GCOVR_EXCL_STOP
 
-ByteView Block::Iterator::key() const noexcept { return StringBytes(key_); }
+ByteView Block::Iterator::key() const noexcept {
+    return borrowed_key_.data() != nullptr ? borrowed_key_ : StringBytes(key_);
+}
 
 ByteView Block::Iterator::value() const noexcept { return value_; }
 
@@ -403,6 +405,7 @@ bool Block::Iterator::SeekToRestartPoint(std::size_t index) noexcept {
     restart_index_ = index;
     next_ = offset;
     key_.clear();
+    borrowed_key_ = {};
     value_ = {};
     return true;
 }
@@ -419,7 +422,7 @@ bool Block::Iterator::ParseNextEntry() {
     std::uint32_t non_shared = 0;
     std::uint32_t value_size = 0;
     const std::byte* key = DecodeEntry(begin, limit, shared, non_shared, value_size);
-    if (key == nullptr || shared > key_.size()) {
+    if (key == nullptr || shared > this->key().size()) {
         return Corruption();
     }
     const std::size_t key_size = std::size_t{shared} + non_shared;
@@ -431,10 +434,19 @@ bool Block::Iterator::ParseNextEntry() {
 
 bool Block::Iterator::CommitEntry(const std::byte* key, std::uint32_t shared,
                                   std::uint32_t non_shared, std::uint32_t value_size) {
-    key_.reserve(std::size_t{shared} + non_shared);
+    if (shared == 0) {
+        borrowed_key_ = ByteView(key, non_shared);
+    } else {
+        key_.reserve(std::size_t{shared} + non_shared);
+        if (borrowed_key_.data() != nullptr) {
+            key_.assign(reinterpret_cast<const char*>(borrowed_key_.data()), shared);
+        } else {
+            key_.resize(shared);
+        }
+        key_.append(reinterpret_cast<const char*>(key), non_shared);
+        borrowed_key_ = {};
+    }
     current_ = next_;
-    key_.resize(shared);
-    key_.append(reinterpret_cast<const char*>(key), non_shared);
     value_ = ByteView(key + non_shared, value_size);
     next_ = static_cast<std::size_t>(value_.data() + value_.size() - layout_.contents.data());
     return AdvanceRestartIndex();
@@ -480,6 +492,7 @@ void Block::Iterator::Invalidate() noexcept {
     next_ = layout_.entries_end;
     restart_index_ = layout_.restart_count;
     key_.clear();
+    borrowed_key_ = {};
     value_ = {};
 }
 
