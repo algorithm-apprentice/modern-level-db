@@ -8,12 +8,24 @@
 #include <cstdint>
 #include <expected>
 #include <limits>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
 
 namespace modern_leveldb {
+
+// GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
+DecodedBlockBytes::DecodedBlockBytes(std::unique_ptr<std::byte[]> bytes,
+                                     std::size_t length) noexcept
+    : data(std::move(bytes)), size(length) {}
+
+DecodedBlockBytes::DecodedBlockBytes(DecodedBlockBytes&& other) noexcept
+    : data(std::move(other.data)), size(std::exchange(other.size, 0)) {}
+// GCOVR_EXCL_STOP
+
 namespace {
 
 constexpr std::size_t MaxBlockSize = std::numeric_limits<std::uint32_t>::max();

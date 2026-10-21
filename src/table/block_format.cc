@@ -7,7 +7,9 @@
 #include <expected>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "modern_leveldb/base/bytes.h"
@@ -91,12 +93,25 @@ BlockContents BlockContents::Owned(std::vector<std::byte> contents) noexcept {
     return BlockContents(std::move(contents));
 }
 
+BlockContents BlockContents::Owned(DecodedBlockBytes contents) noexcept {
+    return BlockContents(std::move(contents));
+}
+
 BlockContents BlockContents::Borrowed(ByteView contents) noexcept {
     return BlockContents(contents);
 }
 
 ByteView BlockContents::data() const noexcept {
-    return borrowed_.has_value() ? *borrowed_ : ByteView(owned_);
+    return std::visit(
+        [](const auto& contents) noexcept -> ByteView {
+            if constexpr (std::is_same_v<std::remove_cvref_t<decltype(contents)>,
+                                         DecodedBlockBytes>) {
+                return {contents.data.get(), contents.size};
+            } else {
+                return ByteView(contents);
+            }
+        },
+        storage_);
 }
 
 void AppendBlockHandle(std::vector<std::byte>& output, BlockHandle handle) {
