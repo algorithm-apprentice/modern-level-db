@@ -67,6 +67,12 @@ The SkipList is an ordered set whose Entry type is a pointer to one packed
 MemTable record. That referenced record contains both the internal key and
 value; the comparator extracts only the internal key for ordering.
 
+Read searches pass the already prepared internal-key view to the comparator;
+only stored records need length-prefix decoding at each comparison. Dropping
+a level can encounter the same upper-bound node again. The search remembers
+that immutable node's comparison result instead of comparing it twice.
+Insertion still collects every level's predecessor before publishing links.
+
 The concurrency contract is deliberately narrow:
 
 - One externally serialized writer inserts nodes.
@@ -92,8 +98,9 @@ value
 ```
 
 A deletion uses kind Deletion and an empty value.
-Lookup uses a length-prefixed internal seek key, but it does not need a
-value field.
+Lookup needs only the internal key. Its search view does not need a packed
+record's length prefix or value field, and an iterator does not copy the
+target into a temporary encoded record.
 
 The representation is compact, stable, and directly comparable.
 Returned internal views borrow arena storage; the public `Get` copies the

@@ -3,7 +3,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <vector>
 
 #include "format/internal_key.h"
 #include "memory/arena.h"
@@ -44,6 +43,7 @@ private:
             : internal_comparator(user_comparator) {}
 
         [[nodiscard]] int operator()(const std::byte* left, const std::byte* right) const noexcept;
+        [[nodiscard]] int operator()(const std::byte* left, ByteView right) const noexcept;
         [[nodiscard]] const Comparator& user_comparator() const noexcept {
             return internal_comparator.user_comparator();
         }
@@ -115,7 +115,6 @@ public:
 
     private:
         Table::Iterator iterator_;
-        std::vector<std::byte> seek_key_;
     };
 
 private:
