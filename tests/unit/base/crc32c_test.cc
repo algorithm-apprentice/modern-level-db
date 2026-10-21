@@ -12,9 +12,12 @@
 #include <vector>
 
 #include "modern_leveldb/base/bytes.h"
+#include "support/crc32c_reference.h"
 
 namespace modern_leveldb {
 namespace {
+
+using test_support::BitwiseExtend;
 
 constexpr std::array<std::byte, 12> BinaryInput{
     std::byte{0xff}, std::byte{0x00}, std::byte{0x80}, std::byte{0x7f},
@@ -33,17 +36,6 @@ constexpr std::array MaskVectors{
     MaskVector{0x80000000U, 0xa283ead8U}, MaskVector{0xffffffffU, 0xa282ead7U},
     MaskVector{0xe3069283U, 0xc78ab0e5U},
 };
-
-std::uint32_t BitwiseExtend(std::uint32_t initial, ByteView input) {
-    std::uint32_t crc = ~initial;
-    for (const std::byte byte : input) {
-        crc ^= std::to_integer<std::uint32_t>(byte);
-        for (int bit = 0; bit < 8; ++bit) {
-            crc = (crc & 1U) != 0U ? (crc >> 1U) ^ 0x82f63b78U : crc >> 1U;
-        }
-    }
-    return ~crc;
-}
 
 std::uint32_t BitwiseCrc32c(ByteView input) { return BitwiseExtend(0, input); }
 
