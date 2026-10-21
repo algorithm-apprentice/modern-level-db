@@ -4,9 +4,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <span>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "modern_leveldb/base/bytes.h"
@@ -40,6 +40,7 @@ struct Footer {
 class BlockContents final {
 public:
     [[nodiscard]] static BlockContents Owned(std::vector<std::byte> contents) noexcept;
+    [[nodiscard]] static BlockContents Owned(DecodedBlockBytes contents) noexcept;
     [[nodiscard]] static BlockContents Borrowed(ByteView contents) noexcept;
 
     BlockContents(const BlockContents&) = delete;
@@ -49,15 +50,23 @@ public:
     ~BlockContents() = default;
 
     [[nodiscard]] ByteView data() const noexcept;
-    [[nodiscard]] bool cacheable() const noexcept { return !borrowed_.has_value(); }
+    [[nodiscard]] bool cacheable() const noexcept {
+        return !std::holds_alternative<ByteView>(storage_);
+    }
 
 private:
-    explicit BlockContents(std::vector<std::byte> contents) noexcept
-        : owned_(std::move(contents)) {}
-    explicit BlockContents(ByteView contents) noexcept : borrowed_(contents) {}
+    // Alternatives are only constructed or moved without throwing, never
+    // reassigned, so data() cannot visit a valueless variant.
+    using Storage = std::variant<ByteView, std::vector<std::byte>, DecodedBlockBytes>;
 
-    std::vector<std::byte> owned_;
-    std::optional<ByteView> borrowed_;
+    explicit BlockContents(std::vector<std::byte> contents) noexcept
+        : storage_(std::in_place_type<std::vector<std::byte>>, std::move(contents)) {}
+    explicit BlockContents(DecodedBlockBytes contents) noexcept
+        : storage_(std::in_place_type<DecodedBlockBytes>, std::move(contents)) {}
+    explicit BlockContents(ByteView contents) noexcept
+        : storage_(std::in_place_type<ByteView>, contents) {}
+
+    Storage storage_;
 };
 
 [[nodiscard]] std::array<std::byte, FooterSize> EncodeFooter(const Footer& footer);

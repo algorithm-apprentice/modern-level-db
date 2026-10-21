@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "modern_leveldb/base/bytes.h"
@@ -19,6 +20,19 @@ enum class BlockCompression : std::uint8_t {
 inline constexpr int MinZstdCompressionLevel = -5;
 inline constexpr int MaxZstdCompressionLevel = 22;
 
+// Owns fully initialized decoded bytes. Moving preserves their address and
+// leaves the source empty. A null pointer requires size zero.
+struct DecodedBlockBytes final {
+    std::unique_ptr<std::byte[]> data;
+    std::size_t size;
+
+    DecodedBlockBytes(std::unique_ptr<std::byte[]> bytes, std::size_t length) noexcept;
+    DecodedBlockBytes(const DecodedBlockBytes&) = delete;
+    DecodedBlockBytes& operator=(const DecodedBlockBytes&) = delete;
+    DecodedBlockBytes(DecodedBlockBytes&& other) noexcept;
+    DecodedBlockBytes& operator=(DecodedBlockBytes&&) = delete;
+};
+
 [[nodiscard]] Status ValidateCompressionOptions(BlockCompression type, int zstd_level);
 
 [[nodiscard]] constexpr bool CompressionIsWorthwhile(std::size_t raw_size,
@@ -31,9 +45,9 @@ inline constexpr int MaxZstdCompressionLevel = 22;
 [[nodiscard]] bool TryCompressBlock(ByteView raw, BlockCompression requested, int zstd_level,
                                     std::vector<std::byte>& scratch);
 
-// Decompresses a raw Snappy block or a self-describing Zstd frame.
-[[nodiscard]] Result<std::vector<std::byte>> DecompressBlock(ByteView stored,
-                                                             BlockCompression type);
+// Decompresses into final, address-stable owned storage. Partial output is
+// discarded on failure.
+[[nodiscard]] Result<DecodedBlockBytes> DecompressBlock(ByteView stored, BlockCompression type);
 
 }  // namespace modern_leveldb
 

@@ -169,7 +169,7 @@ void FuzzFormat(ByteView input) {
             if (TryCompressBlock(input, type, 1, compressed)) {
                 const auto decoded = DecompressBlock(compressed, type);
                 Require(decoded.has_value());
-                Require(std::ranges::equal(*decoded, input));
+                Require(std::ranges::equal(ByteView(decoded->data.get(), decoded->size), input));
             }
             break;
         }

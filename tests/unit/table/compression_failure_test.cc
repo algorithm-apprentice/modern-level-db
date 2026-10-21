@@ -22,6 +22,7 @@ struct CodecResults {
     unsigned long long declared = 16;
     bool valid_length = true;
     bool valid_contents = true;
+    void* decoded_output = nullptr;
     int snappy_bound_calls = 0;
     int snappy_compression_calls = 0;
     int snappy_length_calls = 0;
@@ -56,8 +57,12 @@ bool GetUncompressedLength(const char*, std::size_t, std::size_t* size) {
     return results.valid_length;
 }
 
-bool RawUncompress(const char*, std::size_t, char*) {
+bool RawUncompress(const char*, std::size_t, char* output) {
     ++results.snappy_decode_calls;
+    results.decoded_output = output;
+    if (results.valid_contents) {
+        std::fill_n(output, static_cast<std::size_t>(results.declared), 'd');
+    }
     return results.valid_contents;
 }
 
@@ -78,8 +83,12 @@ unsigned long long ZSTD_getFrameContentSize(const void*, std::size_t) {
     ++results.zstd_length_calls;
     return results.declared;
 }
-std::size_t ZSTD_decompress(void*, std::size_t, const void*, std::size_t) {
+std::size_t ZSTD_decompress(void* output, std::size_t capacity, const void*, std::size_t) {
     ++results.zstd_decode_calls;
+    results.decoded_output = output;
+    if (results.decoded != CodecError) {
+        std::fill_n(static_cast<char*>(output), std::min(capacity, results.decoded), 'd');
+    }
     return results.decoded;
 }
 
@@ -149,6 +158,26 @@ TEST_F(CompressionFailureTest, RejectsZstdFailureAndLengthMismatch) {
                      "compressed Zstd block has invalid contents");
     EXPECT_EQ(results.zstd_length_calls, 2);
     EXPECT_EQ(results.zstd_decode_calls, 2);
+}
+
+TEST_F(CompressionFailureTest, ReturnsTheCodecOutputAllocationWithoutCopyingIt) {
+    for (const auto type : {BlockCompression::Snappy, BlockCompression::Zstd}) {
+        SCOPED_TRACE(static_cast<int>(type));
+        results = {};
+        results.declared = 19;
+        results.decoded = 19;
+
+        const auto decoded = DecompressBlock(raw_, type);
+
+        ASSERT_TRUE(decoded.has_value()) << decoded.error().ToString();
+        EXPECT_EQ(decoded->data.get(), results.decoded_output);
+        EXPECT_EQ(decoded->size, 19U);
+        const ByteView bytes(decoded->data.get(), decoded->size);
+        EXPECT_TRUE(
+            std::ranges::all_of(bytes, [](std::byte byte) { return byte == std::byte{'d'}; }));
+        EXPECT_EQ(results.snappy_decode_calls, type == BlockCompression::Snappy ? 1 : 0);
+        EXPECT_EQ(results.zstd_decode_calls, type == BlockCompression::Zstd ? 1 : 0);
+    }
 }
 
 TEST_F(CompressionFailureTest, AppliesTheStrictSavingsThresholdAfterEachNativeCodec) {

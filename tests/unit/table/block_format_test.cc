@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -28,6 +29,9 @@ static_assert(!std::is_copy_constructible_v<BlockContents>);
 static_assert(!std::is_copy_assignable_v<BlockContents>);
 static_assert(std::is_nothrow_move_constructible_v<BlockContents>);
 static_assert(!std::is_move_assignable_v<BlockContents>);
+static_assert(!std::is_copy_constructible_v<DecodedBlockBytes>);
+static_assert(std::is_nothrow_move_constructible_v<DecodedBlockBytes>);
+static_assert(!std::is_move_assignable_v<DecodedBlockBytes>);
 
 std::vector<std::byte> Bytes(std::initializer_list<unsigned int> values) {
     std::vector<std::byte> result;
@@ -40,6 +44,15 @@ std::vector<std::byte> Bytes(std::initializer_list<unsigned int> values) {
 
 std::vector<std::byte> Materialize(ByteView value) {
     return std::vector<std::byte>(value.begin(), value.end());
+}
+
+DecodedBlockBytes DecodedCopy(ByteView bytes) {
+    std::unique_ptr<std::byte[]> data;
+    if (!bytes.empty()) {
+        data = std::make_unique_for_overwrite<std::byte[]>(bytes.size());
+        std::ranges::copy(bytes, data.get());
+    }
+    return {std::move(data), bytes.size()};
 }
 
 std::vector<std::byte> EncodedHandle(BlockHandle handle) {
@@ -243,6 +256,56 @@ TEST(StoredBlockTest, ReturnsVerifiedContentsInTheSameBuffer) {
     EXPECT_EQ(Materialize(moved.data()), contents);
     EXPECT_EQ(moved.data().data(), data);
     EXPECT_TRUE(moved.cacheable());
+}
+
+TEST(DecodedBlockBytesTest, MoveKeepsTheArrayAddressAndEmptiesTheSource) {
+    const auto contents = Bytes({0x00, 0xff, 'x'});
+    DecodedBlockBytes source = DecodedCopy(contents);
+    const std::byte* const address = source.data.get();
+
+    const DecodedBlockBytes moved(std::move(source));
+
+    EXPECT_EQ(source.data, nullptr);
+    EXPECT_EQ(source.size, 0U);
+    EXPECT_EQ(moved.data.get(), address);
+    EXPECT_EQ(Materialize(ByteView(moved.data.get(), moved.size)), contents);
+}
+
+TEST(BlockContentsTest, AdoptsDecodedArraysWithoutCopyingAndKeepsTheirAddressesOnMove) {
+    const std::vector<std::vector<std::byte>> inputs{
+        Bytes({0x00, 0xff, 'x'}), std::vector<std::byte>(64 * 1024, std::byte{'v'})};
+    for (const auto& contents : inputs) {
+        SCOPED_TRACE(contents.size());
+        DecodedBlockBytes decoded = DecodedCopy(contents);
+        const std::byte* const address = decoded.data.get();
+
+        BlockContents block = BlockContents::Owned(std::move(decoded));
+
+        EXPECT_EQ(decoded.data, nullptr);
+        EXPECT_EQ(decoded.size, 0U);
+        EXPECT_TRUE(block.cacheable());
+        EXPECT_EQ(block.data().data(), address);
+        EXPECT_EQ(Materialize(block.data()), contents);
+
+        const BlockContents moved(std::move(block));
+        EXPECT_TRUE(block.data().empty());
+        EXPECT_TRUE(moved.cacheable());
+        EXPECT_EQ(moved.data().data(), address);
+        EXPECT_EQ(Materialize(moved.data()), contents);
+    }
+}
+
+TEST(BlockContentsTest, EmptyArrayVectorAndBorrowedStorageKeepTheirOwnershipTags) {
+    const BlockContents array = BlockContents::Owned(DecodedCopy({}));
+    const BlockContents vector = BlockContents::Owned(std::vector<std::byte>{});
+    const BlockContents borrowed = BlockContents::Borrowed({});
+
+    EXPECT_TRUE(array.data().empty());
+    EXPECT_TRUE(vector.data().empty());
+    EXPECT_TRUE(borrowed.data().empty());
+    EXPECT_TRUE(array.cacheable());
+    EXPECT_TRUE(vector.cacheable());
+    EXPECT_FALSE(borrowed.cacheable());
 }
 
 TEST(StoredBlockTest, DistinguishesOwnedAndBorrowedEmptyContents) {
