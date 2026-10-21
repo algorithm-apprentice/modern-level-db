@@ -262,11 +262,12 @@ struct Block::Iterator::ReverseCache {
     void SelectLast(Iterator& iterator) noexcept {
         position = entries.size() - 1;
         Restore(iterator);
+        iterator.reverse_cache_active_ = true;
     }
 
     bool TryPrevious(Iterator& iterator) noexcept {
         // Position stays zero until a complete replay has selected its last entry.
-        if (position == 0 || entries[position].current != iterator.current_) {
+        if (position == 0) {
             return false;
         }
         --position;
@@ -410,14 +411,16 @@ void Block::Iterator::ScanToLowerBound(ByteView target) {
 }
 
 Status Block::Iterator::Next() {
+    reverse_cache_active_ = false;
     ParseNextEntry();
     return CurrentStatus();
 }
 
 Status Block::Iterator::Prev() {
-    if (reverse_cache_ != nullptr && reverse_cache_->TryPrevious(*this)) {
+    if (reverse_cache_active_ && reverse_cache_->TryPrevious(*this)) {
         return CurrentStatus();
     }
+    reverse_cache_active_ = false;
     const std::size_t original = current_;
     if (!FindPreviousRestart(original)) {
         return CurrentStatus();
@@ -474,7 +477,10 @@ void Block::Iterator::ScanToPreviousEntry(std::size_t original) {
     } while (ParseNextEntry());
 }
 
-void Block::Iterator::BeginPositioning() noexcept { corrupted_ = false; }
+void Block::Iterator::BeginPositioning() noexcept {
+    corrupted_ = false;
+    reverse_cache_active_ = false;
+}
 
 bool Block::Iterator::RestartPoint(std::size_t index, std::size_t& offset) const noexcept {
     offset = layout_.RestartPoint(index);
@@ -597,6 +603,7 @@ void Block::Iterator::Invalidate() noexcept {
     key_.clear();
     borrowed_key_ = {};
     value_ = {};
+    reverse_cache_active_ = false;
 }
 
 }  // namespace modern_leveldb

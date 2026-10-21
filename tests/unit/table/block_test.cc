@@ -737,6 +737,30 @@ TEST(BlockIteratorTest, ReverseTraversalBorrowsDistinctCachedDecodedKeys) {
     ExpectAt(iterator, keys[2], "3");
 }
 
+TEST(BlockIteratorTest, RepositioningDoesNotReuseADifferentRestartReplay) {
+    const auto fake = EntryBytes(0, "a", "fake");
+    const auto first = EntryBytes(0, "b", AsStringView(fake));
+    const auto merged = EntryBytes(1, "2", "actual");
+    const auto last = EntryBytes(0, "z", "last");
+    const auto fake_offset = static_cast<std::uint32_t>(first.size() - fake.size());
+    const auto last_offset = static_cast<std::uint32_t>(first.size() + merged.size());
+    // The inner restart and the physical path share an offset, not a key history.
+    const Block block = MakeBlock(
+        WithRestarts(Concat({first, merged, last}), {0, last_offset, fake_offset, last_offset}));
+    Block::Iterator iterator(block, BytewiseComparator());
+
+    ExpectOk(iterator.SeekToLast());
+    ExpectAt(iterator, "z", "last");
+    ExpectOk(iterator.Prev());
+    ExpectAt(iterator, "a2", "actual");
+    ExpectOk(iterator.SeekToFirst());
+    ExpectAt(iterator, "b", AsStringView(fake));
+    ExpectOk(iterator.Next());
+    ExpectAt(iterator, "b2", "actual");
+    ExpectOk(iterator.Prev());
+    ExpectAt(iterator, "b", AsStringView(fake));
+}
+
 TEST(BlockIteratorTest, ReverseReplayDeclinesAmplifiedDecodedKeyStorage) {
     const std::string prefix(8192, 'a');
     BlockBuilder builder(16);

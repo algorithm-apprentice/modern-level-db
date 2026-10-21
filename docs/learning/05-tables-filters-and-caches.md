@@ -96,8 +96,10 @@ lifetime, and moving the owning block preserves its backing addresses.
 Entries have no backward links. An uncached reverse step replays from a preceding
 restart and caches the checked entries, decoded keys, and borrowed values.
 Consecutive steps within that cached interval reuse those positions and key
-bytes instead of decoding the same prefixes again. A mismatched position
-falls back to checked replay; a failed replay does not publish a partial cache.
+bytes instead of decoding the same prefixes again. Positioning and forward
+movement end that checked replay context, but keep its backing bytes alive
+until the current borrowed key has been consumed. A subsequent reverse step
+replays from its own checkpoint; a failed replay does not publish a partial cache.
 The cache is allocated lazily only when replay reaches multiple predecessors,
 so point reads, forward scans, and single-predecessor replays do not allocate it.
 Cached key views still expire on movement, just like forward key views.

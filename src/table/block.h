@@ -152,6 +152,8 @@ private:
     ByteView borrowed_key_;
     ByteView value_;
     std::unique_ptr<ReverseCache> reverse_cache_;
+    // Only uninterrupted cached Prev calls share one checked replay context.
+    bool reverse_cache_active_ = false;
     // Corruption invalidates the position before setting this error-only latch.
     bool corrupted_ = false;
 };
