@@ -8,6 +8,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -18,11 +19,12 @@
 
 namespace modern_leveldb::test_support {
 
-// Counts the moves of the iterators that share it and fails one of them.
+// Counts shared iterator moves and injects returned failures or exceptions.
 struct MoveScript {
     int moves = 0;
     // The move, counting from one, that fails.
     std::optional<int> fail_at;
+    std::optional<int> throw_at;
 };
 
 struct ScriptedEntry {
@@ -74,7 +76,12 @@ private:
 
     template <typename Change>
     Status Move(Change change) {
-        if (++script_->moves == script_->fail_at) {
+        ++script_->moves;
+        if (script_->moves == script_->throw_at) {
+            position_ = End;
+            throw std::runtime_error("injected exception");
+        }
+        if (script_->moves == script_->fail_at) {
             position_ = End;
             return std::unexpected(Error::Io("injected failure"));
         }

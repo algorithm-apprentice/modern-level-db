@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -234,6 +235,55 @@ TEST_F(DbIteratorTest, ChangesDirectionAtEveryKey) {
     EXPECT_EQ(After(iterator->Next(), *iterator), "<end>");
     EXPECT_EQ(After(iterator->Seek(AsBytes("c")), *iterator), "c=c1");
     EXPECT_EQ(After(iterator->Prev(), *iterator), "a=a5");
+}
+
+TEST_F(DbIteratorTest, RepeatedSeeksPreserveBinaryLongAndBorrowedTargets) {
+    const std::string binary("b\0x", 3);
+    const std::string long_key(512, 'm');
+    const auto iterator =
+        Open({Put("", 3, "empty"), Put("b", 6, "short"), Put(binary, 5, "binary"),
+              Put(long_key, 8, "future"), Put(long_key, 7, "long"), Put("z", 1, "last")},
+             7);
+    const std::vector<std::pair<std::string, std::string>> seeks{
+        {"", "=empty"},   {binary, binary + "=binary"},   {long_key, long_key + "=long"},
+        {"b", "b=short"}, {long_key, long_key + "=long"}, {"", "=empty"}};
+    for (const auto& [target, expected] : seeks) {
+        EXPECT_EQ(After(iterator->Seek(AsBytes(target)), *iterator), expected);
+    }
+
+    ASSERT_EQ(After(iterator->SeekToLast(), *iterator), "z=last");
+    EXPECT_EQ(After(iterator->Seek(iterator->key()), *iterator), "z=last");
+    ASSERT_EQ(After(iterator->SeekToLast(), *iterator), "z=last");
+    ASSERT_EQ(After(iterator->Prev(), *iterator), long_key + "=long");
+    EXPECT_EQ(After(iterator->Seek(iterator->key().subspan(1)), *iterator), long_key + "=long");
+    ASSERT_EQ(After(iterator->Prev(), *iterator), binary + "=binary");
+    EXPECT_EQ(After(iterator->Seek(iterator->key().first(2)), *iterator), binary + "=binary");
+}
+
+TEST_F(DbIteratorTest, ThrowingMovesInvalidateThePositionAndLaterSeeksRecover) {
+    using Move = Status (*)(DbIterator&);
+    const std::vector<std::pair<std::string_view, Move>> moves{
+        {"first", [](DbIterator& it) { return it.SeekToFirst(); }},
+        {"last", [](DbIterator& it) { return it.SeekToLast(); }},
+        {"seek", [](DbIterator& it) { return it.Seek(AsBytes("c")); }},
+        {"next", [](DbIterator& it) { return it.Next(); }},
+        {"prev", [](DbIterator& it) { return it.Prev(); }}};
+    for (const bool reverse : {false, true}) {
+        for (const auto& [name, move] : moves) {
+            SCOPED_TRACE(reverse);
+            SCOPED_TRACE(name);
+            auto script = std::make_shared<MoveScript>();
+            const auto iterator = Open(Versions(), 5, script);
+            ASSERT_TRUE((reverse ? iterator->SeekToLast() : iterator->SeekToFirst()).has_value());
+            script->throw_at = script->moves + 1;
+
+            EXPECT_THROW(static_cast<void>(move(*iterator)), std::runtime_error);
+
+            EXPECT_FALSE(iterator->valid());
+            script->throw_at.reset();
+            EXPECT_EQ(After(iterator->SeekToFirst(), *iterator), "a=a5");
+        }
+    }
 }
 
 TEST_F(DbIteratorTest, MatchesAModel) {

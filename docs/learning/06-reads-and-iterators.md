@@ -158,6 +158,13 @@ children so they do not repeat or skip a user key.
 The reverse DB iterator saves key/value bytes because its internal iterator
 can already be positioned before the returned user's entries.
 
+The saved key also supplies reusable storage for an internal seek target:
+the requested user key followed by the iterator's fixed sequence and seek kind.
+Copy the user key before appending the trailer, including when the request
+borrows the iterator's own saved key. Capacity survives subsequent clears.
+Movement invalidates the public position before changing storage or children,
+so an exception cannot expose a stale key/value pair as a valid position.
+
 ## Lifetimes and range scans
 
 An iterator starts invalid and retains its engine and source lifetimes.

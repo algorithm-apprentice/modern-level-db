@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "engine/internal_iterator.h"
@@ -55,7 +56,8 @@ public:
 
     [[nodiscard]] Status SeekToFirst();
     [[nodiscard]] Status SeekToLast();
-    // Finds the first user key at or after the target.
+    // Finds the first user key at or after the target. The caller supplies a
+    // user-key length within the persistent representation.
     [[nodiscard]] Status Seek(ByteView user_key);
     [[nodiscard]] Status Next();
     [[nodiscard]] Status Prev();
@@ -81,7 +83,7 @@ private:
     // only invisible entries between them, or past the beginning.
     bool forward_ = true;
     bool valid_ = false;
-    std::vector<std::byte> saved_key_;
+    std::string saved_key_;
     std::vector<std::byte> saved_value_;
     ReadSampling sampling_;
     // The bytes to read before the next sample, once the first entry drew it.
