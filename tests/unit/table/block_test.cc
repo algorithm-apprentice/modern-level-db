@@ -802,6 +802,69 @@ TEST(BlockIteratorTest, DecodesEveryAcceptedExtendedLengthEncoding) {
     }
 }
 
+TEST(BlockIteratorTest, DecodesIndependentSingleAndExtendedHeaderFields) {
+    constexpr std::array<unsigned int, 3> Lengths{0, 1, 2};
+    constexpr std::string_view Value("v\0", 2);
+    for (unsigned int extended = 0; extended < 8; ++extended) {
+        SCOPED_TRACE(extended);
+        std::vector<std::byte> entry;
+        for (std::size_t field = 0; field < Lengths.size(); ++field) {
+            const bool wide = (extended & (1U << field)) != 0;
+            entry.push_back(static_cast<std::byte>(Lengths[field] | (wide ? 0x80U : 0U)));
+            if (wide) {
+                entry.push_back(std::byte{0});
+            }
+        }
+        entry.push_back(std::byte{'a'});
+        entry.insert(entry.end(), AsBytes(Value).begin(), AsBytes(Value).end());
+        const Block block = MakeBlock(WithRestarts(entry, {0}));
+        Block::Iterator iterator(block, BytewiseComparator());
+
+        ExpectOk(iterator.SeekToFirst());
+        ExpectAt(iterator, "a", Value);
+        ExpectOk(iterator.Seek(AsBytes("a")));
+        ExpectAt(iterator, "a", Value);
+        ExpectOk(iterator.SeekToLast());
+        ExpectAt(iterator, "a", Value);
+        ExpectOk(iterator.Next());
+        EXPECT_FALSE(iterator.valid());
+
+        const Block damaged = MakeBlock(WithRestarts(Concat({entry, Bytes({0x80})}), {0}));
+        Block::Iterator failing(damaged, BytewiseComparator());
+        ExpectOk(failing.SeekToFirst());
+        ExpectAt(failing, "a", Value);
+        ExpectCorruption(failing.Next());
+        EXPECT_FALSE(failing.valid());
+        EXPECT_TRUE(failing.key().empty());
+        EXPECT_TRUE(failing.value().empty());
+        ExpectOk(failing.Seek(AsBytes("a")));
+        ExpectAt(failing, "a", Value);
+    }
+}
+
+TEST(BlockIteratorTest, CorruptionAndRecoveryRemainLocalToEachIterator) {
+    const auto first = EntryBytes(0, "a", "first");
+    const auto malformed = EntryBytes(2, "", "");
+    const auto last = EntryBytes(0, "z", "last");
+    const auto restart = static_cast<std::uint32_t>(first.size() + malformed.size());
+    const Block block = MakeBlock(WithRestarts(Concat({first, malformed, last}), {0, restart}));
+    Block::Iterator forward(block, BytewiseComparator());
+    Block::Iterator backward(block, BytewiseComparator());
+    ExpectOk(forward.SeekToFirst());
+    ExpectOk(backward.SeekToLast());
+
+    ExpectCorruption(forward.Next());
+    EXPECT_FALSE(forward.valid());
+    ExpectAt(backward, "z", "last");
+    ExpectOk(forward.SeekToLast());
+    ExpectAt(forward, "z", "last");
+    ExpectCorruption(backward.Prev());
+    EXPECT_FALSE(backward.valid());
+    ExpectAt(forward, "z", "last");
+    ExpectOk(backward.SeekToFirst());
+    ExpectAt(backward, "a", "first");
+}
+
 TEST(BlockIteratorTest, RemainsValidWhenTheBlockMoves) {
     Block block = MakeBlock(BuildGoldenBlock());
     Block::Iterator iterator(block, BytewiseComparator());

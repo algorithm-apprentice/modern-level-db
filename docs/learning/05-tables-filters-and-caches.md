@@ -76,6 +76,13 @@ Table-open validation walks all index entries. When a filter policy is
 configured, it also reads and validates the metaindex entries.
 A valid block envelope is not a certificate that every data entry is valid.
 
+The checked entry decoder returns the key-delta pointer and three lengths.
+Private iterator loops advance with a boolean position result and latch
+corruption locally; the public movement call returns the corresponding
+`Status`. End-of-block is not an error. Key capacity is reserved before
+committing a reconstructed entry, preserving a consistent position if
+allocation throws.
+
 ## Index separators
 
 An index key need not repeat the complete last data key if a shorter key

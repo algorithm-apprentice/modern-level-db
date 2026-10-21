@@ -179,9 +179,10 @@ only.
 
 ### Error and recovery
 
-The iterator stores the first corruption from its current positioning
-attempt, invalidates its position, clears its key/value, and returns that
-error. `Next` and `Prev` require a valid iterator.
+The iterator latches corruption from its current positioning attempt,
+invalidates its position, and clears its key/value. Private decoding and
+movement use a boolean position result; the public movement boundary creates
+the returned `Error`. `Next` and `Prev` require a valid iterator.
 
 `Seek`, `SeekToFirst`, and `SeekToLast` clear the prior error and start over.
 This retains Modern's documented recovery contract while LevelDB's public

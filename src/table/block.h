@@ -68,8 +68,9 @@ public:
 private:
     Block(BlockContents contents, std::size_t entries_end, std::size_t restart_count) noexcept;
     [[nodiscard]] static const std::byte* DecodeEntry(const std::byte* input,
-                                                      const std::byte* limit,
-                                                      DecodedEntry& entry) noexcept;
+                                                      const std::byte* limit, std::uint32_t& shared,
+                                                      std::uint32_t& non_shared,
+                                                      std::uint32_t& value_size) noexcept;
     [[nodiscard]] static std::optional<DecodedEntry> ReadEntry(
         const Layout& layout, std::size_t offset, std::size_t previous_key_size) noexcept;
     static void ReconstructKey(std::string& key, const DecodedEntry& entry);
@@ -102,9 +103,7 @@ public:
     Iterator& operator=(Iterator&&) = delete;
     ~Iterator() = default;
 
-    [[nodiscard]] bool valid() const noexcept {
-        return !error_.has_value() && current_ < layout_.entries_end;
-    }
+    [[nodiscard]] bool valid() const noexcept { return current_ < layout_.entries_end; }
     [[nodiscard]] ByteView key() const noexcept;
     [[nodiscard]] ByteView value() const noexcept;
 
@@ -116,21 +115,23 @@ public:
 
 private:
     void BeginPositioning() noexcept;
-    [[nodiscard]] Result<std::size_t> FindRestart(ByteView target, std::size_t left,
-                                                  std::size_t right);
-    [[nodiscard]] Status RestoreCheckpoint(std::size_t index, int current_key_compare);
-    [[nodiscard]] Status ScanToLowerBound(ByteView target);
-    [[nodiscard]] Status FindPreviousRestart(std::size_t original, bool& found);
-    [[nodiscard]] Status ScanToPreviousEntry(std::size_t original);
-    [[nodiscard]] Status ScanToLastEntry();
+    [[nodiscard]] bool FindRestart(ByteView target, std::size_t left, std::size_t right,
+                                   std::size_t& index) noexcept;
+    [[nodiscard]] bool RestoreCheckpoint(std::size_t index, int current_key_compare) noexcept;
+    void ScanToLowerBound(ByteView target);
+    [[nodiscard]] bool FindPreviousRestart(std::size_t original) noexcept;
+    void ScanToPreviousEntry(std::size_t original);
+    void ScanToLastEntry();
     [[nodiscard]] bool RestartPoint(std::size_t index, std::size_t& offset) const noexcept;
-    [[nodiscard]] Status RestartKey(std::size_t index, ByteView& key);
-    [[nodiscard]] Status SeekToRestartPoint(std::size_t index);
-    [[nodiscard]] Status ParseNextEntry();
-    [[nodiscard]] Status CommitEntry(const DecodedEntry& entry, std::size_t key_size,
-                                     std::size_t entry_end);
-    [[nodiscard]] Status AdvanceRestartIndex();
-    [[nodiscard]] Status Corruption();
+    [[nodiscard]] bool RestartKey(std::size_t index, ByteView& key) noexcept;
+    [[nodiscard]] bool SeekToRestartPoint(std::size_t index) noexcept;
+    // False means end or corruption; CurrentStatus distinguishes them at the boundary.
+    bool ParseNextEntry();
+    [[nodiscard]] bool CommitEntry(const std::byte* key, std::uint32_t shared,
+                                   std::uint32_t non_shared, std::uint32_t value_size);
+    [[nodiscard]] bool AdvanceRestartIndex() noexcept;
+    bool Corruption() noexcept;
+    [[nodiscard]] Status CurrentStatus() const;
     [[nodiscard]] bool AcceptsKeySize(std::size_t size) const noexcept;
     [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept;
     void Invalidate() noexcept;
@@ -143,7 +144,8 @@ private:
     std::size_t restart_index_;
     std::string key_;
     ByteView value_;
-    std::optional<Error> error_;
+    // Corruption invalidates the position before setting this error-only latch.
+    bool corrupted_ = false;
 };
 
 }  // namespace modern_leveldb
