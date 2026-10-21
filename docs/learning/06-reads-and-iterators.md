@@ -122,6 +122,13 @@ compaction; each caller still selects its own sources and cache options.
 The implementation selects among children directly; do not assume every
 merging iterator uses a heap.
 
+For multiple children, each child caches its validity and borrowed key view.
+Only moving that child refreshes the cache; choosing the next stream does not
+repeatedly call through its iterator interface. Key views still expire when
+their child moves. A single child passes through without another iterator layer.
+The merger clears its selected position before fallible child movement and
+publishes a new selection only after success, including during direction changes.
+
 The **DB iterator** turns internal history into user-visible keys:
 
 1. Ignore entries newer than its captured sequence.

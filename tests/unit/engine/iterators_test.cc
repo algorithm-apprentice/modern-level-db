@@ -11,6 +11,7 @@
 #include <optional>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -194,6 +195,83 @@ private:
     std::string name_;
     std::vector<std::string>* moves_;
 };
+
+struct ChildReads {
+    int valid = 0;
+    int key = 0;
+
+    friend bool operator==(const ChildReads&, const ChildReads&) = default;
+};
+
+class CountedIterator final : public InternalIterator {
+public:
+    CountedIterator(const Comparator& comparator, std::vector<ScriptedEntry> entries,
+                    ChildReads& reads)
+        : child_(comparator, std::move(entries)), reads_(&reads) {}
+
+    bool valid() const noexcept override {
+        ++reads_->valid;
+        return child_.valid();
+    }
+    ByteView key() const noexcept override {
+        ++reads_->key;
+        return child_.key();
+    }
+    ByteView value() const noexcept override { return child_.value(); }
+    Status SeekToFirst() override { return child_.SeekToFirst(); }
+    Status SeekToLast() override { return child_.SeekToLast(); }
+    Status Seek(ByteView target) override { return child_.Seek(target); }
+    Status Next() override { return child_.Next(); }
+    Status Prev() override { return child_.Prev(); }
+
+private:
+    ScriptedIterator child_;
+    ChildReads* reads_;
+};
+
+TEST_F(MergingIteratorTest, CachesChildValidityAndKeyUntilThatChildMoves) {
+    const std::string long_key(128, 'c');
+    const std::vector<std::vector<ScriptedEntry>> entries{
+        {Entry("a", 1, "a"), Entry(long_key, 1, "long")},
+        {Entry("b", 1, "b"), Entry("d", 1, "d")},
+        {}};
+    std::vector<ChildReads> reads(entries.size());
+    std::vector<std::unique_ptr<InternalIterator>> children;
+    for (std::size_t index = 0; index < entries.size(); ++index) {
+        children.push_back(
+            std::make_unique<CountedIterator>(comparator_, entries[index], reads[index]));
+    }
+    const auto merged = NewMergingIterator(comparator_, std::move(children));
+    std::ranges::fill(reads, ChildReads{});
+    ASSERT_TRUE(merged->SeekToFirst().has_value());
+    EXPECT_EQ(reads, (std::vector<ChildReads>{{1, 1}, {1, 1}, {1, 0}}));
+    const auto before = reads;
+    for (int query = 0; query < 4; ++query) {
+        EXPECT_EQ(Describe(*merged), "a@1=a");
+    }
+    EXPECT_EQ(reads, before);
+
+    EXPECT_EQ(After(merged->Next(), *merged), "b@1=b");
+    EXPECT_EQ(reads, (std::vector<ChildReads>{{2, 2}, {1, 1}, {1, 0}}));
+    EXPECT_EQ(After(merged->Next(), *merged), long_key + "@1=long");
+    EXPECT_EQ(reads, (std::vector<ChildReads>{{2, 2}, {2, 2}, {1, 0}}));
+    EXPECT_EQ(After(merged->Prev(), *merged), "b@1=b");
+}
+
+TEST_F(MergingIteratorTest, ReturnsASingleChildWithoutAnotherIteratorLayer) {
+    auto child = std::make_unique<ScriptedIterator>(
+        comparator_, std::vector<ScriptedEntry>{Entry("a", 1, "value")});
+    ASSERT_TRUE(child->SeekToFirst().has_value());
+    const InternalIterator* original = child.get();
+    std::vector<std::unique_ptr<InternalIterator>> children;
+    children.push_back(std::move(child));
+
+    const auto merged = NewMergingIterator(comparator_, std::move(children));
+
+    EXPECT_EQ(merged.get(), original);
+    EXPECT_EQ(Describe(*merged), "a@1=value");
+    EXPECT_EQ(After(merged->SeekToFirst(), *merged), "a@1=value");
+}
 
 std::unique_ptr<InternalIterator> RecordedMerge(const InternalKeyComparator& comparator,
                                                 const std::shared_ptr<MoveScript>& script,
@@ -413,7 +491,16 @@ TEST_F(MergingIteratorTest, FailsWithAnyChildMove) {
                  [](InternalIterator& it) { return it.Prev(); },
                  [](InternalIterator& it) { return it.Next(); },
                  [](InternalIterator& it) { return it.Seek(Key("c", 1)); }}) {
-            const Status moved = move(*merged);
+            Status moved;
+            try {
+                moved = move(*merged);
+            } catch (const std::runtime_error& error) {
+                EXPECT_STREQ(error.what(), "injected exception");
+                EXPECT_FALSE(merged->valid());
+                script->throw_at.reset();
+                EXPECT_EQ(After(merged->SeekToFirst(), *merged), "a@1=a");
+                return positions;
+            }
             if (!moved.has_value()) {
                 EXPECT_EQ(moved.error().message(), "injected failure");
                 EXPECT_FALSE(merged->valid());
@@ -431,9 +518,16 @@ TEST_F(MergingIteratorTest, FailsWithAnyChildMove) {
                                                         "e@1=e", "c@1=c"}));
     for (int failing = 1; failing <= reference->moves; ++failing) {
         SCOPED_TRACE(failing);
-        const auto script = std::make_shared<MoveScript>();
-        script->fail_at = failing;
-        EXPECT_LT(run(script).size(), 7U);
+        for (const bool throwing : {false, true}) {
+            SCOPED_TRACE(throwing);
+            const auto script = std::make_shared<MoveScript>();
+            if (throwing) {
+                script->throw_at = failing;
+            } else {
+                script->fail_at = failing;
+            }
+            EXPECT_LT(run(script).size(), 7U);
+        }
     }
 }
 

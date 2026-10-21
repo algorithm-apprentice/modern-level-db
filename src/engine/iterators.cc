@@ -223,19 +223,75 @@ private:
     std::size_t file_ = 0;
 };
 
+class IteratorChild final {
+public:
+    explicit IteratorChild(std::unique_ptr<InternalIterator> iterator) noexcept
+        : iterator_(std::move(iterator)) {
+        Refresh();
+    }
+
+    [[nodiscard]] bool valid() const noexcept { return valid_; }
+    [[nodiscard]] ByteView key() const noexcept { return key_; }
+    [[nodiscard]] ByteView value() const noexcept { return iterator_->value(); }
+
+    [[nodiscard]] Status SeekToFirst() {
+        const Status moved = iterator_->SeekToFirst();
+        Refresh();
+        return moved;
+    }
+    [[nodiscard]] Status SeekToLast() {
+        const Status moved = iterator_->SeekToLast();
+        Refresh();
+        return moved;
+    }
+    [[nodiscard]] Status Seek(ByteView target) {
+        const Status moved = iterator_->Seek(target);
+        Refresh();
+        return moved;
+    }
+    [[nodiscard]] Status Next() {
+        const Status moved = iterator_->Next();
+        Refresh();
+        return moved;
+    }
+    [[nodiscard]] Status Prev() {
+        const Status moved = iterator_->Prev();
+        Refresh();
+        return moved;
+    }
+
+private:
+    void Refresh() noexcept {
+        valid_ = iterator_->valid();
+        if (valid_) {
+            key_ = iterator_->key();
+        }
+    }
+
+    std::unique_ptr<InternalIterator> iterator_;
+    bool valid_ = false;
+    ByteView key_;
+};
+
 class MergingIterator final : public InternalIterator {
 public:
     MergingIterator(const InternalKeyComparator& comparator,
-                    std::vector<std::unique_ptr<InternalIterator>> children) noexcept
-        : comparator_(&comparator), children_(std::move(children)) {}
+                    std::vector<std::unique_ptr<InternalIterator>> children)
+        : comparator_(&comparator) {
+        children_.reserve(children.size());
+        for (std::unique_ptr<InternalIterator>& child : children) {
+            children_.emplace_back(std::move(child));
+        }
+    }
 
     [[nodiscard]] bool valid() const noexcept override { return current_ != nullptr; }
     [[nodiscard]] ByteView key() const noexcept override { return current_->key(); }
     [[nodiscard]] ByteView value() const noexcept override { return current_->value(); }
 
     [[nodiscard]] Status SeekToFirst() override {
-        for (const std::unique_ptr<InternalIterator>& child : children_) {
-            const Status moved = child->SeekToFirst();
+        current_ = nullptr;
+        for (IteratorChild& child : children_) {
+            const Status moved = child.SeekToFirst();
             if (!moved.has_value()) {
                 return Fail(moved.error());
             }
@@ -246,8 +302,9 @@ public:
     }
 
     [[nodiscard]] Status SeekToLast() override {
-        for (const std::unique_ptr<InternalIterator>& child : children_) {
-            const Status moved = child->SeekToLast();
+        current_ = nullptr;
+        for (IteratorChild& child : children_) {
+            const Status moved = child.SeekToLast();
             if (!moved.has_value()) {
                 return Fail(moved.error());
             }
@@ -258,8 +315,9 @@ public:
     }
 
     [[nodiscard]] Status Seek(ByteView target) override {
-        for (const std::unique_ptr<InternalIterator>& child : children_) {
-            const Status moved = child->Seek(target);
+        current_ = nullptr;
+        for (IteratorChild& child : children_) {
+            const Status moved = child.Seek(target);
             if (!moved.has_value()) {
                 return Fail(moved.error());
             }
@@ -270,13 +328,14 @@ public:
     }
 
     [[nodiscard]] Status Next() override {
+        IteratorChild* selected = std::exchange(current_, nullptr);
         if (!forward_) {
-            Status turned = TurnForward();
+            Status turned = TurnForward(*selected);
             if (!turned.has_value()) {
                 return turned;
             }
         }
-        const Status moved = current_->Next();
+        const Status moved = selected->Next();
         if (!moved.has_value()) {
             return Fail(moved.error());
         }
@@ -285,13 +344,14 @@ public:
     }
 
     [[nodiscard]] Status Prev() override {
+        IteratorChild* selected = std::exchange(current_, nullptr);
         if (forward_) {
-            Status turned = TurnBackward();
+            Status turned = TurnBackward(*selected);
             if (!turned.has_value()) {
                 return turned;
             }
         }
-        const Status moved = current_->Prev();
+        const Status moved = selected->Prev();
         if (!moved.has_value()) {
             return Fail(moved.error());
         }
@@ -300,12 +360,12 @@ public:
     }
 
 private:
-    Status TurnForward() {
-        for (const std::unique_ptr<InternalIterator>& child : children_) {
-            if (child.get() == current_) {
+    Status TurnForward(IteratorChild& selected) {
+        for (IteratorChild& child : children_) {
+            if (&child == &selected) {
                 continue;
             }
-            Status positioned = PositionAfterCurrent(*child);
+            Status positioned = PositionAfterCurrent(child, selected.key());
             if (!positioned.has_value()) {
                 return positioned;
             }
@@ -314,12 +374,12 @@ private:
         return {};
     }
 
-    Status PositionAfterCurrent(InternalIterator& child) {
-        const Status sought = child.Seek(key());
+    Status PositionAfterCurrent(IteratorChild& child, ByteView key) {
+        const Status sought = child.Seek(key);
         if (!sought.has_value()) {
             return Fail(sought.error());
         }
-        if (child.valid() && comparator_->Compare(key(), child.key()) == 0) {
+        if (child.valid() && comparator_->Compare(key, child.key()) == 0) {
             const Status moved = child.Next();
             if (!moved.has_value()) {
                 return Fail(moved.error());
@@ -328,12 +388,12 @@ private:
         return {};
     }
 
-    Status TurnBackward() {
-        for (const std::unique_ptr<InternalIterator>& child : children_) {
-            if (child.get() == current_) {
+    Status TurnBackward(IteratorChild& selected) {
+        for (IteratorChild& child : children_) {
+            if (&child == &selected) {
                 continue;
             }
-            Status positioned = PositionBeforeCurrent(*child);
+            Status positioned = PositionBeforeCurrent(child, selected.key());
             if (!positioned.has_value()) {
                 return positioned;
             }
@@ -342,8 +402,8 @@ private:
         return {};
     }
 
-    Status PositionBeforeCurrent(InternalIterator& child) {
-        const Status sought = child.Seek(key());
+    Status PositionBeforeCurrent(IteratorChild& child, ByteView key) {
+        const Status sought = child.Seek(key);
         if (!sought.has_value()) {
             return Fail(sought.error());
         }
@@ -360,11 +420,11 @@ private:
     }
 
     void FindSmallest() noexcept {
-        InternalIterator* smallest = nullptr;
-        for (const std::unique_ptr<InternalIterator>& child : children_) {
-            if (child->valid() &&
-                (smallest == nullptr || comparator_->Compare(child->key(), smallest->key()) < 0)) {
-                smallest = child.get();
+        IteratorChild* smallest = nullptr;
+        for (IteratorChild& child : children_) {
+            if (child.valid() &&
+                (smallest == nullptr || comparator_->Compare(child.key(), smallest->key()) < 0)) {
+                smallest = &child;
             }
         }
         current_ = smallest;
@@ -372,11 +432,11 @@ private:
 
     // Scans from the last child, so that it wins among equal keys.
     void FindLargest() noexcept {
-        InternalIterator* largest = nullptr;
+        IteratorChild* largest = nullptr;
         for (auto child = children_.rbegin(); child != children_.rend(); ++child) {
-            if ((*child)->valid() &&
-                (largest == nullptr || comparator_->Compare((*child)->key(), largest->key()) > 0)) {
-                largest = child->get();
+            if (child->valid() &&
+                (largest == nullptr || comparator_->Compare(child->key(), largest->key()) > 0)) {
+                largest = &*child;
             }
         }
         current_ = largest;
@@ -388,8 +448,10 @@ private:
     }
 
     const InternalKeyComparator* comparator_;
-    std::vector<std::unique_ptr<InternalIterator>> children_;
-    InternalIterator* current_ = nullptr;
+    // The fixed child list keeps the selected wrapper's address stable.
+    std::vector<IteratorChild> children_;
+    // A null selection hides cached views while a fallible move is in progress.
+    IteratorChild* current_ = nullptr;
     bool forward_ = true;
 };
 
@@ -426,6 +488,9 @@ void AppendLevelIterators(std::shared_ptr<const Version> version, std::uint32_t 
 std::unique_ptr<InternalIterator> NewMergingIterator(
     const InternalKeyComparator& comparator,
     std::vector<std::unique_ptr<InternalIterator>> children) {
+    if (children.size() == 1) {
+        return std::move(children.front());
+    }
     return std::make_unique<MergingIterator>(comparator, std::move(children));
 }
 
