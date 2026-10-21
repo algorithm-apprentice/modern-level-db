@@ -1,13 +1,15 @@
 # ADR-0080: Final Owned Decompression Output
 
-- Status: Proposed
+- Status: Implemented
 - Date: 2026-10-21
 
 ## Scope and implementation status
 
-This is a design-only proposal. Decompression ownership is not changed by
-this ADR, and implementation requires approval after design review.
-The separately requested single-call read CRC change does not depend on it.
+Implemented after independent design review and explicit approval to adopt
+the design even without a measured speedup. Acceptance depends on correctness
+and architecture quality, not a preset performance-improvement threshold.
+The separately delivered single-call read CRC change is present in both
+measurement revisions and is not part of this ownership change.
 
 The goal is to decode directly into final, address-stable storage without
 pre-initializing bytes that the codec will overwrite. It is not a claim that
@@ -18,9 +20,9 @@ Public APIs, persisted bytes, codec choices, cache policy, exception behavior,
 and data-validation rules remain unchanged. Compressor scratch buffers,
 LookupKey, comparator interfaces, and iterator algorithms are outside scope.
 
-## Existing ownership boundary
+## Previous ownership boundary
 
-The current path is:
+The previous compressed-block path was:
 
 ```text
 DecompressBlock -> vector<byte> -> BlockContents -> Block -> cache or iterator
@@ -36,11 +38,11 @@ Decoding to an array and then constructing a vector would add an allocation
 and a byte copy. The new array must therefore reach the existing ownership
 boundary directly, not be converted back into a vector.
 
-## Proposed design
+## Decision
 
 ### A two-field decoder result
 
-Add a small, private table-layer struct in `src/table/compression.h`:
+Use a small, private table-layer struct in `src/table/compression.h`:
 
 ```cpp
 struct DecodedBlockBytes {
@@ -61,7 +63,7 @@ exchanges the source size with zero, keeping a moved-from result safely empty.
 Assignment is unnecessary for this immutable handoff, as with BlockContents.
 There are no growth, iterator, allocator, or generic-container interfaces.
 
-Change only the private decoder result:
+The private decoder result is:
 
 ```cpp
 Result<DecodedBlockBytes> DecompressBlock(ByteView stored,
@@ -79,8 +81,8 @@ length remains unchanged.
 
 ### Three mutually exclusive BlockContents sources
 
-Retain the existing BlockContents boundary and use one private storage
-discriminated union:
+BlockContents retains the existing ownership boundary with one private
+storage discriminated union:
 
 ```cpp
 using Storage =
@@ -167,10 +169,9 @@ adopt a raw allocation, is not an acceptable replacement.
 
 ## Verification and delivery boundary
 
-Before implementation, independently review this ownership design and its
-existing-caller integration. Keep this ADR Proposed until it is approved.
-
-Implementation then uses small test-first increments:
+The design and implementation received independent ownership/correctness
+review. Two test-first implementation increments separate the owner/storage
+contracts from the actual codec integration:
 
 - Verify decoded pointer/length contents and move-to-empty behavior, including
   empty, small binary, and large output.
@@ -185,10 +186,18 @@ Implementation then uses small test-first increments:
   allocation budget or byte-equality checks.
 
 Use the existing focused tests and cross-platform sanitizer/coverage gates.
-After correctness and ownership review, compare complete workloads under the
-existing fixed measurement controls. Do not substitute object-size ratios
-or isolated initialization timings for end-to-end evidence, and do not
-promise a fixed speedup.
+The matched before/after experiment uses six fixed paired rounds for
+million-record random Get at 8/512 MiB cache capacity, retained-iterator Seek
+at 8 MiB, and full Scan at 8 MiB: 48 fresh processes. Both binaries reuse
+the same timing object and exact codec/checksum archives; normalized Release
+compiler commands must match.
+
+The complete result matrix and provenance are retained with PR #293 and
+under `build/overwrite-output-experiment-20261021`. This compares output
+allocation and ownership representation together, not initialization alone.
+The shared image is Snappy-compressed; it does not establish Zstd throughput
+or cold-storage, tail-latency, or multi-core behavior. Do not substitute
+object-size ratios or isolated timings for end-to-end evidence.
 
 Stop after this private storage handoff. Generic buffers, small-buffer
 thresholds, public result redesign, and unrelated read-path changes require

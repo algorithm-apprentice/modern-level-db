@@ -151,6 +151,12 @@ Reading verifies those bytes before decompression.
 Decompression also validates its format and declared output size.
 Corruption must become an error, not a plausible empty block.
 
+The codec writes directly into an overwrite-allocated byte array. A small
+pointer/length owner transfers that allocation into `BlockContents`, without
+converting it to a vector or copying the decoded bytes. Already-owned raw
+vectors and borrowed mapped bytes keep their separate zero-copy paths.
+Moving a block transfers ownership, not the backing bytes.
+
 ## Three different caches
 
 | Cache | What it retains |
