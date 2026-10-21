@@ -29,10 +29,9 @@ std::uint32_t BlockChecksum(ByteView contents, std::byte type) noexcept {
     return MaskCrc32c(ExtendCrc32c(Crc32c(contents), ByteView(&type, 1)));
 }
 
-bool StoredBlockChecksumMatches(ByteView stored, std::size_t contents_size,
-                                std::byte type) noexcept {
+bool StoredBlockChecksumMatches(ByteView stored, std::size_t contents_size) noexcept {
     const std::uint32_t checksum = DecodeFixed32(stored.last<sizeof(std::uint32_t)>());
-    return checksum == BlockChecksum(stored.first(contents_size), type);
+    return checksum == MaskCrc32c(Crc32c(stored.first(contents_size + 1)));
 }
 
 std::optional<BlockCompression> DecodeCompressionType(std::byte encoded) noexcept {
@@ -52,7 +51,7 @@ Result<StoredBlock> ValidateStoredBlock(ByteView stored) {
     }
     const std::size_t contents_size = stored.size() - BlockTrailerSize;
     const std::byte type = stored[contents_size];
-    if (!StoredBlockChecksumMatches(stored, contents_size, type)) {
+    if (!StoredBlockChecksumMatches(stored, contents_size)) {
         return std::unexpected(Error::Corruption("block checksum mismatch"));
     }
     const std::optional<BlockCompression> compression = DecodeCompressionType(type);

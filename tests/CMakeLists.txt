@@ -253,6 +253,31 @@ gtest_discover_tests(
   PROPERTIES LABELS unit TIMEOUT 10
 )
 
+add_executable(
+  modern_leveldb_block_checksum_tests
+  unit/table/block_checksum_test.cc
+  "${PROJECT_SOURCE_DIR}/src/table/block_format.cc"
+  "${PROJECT_SOURCE_DIR}/src/base/crc32c.cc"
+)
+target_include_directories(
+  modern_leveldb_block_checksum_tests
+  PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests"
+)
+target_include_directories(
+  modern_leveldb_block_checksum_tests
+  SYSTEM PRIVATE
+    "$<TARGET_PROPERTY:${MODERN_LEVELDB_CRC32C_TARGET},INTERFACE_INCLUDE_DIRECTORIES>"
+)
+target_link_libraries(
+  modern_leveldb_block_checksum_tests PRIVATE modern_leveldb::modern_leveldb GTest::gtest_main
+)
+modern_leveldb_set_project_warnings(modern_leveldb_block_checksum_tests PRIVATE)
+gtest_discover_tests(
+  modern_leveldb_block_checksum_tests
+  DISCOVERY_TIMEOUT "${modern_leveldb_gtest_discovery_timeout}"
+  PROPERTIES LABELS unit TIMEOUT 10
+)
+
 add_test(
   NAME stress.crash_runner_contracts
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/tools/crash_stress_test.py"

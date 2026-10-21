@@ -30,6 +30,9 @@ index block
 Stored blocks have five-byte trailers: one compression-type byte and four
 bytes of masked CRC32C. A block handle stores its offset and size; its size
 excludes the trailer.
+The reader checks contiguous contents plus the type byte in one CRC32C
+calculation. The writer extends the checksum across its separate contents and
+type buffers.
 The footer contains handles for the metaindex and index, padding, and the
 LevelDB table magic number.
 
