@@ -328,3 +328,34 @@ concurrent initialization evidence, actual linked runtime/scalar leaf checks,
 and unchanged KeyMayMatch/scalar/AVX2 hot bodies before publication.
 Independent architecture re-review approved this bounded correction, not its
 implementation or a whole-Get performance attribution.
+
+The implementation at `e7fde2e` received an independent implementation review.
+Three deterministic behavioral RED cases first demonstrated repeated
+detection, detection despite a selected leaf, and missing publication after a
+forced eight-reader cold wave. The minimal cache implementation passes those
+cases and all 27 selected full-filter/reader/public-default contracts, with
+strict portable syntax checks.
+
+A second, exact-object control campaign retains 18 fresh processes: six
+order-balanced rounds of one million selections with the original
+`51c000a`, accepted `05033d5`, and corrected dispatcher objects sharing the same
+driver and scalar/AVX2 providers.
+
+| Actual dispatcher | Median selection time |
+|---|---:|
+| Original cached `51c000a` | 1.89055 ns |
+| Repeated-detection `05033d5` | 10,265.45 ns |
+| Corrected atomic cache | 2.19925 ns |
+
+This restores constant-time repeated admission selection, not a claim that the
+atomic hit outperforms the original guarded hit or that a particular percentage
+of whole-Get time has been recovered. Fresh matched reader controls are still
+required.
+
+Both actual linked runtime-AVX2 and scalar-only dispatch targets are verified.
+Normalized COFF and linked executable bodies remain identical for KeyMayMatch
+(126 bytes), ScalarMayMatch (95 bytes), and AVX2 MayMatch (249 bytes).
+Source, exact objects, raw selector samples, linked images/maps and proof are
+retained under `build\read-adoption-20261022\probe-selection-proof`; the earlier
+two-role control and its zero-sample line-ending preflight correction remain
+under `reader-route-probe`. No original observation was discarded.
