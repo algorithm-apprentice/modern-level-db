@@ -50,8 +50,14 @@ Access follows the lease's own alternative, including noexcept move assignment
 between alternatives; do not infer its type from an unrelated cache pointer.
 
 Add a point-read operation on TableCache that performs the complete Table Get.
-Its hint-hit path holds only a temporary shared Table owner while calling Get.
-Every fallback obtains and retains a normal Find handle through Table Get,
+Dispatch the immutable backend at the inline point-read boundary. Unique mode
+uses the original typed LRU pin directly through a shared `FindUnique` helper;
+ordinary Find wraps that same helper's pin for its variant-facing callers.
+Point reads do not construct or visit the outward-facing Handle variant in
+Unique mode. Keep shared hint processing out of line.
+
+The hint-hit path holds only a temporary shared Table owner while calling Get.
+Every fallback obtains and retains a normal mapping pin through Table Get,
 including reuse-disabled and pressured paths. It may publish a weak hint
 while that handle protects the owner, but does not release the cache pin
 early. No shared reader is returned to an external
@@ -225,3 +231,26 @@ the first 192-process campaign exposed the default-off cost. Unique mode does
 not pay shared control/holder/token allocations or hint-state maintenance.
 This restores ownership semantics, not a presumed performance result; variant
 dispatch and layout still require fresh original/off/on controls.
+
+The second 192-process campaign retained all observations. Unique ownership
+removed the mandatory shared allocations, but did not preserve default-off
+throughput: constrained-open-file single-reader cases were 5.38% and 4.52%
+slower than the original, with no faster pair in either six-round cell.
+The fixture has 47 tables, with six in one shard whose ceiling is four;
+this is real, localized pressure, not a promise that every shard is pressured.
+
+The next bounded experiment isolates the remaining point-read routing:
+the added out-of-line Get and the typed Handle variant. Retain the selected
+backend and outward Find/Handle contracts, but use the original underlying
+Unique pin directly for point Get. This is a hypothesis to measure, not a
+claim that those costs already explain the complete observed regression.
+Require linked-code inspection and a fresh original/off/on campaign; retain
+both earlier negative campaigns. No pointer tagging, layout casts, duplicated
+ownership flags, changed gate, or default-on selection is part of this revision.
+
+An exact MSVC layout probe found a 16-byte original pin and a 24-byte outward
+variant pin, but both Result representations remain 72 bytes because Error is
+64 bytes. Do not attribute the slowdown to a larger Result return buffer.
+Independent architecture re-review approved this bounded routing experiment,
+with linked-production-path inspection, implementation review and new measured
+controls still required.
