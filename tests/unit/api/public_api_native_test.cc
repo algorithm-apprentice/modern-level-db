@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -110,12 +109,17 @@ Result<FilterInspection> InspectFilters(const std::filesystem::path& directory) 
             continue;
         }
         ++result.tables;
-        std::ifstream input(path.path(), std::ios::binary);
+        std::ifstream input(path.path(), std::ios::binary | std::ios::ate);
         if (!input.is_open()) {
             return std::unexpected(Error::Io("cannot inspect generated table"));
         }
-        const std::string stored{std::istreambuf_iterator<char>(input), {}};
-        if (input.bad()) {
+        const std::streamoff length = input.tellg();
+        if (!std::in_range<std::size_t>(length) || !std::in_range<std::streamsize>(length)) {
+            return std::unexpected(Error::Io("cannot inspect generated table size"));
+        }
+        std::string stored(static_cast<std::size_t>(length), '\0');
+        input.seekg(0);
+        if (!input.read(stored.data(), static_cast<std::streamsize>(stored.size()))) {
             return std::unexpected(Error::Io("cannot read generated table"));
         }
         for (const auto name :
