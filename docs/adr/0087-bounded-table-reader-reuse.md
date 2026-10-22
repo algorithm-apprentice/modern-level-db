@@ -213,6 +213,10 @@ weak hints add no persistent open-file owners.
   other, including maintenance run during verification-copy shutdown.
 - One/four-reader Get measurements with hints disabled/enabled and original
   ownership baseline, plus read/fd lifetime counters and negative outcomes.
+- Publish a passed verification verdict only after inherited and all matched
+  source/isolation/open checks succeed. Keep provisional inherited reports in
+  memory, clear stale derived verdicts on rerun, and atomically publish the
+  final complete report; a later failure must not leave an earlier success.
 
 ## Review boundary
 
