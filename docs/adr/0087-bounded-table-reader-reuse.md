@@ -38,9 +38,11 @@ Own the selected nonmovable backend in place in a proper typed variant; never
 switch it when a shard's pressure gate closes. The generic LRU policy remains
 unchanged. Identity tokens, gates and epochs are constructed only in Shared mode.
 
-The first measured shared-in-both-modes implementation regressed pressure
-even with hints disabled: closing a gate does not remove shared-owner/control/
-holder costs. Default-off must not inherit that ownership regression.
+The first shared-in-both-modes implementation imposed shared-owner/control/
+holder costs even with hints disabled: closing a gate does not remove them.
+Default-off retains unique ownership. Its first original/control comparison
+also crossed a CPU-dispatch lifetime change, so it does not isolate how much
+of the measured pressure difference came from shared allocation costs.
 
 Keep TableCache::Handle a move-only typed variant of the underlying cache pins.
 Its value/arrow/dereference continue to expose the Table, not a shared-pointer
@@ -50,14 +52,8 @@ Access follows the lease's own alternative, including noexcept move assignment
 between alternatives; do not infer its type from an unrelated cache pointer.
 
 Add a point-read operation on TableCache that performs the complete Table Get.
-Dispatch the immutable backend at the inline point-read boundary. Unique mode
-uses the original typed LRU pin directly through a shared `FindUnique` helper;
-ordinary Find wraps that same helper's pin for its variant-facing callers.
-Point reads do not construct or visit the outward-facing Handle variant in
-Unique mode. Keep shared hint processing out of line.
-
-The hint-hit path holds only a temporary shared Table owner while calling Get.
-Every fallback obtains and retains a normal mapping pin through Table Get,
+Its hint-hit path holds only a temporary shared Table owner while calling Get.
+Every fallback obtains and retains a normal Find mapping pin through Table Get,
 including reuse-disabled and pressured paths. It may publish a weak hint
 while that handle protects the owner, but does not release the cache pin
 early. No shared reader is returned to an external
@@ -151,9 +147,11 @@ support external table mutation while a database is open.
 Provide a read-reuse switch for control measurements and operational opt-out.
 Keep it disabled by default. The measured resident/concurrent benefit supports
 an opt-in, not an unconditional default: constrained-table-cache pressure exposed
-shared ownership costs even after hints stopped. Repeat measurements after the
-typed ownership selection to verify default-off preservation, not just semantic
-equivalence. Do not extrapolate the strong-pin prototype.
+additional work after hints stopped, but the earlier original arm also used a
+different CPU-selection lifetime. Repeat matched measurements after immutable
+ownership selection and the dispatch correction to verify default-off
+preservation, not just semantic equivalence. Do not extrapolate the strong-pin
+prototype or attribute cumulative costs to ownership alone.
 
 Retain the original shared-in-both-modes campaign as its distinct ownership
 baseline. A measurement-only SharedNoHints object may keep constructor-true
@@ -202,6 +200,17 @@ weak hints add no persistent open-file owners.
   before inspecting the gate, rather than sampling an earlier gate value.
 - A pressure corpus measuring handoff and disabled variants, not merely an
   all-resident hit test or a claim that disabling hints restores past history.
+- Baseline/candidate CPU-selection code and lifetime must match. Hot Get-body
+  identity alone is insufficient for a workload that can open readers.
+- Count actual successful random-access table opens during timing. A file
+  population above a shard target establishes potential pressure, not observed
+  eviction/reopening. Verify the corpus in an independent owned database copy,
+  checking distinct directory and per-SST file identities against both copies
+  and the sealed source. Then warm the freshly opened measured copy with point
+  Get only; an iterator's
+  temporary pins must not establish an uncontrolled over-target starting cache.
+  Both copies remain isolated from the immutable input image and from each
+  other, including maintenance run during verification-copy shutdown.
 - One/four-reader Get measurements with hints disabled/enabled and original
   ownership baseline, plus read/fd lifetime counters and negative outcomes.
 
@@ -233,24 +242,27 @@ This restores ownership semantics, not a presumed performance result; variant
 dispatch and layout still require fresh original/off/on controls.
 
 The second 192-process campaign retained all observations. Unique ownership
-removed the mandatory shared allocations, but did not preserve default-off
-throughput: constrained-open-file single-reader cases were 5.38% and 4.52%
-slower than the original, with no faster pair in either six-round cell.
-The fixture has 47 tables, with six in one shard whose ceiling is four;
-this is real, localized pressure, not a promise that every shard is pressured.
+removed the mandatory shared allocations; its constrained-open-file serial
+cases were 5.38% and 4.52% slower than the frozen original, with no faster pair
+in either six-round cell. This is a cumulative observation, not isolated proof
+of a default-off reader-feature regression: the original `51c000a` cached
+RuntimeProbe, while the candidate inherited per-reader CPU detection from
+`05033d5`. See the measured correction in [ADR-0086](0086-persisted-full-table-filters.md#admission-time-cpu-selection-correction).
 
-The next bounded experiment isolates the remaining point-read routing:
-the added out-of-line Get and the typed Handle variant. Retain the selected
-backend and outward Find/Handle contracts, but use the original underlying
-Unique pin directly for point Get. This is a hypothesis to measure, not a
-claim that those costs already explain the complete observed regression.
-Require linked-code inspection and a fresh original/off/on campaign; retain
-both earlier negative campaigns. No pointer tagging, layout casts, duplicated
-ownership flags, changed gate, or default-on selection is part of this revision.
+The fixture has 47 tables, with six in one shard whose ceiling is four.
+That establishes potential localized pressure; the old harness did not count
+timed opens. New controls must prove actual pressure and exclude uncontrolled
+iterator-warmed soft-target overshoot before making an admission claim.
+
+An independently reviewed draft isolates the added out-of-line point Get and
+outward typed Handle by using a direct Unique pin. It remains an unadopted
+experiment, not this implementation's required representation. Do not ship it
+merely to compensate for the mismatched control. First run original/off/on
+with the same fixed selector and measured open events. Retain both earlier
+campaigns and the draft.
 
 An exact MSVC layout probe found a 16-byte original pin and a 24-byte outward
 variant pin, but both Result representations remain 72 bytes because Error is
 64 bytes. Do not attribute the slowdown to a larger Result return buffer.
-Independent architecture re-review approved this bounded routing experiment,
-with linked-production-path inspection, implementation review and new measured
-controls still required.
+Any later routing experiment still requires linked-production-path inspection,
+implementation review and fresh matched controls.
