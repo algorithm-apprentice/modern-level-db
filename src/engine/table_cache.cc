@@ -92,8 +92,8 @@ TableCache::TableCache(FileSystem& file_system, std::filesystem::path directory,
 }
 
 Result<TableCache::Handle> TableCache::Find(std::uint64_t file_number, std::uint64_t file_size) {
-    const auto key = CacheKey(file_number);
     if (auto* shared = std::get_if<SharedTables>(&tables_)) {
+        const auto key = CacheKey(file_number);
         auto cached = shared->tables.Lookup(key);
         if (cached.has_value()) {
             return Handle(std::move(*cached));
@@ -107,10 +107,17 @@ Result<TableCache::Handle> TableCache::Find(std::uint64_t file_number, std::uint
         return shared->tables.Insert(key, std::move(holder), 1)
             .transform([](SharedCache::Handle pin) { return Handle(std::move(pin)); });
     }
-    auto& unique = std::get<UniqueTables>(tables_);
-    auto cached = unique.Lookup(key);
+    return FindUnique(std::get<UniqueTables>(tables_), file_number, file_size)
+        .transform([](UniqueTables::Handle pin) { return Handle(std::move(pin)); });
+}
+
+Result<TableCache::UniqueTables::Handle> TableCache::FindUnique(UniqueTables& tables,
+                                                                std::uint64_t file_number,
+                                                                std::uint64_t file_size) {
+    const auto key = CacheKey(file_number);
+    auto cached = tables.Lookup(key);
     if (cached.has_value()) {
-        return Handle(std::move(*cached));
+        return std::move(*cached);
     }
 
     auto table = OpenTable(file_number, file_size, nullptr);
@@ -119,32 +126,26 @@ Result<TableCache::Handle> TableCache::Find(std::uint64_t file_number, std::uint
     }
     // Tables have charge one, so accounting saturation would require SIZE_MAX
     // tables in one shard.
-    return unique.Insert(key, std::move(*table), 1).transform([](UniqueTables::Handle pin) {
-        return Handle(std::move(pin));
-    });
+    return tables.Insert(key, std::move(*table), 1);
 }
 
-Result<TableLookupKind> TableCache::Get(std::uint64_t file_number, std::uint64_t file_size,
-                                        const LookupKey& key, std::vector<std::byte>& value,
-                                        const TableReadOptions& options) {
+Result<TableLookupKind> TableCache::GetShared(SharedTables& shared, std::uint64_t file_number,
+                                              std::uint64_t file_size, const LookupKey& key,
+                                              std::vector<std::byte>& value,
+                                              const TableReadOptions& options) {
     ReaderHint* hint = nullptr;
-    table_cache_detail::ReuseShard* shard = nullptr;
     std::uint64_t generation = 0;
-    auto* shared = std::get_if<SharedTables>(&tables_);
-    if (shared != nullptr) {
-        const auto hash = ShardedLruCacheCore::HashKey(CacheKey(file_number));
-        shard = &shared->reuse[ShardedLruCacheCore::ShardIndex(hash)];
-        if (shard->enabled(shared->shard_capacity)) {
-            generation = shard->generation.load(std::memory_order_acquire);
-            const auto identity_hash =
-                reinterpret_cast<std::uintptr_t>(shared->identity.get()) >> 4U;
-            hint = &ReaderHints[(hash ^ identity_hash) & (HintCount - 1)];
-            if (hint->file_number == file_number && hint->generation == generation &&
-                !hint->identity.owner_before(shared->identity) &&
-                !shared->identity.owner_before(hint->identity)) {
-                if (const auto table = hint->table.lock()) {
-                    return table->Get(key, value, options);
-                }
+    const auto hash = ShardedLruCacheCore::HashKey(CacheKey(file_number));
+    auto& shard = shared.reuse[ShardedLruCacheCore::ShardIndex(hash)];
+    if (shard.enabled(shared.shard_capacity)) {
+        generation = shard.generation.load(std::memory_order_acquire);
+        const auto identity_hash = reinterpret_cast<std::uintptr_t>(shared.identity.get()) >> 4U;
+        hint = &ReaderHints[(hash ^ identity_hash) & (HintCount - 1)];
+        if (hint->file_number == file_number && hint->generation == generation &&
+            !hint->identity.owner_before(shared.identity) &&
+            !shared.identity.owner_before(hint->identity)) {
+            if (const auto table = hint->table.lock()) {
+                return table->Get(key, value, options);
             }
         }
     }
@@ -152,9 +153,9 @@ Result<TableLookupKind> TableCache::Get(std::uint64_t file_number, std::uint64_t
     if (!found.has_value()) {
         return std::unexpected(std::move(found).error());
     }
-    if (hint != nullptr && shard->enabled(shared->shard_capacity) &&
-        shard->generation.load(std::memory_order_acquire) == generation) {
-        hint->identity = shared->identity;
+    if (hint != nullptr && shard.enabled(shared.shard_capacity) &&
+        shard.generation.load(std::memory_order_acquire) == generation) {
+        hint->identity = shared.identity;
         hint->file_number = file_number;
         hint->generation = generation;
         hint->table = found->shared_owner();

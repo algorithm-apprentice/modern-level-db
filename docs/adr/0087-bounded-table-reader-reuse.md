@@ -52,8 +52,15 @@ Access follows the lease's own alternative, including noexcept move assignment
 between alternatives; do not infer its type from an unrelated cache pointer.
 
 Add a point-read operation on TableCache that performs the complete Table Get.
+The next candidate dispatches the immutable backend at a header-defined boundary.
+Unique point Get retains the original underlying typed pin from a shared
+`FindUnique` helper; outward Find wraps that same pin for its existing typed
+Handle interface. Shared hint processing remains out of line. This removes
+the outward Handle variant from the disabled point path without changing
+ownership mode or the pin's lifetime.
+
 Its hint-hit path holds only a temporary shared Table owner while calling Get.
-Every fallback obtains and retains a normal Find mapping pin through Table Get,
+Every fallback obtains and retains its normal mapping pin through Table Get,
 including reuse-disabled and pressured paths. It may publish a weak hint
 while that handle protects the owner, but does not release the cache pin
 early. No shared reader is returned to an external
@@ -270,3 +277,48 @@ variant pin, but both Result representations remain 72 bytes because Error is
 64 bytes. Do not attribute the slowdown to a larger Result return buffer.
 Any later routing experiment still requires linked-production-path inspection,
 implementation review and fresh matched controls.
+
+### Matched control result and bounded routing follow-up
+
+The corrected v2 campaign completed and independently verified all 192
+processes against accepted `02ed212`, with identical filter/CPU-dispatch source,
+separate byte-identical nonaliased verification/measurement copies, zero
+resident timed opens, and positive pressure opens in every accepted process.
+The original zero-timing matched fixture is retained: independent review found
+its inherited verifier published success before matched checks. Two observed
+RED regression cases preceded the transactional v2 verifier fix.
+
+These are paired median wall-time improvements versus the matched original;
+positive is faster. No process or round was discarded.
+
+| max_open_files | Logical cache | Readers | Disabled | Enabled |
+|---:|---:|---:|---:|---:|
+| 1000 | 8 MiB | 1 | -0.95% | -0.01% |
+| 1000 | 8 MiB | 4 | -3.30% | +7.75% |
+| 1000 | 512 MiB | 1 | -1.13% | +2.86% |
+| 1000 | 512 MiB | 4 | -2.36% | +11.48% |
+| 74 | 8 MiB | 1 | +0.92% | -0.03% |
+| 74 | 8 MiB | 4 | -1.18% | -0.85% |
+| 74 | 512 MiB | 1 | -1.48% | -1.04% |
+| 74 | 512 MiB | 4 | -0.02% | +0.42% |
+
+The earlier roughly five-percent serial-pressure gap is no longer present,
+but the disabled resident four-reader path is slower in five of six pairs in
+both cache cells. Enabled resident four-reader reads beat the original in all
+six pairs, and beat the candidate disabled arm by 12.06% and 12.86%.
+This is valuable opt-in evidence, not permission to silently ship default-off
+overhead or claim that its cause is already proven.
+
+Reactivate the independently reviewed direct-Unique-pin candidate only now,
+after matched controls established a remaining disabled-path cost. Preserve v2 and
+all older observations; keep the Shared protocol and default false unchanged.
+The inline Unique path still requires linked production-routing proof, fresh
+contracts, independent implementation review and another complete matched
+campaign. No default-preservation claim follows from the source refactor alone.
+
+Optimized MSVC inspection does not claim that `inline` forced inlining:
+SearchFile and PointLookup::Visit still call TableCache::Get. Its emitted body
+falls from 1,145 to 462 bytes, however, and the Unique branch now calls the
+original typed `FindUnique` pin and Table Get without weak-hint state or
+outward Handle visitation. Require the linked image to match that inspected
+route and measure its actual effect rather than inferring a gain from size.
