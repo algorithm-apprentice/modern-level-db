@@ -28,6 +28,9 @@
 #include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/hash.h"
 #include "support/memory_file_system.h"
+#include "table/block.h"
+#include "table/block_builder.h"
+#include "table/clock_block_cache.h"
 #include "table/table_builder.h"
 
 namespace {
@@ -45,6 +48,8 @@ struct DeallocationSnapshot {
     void* target = nullptr;
     std::size_t target_unsized_calls = 0;
     std::size_t target_sized_calls = 0;
+    void (*callback)(void*) noexcept = nullptr;
+    void* context = nullptr;
 };
 
 thread_local AllocationSnapshot* active_allocations = nullptr;
@@ -140,12 +145,18 @@ public:
 void RecordUnsizedDelete(void* memory) noexcept {
     if (active_deallocations != nullptr && memory == active_deallocations->target) {
         ++active_deallocations->target_unsized_calls;
+        if (active_deallocations->callback != nullptr) {
+            active_deallocations->callback(active_deallocations->context);
+        }
     }
 }
 
 void RecordSizedDelete(void* memory) noexcept {
     if (active_deallocations != nullptr && memory == active_deallocations->target) {
         ++active_deallocations->target_sized_calls;
+        if (active_deallocations->callback != nullptr) {
+            active_deallocations->callback(active_deallocations->context);
+        }
     }
 }
 
@@ -284,6 +295,186 @@ Result<TableLookupKind> AllocationPointRead(TableCache& cache, std::uint64_t num
                                             std::uint64_t size, std::vector<std::byte>& output) {
     const auto key = LookupKey::CreateTrusted(AsBytes("key"), 100);
     return cache.Get(number, size, key, output);
+}
+
+std::unique_ptr<const Block> AllocationBlock(std::string_view value) {
+    BlockBuilder builder(16);
+    builder.Add(AsBytes("key"), AsBytes(value));
+    const auto encoded = builder.Finish();
+    auto block = Block::Create(std::vector<std::byte>(encoded.begin(), encoded.end())).value();
+    return std::make_unique<const Block>(std::move(block));
+}
+
+std::string ClockText(const ClockBlockCache::Handle& lease) {
+    Block::Iterator cursor(lease.value(), BytewiseComparator());
+    cursor.SeekToFirst().value();
+    return std::string(AsStringView(cursor.value()));
+}
+
+std::vector<std::array<std::byte, 16>> ClockKeysForOneShard(std::size_t count) {
+    std::vector<std::array<std::byte, 16>> keys;
+    for (std::uint64_t candidate = 1; keys.size() < count; ++candidate) {
+        std::array<std::byte, 16> key{};
+        EncodeFixed64(MutableByteView(key).first<8>(), candidate);
+        if ((Hash32(key, 0) >> 28U) == 0) {
+            keys.push_back(key);
+        }
+    }
+    return keys;
+}
+
+TEST(CacheAllocationTest, ClockLookupAndOrdinaryReleaseAllocateNothing) {
+    ClockBlockCache cache(16 * 4096);
+    const auto key = ClockKeysForOneShard(1).front();
+    static_cast<void>(cache.Insert(key, AllocationBlock("value"), 4096).value());
+    AllocationSnapshot lookup;
+    std::optional<ClockBlockCache::Handle> found;
+    {
+        AllocationSession record(lookup);
+        found = cache.Lookup(key);
+    }
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(lookup.calls, 0U);
+    EXPECT_EQ(ClockText(*found), "value");
+    AllocationSnapshot release;
+    {
+        AllocationSession record(release);
+        found.reset();
+    }
+    EXPECT_EQ(release.calls, 0U);
+}
+
+TEST(CacheAllocationTest, ClockPreparationFailureNeverInvalidatesPreviouslyRetainedKeys) {
+    const auto keys = ClockKeysForOneShard(9);
+    const auto fill = [&](ClockBlockCache& cache) {
+        for (std::size_t index = 0; index < 8; ++index) {
+            static_cast<void>(
+                cache.Insert(keys[index], AllocationBlock(std::to_string(index)), 512).value());
+        }
+    };
+    AllocationSnapshot complete;
+    {
+        ClockBlockCache cache(16 * 4096 * 16);
+        fill(cache);
+        auto value = AllocationBlock("ninth");
+        std::optional<ClockBlockCache::Handle> inserted;
+        {
+            AllocationSession record(complete);
+            inserted.emplace(std::move(cache.Insert(keys[8], std::move(value), 512)).value());
+        }
+        ASSERT_TRUE(inserted.has_value());
+        ASSERT_TRUE(cache.Lookup(keys[8]).has_value());
+    }
+    ASSERT_GT(complete.calls, 3U);
+    for (std::size_t failure = 0; failure < complete.calls; ++failure) {
+        SCOPED_TRACE(failure);
+        ClockBlockCache cache(16 * 4096 * 16);
+        fill(cache);
+        auto value = AllocationBlock("ninth");
+        AllocationSnapshot attempted;
+        bool threw = false;
+        {
+            AllocationSession fail(attempted, failure);
+            try {
+                static_cast<void>(cache.Insert(keys[8], std::move(value), 512));
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+        }
+        EXPECT_TRUE(threw);
+        EXPECT_EQ(attempted.calls, failure);
+        EXPECT_FALSE(cache.Lookup(keys[8]).has_value());
+        EXPECT_EQ(cache.total_charge(), 8U * 512U);
+        for (std::size_t index = 0; index < 8; ++index) {
+            const auto found = cache.Lookup(keys[index]);
+            ASSERT_TRUE(found.has_value());
+            EXPECT_EQ(ClockText(*found), std::to_string(index));
+        }
+        EXPECT_LE(cache.GetStats().metadata_bytes, cache.GetStats().metadata_allowance);
+    }
+}
+
+TEST(CacheAllocationTest, ClockInsertResultIsPinnedBeforeReentrantRetirementErasesItsMapping) {
+    ClockBlockCache cache(16 * 4096);
+    const auto key = ClockKeysForOneShard(1).front();
+    AllocationSnapshot first;
+    std::optional<ClockBlockCache::Handle> old;
+    auto value = AllocationBlock("old");
+    {
+        AllocationSession record(first);
+        old.emplace(std::move(cache.Insert(key, std::move(value), 4096)).value());
+    }
+    ASSERT_GT(first.calls, 0U);
+    void* old_owner = first.addresses[0];
+    old.reset();
+    struct Reentry {
+        ClockBlockCache& cache;
+        const std::array<std::byte, 16>& key;
+        bool called = false;
+    } reentry{cache, key};
+    std::optional<ClockBlockCache::Handle> inserted;
+    DeallocationSnapshot retired;
+    {
+        DeallocationSession watch(retired, old_owner);
+        retired.callback = [](void* context) noexcept {
+            auto& state = *static_cast<Reentry*>(context);
+            state.called = true;
+            state.cache.Erase(state.key);
+        };
+        retired.context = &reentry;
+        inserted.emplace(std::move(cache.Insert(key, AllocationBlock("new"), 4096)).value());
+    }
+    ASSERT_TRUE(reentry.called);
+    EXPECT_EQ(retired.target_unsized_calls + retired.target_sized_calls, 1U);
+    ASSERT_TRUE(inserted.has_value());
+    EXPECT_EQ(ClockText(*inserted), "new");
+    EXPECT_FALSE(cache.Lookup(key).has_value());
+    EXPECT_EQ(cache.total_charge(), 0U);
+    inserted.reset();
+    EXPECT_EQ(cache.GetStats().erased_bytes, 0U);
+}
+
+TEST(CacheAllocationTest, ClockRetiredPeakIncludesOverlappingDestructionBatches) {
+    ClockBlockCache cache(16 * 4096 * 2);
+    const auto keys = ClockKeysForOneShard(2);
+    AllocationSnapshot recorded;
+    std::optional<ClockBlockCache::Handle> first;
+    auto block = AllocationBlock("same");
+    {
+        AllocationSession allocations(recorded);
+        first.emplace(std::move(cache.Insert(keys[0], std::move(block), 4096)).value());
+    }
+    ASSERT_GT(recorded.calls, 0U);
+    void* first_owner = recorded.addresses[0];
+    first.reset();
+    static_cast<void>(cache.Insert(keys[1], AllocationBlock("same"), 4096).value());
+    std::latch retiring(1);
+    std::latch finish(1);
+    struct Pause {
+        std::latch& retiring;
+        std::latch& finish;
+    } pause{retiring, finish};
+    std::jthread destroyer;
+    ReleaseLatch finish_guard(finish);
+    destroyer = std::jthread([&] {
+        DeallocationSnapshot snapshot;
+        DeallocationSession watching(snapshot, first_owner);
+        snapshot.context = &pause;
+        snapshot.callback = [](void* context) noexcept {
+            auto& state = *static_cast<Pause*>(context);
+            state.retiring.count_down();
+            state.finish.wait();
+        };
+        cache.Erase(keys[0]);
+    });
+    retiring.wait();
+    const auto pending = cache.GetStats().retired_bytes;
+    ASSERT_GT(pending, 0U);
+    cache.Erase(keys[1]);
+    EXPECT_GE(cache.GetStats().peak_retired_bytes, pending * 2);
+    finish_guard.Open();
+    destroyer.join();
+    EXPECT_EQ(cache.GetStats().retired_bytes, 0U);
 }
 
 TEST(CacheAllocationTest, ReaderConstructionClosesHintsBeforeEveryLaterOwnershipAllocation) {

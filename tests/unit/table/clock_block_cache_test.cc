@@ -3,13 +3,16 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -46,19 +49,18 @@ std::string TextOf(const ClockBlockCache::Handle& handle) {
     return std::string(AsStringView(cursor.value()));
 }
 
-Key CollidingKey(std::uint32_t number) {
+Key CollidingKey(std::uint32_t number, std::uint32_t target = 0x01234567U) {
     constexpr std::uint32_t Multiplier = 0xc6a4a793U;
     constexpr std::uint32_t Inverse = 0xd8198e9bU;
-    constexpr std::uint32_t Target = 0x01234567U;
     const std::array<std::uint32_t, 3> words{number, 0x5a5a1234U, number * 0x9e3779b9U};
     auto hash = std::uint32_t{16} * Multiplier;
     Key key{};
     for (std::size_t index = 0; index < words.size(); ++index) {
-        EncodeFixed32(MutableByteView(key).subspan(index * 4, 4), words[index]);
+        EncodeFixed32(MutableByteView(key).subspan(index * 4).first<4>(), words[index]);
         hash = (hash + words[index]) * Multiplier;
         hash ^= hash >> 16U;
     }
-    const auto final_word = ((Target ^ (Target >> 16U)) * Inverse) - hash;
+    const auto final_word = ((target ^ (target >> 16U)) * Inverse) - hash;
     EncodeFixed32(MutableByteView(key).last<4>(), final_word);
     return key;
 }
@@ -168,20 +170,48 @@ TEST(ClockBlockCacheTest, FullKeysRemainReachableAcrossExactHashClustersAndIndex
 
 TEST(ClockBlockCacheTest, RefreshAndPositionReuseDoNotAccumulateTombstoneSnapshots) {
     ClockBlockCache cache(16 * 4096 * 8);
-    auto key = CollidingKey(0);
+    auto key = CollidingKey(0, 0x01234560U);
     ASSERT_TRUE(cache.Insert(key, ValueOf("value"), 4096).has_value());
     const auto initial = cache.GetStats();
     for (std::uint32_t index = 1; index <= 1024; ++index) {
         cache.Erase(key);
-        key = CollidingKey(index);
+        key = CollidingKey(index, 0x01234560U | (index & 7U));
         ASSERT_TRUE(cache.Insert(key, ValueOf("value"), 4096).has_value());
         ASSERT_TRUE(cache.Lookup(key).has_value());
     }
     const auto after = cache.GetStats();
     EXPECT_EQ(after.metadata_bytes, initial.metadata_bytes);
     EXPECT_EQ(after.retained_index_bytes, initial.retained_index_bytes);
+    EXPECT_GT(after.index_refreshes, 0U);
     EXPECT_LE(after.metadata_bytes, after.metadata_allowance);
     EXPECT_EQ(cache.total_charge(), 4096U);
+}
+
+TEST(ClockBlockCacheTest, ActualMetadataAllowanceBoundsTinyChargedAdmissions) {
+    ClockBlockCache cache(16 * 4096);
+    for (std::uint32_t index = 0; index < 1024; ++index) {
+        auto inserted = cache.Insert(CollidingKey(index), ValueOf("tiny"), 1);
+        ASSERT_TRUE(inserted.has_value());
+        EXPECT_EQ(TextOf(*inserted), "tiny");
+    }
+    const auto stats = cache.GetStats();
+    EXPECT_GT(stats.admission_rejections, 0U);
+    EXPECT_LE(stats.metadata_bytes, stats.metadata_allowance);
+    EXPECT_LT(cache.total_charge(), 4096U);
+    EXPECT_EQ(stats.standalone_bytes, 0U);
+}
+
+TEST(ClockBlockCacheTest, AggregateChargeSaturatesAcrossRoundedShardCapacities) {
+    constexpr auto Maximum = std::numeric_limits<std::size_t>::max();
+    ClockBlockCache cache(Maximum);
+    constexpr auto Charge = Maximum / 16 + 1;
+    for (std::uint32_t shard = 0; shard < 16; ++shard) {
+        const auto key = CollidingKey(shard, (shard << 28U) | 0x01234567U);
+        auto inserted = cache.Insert(key, ValueOf("charged"), Charge);
+        ASSERT_TRUE(inserted.has_value());
+        EXPECT_TRUE(cache.Lookup(key).has_value());
+    }
+    EXPECT_EQ(cache.total_charge(), Maximum);
 }
 
 TEST(ClockBlockCacheTest, MoveAndAllPinnedPressurePreserveOwnershipWithoutUnboundedRetention) {
@@ -198,6 +228,115 @@ TEST(ClockBlockCacheTest, MoveAndAllPinnedPressurePreserveOwnershipWithoutUnboun
     const auto stats = cache.GetStats();
     EXPECT_GT(stats.admission_rejections, 0U);
     EXPECT_LE(stats.metadata_bytes, stats.metadata_allowance);
+}
+
+TEST(ClockBlockCacheTest, MixedChargesErasesAndOldLeasesMatchAnIndependentQuiescentModel) {
+    ClockBlockCache cache(16 * 4096 * 4);
+    constexpr std::size_t Keys = 32;
+    std::array<std::string, Keys> latest;
+    std::array<std::size_t, Keys> charges{};
+    std::array<bool, Keys> erased{};
+    struct Retention {
+        ClockBlockCache::Handle lease;
+        std::string value;
+    };
+    std::vector<Retention> retained;
+    std::uint32_t random = 301;
+    for (std::uint32_t step = 0; step < 800; ++step) {
+        random = random * 1664525U + 1013904223U;
+        const auto position = (random >> 8U) % Keys;
+        const auto key = CollidingKey(static_cast<std::uint32_t>(position));
+        if ((random & 3U) == 0) {
+            cache.Erase(key);
+            erased[position] = true;
+        } else {
+            latest[position] = std::to_string(position) + "-" + std::to_string(step);
+            erased[position] = false;
+            charges[position] = 1 + ((random >> 16U) % 4096);
+            auto inserted = cache.Insert(key, ValueOf(latest[position]), charges[position]);
+            ASSERT_TRUE(inserted.has_value());
+            EXPECT_EQ(TextOf(*inserted), latest[position]);
+            if ((random & 7U) == 1) {
+                retained.push_back({std::move(*inserted), latest[position]});
+            }
+        }
+        if (retained.size() > 6) {
+            retained.erase(retained.begin());
+        }
+        for (const auto& held : retained) {
+            EXPECT_EQ(TextOf(held.lease), held.value);
+        }
+        std::size_t indexed = 0;
+        std::size_t charge = 0;
+        for (std::size_t query = 0; query < Keys; ++query) {
+            const auto found = cache.Lookup(CollidingKey(static_cast<std::uint32_t>(query)));
+            if (found.has_value()) {
+                EXPECT_FALSE(erased[query]);
+                EXPECT_EQ(TextOf(*found), latest[query]);
+                ++indexed;
+                charge += charges[query];
+            }
+        }
+        const auto stats = cache.GetStats();
+        EXPECT_EQ(stats.indexed_entries, indexed);
+        EXPECT_EQ(cache.total_charge(), charge);
+        EXPECT_LE(stats.metadata_bytes, stats.metadata_allowance);
+    }
+    retained.clear();
+    EXPECT_EQ(cache.GetStats().standalone_bytes, 0U);
+    EXPECT_EQ(cache.GetStats().erased_bytes, 0U);
+}
+
+TEST(ClockBlockCacheTest, ConcurrentInsertLookupEraseNeverReturnsAnotherFullKeysValue) {
+    ClockBlockCache cache(16 * 4096 * 16);
+    std::array<std::exception_ptr, 4> exceptions{};
+    std::atomic<int> failures = 0;
+    std::vector<std::jthread> workers;
+    for (std::uint32_t worker = 0; worker < exceptions.size(); ++worker) {
+        workers.emplace_back([&, worker] {
+            try {
+                auto random = worker + 301;
+                std::optional<ClockBlockCache::Handle> retained;
+                std::string retained_value;
+                for (std::uint32_t step = 0; step < 8000; ++step) {
+                    random = random * 1664525U + 1013904223U;
+                    const auto position = (random >> 8U) % 32U;
+                    const auto key = CollidingKey(position);
+                    const auto expected = "value-" + std::to_string(position);
+                    if ((random & 3U) == 0) {
+                        auto inserted = cache.Insert(key, ValueOf(expected), 512);
+                        if (!inserted.has_value() || TextOf(*inserted) != expected) {
+                            ++failures;
+                        }
+                    } else if ((random & 3U) == 1) {
+                        cache.Erase(key);
+                    } else {
+                        auto found = cache.Lookup(key);
+                        if (found.has_value()) {
+                            if (TextOf(*found) != expected) {
+                                ++failures;
+                            }
+                            retained = std::move(found);
+                            retained_value = expected;
+                        }
+                    }
+                    if (retained.has_value() && TextOf(*retained) != retained_value) {
+                        ++failures;
+                    }
+                }
+            } catch (...) {
+                exceptions[worker] = std::current_exception();
+            }
+        });
+    }
+    workers.clear();
+    for (const auto& exception : exceptions) {
+        EXPECT_FALSE(exception);
+    }
+    EXPECT_EQ(failures.load(), 0);
+    EXPECT_EQ(cache.GetStats().standalone_bytes, 0U);
+    EXPECT_EQ(cache.GetStats().erased_bytes, 0U);
+    EXPECT_LE(cache.GetStats().metadata_bytes, cache.GetStats().metadata_allowance);
 }
 
 }  // namespace

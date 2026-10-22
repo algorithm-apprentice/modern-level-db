@@ -73,8 +73,8 @@ add_executable(
   unit/support/database_model_test.cc
   unit/table/block_format_test.cc
   unit/table/block_test.cc
-  unit/table/clock_block_cache_test.cc
   unit/table/bloom_filter_test.cc
+  unit/table/clock_block_cache_test.cc
   unit/table/compression_test.cc
   unit/table/filter_block_test.cc
   unit/table/full_filter_test.cc
