@@ -136,8 +136,7 @@ LookupKey LookupKey::CreateTrusted(ByteView user_key, SequenceNumber sequence) {
     const std::size_t prefix_size = VarintLength(encoded_internal_key_size);
     const std::size_t encoded_size = prefix_size + internal_key_size;
 
-    LookupKey result;
-    result.PrepareStorage(encoded_size, prefix_size);
+    LookupKey result(encoded_size, prefix_size);
 
     MutableByteView output(result.data(), encoded_size);
     EncodeVarint32Trusted(output, encoded_internal_key_size);
@@ -145,15 +144,12 @@ LookupKey LookupKey::CreateTrusted(ByteView user_key, SequenceNumber sequence) {
     return result;
 }
 
-void LookupKey::PrepareStorage(std::size_t encoded_size, std::size_t prefix_size) {
+LookupKey::LookupKey(std::size_t encoded_size, std::size_t prefix_size)
+    : encoded_size_(encoded_size), internal_key_offset_(prefix_size) {
     if (encoded_size > InlineCapacity) {
-        heap_storage_ = std::make_unique<std::byte[]>(encoded_size);
+        heap_storage_ = std::make_unique_for_overwrite<std::byte[]>(encoded_size);
     }
-    encoded_size_ = encoded_size;
-    internal_key_offset_ = prefix_size;
 }
-
-LookupKey::LookupKey() noexcept { ResetToCanonicalEmpty(); }
 
 LookupKey::LookupKey(LookupKey&& source) noexcept
     : inline_storage_(source.inline_storage_),
