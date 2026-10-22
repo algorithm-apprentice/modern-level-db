@@ -232,7 +232,7 @@ void ShardedLruCacheCore::CommitAdmission(Shard& shard, Entry& entry,
 }
 
 std::optional<ShardedLruCacheCore::Pin> ShardedLruCacheCore::Lookup(ByteView key) {
-    const std::uint32_t hash = Hash32(key, 0U);
+    const std::uint32_t hash = HashKey(key);
     Shard& shard = shards_[ShardIndex(hash)];
     std::lock_guard lock(shard.mutex);
     Entry* entry = LookupAndRef(shard, key, hash);
@@ -243,7 +243,7 @@ std::optional<ShardedLruCacheCore::Pin> ShardedLruCacheCore::Lookup(ByteView key
 }
 
 void ShardedLruCacheCore::Erase(ByteView key) {
-    const std::uint32_t hash = Hash32(key, 0U);
+    const std::uint32_t hash = HashKey(key);
     Shard& shard = shards_[ShardIndex(hash)];
     Entry* retired = nullptr;
     {
@@ -268,14 +268,6 @@ std::uint64_t ShardedLruCacheCore::NewId() noexcept {
     return next_id_.fetch_add(1U, std::memory_order_relaxed) + 1U;
 }
 
-std::size_t ShardedLruCacheCore::ShardIndex(std::uint32_t hash) noexcept {
-    return hash >> (32U - ShardBits);
-}
-
-std::size_t ShardedLruCacheCore::ShardCapacity(std::size_t capacity) noexcept {
-    return capacity / ShardCount + (capacity % ShardCount != 0U ? 1U : 0U);
-}
-
 bool ShardedLruCacheCore::TryAddCharge(std::size_t& total, std::size_t charge) noexcept {
     if (charge > std::numeric_limits<std::size_t>::max() - total) {
         return false;
@@ -289,7 +281,7 @@ ShardedLruCacheCore::PendingEntry ShardedLruCacheCore::CreateEntry(ByteView key,
     void* storage = ::operator new(sizeof(Entry) + key.size());
     auto* entry = static_cast<Entry*>(storage);
     std::construct_at(entry, value.get(), value.get_deleter().deleter, charge, key.size(),
-                      Hash32(key, 0U));
+                      HashKey(key));
     PendingEntry owned(entry, &DeleteEntry);
     static_cast<void>(value.release());
     CopyEntryKey(*entry, key);

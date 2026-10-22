@@ -10,6 +10,7 @@
 #include <optional>
 
 #include "modern_leveldb/base/bytes.h"
+#include "modern_leveldb/base/hash.h"
 
 namespace modern_leveldb {
 
@@ -22,6 +23,17 @@ private:
 
 public:
     using ValueDeleter = void (*)(const void*) noexcept;
+
+    static constexpr std::size_t ShardCount = 16;
+    static constexpr unsigned int ShardBits = 4;
+
+    [[nodiscard]] static std::uint32_t HashKey(ByteView key) noexcept { return Hash32(key, 0U); }
+    [[nodiscard]] static constexpr std::size_t ShardIndex(std::uint32_t hash) noexcept {
+        return hash >> (32U - ShardBits);
+    }
+    [[nodiscard]] static constexpr std::size_t ShardCapacity(std::size_t capacity) noexcept {
+        return capacity / ShardCount + (capacity % ShardCount != 0U ? 1U : 0U);
+    }
 
     class Pin final {
     public:
@@ -60,9 +72,6 @@ public:
     [[nodiscard]] std::uint64_t NewId() noexcept;
 
 private:
-    static constexpr std::size_t ShardCount = 16;
-    static constexpr unsigned int ShardBits = 4;
-
     struct Entry {
         Entry(const void* entry_value, ValueDeleter entry_deleter, std::size_t entry_charge,
               std::size_t entry_key_length, std::uint32_t entry_hash) noexcept
@@ -140,8 +149,6 @@ private:
     using PendingValue = std::unique_ptr<const void, ErasedValueDeleter>;
     using PendingEntry = std::unique_ptr<Entry, void (*)(Entry*) noexcept>;
 
-    [[nodiscard]] static std::size_t ShardIndex(std::uint32_t hash) noexcept;
-    [[nodiscard]] static std::size_t ShardCapacity(std::size_t capacity) noexcept;
     [[nodiscard]] static bool TryAddCharge(std::size_t& total, std::size_t charge) noexcept;
     [[nodiscard]] static PendingEntry CreateEntry(ByteView key, PendingValue value,
                                                   std::size_t charge);
