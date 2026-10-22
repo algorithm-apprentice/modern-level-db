@@ -132,6 +132,7 @@ decision context and evidence available when each change was made.
 | [ADR-0083: Direct LookupKey Construction](0083-direct-lookup-key-construction.md) | LookupKey construction | Implemented | Constructs the final encoding directly and overwrites heap backing; retains initialized inline storage and unchanged moves after rejecting prefix-copy regressions | [ADR-0057](0057-leveldb-version-output-parity.md); [ADR-0038](0038-public-raii-api.md) |
 | [ADR-0085: Reviewed Read Optimization Adoption](0085-reviewed-read-optimization-adoption.md) | Read optimization delivery | Accepted | Defines independently reviewed staging and evidence gates for the measured mechanisms | [ADR-0086](0086-persisted-full-table-filters.md) |
 | [ADR-0086: Persisted Full-Table Filters](0086-persisted-full-table-filters.md) | Full-table filtering | Accepted | Independently reviewed versioned cache-local metadata, safe automatic defaults and scalar/ISA boundary | [ADR-0023](0023-sstable-filter-blocks.md); [API and options](../reference/api-and-options.md) |
+| [ADR-0087: Bounded Table-Reader Reuse](0087-bounded-table-reader-reuse.md) | Reader reuse | Accepted | Independently reviewed weak-hint ownership, invalidation and explicit pressure-handoff limits without permanent file pins | [ADR-0026](0026-table-cache.md); [ADR-0085](0085-reviewed-read-optimization-adoption.md) |
 
 ## Historical upstream-link provenance
 
