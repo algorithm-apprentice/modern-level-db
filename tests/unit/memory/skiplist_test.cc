@@ -47,6 +47,36 @@ struct PreparedIntegerTarget {
     std::uint64_t value;
 };
 
+struct ConvertibleIntegerTarget {
+    std::uint64_t value;
+    std::size_t* conversions;
+
+    operator std::uint64_t() const noexcept {
+        ++*conversions;
+        return value;
+    }
+};
+
+struct LvalueIntegerTarget {
+    std::uint64_t value;
+    std::size_t* conversions;
+
+    operator std::uint64_t() & noexcept {
+        ++*conversions;
+        return value;
+    }
+};
+
+struct RvalueIntegerTarget {
+    std::uint64_t value;
+    std::size_t* conversions;
+
+    operator std::uint64_t() && noexcept {
+        ++*conversions;
+        return value;
+    }
+};
+
 struct PreparedIntegerCompare {
     int operator()(std::uint64_t left, std::uint64_t right) const noexcept {
         return IntegerCompare{}(left, right);
@@ -252,6 +282,58 @@ TEST(SkipListTest, LastPositioningAvoidsComparisonsAndPrevUsesStrictBounds) {
         saw_equal_bound = saw_equal_bound || left == right;
     }
     EXPECT_TRUE(saw_equal_bound);
+}
+
+TEST(SkipListTest, ConvertsEntryCompatibleTargetsOnceBeforeSearching) {
+    Arena arena;
+    IntegerCompare compare;
+    IntegerList list(compare, arena);
+    IntegerList::Iterator iterator(list);
+    std::size_t conversions = 0;
+    iterator.Seek(ConvertibleIntegerTarget{10, &conversions});
+    EXPECT_EQ(conversions, 1U);
+    EXPECT_FALSE(iterator.valid());
+
+    for (std::uint64_t key = 2; key <= 512; key += 2) {
+        list.Insert(key);
+    }
+    for (const std::uint64_t target : {0U, 255U, 256U, 511U, 512U, 513U}) {
+        SCOPED_TRACE(target);
+        conversions = 0;
+        iterator.Seek(ConvertibleIntegerTarget{target, &conversions});
+        EXPECT_EQ(conversions, 1U);
+        ASSERT_EQ(iterator.valid(), target <= 512);
+        if (iterator.valid()) {
+            const std::uint64_t expected = target < 2 ? 2 : ((target + 1) / 2) * 2;
+            EXPECT_EQ(iterator.entry(), expected);
+        }
+    }
+}
+
+TEST(SkipListTest, PreservesReferenceQualifiedEntryConversions) {
+    Arena arena;
+    IntegerCompare compare;
+    IntegerList list(compare, arena);
+    IntegerList::Iterator iterator(list);
+    std::size_t conversions = 0;
+    LvalueIntegerTarget target{20, &conversions};
+    iterator.Seek(target);
+    EXPECT_EQ(conversions, 1U);
+    EXPECT_FALSE(iterator.valid());
+
+    list.Insert(10);
+    list.Insert(30);
+    conversions = 0;
+    iterator.Seek(target);
+    EXPECT_EQ(conversions, 1U);
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(iterator.entry(), 30U);
+
+    conversions = 0;
+    iterator.Seek(RvalueIntegerTarget{10, &conversions});
+    EXPECT_EQ(conversions, 1U);
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(iterator.entry(), 10U);
 }
 
 TEST(SkipListTest, SeeksWithPreparedTargetsWithoutConvertingThemToStoredEntries) {

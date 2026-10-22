@@ -75,9 +75,12 @@ public:
 
         void Prev() { SetPosition(list_->FindLessThan(node_->entry)); }
 
-        // A prepared Target needs Compare(Entry, Target) and is borrowed only for this call.
+        void Seek(const Entry& target) { node_ = list_->FindGreaterOrEqual(target, nullptr); }
+
+        // Distinct prepared targets are borrowed; Entry conversions stay at the call boundary.
         template <typename Target>
-        void Seek(const Target& target) {
+            requires(!std::is_convertible_v<Target &&, Entry>)
+        void Seek(Target&& target) {
             node_ = list_->FindGreaterOrEqual(target, nullptr);
         }
 

@@ -73,6 +73,12 @@ a level can encounter the same upper-bound node again. The search remembers
 that immutable node's comparison result instead of comparing it twice.
 Insertion still collects every level's predecessor before publishing links.
 
+Targets convertible to Entry use the original stored-entry overload and
+convert once before searching, including an empty list. Only distinct
+non-convertible prepared representations select the heterogeneous overload;
+implicit conversions do not move into the comparison loop. Selection preserves
+the argument's qualification and value category.
+
 The concurrency contract is deliberately narrow:
 
 - One externally serialized writer inserts nodes.
