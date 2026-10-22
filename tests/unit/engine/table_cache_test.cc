@@ -336,7 +336,8 @@ private:
 
 // Returns the value of the user key at the newest sequence number, if any,
 // without test assertions, so that any thread may call it.
-std::optional<std::string> TryLookup(const TableCache::Handle& table, std::string_view user_key) {
+template <typename Handle>
+std::optional<std::string> TryLookup(const Handle& table, std::string_view user_key) {
     auto key = LookupKey::Create(AsBytes(user_key), 100);
     if (!key.has_value()) {
         return std::nullopt;
@@ -446,6 +447,45 @@ TEST_F(TableCacheTest, HandlesMoveAcrossImmutableOwnershipModesWithoutLosingThei
     auto* same = &first;
     first = std::move(*same);
     EXPECT_EQ(TryLookup(first, "key"), "seven");
+}
+
+TEST_F(TableCacheTest, SharedOwnershipObservationDoesNotBecomeUniqueWhenPressureClosesHints) {
+    const auto files = SameShardFiles(3);
+    std::array<std::uint64_t, 3> sizes{};
+    for (std::size_t index = 0; index < files.size(); ++index) {
+        sizes[index] = WriteTable(files[index], std::to_string(index));
+    }
+    for (const bool shared : {false, true}) {
+        SCOPED_TRACE(shared);
+        TableCache cache(file_system_, directory_, comparator_, {}, 16, shared);
+        EXPECT_EQ(cache.uses_shared_readers(), shared);
+        std::vector<std::byte> value;
+        for (std::size_t index = 0; index < files.size(); ++index) {
+            ASSERT_EQ(PointRead(cache, files[index], sizes[index], value), TableLookupKind::Value);
+            EXPECT_EQ(cache.uses_shared_readers(), shared);
+        }
+        EXPECT_EQ(cache.uses_shared_readers(), shared);
+    }
+}
+
+TEST_F(TableCacheTest, UniquePointFindRetainsItsOriginalTypedPinAcrossEvictionAndReplacement) {
+    const auto old_size = WriteTable(7, "old");
+    TableCache cache(file_system_, directory_, comparator_, {}, 16, false);
+    ASSERT_FALSE(cache.uses_shared_readers());
+    auto old = cache.FindUniqueForPoint(7, old_size);
+    ASSERT_TRUE(old.has_value());
+    const auto cached = cache.FindUniqueForPoint(7, old_size + 1);
+    ASSERT_TRUE(cached.has_value());
+    EXPECT_EQ(&old->value(), &cached->value());
+    EXPECT_EQ(Opens(7), 1);
+    cache.Evict(7);
+    const auto new_size = WriteTable(7, "new");
+    const auto replacement = cache.FindUniqueForPoint(7, new_size);
+    ASSERT_TRUE(replacement.has_value());
+    EXPECT_EQ(TryLookup(*old, "key"), "old");
+    EXPECT_EQ(TryLookup(*cached, "key"), "old");
+    EXPECT_EQ(TryLookup(*replacement, "key"), "new");
+    EXPECT_EQ(Opens(7), 2);
 }
 
 TEST_F(TableCacheTest, FindContractsRetainTheirOriginalMeaningInBothOwnershipModes) {
