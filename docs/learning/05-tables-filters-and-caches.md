@@ -222,6 +222,11 @@ Fallback reads keep their real mapping pin. A monotonic per-shard open-event
 gate disables hints before pressure can exceed its known ceiling, and an
 eviction generation prevents an old live reader from becoming a stale hint.
 Past skipped LRU promotions cannot be reconstructed at that handoff.
+Ownership mode is also immutable: closing a gate does not turn Shared tables
+back into Unique tables. This explains why avoiding recency maintenance can
+help a resident concurrent workload without making reader reuse a universal
+win under pressure. The default remains off, and the matched disabled controls
+also do not establish a universally cost-free feature.
 
 Capacity is an eviction budget, not a strict process memory limit.
 Pinned entries can exceed it, and per-shard rounding and ownership outside

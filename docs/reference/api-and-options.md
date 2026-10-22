@@ -77,7 +77,12 @@ cache pin through the read. A shard permanently disables hints after its
 successful-open-event ceiling; explicit eviction invalidates its hints.
 Skipping promotions can change the initial pressure-handoff victim, so this
 is not exact LRU-history preservation. Iterator and maintenance pins retain
-their existing mapping/lifetime contracts. See
+their existing mapping/lifetime contracts. Ownership is selected once: disabling
+reuse selects Unique ownership; enabling it selects Shared ownership even after
+a pressure gate closes. Keep the default `false` unless the workload benefits.
+Matched resident concurrent reads improved, but constrained-open-file reads
+included repeatable losses, and disabled controls did not establish universal
+performance neutrality. See
 [ADR-0087](../adr/0087-bounded-table-reader-reuse.md).
 
 ## Supplying runtime dependencies
