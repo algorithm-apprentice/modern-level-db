@@ -44,6 +44,9 @@ namespace {
 
 static_assert(!std::is_copy_constructible_v<TableCache>);
 static_assert(!std::is_move_constructible_v<TableCache>);
+static_assert(!std::is_copy_constructible_v<TableCache::Handle>);
+static_assert(std::is_nothrow_move_constructible_v<TableCache::Handle>);
+static_assert(std::is_nothrow_move_assignable_v<TableCache::Handle>);
 static_assert(
     std::is_constructible_v<TableCache, FileSystem&, std::filesystem::path,
                             const InternalKeyComparator&, const TableOptions&, std::size_t>);
@@ -421,6 +424,68 @@ TEST_F(TableCacheTest, OpensTheTableFileOfTheNumber) {
     ASSERT_TRUE(iterator.SeekToFirst().has_value());
     ASSERT_TRUE(iterator.valid());
     EXPECT_EQ(AsStringView(iterator.value()), "seven");
+}
+
+TEST_F(TableCacheTest, HandlesMoveAcrossImmutableOwnershipModesWithoutLosingTheirOwnPin) {
+    const auto size = WriteTable(7, "seven");
+    TableCache unique(file_system_, directory_, comparator_, {}, 16, false);
+    TableCache shared(file_system_, directory_, comparator_, {}, 16, true);
+    auto first = Found(unique.Find(7, size));
+    auto second = Found(shared.Find(7, size));
+    const auto* shared_table = &second.value();
+    first = std::move(second);
+    EXPECT_EQ(&first.value(), shared_table);
+    auto third = Found(unique.Find(7, size));
+    const auto* unique_table = &third.value();
+    second = std::move(third);
+    EXPECT_EQ(&second.value(), unique_table);
+    unique.Evict(7);
+    shared.Evict(7);
+    EXPECT_EQ(TryLookup(first, "key"), "seven");
+    EXPECT_EQ(TryLookup(second, "key"), "seven");
+    auto* same = &first;
+    first = std::move(*same);
+    EXPECT_EQ(TryLookup(first, "key"), "seven");
+}
+
+TEST_F(TableCacheTest, FindContractsRetainTheirOriginalMeaningInBothOwnershipModes) {
+    const auto files = SameShardFiles(3);
+    for (const bool shared : {false, true}) {
+        SCOPED_TRACE(shared);
+        const auto a = WriteTable(files[0], "old");
+        const auto b = WriteTable(files[1], "b");
+        const auto c = WriteTable(files[2], "c");
+        TableCache cache(file_system_, directory_, comparator_, {}, 16, shared);
+        const auto old = Found(cache.Find(files[0], a));
+        const auto a_opens = Opens(files[0]);
+        static_cast<void>(Found(cache.Find(files[0], a + 1)));
+        EXPECT_EQ(Opens(files[0]), a_opens);
+        static_cast<void>(Found(cache.Find(files[1], b)));
+        static_cast<void>(Found(cache.Find(files[2], c)));
+        EXPECT_EQ(TryLookup(old, "key"), "old");
+        static_cast<void>(Found(cache.Find(files[0], a + 1)));
+        EXPECT_EQ(Opens(files[0]), a_opens);
+        cache.Evict(files[0]);
+        const auto replaced_size = WriteTable(files[0], "new");
+        const auto replacement = Found(cache.Find(files[0], replaced_size));
+        EXPECT_EQ(TryLookup(old, "key"), "old");
+        EXPECT_EQ(TryLookup(replacement, "key"), "new");
+        EXPECT_EQ(Opens(files[0]), a_opens + 1);
+    }
+    for (const bool shared : {false, true}) {
+        SCOPED_TRACE(shared);
+        TableCache cache(file_system_, directory_, comparator_, {}, 0, shared);
+        file_system_.FailOpens(Error::Io("mode open failure"));
+        ExpectError(cache.Find(7, 100), ErrorCode::Io);
+        file_system_.FailOpens(std::nullopt);
+        const auto size = WriteTable(7, "uncached");
+        const auto before = Opens(7);
+        const auto first = Found(cache.Find(7, size));
+        const auto second = Found(cache.Find(7, size));
+        EXPECT_EQ(Opens(7), before + 2);
+        EXPECT_EQ(TryLookup(first, "key"), "uncached");
+        EXPECT_EQ(TryLookup(second, "key"), "uncached");
+    }
 }
 
 TEST_F(TableCacheTest, ReusesCachedTablesUntilEvicted) {
