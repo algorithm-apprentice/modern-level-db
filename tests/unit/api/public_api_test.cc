@@ -59,6 +59,14 @@ TEST(PublicOptionsTest, DefaultsToComparatorSafeAutomaticFullFiltering) {
     EXPECT_FALSE(disabled.bloom_bits_per_key.has_value());
 }
 
+TEST(PublicOptionsTest, ReaderReuseHasAnExplicitCopyableControl) {
+    Options options;
+    EXPECT_FALSE(options.reuse_table_readers);
+    options.reuse_table_readers = true;
+    const Options copied = options;
+    EXPECT_TRUE(copied.reuse_table_readers);
+}
+
 TEST(PublicOptionsTest, InvalidFilterLayoutIsRejectedEvenWhenFiltersAreDisabled) {
     Options options;
     options.bloom_bits_per_key.reset();

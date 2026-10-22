@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -21,7 +22,9 @@
 #include "metadata/version.h"
 #include "metadata/version_edit.h"
 #include "modern_leveldb/base/bytes.h"
+#include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/comparator.h"
+#include "modern_leveldb/base/hash.h"
 #include "modern_leveldb/base/result.h"
 #include "support/memory_file_system.h"
 #include "table/table.h"
@@ -96,12 +99,14 @@ void Fill(MemTable& memtable, std::initializer_list<Entry> entries) {
 // nothing, so every table a lookup searches is opened.
 class DatabaseEngine {
 public:
-    explicit DatabaseEngine(const Comparator& user_comparator, TableOptions table_options = {})
+    explicit DatabaseEngine(const Comparator& user_comparator, TableOptions table_options = {},
+                            std::size_t lookup_capacity = 0, bool reuse_readers = false)
         : user_comparator_(user_comparator),
           comparator_(user_comparator),
           table_options_(table_options),
           cache_(file_system_, directory_, comparator_, table_options_, 100),
-          lookup_cache_(file_system_, directory_, comparator_, table_options_, 0) {}
+          lookup_cache_(file_system_, directory_, comparator_, table_options_, lookup_capacity,
+                        reuse_readers) {}
 
     FileMetadata WriteTable(std::uint64_t number, std::initializer_list<Entry> entries) {
         MemTable memtable(user_comparator_);
@@ -207,6 +212,33 @@ private:
 };
 
 using Tables = std::set<std::uint64_t>;
+
+TEST(LookupTest, PointLookupRoutesThroughTheWeakReaderOperationRatherThanAlwaysPromotingFind) {
+    std::array<std::uint64_t, 3> numbers{};
+    std::array<bool, 64> hint_positions{};
+    std::size_t count = 0;
+    for (std::uint64_t candidate = 1; count < numbers.size(); ++candidate) {
+        std::array<std::byte, 8> key{};
+        EncodeFixed64(key, candidate);
+        const auto hash = Hash32(key, 0);
+        if ((hash >> 28U) == 0 && !hint_positions[hash & 63U]) {
+            numbers[count++] = candidate;
+            hint_positions[hash & 63U] = true;
+        }
+    }
+    DatabaseEngine database(BytewiseComparator(), {}, 32, true);
+    const Version version = database.MakeVersion({
+        {1, database.WriteTable(numbers[0], {{"a", 1, "A"}})},
+        {1, database.WriteTable(numbers[1], {{"b", 1, "B"}})},
+        {1, database.WriteTable(numbers[2], {{"c", 1, "C"}})},
+    });
+    EXPECT_EQ(database.Lookup("a", 100, version), "A");
+    EXPECT_EQ(database.Lookup("b", 100, version), "B");
+    EXPECT_EQ(database.Lookup("a", 100, version), "A");
+    EXPECT_EQ(database.Lookup("c", 100, version), "C");
+    EXPECT_EQ(database.Lookup("a", 100, version), "A");
+    EXPECT_EQ(database.SearchedTables(), Tables{numbers[0]});
+}
 
 TEST(LookupTest, ReadsTheMemtablesBeforeTheVersion) {
     DatabaseEngine database(BytewiseComparator());
