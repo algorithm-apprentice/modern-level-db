@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -21,7 +22,9 @@
 #include "format/internal_key.h"
 #include "metadata/filenames.h"
 #include "modern_leveldb/base/bytes.h"
+#include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/comparator.h"
+#include "modern_leveldb/base/hash.h"
 #include "modern_leveldb/base/result.h"
 #include "platform/file_system.h"
 #include "table/bloom_filter.h"
@@ -42,8 +45,13 @@ static_assert(!std::is_constructible_v<TableCache, FileSystem&, std::filesystem:
 class MemoryRandomAccessFile final : public RandomAccessFile {
 public:
     MemoryRandomAccessFile(std::shared_ptr<const std::vector<std::byte>> data,
-                           std::shared_ptr<std::atomic<int>> reads)
-        : data_(std::move(data)), reads_(std::move(reads)) {}
+                           std::shared_ptr<std::atomic<int>> reads,
+                           std::shared_ptr<std::atomic<int>> live)
+        : data_(std::move(data)), reads_(std::move(reads)), live_(std::move(live)) {
+        ++*live_;
+    }
+
+    ~MemoryRandomAccessFile() override { --*live_; }
 
     Result<std::size_t> Read(std::uint64_t offset, MutableByteView output) const override {
         ++*reads_;
@@ -59,6 +67,7 @@ public:
 private:
     std::shared_ptr<const std::vector<std::byte>> data_;
     std::shared_ptr<std::atomic<int>> reads_;
+    std::shared_ptr<std::atomic<int>> live_;
 };
 
 // Serves random-access files from memory. An open file reads the contents the
@@ -82,6 +91,7 @@ public:
     }
 
     [[nodiscard]] int reads() const { return reads_->load(); }
+    [[nodiscard]] int live_files() const { return live_files_->load(); }
 
     Result<std::unique_ptr<RandomAccessFile>> OpenRandomAccess(
         const std::filesystem::path& path,
@@ -96,7 +106,7 @@ public:
         if (found == files_.end()) {
             return std::unexpected(Error::NotFound(path.string()));
         }
-        return std::make_unique<MemoryRandomAccessFile>(found->second, reads_);
+        return std::make_unique<MemoryRandomAccessFile>(found->second, reads_, live_files_);
     }
 
     Result<std::unique_ptr<SequentialFile>> OpenSequential(const std::filesystem::path&) override {
@@ -135,6 +145,7 @@ private:
     std::map<std::filesystem::path, int> opens_;
     std::optional<Error> open_error_;
     std::shared_ptr<std::atomic<int>> reads_ = std::make_shared<std::atomic<int>>(0);
+    std::shared_ptr<std::atomic<int>> live_files_ = std::make_shared<std::atomic<int>>(0);
 };
 
 class MemoryWritableFile final : public WritableFile {
@@ -167,12 +178,39 @@ std::optional<std::string> TryLookup(const TableCache::Handle& table, std::strin
     return std::string(AsStringView(value));
 }
 
+std::vector<std::uint64_t> SameShardFiles(std::size_t count) {
+    std::vector<std::uint64_t> result;
+    std::array<bool, 64> used_hint_positions{};
+    for (std::uint64_t candidate = 1; result.size() < count; ++candidate) {
+        std::array<std::byte, 8> key{};
+        EncodeFixed64(key, candidate);
+        const auto hash = Hash32(key, 0);
+        if (hash >> 28U == 0 && !used_hint_positions[hash & 63U]) {
+            result.push_back(candidate);
+            used_hint_positions[hash & 63U] = true;
+        }
+    }
+    return result;
+}
+
+Result<TableLookupKind> PointRead(TableCache& cache, std::uint64_t number, std::uint64_t size,
+                                  std::vector<std::byte>& value, SequenceNumber sequence = 100,
+                                  const TableReadOptions& options = {}) {
+    const auto key = LookupKey::CreateTrusted(AsBytes("key"), sequence);
+    return cache.Get(number, size, key, value, options);
+}
+
 class TableCacheTest : public testing::Test {
 protected:
     // Writes a table whose only entry maps "key" to the value as the file of the
     // number, and returns the table's size.
     std::uint64_t WriteTable(std::uint64_t number, std::string_view value,
                              const TableBuilderOptions& options = {}) {
+        return WriteTableAt(directory_, number, value, options);
+    }
+
+    std::uint64_t WriteTableAt(const std::filesystem::path& directory, std::uint64_t number,
+                               std::string_view value, const TableBuilderOptions& options = {}) {
         std::vector<std::byte> data;
         TableBuilder builder(std::make_unique<MemoryWritableFile>(data), comparator_, options);
         auto key = InternalKey::Create(AsBytes("key"), 1, ValueKind::Value);
@@ -180,7 +218,7 @@ protected:
         EXPECT_TRUE(builder.Add(key->encoded(), AsBytes(value)).has_value());
         EXPECT_TRUE(builder.Finish().has_value());
         const std::uint64_t size = data.size();
-        file_system_.Write(TableFileName(directory_, number), std::move(data));
+        file_system_.Write(TableFileName(directory, number), std::move(data));
         return size;
     }
 
@@ -370,6 +408,165 @@ TEST_F(TableCacheTest, SupportsConcurrentFindsAndEvictions) {
     }
 
     EXPECT_EQ(failures.load(), 0);
+}
+
+TEST_F(TableCacheTest, PointReadsReuseTheReaderAndPreserveFillCacheControl) {
+    const auto size = WriteTable(7, "seven");
+    BlockCache blocks(1 << 20);
+    TableOptions options;
+    options.block_cache = &blocks;
+    TableCache cache(file_system_, directory_, comparator_, options, 16, true);
+    std::vector<std::byte> value;
+    auto found = PointRead(cache, 7, size, value, 100, {.fill_cache = false});
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(*found, TableLookupKind::Value);
+    EXPECT_EQ(AsStringView(value), "seven");
+    EXPECT_EQ(blocks.total_charge(), 0U);
+    found = PointRead(cache, 7, size + 100, value);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(*found, TableLookupKind::Value);
+    EXPECT_EQ(AsStringView(value), "seven");
+    EXPECT_GT(blocks.total_charge(), 0U);
+    EXPECT_EQ(Opens(7), 1);
+}
+
+TEST_F(TableCacheTest, ReusedReaderDoesNotCacheSequenceVisibilityOrTombstoneResults) {
+    std::vector<std::byte> bytes;
+    TableBuilder builder(std::make_unique<MemoryWritableFile>(bytes), comparator_, {});
+    const auto deletion = InternalKey::Create(AsBytes("key"), 2, ValueKind::Deletion);
+    const auto old = InternalKey::Create(AsBytes("key"), 1, ValueKind::Value);
+    ASSERT_TRUE(deletion.has_value());
+    ASSERT_TRUE(old.has_value());
+    ASSERT_TRUE(builder.Add(deletion->encoded(), {}).has_value());
+    ASSERT_TRUE(builder.Add(old->encoded(), AsBytes("old")).has_value());
+    ASSERT_TRUE(builder.Finish().has_value());
+    const auto size = bytes.size();
+    file_system_.Write(TableFileName(directory_, 7), std::move(bytes));
+    TableCache cache(file_system_, directory_, comparator_, {}, 16, true);
+    std::vector<std::byte> value;
+    auto found = PointRead(cache, 7, size, value, 1);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(*found, TableLookupKind::Value);
+    EXPECT_EQ(AsStringView(value), "old");
+    found = PointRead(cache, 7, size, value, 2);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(*found, TableLookupKind::Deletion);
+    EXPECT_EQ(AsStringView(value), "old");
+    found = PointRead(cache, 7, size, value, 0);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(*found, TableLookupKind::Missing);
+    EXPECT_EQ(AsStringView(value), "old");
+    EXPECT_EQ(Opens(7), 1);
+}
+
+TEST_F(TableCacheTest, CompletedEvictionInvalidatesAHintEvenWhileTheOldReaderIsPinned) {
+    const auto old_size = WriteTable(7, "old");
+    TableCache cache(file_system_, directory_, comparator_, {}, 32, true);
+    std::vector<std::byte> value;
+    ASSERT_EQ(PointRead(cache, 7, old_size, value), TableLookupKind::Value);
+    const auto old = Found(cache.Find(7, old_size));
+    cache.Evict(7);
+    const auto new_size = WriteTable(7, "new");
+    ASSERT_EQ(PointRead(cache, 7, new_size, value), TableLookupKind::Value);
+    EXPECT_EQ(AsStringView(value), "new");
+    EXPECT_EQ(TryLookup(old, "key"), "old");
+    EXPECT_EQ(Opens(7), 2);
+}
+
+TEST_F(TableCacheTest, WeakHintsKeepNoFilesOpenAfterCacheDestruction) {
+    const auto size = WriteTable(7, "seven");
+    {
+        TableCache cache(file_system_, directory_, comparator_, {}, 16, true);
+        std::vector<std::byte> value;
+        ASSERT_EQ(PointRead(cache, 7, size, value), TableLookupKind::Value);
+        EXPECT_EQ(file_system_.live_files(), 1);
+    }
+    EXPECT_EQ(file_system_.live_files(), 0);
+}
+
+TEST_F(TableCacheTest, ZeroCapacityNeverRetainsReadersThroughHints) {
+    const auto size = WriteTable(7, "seven");
+    TableCache cache(file_system_, directory_, comparator_, {}, 0, true);
+    std::vector<std::byte> value;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        ASSERT_EQ(PointRead(cache, 7, size, value), TableLookupKind::Value);
+        EXPECT_EQ(file_system_.live_files(), 0);
+    }
+    EXPECT_EQ(Opens(7), 3);
+}
+
+TEST_F(TableCacheTest, CompleteCacheIdentityDistinguishesCollidingHintsForTheSameFileNumber) {
+    constexpr std::size_t Caches = 129;
+    std::vector<std::unique_ptr<TableCache>> caches;
+    std::vector<std::uint64_t> sizes;
+    for (std::size_t index = 0; index < Caches; ++index) {
+        const auto directory = directory_ / std::to_string(index);
+        sizes.push_back(WriteTableAt(directory, 7, "database-" + std::to_string(index)));
+        caches.push_back(std::make_unique<TableCache>(file_system_, directory, comparator_,
+                                                      TableOptions{}, 16, true));
+        std::vector<std::byte> value;
+        ASSERT_EQ(PointRead(*caches.back(), 7, sizes.back(), value), TableLookupKind::Value);
+        EXPECT_EQ(AsStringView(value), "database-" + std::to_string(index));
+    }
+    for (std::size_t index = 0; index < Caches; ++index) {
+        std::vector<std::byte> value;
+        ASSERT_EQ(PointRead(*caches[index], 7, sizes[index], value), TableLookupKind::Value);
+        EXPECT_EQ(AsStringView(value), "database-" + std::to_string(index));
+    }
+    EXPECT_EQ(file_system_.live_files(), static_cast<int>(Caches));
+    caches.clear();
+    EXPECT_EQ(file_system_.live_files(), 0);
+}
+
+TEST_F(TableCacheTest, PressureHandoffAdmitsSkippedHistoryThenUsesOrdinaryPromotions) {
+    const auto files = SameShardFiles(4);
+    std::array<std::uint64_t, 4> sizes{};
+    for (std::size_t index = 0; index < files.size(); ++index) {
+        sizes[index] = WriteTable(files[index], "value-" + std::to_string(index));
+    }
+    for (const bool reuse : {false, true}) {
+        SCOPED_TRACE(reuse);
+        TableCache cache(file_system_, directory_, comparator_, {}, 32, reuse);
+        std::vector<std::byte> value;
+        for (const auto index : {0U, 1U, 0U, 2U}) {
+            ASSERT_EQ(PointRead(cache, files[index], sizes[index], value), TableLookupKind::Value);
+        }
+        const auto victim = reuse ? 0U : 1U;
+        const auto survivor = reuse ? 1U : 0U;
+        const auto before_survivor = Opens(files[survivor]);
+        const auto before_victim = Opens(files[victim]);
+        {
+            const auto retained = Found(cache.Find(files[survivor], sizes[survivor]));
+            EXPECT_EQ(Opens(files[survivor]), before_survivor);
+            static_cast<void>(Found(cache.Find(files[victim], sizes[victim])));
+            EXPECT_EQ(Opens(files[victim]), before_victim + 1);
+        }
+        static_cast<void>(Found(cache.Find(files[victim], sizes[victim])));
+        ASSERT_EQ(PointRead(cache, files[survivor], sizes[survivor], value),
+                  TableLookupKind::Value);
+        static_cast<void>(Found(cache.Find(files[3], sizes[3])));
+        const auto survivor_opens = Opens(files[survivor]);
+        const auto victim_opens = Opens(files[victim]);
+        const auto retained = Found(cache.Find(files[survivor], sizes[survivor]));
+        EXPECT_EQ(Opens(files[survivor]), survivor_opens);
+        static_cast<void>(Found(cache.Find(files[victim], sizes[victim])));
+        EXPECT_EQ(Opens(files[victim]), victim_opens + 1);
+    }
+}
+
+TEST_F(TableCacheTest, PointReadErrorsRemainErrorsAndAreNotCachedAsAbsence) {
+    const auto size = WriteTable(7, "seven");
+    TableCache cache(file_system_, directory_, comparator_, {}, 16, true);
+    std::vector<std::byte> value{std::byte{0x5a}};
+    file_system_.FailOpens(Error::Io("point open failure"));
+    const auto failed = PointRead(cache, 7, size, value);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), ErrorCode::Io);
+    EXPECT_EQ(AsStringView(value), "Z");
+    file_system_.FailOpens(std::nullopt);
+    ASSERT_EQ(PointRead(cache, 7, size, value), TableLookupKind::Value);
+    EXPECT_EQ(AsStringView(value), "seven");
+    EXPECT_EQ(Opens(7), 2);
 }
 
 }  // namespace
