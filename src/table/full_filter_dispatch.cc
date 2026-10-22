@@ -61,7 +61,14 @@ Probe SelectProbe(bool avx2_supported) noexcept {
 #endif
 }
 
-Probe CachedProbe(std::atomic<Probe>&, Probe (*detect)() noexcept) noexcept { return detect(); }
+Probe CachedProbe(std::atomic<Probe>& cache, Probe (*detect)() noexcept) noexcept {
+    if (const auto selected = cache.load(std::memory_order_relaxed); selected != nullptr) {
+        return selected;
+    }
+    const auto selected = detect();
+    cache.store(selected, std::memory_order_relaxed);
+    return selected;
+}
 
 Probe RuntimeProbe() noexcept { return CachedProbe(ProcessProbe, &DetectRuntimeProbe); }
 
