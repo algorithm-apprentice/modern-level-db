@@ -278,8 +278,8 @@ source objects outside relocations, proves distinct addresses and AVX2-only
 dispatch control. Both Get variants use the identical KeyMayMatch caller and
 one indirect call to the stored actual leaf.
 
-The ordinary CI follow-up removes an unnecessary process-static dispatch guard:
-CPU/OS selection runs at reader admission, and the reader still retains its
+The first ordinary CI follow-up removed a process-static dispatch guard:
+CPU/OS selection ran at reader admission, and the reader still retained its
 pointer outside Get. The measured KeyMayMatch, scalar and AVX2 machine-code
 bodies are unchanged. The public-only fixture uses checked exact-size file
 reads instead of a GCC-13 `istreambuf_iterator` optimization warning; no warning
@@ -289,3 +289,42 @@ Admit Automatic with density ten for the known built-in bytewise comparator.
 Keep explicit disable and legacy selection, conservative custom-comparator
 handling, portable scalar fallback and ordinary CI gates. This decision does
 not admit a different cache policy, reader-reuse default or batch API.
+
+### Admission-time CPU selection correction
+
+Later reader-pressure investigation found a control mismatch: frozen revision
+`51c000a` cached RuntimeProbe selection, while accepted revision `05033d5`
+repeated CPU/OS detection at every reader admission after the CI repair.
+The retained reader campaigns therefore measure a cumulative change, not an
+isolated reader-reuse cost. Keep those raw observations, but require matched
+accepted-main controls before attributing their whole-Get difference.
+
+Twelve fresh selector-only processes, six order-balanced rounds with one
+million calls each, used identical drivers and verified the same actual AVX2
+leaf. Repeated selection measured a median 1.91285 ns for the cached original
+and 10,366.35 ns for the per-reader detector on this host. This quantifies only
+selector cost, not the amount of any whole-Get regression.
+
+Restore process-scoped selection without a hidden function-local static
+initialization guard. The bounded repair uses a `constinit` atomic function
+pointer initialized to null and one private helper shared with deterministic
+tests. A cached pointer returns immediately; only a cold miss invokes the
+typed nonthrowing detector and publishes its nonnull safe leaf.
+
+Concurrent cold calls may detect redundantly, but the concurrently callable
+detector must select the same process-stable CPU/OS-safe leaf. Relaxed atomic
+publication is sufficient:
+the pointer identifies immutable executable code and publishes no separately
+initialized payload. Readers still retain that pointer; Get never loads the
+process cache or performs CPU detection.
+
+The private helper accepts the cache and a detector function pointer so fresh
+test caches can count real detector invocations without resetting production
+state or adding profiling hooks. The detector must return a nonnull,
+process-stable leaf. No public knob, allocation, pointer tagging, conditional
+inline variant, exception fallback or coverage exclusion is part of the repair.
+Require independent design/implementation review, deterministic cold/warm and
+concurrent initialization evidence, actual linked runtime/scalar leaf checks,
+and unchanged KeyMayMatch/scalar/AVX2 hot bodies before publication.
+Independent architecture re-review approved this bounded correction, not its
+implementation or a whole-Get performance attribution.
