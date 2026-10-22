@@ -6,14 +6,18 @@
 #include <array>
 #include <atomic>
 #include <barrier>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <semaphore>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -44,19 +48,75 @@ static_assert(
 static_assert(!std::is_constructible_v<TableCache, FileSystem&, std::filesystem::path,
                                        InternalKeyComparator, const TableOptions&, std::size_t>);
 
+struct FileHooks {
+    std::mutex mutex;
+    std::function<void(std::uint64_t)> opened;
+    std::function<void(std::uint64_t, std::uint64_t)> read;
+    std::function<void(std::uint64_t)> closed;
+};
+
+class OneShotGate {
+public:
+    ~OneShotGate() { Open(); }
+
+    void Pause() {
+        if (!arrived_.exchange(true)) {
+            reached_.release();
+            released_.acquire();
+        }
+    }
+
+    [[nodiscard]] bool Wait() { return reached_.try_acquire_for(std::chrono::seconds(5)); }
+
+    void Open() {
+        if (!opened_.exchange(true)) {
+            released_.release();
+        }
+    }
+
+private:
+    std::atomic<bool> arrived_ = false;
+    std::atomic<bool> opened_ = false;
+    std::binary_semaphore reached_{0};
+    std::binary_semaphore released_{0};
+};
+
 class MemoryRandomAccessFile final : public RandomAccessFile {
 public:
     MemoryRandomAccessFile(std::shared_ptr<const std::vector<std::byte>> data,
                            std::shared_ptr<std::atomic<int>> reads,
-                           std::shared_ptr<std::atomic<int>> live)
-        : data_(std::move(data)), reads_(std::move(reads)), live_(std::move(live)) {
+                           std::shared_ptr<std::atomic<int>> live, std::uint64_t number,
+                           std::shared_ptr<FileHooks> hooks)
+        : data_(std::move(data)),
+          reads_(std::move(reads)),
+          live_(std::move(live)),
+          number_(number),
+          hooks_(std::move(hooks)) {
         ++*live_;
     }
 
-    ~MemoryRandomAccessFile() override { --*live_; }
+    ~MemoryRandomAccessFile() override {
+        std::function<void(std::uint64_t)> closed;
+        {
+            const std::lock_guard lock(hooks_->mutex);
+            closed = hooks_->closed;
+        }
+        if (closed) {
+            closed(number_);
+        }
+        --*live_;
+    }
 
     Result<std::size_t> Read(std::uint64_t offset, MutableByteView output) const override {
         ++*reads_;
+        std::function<void(std::uint64_t, std::uint64_t)> read;
+        {
+            const std::lock_guard lock(hooks_->mutex);
+            read = hooks_->read;
+        }
+        if (read) {
+            read(number_, offset);
+        }
         if (offset >= data_->size()) {
             return 0;
         }
@@ -70,6 +130,8 @@ private:
     std::shared_ptr<const std::vector<std::byte>> data_;
     std::shared_ptr<std::atomic<int>> reads_;
     std::shared_ptr<std::atomic<int>> live_;
+    std::uint64_t number_;
+    std::shared_ptr<FileHooks> hooks_;
 };
 
 // Serves random-access files from memory. An open file reads the contents the
@@ -95,20 +157,49 @@ public:
     [[nodiscard]] int reads() const { return reads_->load(); }
     [[nodiscard]] int live_files() const { return live_files_->load(); }
 
+    void SetOpenHook(std::function<void(std::uint64_t)> hook) {
+        const std::lock_guard lock(hooks_->mutex);
+        hooks_->opened = std::move(hook);
+    }
+
+    void SetReadHook(std::function<void(std::uint64_t, std::uint64_t)> hook) {
+        const std::lock_guard lock(hooks_->mutex);
+        hooks_->read = std::move(hook);
+    }
+
+    void SetCloseHook(std::function<void(std::uint64_t)> hook) {
+        const std::lock_guard lock(hooks_->mutex);
+        hooks_->closed = std::move(hook);
+    }
+
     Result<std::unique_ptr<RandomAccessFile>> OpenRandomAccess(
         const std::filesystem::path& path,
         std::optional<std::uint64_t> expected_size = std::nullopt) override {
         (void)expected_size;
-        std::lock_guard lock(mutex_);
-        ++opens_[path];
-        if (open_error_.has_value()) {
-            return std::unexpected(*open_error_);
+        const auto number = ParseNativeFileName(path)->number;
+        std::unique_ptr<RandomAccessFile> file;
+        {
+            std::lock_guard lock(mutex_);
+            ++opens_[path];
+            if (open_error_.has_value()) {
+                return std::unexpected(*open_error_);
+            }
+            const auto found = files_.find(path);
+            if (found == files_.end()) {
+                return std::unexpected(Error::NotFound(path.string()));
+            }
+            file = std::make_unique<MemoryRandomAccessFile>(found->second, reads_, live_files_,
+                                                            number, hooks_);
         }
-        const auto found = files_.find(path);
-        if (found == files_.end()) {
-            return std::unexpected(Error::NotFound(path.string()));
+        std::function<void(std::uint64_t)> opened;
+        {
+            const std::lock_guard lock(hooks_->mutex);
+            opened = hooks_->opened;
         }
-        return std::make_unique<MemoryRandomAccessFile>(found->second, reads_, live_files_);
+        if (opened) {
+            opened(number);
+        }
+        return file;
     }
 
     Result<std::unique_ptr<SequentialFile>> OpenSequential(const std::filesystem::path&) override {
@@ -148,6 +239,20 @@ private:
     std::optional<Error> open_error_;
     std::shared_ptr<std::atomic<int>> reads_ = std::make_shared<std::atomic<int>>(0);
     std::shared_ptr<std::atomic<int>> live_files_ = std::make_shared<std::atomic<int>>(0);
+    std::shared_ptr<FileHooks> hooks_ = std::make_shared<FileHooks>();
+};
+
+class ClearFileHooks {
+public:
+    explicit ClearFileHooks(MemoryFileSystem& file_system) : file_system_(file_system) {}
+    ~ClearFileHooks() {
+        file_system_.SetOpenHook({});
+        file_system_.SetReadHook({});
+        file_system_.SetCloseHook({});
+    }
+
+private:
+    MemoryFileSystem& file_system_;
 };
 
 class MemoryWritableFile final : public WritableFile {
@@ -569,6 +674,156 @@ TEST_F(TableCacheTest, PointReadErrorsRemainErrorsAndAreNotCachedAsAbsence) {
     ASSERT_EQ(PointRead(cache, 7, size, value), TableLookupKind::Value);
     EXPECT_EQ(AsStringView(value), "seven");
     EXPECT_EQ(Opens(7), 2);
+}
+
+TEST_F(TableCacheTest, FallbackReadPinsMappingButHintReadPinsOnlyTheReaderAcrossPressure) {
+    const auto files = SameShardFiles(2);
+    const auto a = WriteTable(files[0], "a");
+    const auto b = WriteTable(files[1], "b");
+    for (const bool prime_hint : {false, true}) {
+        SCOPED_TRACE(prime_hint);
+        TableCache cache(file_system_, directory_, comparator_, {}, 16, true);
+        std::optional<Result<TableLookupKind>> result;
+        std::exception_ptr error;
+        std::vector<std::byte> output;
+        std::jthread reader;
+        OneShotGate data_read;
+        ClearFileHooks clear(file_system_);
+        std::atomic<int> reads = 0;
+        file_system_.SetReadHook([&](std::uint64_t number, std::uint64_t offset) {
+            if (number == files[0] && offset == 0 && ++reads == (prime_hint ? 2 : 1)) {
+                data_read.Pause();
+            }
+        });
+        reader = std::jthread([&] {
+            try {
+                if (prime_hint) {
+                    result.emplace(PointRead(cache, files[0], a, output));
+                }
+                result.emplace(PointRead(cache, files[0], a, output));
+            } catch (...) {
+                error = std::current_exception();
+            }
+        });
+        ASSERT_TRUE(data_read.Wait());
+        std::vector<std::byte> other;
+        ASSERT_EQ(PointRead(cache, files[1], b, other), TableLookupKind::Value);
+        const auto still_indexed = cache.Find(files[0], a + 1);
+        EXPECT_EQ(still_indexed.has_value(), !prime_hint);
+        if (!still_indexed.has_value()) {
+            EXPECT_EQ(still_indexed.error().code(), ErrorCode::Corruption);
+        }
+        EXPECT_GE(file_system_.live_files(), 2);
+        data_read.Open();
+        reader.join();
+        ASSERT_FALSE(error);
+        ASSERT_TRUE(result.has_value());
+        ASSERT_EQ(*result, TableLookupKind::Value);
+        EXPECT_EQ(AsStringView(output), "a");
+    }
+}
+
+TEST_F(TableCacheTest, OldOpenAfterEvictMayRecacheButCannotRetagItsHintAsTheNewGeneration) {
+    const auto files = SameShardFiles(3);
+    const auto a = WriteTable(files[0], "old");
+    const auto b = WriteTable(files[1], "b");
+    const auto c = WriteTable(files[2], "c");
+    TableCache cache(file_system_, directory_, comparator_, {}, 32, true);
+    std::optional<Result<TableLookupKind>> result;
+    std::exception_ptr error;
+    std::vector<std::byte> value;
+    std::jthread reader;
+    OneShotGate open;
+    OneShotGate second_read;
+    ClearFileHooks clear(file_system_);
+    file_system_.SetOpenHook([&](std::uint64_t number) {
+        if (number == files[0]) {
+            open.Pause();
+        }
+    });
+    reader = std::jthread([&] {
+        try {
+            result.emplace(PointRead(cache, files[0], a, value));
+            second_read.Pause();
+            result.emplace(PointRead(cache, files[0], a, value));
+        } catch (...) {
+            error = std::current_exception();
+        }
+    });
+    ASSERT_TRUE(open.Wait());
+    cache.Evict(files[0]);
+    static_cast<void>(WriteTable(files[0], "new"));
+    open.Open();
+    ASSERT_TRUE(second_read.Wait());
+    std::vector<std::byte> other;
+    ASSERT_EQ(PointRead(cache, files[1], b, other), TableLookupKind::Value);
+    second_read.Open();
+    reader.join();
+    ASSERT_FALSE(error);
+    ASSERT_TRUE(result.has_value());
+    ASSERT_EQ(*result, TableLookupKind::Value);
+    EXPECT_EQ(AsStringView(value), "old");
+    ASSERT_EQ(PointRead(cache, files[2], c, other), TableLookupKind::Value);
+    const auto retained = Found(cache.Find(files[0], a));
+    EXPECT_EQ(Opens(files[0]), 1);
+    EXPECT_EQ(TryLookup(retained, "key"), "old");
+}
+
+TEST_F(TableCacheTest, InvalidationFollowsEraseEvenWhenNewReadsRecacheDuringClose) {
+    const auto files = SameShardFiles(4);
+    const auto old = WriteTable(files[0], "old");
+    std::array<std::uint64_t, 4> sizes{};
+    for (std::size_t index = 1; index < files.size(); ++index) {
+        sizes[index] = WriteTable(files[index], "value");
+    }
+    TableCache cache(file_system_, directory_, comparator_, {}, 48, true);
+    std::vector<std::byte> value;
+    ASSERT_EQ(PointRead(cache, files[0], old, value), TableLookupKind::Value);
+    std::jthread evictor;
+    OneShotGate close;
+    ClearFileHooks clear(file_system_);
+    file_system_.SetCloseHook([&](std::uint64_t number) {
+        if (number == files[0]) {
+            close.Pause();
+        }
+    });
+    evictor = std::jthread([&] { cache.Evict(files[0]); });
+    ASSERT_TRUE(close.Wait());
+    sizes[0] = WriteTable(files[0], "new");
+    ASSERT_EQ(PointRead(cache, files[0], sizes[0], value), TableLookupKind::Value);
+    EXPECT_EQ(AsStringView(value), "new");
+    close.Open();
+    evictor.join();
+    ASSERT_EQ(PointRead(cache, files[1], sizes[1], value), TableLookupKind::Value);
+    ASSERT_EQ(PointRead(cache, files[0], sizes[0], value), TableLookupKind::Value);
+    ASSERT_EQ(PointRead(cache, files[2], sizes[2], value), TableLookupKind::Value);
+    static_cast<void>(Found(cache.Find(files[3], sizes[3])));
+    const auto retained = Found(cache.Find(files[0], sizes[0]));
+    EXPECT_EQ(Opens(files[0]), 2);
+    EXPECT_EQ(TryLookup(retained, "key"), "new");
+}
+
+TEST_F(TableCacheTest, WeakThreadHintsOutliveCacheClosureWithoutRetainingFiles) {
+    const auto size = WriteTable(7, "seven");
+    auto cache = std::make_unique<TableCache>(file_system_, directory_, comparator_, TableOptions{},
+                                              16, true);
+    std::optional<Result<TableLookupKind>> result;
+    std::vector<std::byte> value;
+    std::jthread worker;
+    OneShotGate thread_exit;
+    worker = std::jthread([&] {
+        result.emplace(PointRead(*cache, 7, size, value));
+        thread_exit.Pause();
+    });
+    ASSERT_TRUE(thread_exit.Wait());
+    ASSERT_TRUE(result.has_value());
+    ASSERT_EQ(*result, TableLookupKind::Value);
+    EXPECT_EQ(file_system_.live_files(), 1);
+    cache.reset();
+    EXPECT_EQ(file_system_.live_files(), 0);
+    thread_exit.Open();
+    worker.join();
+    EXPECT_EQ(file_system_.live_files(), 0);
 }
 
 TEST(TableReaderReuseStateTest, OpenEventsIncludeTheBoundaryThenSaturatePermanently) {
