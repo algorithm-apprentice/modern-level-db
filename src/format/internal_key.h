@@ -104,12 +104,11 @@ public:
 private:
     static constexpr std::size_t InlineCapacity = 200;
 
-    LookupKey() noexcept;
+    LookupKey(std::size_t encoded_size, std::size_t prefix_size);
 
     [[nodiscard]] std::byte* data() noexcept;
     [[nodiscard]] const std::byte* data() const noexcept;
     void ResetToCanonicalEmpty() noexcept;
-    void PrepareStorage(std::size_t encoded_size, std::size_t prefix_size);
     void TransferStorageFrom(LookupKey& source) noexcept;
     void InitializeCanonicalEmpty() noexcept;
 
