@@ -96,6 +96,8 @@ set(
     src/table/bloom_filter.cc
     src/table/compression.cc
     src/table/filter_block.cc
+    src/table/full_filter.cc
+    src/table/full_filter_scalar.cc
     src/table/table.cc
     src/table/table_builder.cc
     src/wal/wal_io.cc

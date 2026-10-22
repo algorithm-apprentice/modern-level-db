@@ -18,6 +18,9 @@ public:
     // Density controls space/probe tradeoffs; size bounds are enforced by builders.
     explicit BloomFilterPolicy(std::uint32_t bits_per_key) noexcept;
 
+    [[nodiscard]] std::uint32_t bits_per_key() const noexcept { return bits_per_key_; }
+    [[nodiscard]] std::uint32_t probes() const noexcept { return probes_; }
+
     [[nodiscard]] std::string_view Name() const noexcept { return "leveldb.BuiltinBloomFilter2"; }
 
     // Returns the size of a filter over key_count keys, including its probe

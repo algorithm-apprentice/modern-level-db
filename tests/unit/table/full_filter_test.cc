@@ -42,7 +42,7 @@ std::vector<std::byte> GoldenBytes() {
 }
 
 std::vector<std::byte> BuildFullFilter(const std::vector<std::string>& keys,
-                                      std::uint32_t bits_per_key) {
+                                       std::uint32_t bits_per_key) {
     FullFilterBuilder builder{BloomFilterPolicy(bits_per_key)};
     for (const auto& key : keys) {
         const auto added = builder.AddKey(AsBytes(key));
@@ -55,7 +55,7 @@ std::vector<std::byte> BuildFullFilter(const std::vector<std::string>& keys,
 }
 
 bool ReferenceMayMatch(ByteView key, ByteView filter) {
-    const auto regions = DecodeFixed32(filter.subspan(8, 4));
+    const auto regions = DecodeFixed32(filter.subspan<8, 4>());
     const auto bucket = Hash32(key, 0xbc9f1d34U);
     const auto region = static_cast<std::uint32_t>((std::uint64_t{bucket} * regions) >> 32U);
     const auto line = filter.subspan(16 + std::size_t{region} * 64, 64);
@@ -85,9 +85,9 @@ TEST(FullFilterTest, PreservesTheLiteralVersionOneRepresentation) {
 TEST(FullFilterTest, EmptyBuilderKeepsOneEmptyRegion) {
     const auto bytes = BuildFullFilter({}, 10);
     ASSERT_EQ(bytes.size(), 80U);
-    EXPECT_EQ(DecodeFixed32(ByteView(bytes).subspan(8, 4)), 1U);
+    EXPECT_EQ(DecodeFixed32(ByteView(bytes).subspan<8, 4>()), 1U);
     EXPECT_TRUE(std::ranges::all_of(ByteView(bytes).subspan(16),
-                                   [](std::byte value) { return value == std::byte{0}; }));
+                                    [](std::byte value) { return value == std::byte{0}; }));
     auto reader = FullFilterReader::Create(bytes);
     ASSERT_TRUE(reader.has_value());
     EXPECT_FALSE(reader->KeyMayMatch({}));
@@ -130,8 +130,8 @@ TEST(FullFilterTest, AdmitsPayloadSizesWithoutReadingOrAllocatingThem) {
     EXPECT_TRUE(IsFullFilterBlockSize(80));
     EXPECT_TRUE(IsFullFilterBlockSize(144));
     EXPECT_TRUE(IsFullFilterBlockSize(4294967248ULL));
-    for (const auto size : {0ULL, 79ULL, 81ULL, 4294967249ULL,
-                            std::numeric_limits<unsigned long long>::max()}) {
+    for (const auto size :
+         {0ULL, 79ULL, 81ULL, 4294967249ULL, std::numeric_limits<unsigned long long>::max()}) {
         EXPECT_FALSE(IsFullFilterBlockSize(size));
     }
 }
@@ -153,7 +153,7 @@ TEST(FullFilterTest, RejectsKnownMalformedHeadersInOwnedAndBorrowedContents) {
     }
     for (const auto regions : {0U, 2U, std::numeric_limits<std::uint32_t>::max()}) {
         auto bytes = GoldenBytes();
-        EncodeFixed32(MutableByteView(bytes).subspan(8, 4), regions);
+        EncodeFixed32(MutableByteView(bytes).subspan<8, 4>(), regions);
         malformed.push_back(std::move(bytes));
     }
     for (const auto& bytes : malformed) {
@@ -171,8 +171,8 @@ TEST(FullFilterTest, ReaderMovesKeepEveryBorrowedAlignmentStable) {
         std::vector<std::byte> backing(offset + Golden.size());
         const auto golden = GoldenBytes();
         std::ranges::copy(golden, backing.begin() + static_cast<std::ptrdiff_t>(offset));
-        auto admitted = FullFilterReader::Create(
-            BlockContents::Borrowed(ByteView(backing).subspan(offset)));
+        auto admitted =
+            FullFilterReader::Create(BlockContents::Borrowed(ByteView(backing).subspan(offset)));
         ASSERT_TRUE(admitted.has_value());
         FullFilterReader moved(std::move(*admitted));
         EXPECT_TRUE(moved.KeyMayMatch(AsBytes("alpha")));
