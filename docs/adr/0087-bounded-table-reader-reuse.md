@@ -31,14 +31,23 @@ can grow with database/file count.
 
 ### Table ownership
 
-Internally cache shared table owners rather than directly owning Table values.
-The generic sharded LRU core remains unchanged. It owns a shared-pointer value;
-opening a table creates its shared owner once.
+Select ownership once at cache construction. With reader reuse disabled, retain
+the original `ShardedLruCache<Table>` unique-value backend. With reuse enabled,
+cache shared Table owners through `ShardedLruCache<shared_ptr<const Table>>`.
+Own the selected nonmovable backend in place in a proper typed variant; never
+switch it when a shard's pressure gate closes. The generic LRU policy remains
+unchanged. Identity tokens, gates and epochs are constructed only in Shared mode.
 
-Keep TableCache::Handle a move-only wrapper around the underlying cache pin.
+The first measured shared-in-both-modes implementation regressed pressure
+even with hints disabled: closing a gate does not remove shared-owner/control/
+holder costs. Default-off must not inherit that ownership regression.
+
+Keep TableCache::Handle a move-only typed variant of the underlying cache pins.
 Its value/arrow/dereference continue to expose the Table, not a shared-pointer
 implementation detail. Find keeps the cache mapping pinned for existing
 iterator/maintenance callers, preserving their eviction and lifetime behavior.
+Access follows the lease's own alternative, including noexcept move assignment
+between alternatives; do not infer its type from an unrelated cache pointer.
 
 Add a point-read operation on TableCache that performs the complete Table Get.
 Its hint-hit path holds only a temporary shared Table owner while calling Get.
@@ -134,9 +143,16 @@ support external table mutation while a database is open.
 ### Options and defaults
 
 Provide a read-reuse switch for control measurements and operational opt-out.
-Enable it by default only after measuring the production weak-hint mechanism,
-not by extrapolating the strong-pin prototype. Measure the changed ownership
-representation with hints disabled as a separate baseline.
+Keep it disabled by default. The measured resident/concurrent benefit supports
+an opt-in, not an unconditional default: constrained-table-cache pressure exposed
+shared ownership costs even after hints stopped. Repeat measurements after the
+typed ownership selection to verify default-off preservation, not just semantic
+equivalence. Do not extrapolate the strong-pin prototype.
+
+Retain the original shared-in-both-modes campaign as its distinct ownership
+baseline. A measurement-only SharedNoHints object may keep constructor-true
+ownership/counting behavior and disable only hint use; it is not a production
+option or a replacement for ordinary off/on measurements.
 
 Do not change max_open_files, silently add an independent persistent-pin
 budget, or retain a table merely because its FileMetadata is still reachable.
@@ -147,6 +163,8 @@ weak hints add no persistent open-file owners.
 
 - Existing Find/Handle behavior, pinned replacement under pressure, cached
   size ignoring, errors, noncached failures and destruction ordering.
+- Run the Find/Handle contracts in both immutable backend modes, including
+  cross-alternative noexcept move assignment and default-off allocation parity.
 - Same-thread hint reuse and independent multi-thread hints, with independent
   output buffers and identical values.
 - Explicit Evict with an old live handle and a same-number replacement table.
@@ -201,3 +219,9 @@ Independent pre-implementation re-review also approved weak control-block
 instance identity and the corrected terminal-generation ordering. Its
 two-Evict counterexample was resolved by closing the gate before terminal
 publication and never wrapping an epoch.
+
+Independent design re-review approved immutable typed ownership selection after
+the first 192-process campaign exposed the default-off cost. Unique mode does
+not pay shared control/holder/token allocations or hint-state maintenance.
+This restores ownership semantics, not a presumed performance result; variant
+dispatch and layout still require fresh original/off/on controls.
