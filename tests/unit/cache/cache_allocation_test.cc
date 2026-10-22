@@ -1,12 +1,19 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdlib>
+#include <exception>
+#include <filesystem>
+#include <latch>
 #include <limits>
 #include <memory>
 #include <new>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
 #if defined(_WIN32)
@@ -14,8 +21,14 @@
 #endif
 
 #include "cache/sharded_lru_cache.h"
+#include "engine/table_cache.h"
+#include "format/internal_key.h"
+#include "metadata/filenames.h"
 #include "modern_leveldb/base/bytes.h"
+#include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/hash.h"
+#include "support/memory_file_system.h"
+#include "table/table_builder.h"
 
 namespace {
 
@@ -24,6 +37,8 @@ struct AllocationSnapshot {
     std::size_t bytes = 0;
     std::size_t successes_before_failure = std::numeric_limits<std::size_t>::max();
     void* last_allocation = nullptr;
+    std::array<void*, 128> addresses{};
+    std::array<std::size_t, 128> sizes{};
 };
 
 struct DeallocationSnapshot {
@@ -37,6 +52,11 @@ thread_local DeallocationSnapshot* active_deallocations = nullptr;
 
 void RecordAllocation(std::size_t bytes) noexcept {
     if (active_allocations != nullptr) {
+        if (active_allocations->calls < active_allocations->addresses.size()) {
+            active_allocations->addresses[active_allocations->calls] =
+                active_allocations->last_allocation;
+            active_allocations->sizes[active_allocations->calls] = bytes;
+        }
         ++active_allocations->calls;
         active_allocations->bytes += bytes;
     }
@@ -54,10 +74,10 @@ void* Allocate(std::size_t bytes) {
     if (memory == nullptr) {
         throw std::bad_alloc();
     }
-    RecordAllocation(bytes);
     if (active_allocations != nullptr) {
         active_allocations->last_allocation = memory;
     }
+    RecordAllocation(bytes);
     return memory;
 }
 
@@ -78,10 +98,10 @@ void* AllocateAligned(std::size_t bytes, std::size_t alignment) {
 #endif
         throw std::bad_alloc();
     }
-    RecordAllocation(bytes);
     if (active_allocations != nullptr) {
         active_allocations->last_allocation = memory;
     }
+    RecordAllocation(bytes);
     return memory;
 }
 
@@ -220,6 +240,157 @@ std::vector<std::string> KeysForShard(std::size_t shard, std::size_t count) {
         }
     }
     return keys;
+}
+
+class ReleaseLatch {
+public:
+    explicit ReleaseLatch(std::latch& latch) : latch_(latch) {}
+    ~ReleaseLatch() { Open(); }
+
+    void Open() {
+        if (std::exchange(active_, false)) {
+            latch_.count_down();
+        }
+    }
+
+private:
+    std::latch& latch_;
+    bool active_ = true;
+};
+
+std::vector<std::uint64_t> TableFilesForOneShard() {
+    std::vector<std::uint64_t> files;
+    for (std::uint64_t number = 1; files.size() < 3; ++number) {
+        std::array<std::byte, 8> key{};
+        EncodeFixed64(key, number);
+        if ((Hash32(key, 0) >> 28U) == 0) {
+            files.push_back(number);
+        }
+    }
+    return files;
+}
+
+std::uint64_t WriteAllocationTable(test_support::MemoryFileSystem& file_system,
+                                   const InternalKeyComparator& comparator, std::uint64_t number) {
+    auto file = file_system.OpenWritable(TableFileName("db", number)).value();
+    TableBuilder builder(std::move(file), comparator, {});
+    const auto key = InternalKey::Create(AsBytes("key"), 1, ValueKind::Value).value();
+    builder.Add(key.encoded(), AsBytes("value")).value();
+    builder.Finish().value();
+    return builder.file_size();
+}
+
+Result<TableLookupKind> AllocationPointRead(TableCache& cache, std::uint64_t number,
+                                            std::uint64_t size, std::vector<std::byte>& output) {
+    const auto key = LookupKey::CreateTrusted(AsBytes("key"), 100);
+    return cache.Get(number, size, key, output);
+}
+
+TEST(CacheAllocationTest, ReaderConstructionClosesHintsBeforeEveryLaterOwnershipAllocation) {
+    const InternalKeyComparator comparator(BytewiseComparator());
+    const auto files = TableFilesForOneShard();
+    std::array<std::uint64_t, 3> sizes{};
+    const auto prepare = [&](test_support::MemoryFileSystem& file_system) {
+        for (std::size_t index = 0; index < files.size(); ++index) {
+            sizes[index] = WriteAllocationTable(file_system, comparator, files[index]);
+        }
+    };
+    AllocationSnapshot profiled;
+    std::size_t table_allocation = 0;
+    {
+        test_support::MemoryFileSystem file_system;
+        prepare(file_system);
+        TableCache cache(file_system, "db", comparator, {}, 16, true);
+        std::vector<std::byte> output;
+        ASSERT_EQ(AllocationPointRead(cache, files[0], sizes[0], output), TableLookupKind::Value);
+        std::optional<TableCache::Handle> retained;
+        {
+            AllocationSession record(profiled);
+            retained.emplace(std::move(cache.Find(files[1], sizes[1])).value());
+        }
+        ASSERT_LE(profiled.calls, profiled.addresses.size());
+        const void* table = &retained->value();
+        bool found = false;
+        for (std::size_t index = 0; index < profiled.calls; ++index) {
+            if (profiled.addresses[index] == table) {
+                found = true;
+                table_allocation = index;
+            }
+        }
+        ASSERT_TRUE(found);
+        ASSERT_GE(profiled.calls, table_allocation + 4);
+        EXPECT_EQ(profiled.sizes[table_allocation], sizeof(Table));
+        EXPECT_EQ(profiled.sizes[profiled.calls - 2], sizeof(std::shared_ptr<const Table>));
+    }
+
+    for (std::size_t later = 1; later <= 3; ++later) {
+        SCOPED_TRACE(later);
+        test_support::MemoryFileSystem file_system;
+        prepare(file_system);
+        TableCache cache(file_system, "db", comparator, {}, 16, true);
+        std::optional<Result<TableLookupKind>> read;
+        std::exception_ptr error;
+        std::vector<std::byte> output;
+        std::latch primed(1);
+        std::latch continue_read(1);
+        std::latch entered(1);
+        std::latch finish_read(1);
+        std::jthread reader;
+        ReleaseLatch continue_guard(continue_read);
+        ReleaseLatch finish_guard(finish_read);
+        reader = std::jthread([&] {
+            ReleaseLatch primed_guard(primed);
+            try {
+                read.emplace(AllocationPointRead(cache, files[0], sizes[0], output));
+                primed_guard.Open();
+                continue_read.wait();
+                read.emplace(AllocationPointRead(cache, files[0], sizes[0], output));
+            } catch (...) {
+                error = std::current_exception();
+            }
+        });
+        primed.wait();
+        ASSERT_FALSE(error);
+        ASSERT_TRUE(read.has_value());
+        ASSERT_EQ(*read, TableLookupKind::Value);
+        AllocationSnapshot failed;
+        bool threw = false;
+        {
+            // Table construction can allocate debug-library bookkeeping.
+            // The final stages are its control block, holder, and cache entry.
+            AllocationSession fail(failed, profiled.calls - 3 + later - 1);
+            try {
+                static_cast<void>(cache.Find(files[1], sizes[1]));
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+        }
+        EXPECT_TRUE(threw);
+        EXPECT_EQ(failed.calls, profiled.calls - 3 + later - 1);
+
+        const auto operation = "read " + TableFileName("db", files[0]).filename().string();
+        const auto reader_id = reader.get_id();
+        file_system.SetOperationHook([&](std::string_view current) -> Status {
+            if (current == operation && std::this_thread::get_id() == reader_id) {
+                entered.count_down();
+                finish_read.wait();
+            }
+            return {};
+        });
+        continue_guard.Open();
+        entered.wait();
+        std::vector<std::byte> other;
+        ASSERT_EQ(AllocationPointRead(cache, files[2], sizes[2], other), TableLookupKind::Value);
+        const auto retained = cache.Find(files[0], sizes[0] + 1);
+        EXPECT_TRUE(retained.has_value());
+        finish_guard.Open();
+        reader.join();
+        file_system.SetOperationHook({});
+        ASSERT_FALSE(error);
+        ASSERT_TRUE(read.has_value());
+        EXPECT_EQ(*read, TableLookupKind::Value);
+        EXPECT_EQ(AsStringView(output), "value");
+    }
 }
 
 TEST(CacheAllocationTest, InsertUsesOneEntryAllocationAndLookupUsesNone) {
