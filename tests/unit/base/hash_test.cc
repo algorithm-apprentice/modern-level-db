@@ -156,5 +156,42 @@ TEST(HashTest, GuardedSubspansPreserveCallerViewsAndStorage) {
     }
 }
 
+TEST(HashTest, MatchesLiteralCacheAndLongKeyVectorsAtEveryAlignment) {
+    struct LongHashVector {
+        std::size_t length;
+        std::array<std::uint32_t, 3> hashes;
+    };
+    constexpr std::array Seeds{0U, 0xbc9f1d34U, 0xffffffffU};
+    // Pinned LevelDB outputs for byte[index] = (73 * index + 19) modulo 256.
+    constexpr std::array Vectors{
+        LongHashVector{8, {0xb020b4cdU, 0x14b3e297U, 0x1eb55c8cU}},
+        LongHashVector{16, {0x5e689faaU, 0xdf8e7784U, 0x6f6af420U}},
+        LongHashVector{17, {0xc5829c61U, 0x800ff7bbU, 0x7b4b0535U}},
+        LongHashVector{31, {0xfed56e96U, 0x0e283588U, 0xef68754eU}},
+        LongHashVector{32, {0xd2470dfcU, 0x155c40b4U, 0x7426abc9U}},
+        LongHashVector{33, {0x70547cd1U, 0xbc798f59U, 0xce2ac442U}},
+        LongHashVector{255, {0xf668f050U, 0xff1890e0U, 0xa83d5023U}},
+        LongHashVector{256, {0xad9d6f93U, 0x6b008088U, 0x505ff0a5U}},
+        LongHashVector{257, {0x20fd682eU, 0xe6c67027U, 0x2cb845e6U}},
+    };
+    std::array<std::byte, 257 + 7> storage{};
+    for (std::size_t offset = 0; offset < 8; ++offset) {
+        SCOPED_TRACE(offset);
+        for (std::size_t index = 0; index < 257; ++index) {
+            storage[offset + index] = static_cast<std::byte>((index * 73U + 19U) & 0xffU);
+        }
+        const auto before = storage;
+        for (const auto& vector : Vectors) {
+            SCOPED_TRACE(vector.length);
+            const ByteView input = ByteView(storage).subspan(offset, vector.length);
+            for (std::size_t index = 0; index < Seeds.size(); ++index) {
+                SCOPED_TRACE(Seeds[index]);
+                EXPECT_EQ(Hash32(input, Seeds[index]), vector.hashes[index]);
+            }
+        }
+        EXPECT_EQ(storage, before);
+    }
+}
+
 }  // namespace
 }  // namespace modern_leveldb
