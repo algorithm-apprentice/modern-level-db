@@ -115,6 +115,7 @@ set(
     src/table/block_builder.cc
     src/table/block_format.cc
     src/table/bloom_filter.cc
+    src/table/clock_block_cache.cc
     src/table/compression.cc
     src/table/filter_block.cc
     src/table/full_filter.cc
