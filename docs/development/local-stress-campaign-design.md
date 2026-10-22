@@ -131,6 +131,19 @@ Commands are argv arrays and never pass through a shell.
 - the healthy V3 parent already owns and reaps every worker, and its workers
   inherit the orchestrator-created process group.
 
+The process-group regression fixture launches the concrete running Python
+image on Windows, resolved with `GetModuleFileNameW`. A Store installation's
+`sys.executable` can instead name an application-execution alias; that extra
+launcher can invalidate the process-group identity the fixture intends to
+test. Both fake parent and child use the concrete image. The fixture waits
+for their PID markers before starting its unchanged short timeout and checks
+that the reported parent PID equals `Popen.pid`.
+
+Windows liveness checks use pointer-sized typed handles and wait for process
+completion. An API/query failure is not treated as a vanished child. These
+checks retain the child-termination and immediate temporary-directory cleanup
+requirements; no timeout, termination assertion, or test gate is relaxed.
+
 The effective job deadline is the smaller of:
 
 - `--job-timeout-seconds`;
