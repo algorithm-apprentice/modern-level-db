@@ -10,6 +10,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -22,8 +23,61 @@
 #include "modern_leveldb/base/hash.h"
 #include "table/block.h"
 #include "table/block_builder.h"
+#include "table/clock_block_cache_protocol.h"
 
 namespace modern_leveldb {
+
+class ClockBlockCacheTestPeer {
+public:
+    using Root = clock_cache_detail::LookupRoot;
+    using Slot = clock_cache_detail::Slot;
+    using Shard = clock_cache_detail::Shard;
+
+    class PendingRelease {
+    public:
+        PendingRelease(Slot& slot, Shard& shard) noexcept : slot_(&slot), shard_(&shard) {}
+        PendingRelease(const PendingRelease&) = delete;
+        PendingRelease& operator=(const PendingRelease&) = delete;
+        PendingRelease(PendingRelease&& source) noexcept
+            : slot_(std::exchange(source.slot_, nullptr)), shard_(source.shard_) {}
+        ~PendingRelease() { Finish(); }
+
+        void Finish() noexcept {
+            if (auto* slot = std::exchange(slot_, nullptr)) {
+                clock_cache_detail::FinishRelease(*slot, *shard_);
+            }
+        }
+
+    private:
+        Slot* slot_;
+        Shard* shard_;
+    };
+
+    static Root AcquireRoot(ClockBlockCache& cache, ClockBlockCache::Key key) {
+        return cache.AcquireLookupRoot(key);
+    }
+    static std::optional<ClockBlockCache::Handle> LookupInRoot(const Root& root,
+                                                               ClockBlockCache::Key key) {
+        return ClockBlockCache::LookupInRoot(root, key);
+    }
+    static Slot* Position(const ClockBlockCache::Handle& handle) { return handle.slot_; }
+    static std::optional<ClockBlockCache::Handle> PinObserved(Slot& slot, std::uint64_t& observed) {
+        if ((observed & clock_cache_detail::StateMask) != clock_cache_detail::Live ||
+            !clock_cache_detail::PinOnce(slot, observed)) {
+            return std::nullopt;
+        }
+        return ClockBlockCache::Handle(slot);
+    }
+    static std::optional<PendingRelease> ReleaseToPending(ClockBlockCache::Handle& handle) {
+        auto* slot = std::exchange(handle.slot_, nullptr);
+        auto* shard = clock_cache_detail::DropPin(*slot);
+        if (shard == nullptr) {
+            return std::nullopt;
+        }
+        return PendingRelease(*slot, *shard);
+    }
+};
+
 namespace {
 
 using Key = std::array<std::byte, 16>;
@@ -337,6 +391,231 @@ TEST(ClockBlockCacheTest, ConcurrentInsertLookupEraseNeverReturnsAnotherFullKeys
     EXPECT_EQ(cache.GetStats().standalone_bytes, 0U);
     EXPECT_EQ(cache.GetStats().erased_bytes, 0U);
     EXPECT_LE(cache.GetStats().metadata_bytes, cache.GetStats().metadata_allowance);
+}
+
+TEST(ClockBlockCacheProtocolTest, StaleLiveWordAcrossEvictionAndReuseStillChecksTheCompleteKey) {
+    ClockBlockCache cache(16 * 4096);
+    const auto old_key = CollidingKey(1);
+    const auto victim_replacement = CollidingKey(2);
+    const auto new_key = CollidingKey(3);
+    clock_cache_detail::Slot* slot = nullptr;
+    {
+        auto old = cache.Insert(old_key, ValueOf("old"), 4096);
+        ASSERT_TRUE(old.has_value());
+        slot = ClockBlockCacheTestPeer::Position(*old);
+    }
+    auto observed = slot->metadata.load(std::memory_order_acquire);
+    ASSERT_EQ(observed & clock_cache_detail::StateMask, clock_cache_detail::Live);
+    ASSERT_TRUE(cache.Insert(victim_replacement, ValueOf("victim"), 4096).has_value());
+    ASSERT_FALSE(cache.Lookup(old_key).has_value());
+    {
+        auto reused = cache.Insert(new_key, ValueOf("new"), 4096);
+        ASSERT_TRUE(reused.has_value());
+        ASSERT_EQ(ClockBlockCacheTestPeer::Position(*reused), slot);
+    }
+    ASSERT_EQ(slot->metadata.load(std::memory_order_acquire), observed);
+    auto pinned = ClockBlockCacheTestPeer::PinObserved(*slot, observed);
+    ASSERT_TRUE(pinned.has_value());
+    EXPECT_EQ(TextOf(*pinned), "new");
+    ASSERT_EQ(Hash32(old_key, 0), Hash32(new_key, 0));
+    EXPECT_FALSE(clock_cache_detail::MatchesPinned(*slot, Hash32(old_key, 0), old_key));
+    EXPECT_TRUE(clock_cache_detail::MatchesPinned(*slot, Hash32(new_key, 0), new_key));
+    EXPECT_FALSE(cache.Lookup(old_key).has_value());
+}
+
+TEST(ClockBlockCacheProtocolTest, FailedStrongCasUpdatesTheObservationBeforeRetrying) {
+    ClockBlockCache cache(16 * 4096);
+    const auto key = CollidingKey(1);
+    clock_cache_detail::Slot* slot = nullptr;
+    {
+        auto inserted = cache.Insert(key, ValueOf("value"), 4096);
+        ASSERT_TRUE(inserted.has_value());
+        slot = ClockBlockCacheTestPeer::Position(*inserted);
+    }
+    auto observed = slot->metadata.load(std::memory_order_acquire);
+    auto competing = cache.Lookup(key);
+    ASSERT_TRUE(competing.has_value());
+    const auto missed = ClockBlockCacheTestPeer::PinObserved(*slot, observed);
+    ASSERT_FALSE(missed.has_value());
+    EXPECT_EQ(observed, slot->metadata.load(std::memory_order_acquire));
+    auto retried = ClockBlockCacheTestPeer::PinObserved(*slot, observed);
+    ASSERT_TRUE(retried.has_value());
+    EXPECT_EQ(TextOf(*retried), "value");
+}
+
+TEST(ClockBlockCacheProtocolTest, AcquiredPinKeepsItsGenerationAcrossEraseAndReplacement) {
+    ClockBlockCache cache(16 * 4096 * 8);
+    const auto key = CollidingKey(1);
+    clock_cache_detail::Slot* slot = nullptr;
+    {
+        auto old = cache.Insert(key, ValueOf("old"), 4096);
+        ASSERT_TRUE(old.has_value());
+        slot = ClockBlockCacheTestPeer::Position(*old);
+    }
+    auto observed = slot->metadata.load(std::memory_order_acquire);
+    auto pinned = ClockBlockCacheTestPeer::PinObserved(*slot, observed);
+    ASSERT_TRUE(pinned.has_value());
+    cache.Erase(key);
+    auto replacement = cache.Insert(key, ValueOf("new"), 4096);
+    ASSERT_TRUE(replacement.has_value());
+    EXPECT_NE(ClockBlockCacheTestPeer::Position(*replacement), slot);
+    EXPECT_TRUE(clock_cache_detail::MatchesPinned(*slot, Hash32(key, 0), key));
+    EXPECT_EQ(TextOf(*pinned), "old");
+    EXPECT_EQ(TextOf(*replacement), "new");
+    EXPECT_GT(cache.GetStats().erased_bytes, 0U);
+    pinned.reset();
+    EXPECT_EQ(cache.GetStats().erased_bytes, 0U);
+}
+
+TEST(ClockBlockCacheProtocolTest, AcquiredOldRootKeepsItsMaskAcrossGrowthAndSlotReuse) {
+    ClockBlockCache cache(16 * 4096 * 16);
+    constexpr std::uint32_t Target = 0x0123456fU;
+    for (std::uint32_t index = 0; index < 4; ++index) {
+        ASSERT_TRUE(cache.Insert(CollidingKey(index, Target), ValueOf(std::to_string(index)), 4096)
+                        .has_value());
+    }
+    const auto key = CollidingKey(0, Target);
+    const auto old = ClockBlockCacheTestPeer::AcquireRoot(cache, key);
+    ASSERT_NE(old.index, nullptr);
+    ASSERT_EQ(old.index->bucket_count, 8U);
+    ASSERT_NE(Target & old.index->mask, Target & std::size_t{15});
+    ASSERT_TRUE(cache.Insert(CollidingKey(4, Target), ValueOf("4"), 4096).has_value());
+    const auto grown = ClockBlockCacheTestPeer::AcquireRoot(cache, key);
+    ASSERT_NE(grown.index, old.index);
+    EXPECT_EQ(grown.index->bucket_count, 16U);
+    {
+        const auto found = ClockBlockCacheTestPeer::LookupInRoot(old, key);
+        ASSERT_TRUE(found.has_value());
+        EXPECT_EQ(TextOf(*found), "0");
+    }
+    clock_cache_detail::Slot* previous = nullptr;
+    {
+        const auto found = cache.Lookup(key);
+        ASSERT_TRUE(found.has_value());
+        previous = ClockBlockCacheTestPeer::Position(*found);
+    }
+    cache.Erase(key);
+    const auto replacement_key = CollidingKey(5, Target);
+    {
+        auto replacement = cache.Insert(replacement_key, ValueOf("5"), 4096);
+        ASSERT_TRUE(replacement.has_value());
+        ASSERT_EQ(ClockBlockCacheTestPeer::Position(*replacement), previous);
+    }
+    EXPECT_FALSE(ClockBlockCacheTestPeer::LookupInRoot(old, key).has_value());
+    for (std::uint32_t index = 1; index <= 5; ++index) {
+        const auto found = cache.Lookup(CollidingKey(index, Target));
+        ASSERT_TRUE(found.has_value()) << index;
+        EXPECT_EQ(TextOf(*found), std::to_string(index));
+    }
+    EXPECT_GT(cache.GetStats().retained_index_bytes, 0U);
+    EXPECT_EQ(cache.total_charge(), 5U * 4096U);
+}
+
+TEST(ClockBlockCacheProtocolTest, AcquiredRootRemainsUsableAfterInPlaceRefresh) {
+    ClockBlockCache cache(16 * 4096 * 8);
+    constexpr std::uint32_t Target = 0x0123456fU;
+    for (std::uint32_t index = 0; index < 4; ++index) {
+        ASSERT_TRUE(cache.Insert(CollidingKey(index, Target), ValueOf(std::to_string(index)), 4096)
+                        .has_value());
+    }
+    const auto survivor = CollidingKey(3, Target);
+    const auto old = ClockBlockCacheTestPeer::AcquireRoot(cache, survivor);
+    const auto before = cache.GetStats();
+    for (std::uint32_t index = 0; index < 3; ++index) {
+        cache.Erase(CollidingKey(index, Target));
+    }
+    ASSERT_TRUE(cache.Insert(CollidingKey(8, Target ^ 1U), ValueOf("new"), 4096).has_value());
+    const auto refreshed = ClockBlockCacheTestPeer::AcquireRoot(cache, survivor);
+    EXPECT_EQ(refreshed.index, old.index);
+    EXPECT_EQ(cache.GetStats().index_refreshes, before.index_refreshes + 1);
+    const auto found = ClockBlockCacheTestPeer::LookupInRoot(old, survivor);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(TextOf(*found), "3");
+    EXPECT_FALSE(ClockBlockCacheTestPeer::LookupInRoot(old, CollidingKey(0, Target)).has_value());
+    EXPECT_EQ(cache.GetStats().retained_index_bytes, before.retained_index_bytes);
+    EXPECT_EQ(cache.total_charge(), 2U * 4096U);
+}
+
+TEST(ClockBlockCacheProtocolTest, LateErasedReleaseNeverReclaimsALiveOrPinnedReplacement) {
+    enum class Replacement { Live, ErasedPinned, ErasedZero };
+    for (const auto next :
+         {Replacement::Live, Replacement::ErasedPinned, Replacement::ErasedZero}) {
+        SCOPED_TRACE(static_cast<int>(next));
+        ClockBlockCache cache(16 * 8);
+        const auto old_key = CollidingKey(0);
+        auto old = cache.Insert(old_key, ValueOf("old"), 1);
+        ASSERT_TRUE(old.has_value());
+        auto* slot = ClockBlockCacheTestPeer::Position(*old);
+        for (std::uint32_t index = 1; index < 8; ++index) {
+            ASSERT_TRUE(cache.Insert(CollidingKey(index), ValueOf("filler"), 1).has_value());
+        }
+        ASSERT_EQ(cache.GetStats().pooled_slots, 8U);
+        ASSERT_EQ(cache.GetStats().indexed_entries, 8U);
+        cache.Erase(old_key);
+        auto pending = ClockBlockCacheTestPeer::ReleaseToPending(*old);
+        ASSERT_TRUE(pending.has_value());
+        EXPECT_EQ(ClockBlockCacheTestPeer::Position(*old), nullptr);
+        const auto new_key = CollidingKey(8);
+        auto replacement = cache.Insert(new_key, ValueOf("replacement"), 2);
+        ASSERT_TRUE(replacement.has_value());
+        ASSERT_EQ(ClockBlockCacheTestPeer::Position(*replacement), slot);
+        if (next != Replacement::Live) {
+            cache.Erase(new_key);
+        }
+        auto later = next == Replacement::ErasedZero
+                         ? ClockBlockCacheTestPeer::ReleaseToPending(*replacement)
+                         : std::optional<ClockBlockCacheTestPeer::PendingRelease>{};
+        pending->Finish();
+        if (next == Replacement::ErasedZero) {
+            ASSERT_TRUE(later.has_value());
+            EXPECT_EQ(cache.GetStats().erased_bytes, 0U);
+            later->Finish();
+            EXPECT_EQ(cache.GetStats().erased_bytes, 0U);
+        } else {
+            EXPECT_EQ(TextOf(*replacement), "replacement");
+            if (next == Replacement::Live) {
+                EXPECT_TRUE(cache.Lookup(new_key).has_value());
+                EXPECT_EQ(cache.GetStats().erased_bytes, 0U);
+            } else {
+                EXPECT_FALSE(cache.Lookup(new_key).has_value());
+                EXPECT_GT(cache.GetStats().erased_bytes, 0U);
+            }
+        }
+        EXPECT_EQ(cache.total_charge(), next == Replacement::Live ? 8U : 6U);
+        EXPECT_EQ(cache.GetStats().retired_bytes, 0U);
+    }
+}
+
+TEST(ClockBlockCacheProtocolTest, PendingCleanupConsumesTheHandleAndFinishesOnUnwinding) {
+    ClockBlockCache cache(16 * 4096);
+    const auto key = CollidingKey(1);
+    auto inserted = cache.Insert(key, ValueOf("value"), 4096);
+    ASSERT_TRUE(inserted.has_value());
+    cache.Erase(key);
+    EXPECT_THROW(
+        {
+            auto pending = ClockBlockCacheTestPeer::ReleaseToPending(*inserted);
+            if (!pending.has_value()) {
+                throw std::logic_error("expected pending erased cleanup");
+            }
+            EXPECT_EQ(ClockBlockCacheTestPeer::Position(*inserted), nullptr);
+            EXPECT_GT(cache.GetStats().erased_bytes, 0U);
+            throw std::runtime_error("leave the pending-cleanup scope");
+        },
+        std::runtime_error);
+    EXPECT_EQ(cache.GetStats().erased_bytes, 0U);
+    EXPECT_EQ(cache.GetStats().retired_bytes, 0U);
+}
+
+TEST(ClockBlockCacheProtocolTest, StandaloneReleaseReturnsNoPendingWorkOrUsableSlot) {
+    ClockBlockCache cache(0);
+    auto inserted = cache.Insert(CollidingKey(1), ValueOf("standalone"), 4096);
+    ASSERT_TRUE(inserted.has_value());
+    EXPECT_GT(cache.GetStats().standalone_bytes, 0U);
+    const auto pending = ClockBlockCacheTestPeer::ReleaseToPending(*inserted);
+    EXPECT_FALSE(pending.has_value());
+    EXPECT_EQ(ClockBlockCacheTestPeer::Position(*inserted), nullptr);
+    EXPECT_EQ(cache.GetStats().standalone_bytes, 0U);
 }
 
 }  // namespace
