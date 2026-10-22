@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <memory>
 #include <type_traits>
@@ -41,7 +42,7 @@ struct ReuseShard {
 // Keeps the tables of a database directory open for reuse, by file number.
 // The file system, the comparator, and the options' block cache must outlive
 // the table cache, and every handle must be released before it is destroyed.
-// Find and Evict are safe for concurrent calls.
+// Find, Get and Evict are safe for concurrent calls.
 class TableCache final {
     using TableOwner = std::shared_ptr<const Table>;
     using UniqueTables = ShardedLruCache<Table>;
@@ -124,10 +125,20 @@ public:
     [[nodiscard]] Result<Handle> Find(std::uint64_t file_number, std::uint64_t file_size);
 
     // Reuses only weak per-thread hints when the shard has never exceeded its
-    // open-event ceiling. Every fallback keeps a Find pin through the Table Get.
+    // open-event ceiling. Every fallback keeps its mapping pin through Table Get.
     [[nodiscard]] Result<TableLookupKind> Get(std::uint64_t file_number, std::uint64_t file_size,
                                               const LookupKey& key, std::vector<std::byte>& value,
-                                              const TableReadOptions& options = {});
+                                              const TableReadOptions& options = {}) {
+        if (auto* unique = std::get_if<UniqueTables>(&tables_)) {
+            auto found = FindUnique(*unique, file_number, file_size);
+            if (!found.has_value()) {
+                return std::unexpected(std::move(found).error());
+            }
+            return (*found)->Get(key, value, options);
+        }
+        return GetShared(std::get<SharedTables>(tables_), file_number, file_size, key, value,
+                         options);
+    }
 
     // Stops caching the table of the file number. Handles stay valid, and a Find
     // that is opening the file may cache it again, so before deleting a table
@@ -135,6 +146,14 @@ public:
     void Evict(std::uint64_t file_number);
 
 private:
+    // Both Unique point Get and outward Find retain this original typed pin.
+    [[nodiscard]] Result<UniqueTables::Handle> FindUnique(UniqueTables& tables,
+                                                          std::uint64_t file_number,
+                                                          std::uint64_t file_size);
+    [[nodiscard]] Result<TableLookupKind> GetShared(SharedTables& shared, std::uint64_t file_number,
+                                                    std::uint64_t file_size, const LookupKey& key,
+                                                    std::vector<std::byte>& value,
+                                                    const TableReadOptions& options);
     [[nodiscard]] Result<std::unique_ptr<Table>> OpenTable(std::uint64_t file_number,
                                                            std::uint64_t file_size,
                                                            SharedTables* shared);
