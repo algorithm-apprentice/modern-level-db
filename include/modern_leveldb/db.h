@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "modern_leveldb/base/bytes.h"
@@ -20,6 +21,8 @@ namespace modern_leveldb {
 namespace detail {
 class DatabaseState;
 }
+
+using OwningReadResult = Result<std::optional<std::vector<std::byte>>>;
 
 // Owns access to one exclusively locked database directory. Concurrent operations
 // are supported, but moving or destroying this handle must not race with its use.
@@ -56,8 +59,13 @@ public:
                                    const ReadOptions& options = {});
     // The owning alternative: an empty optional means missing/deleted, and an
     // engaged vector can itself be empty for a stored empty value.
-    [[nodiscard]] Result<std::optional<std::vector<std::byte>>> Get(
-        ByteView key, const ReadOptions& options = {});
+    [[nodiscard]] OwningReadResult Get(ByteView key, const ReadOptions& options = {});
+    // Synchronous, ordered owning reads at one retained sequence. Inputs remain
+    // stable until return; duplicates and per-key errors retain their positions.
+    // Valid concurrency is 1..16; one runs on the caller without read workers.
+    // All workers finish before return or propagation of an exception.
+    [[nodiscard]] Result<std::vector<OwningReadResult>> MultiGet(
+        std::span<const ByteView> keys, const MultiGetOptions& options = {});
     // Captures a fixed read sequence and starts unpositioned. A supplied snapshot
     // registration is retained even after its public Snapshot handle is destroyed.
     [[nodiscard]] Result<Iterator> NewIterator(const ReadOptions& options = {});

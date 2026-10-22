@@ -141,8 +141,8 @@ pointers, callbacks, or handles into the engine.
 | `levels[level].file_count` | Number of files in the current Version at that level |
 | `levels[level].file_bytes` | Sum of the current Version's recorded file sizes at that level |
 | `last_sequence` | Last sequence published to latest reads |
-| `snapshot_count` | Number of live explicit snapshot registrations retained by Snapshot handles or iterators created from them, including duplicates at one sequence |
-| `oldest_snapshot_sequence` | Smallest registered explicit snapshot sequence, or no value when none exist |
+| `snapshot_count` | Number of all live registered read-sequence pins, including Snapshot/retaining-iterator owners and temporary implicit MultiGet registrations; duplicates count separately |
+| `oldest_snapshot_sequence` | Smallest registered read-pin sequence, or no value when none exist |
 | `write_queue_depth` | Writers currently in the serialized write queue, including its active leader |
 | `mutable_memtable_bytes` | Arena-reserved bytes published at the same last completed successful write boundary as `last_sequence` |
 | `immutable_memtable_bytes` | Arena-reserved bytes of the immutable memtable, when one occupies the flush slot |
@@ -151,9 +151,12 @@ pointers, callbacks, or handles into the engine.
 | `sticky_error` | Exact copy of the engine's first recorded sticky error, when present |
 
 The sequence values are operation-order identifiers, not timestamps.
-The snapshot fields cover explicit `GetSnapshot` registrations. Iterators
-also retain their concrete read sources, but an iterator without an explicit
-Snapshot does not create a registration in the snapshot multiset.
+The snapshot fields cover the registration multiset. As deliberately broadened
+by [ADR-0089](0089-bounded-snapshot-consistent-multiget.md), a nonempty implicit
+MultiGet creates one temporary registration visible for the whole batch, not
+one per key. Explicit batches retain their supplied registration. Iterators
+also retain concrete read sources; an iterator without an explicit Snapshot
+still does not create a registration in this multiset.
 
 `file_bytes` describes recorded SSTable file sizes, not live user-value
 bytes, WAL bytes, MANIFEST bytes, total directory usage, compressed logical

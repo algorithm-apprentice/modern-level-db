@@ -125,6 +125,45 @@ cache remain available when `fill_cache=false`.
 is acknowledged. It does not turn the whole database into a transaction and
 does not strengthen a backend's namespace guarantee.
 
+### Bounded owning batch reads
+
+`OwningReadResult` names the existing owning Get result:
+`Result<optional<vector<byte>>>`. `Database::MultiGet` returns
+`Result<vector<OwningReadResult>>`, preserving exact input order and duplicates.
+An empty optional is missing/deleted; an engaged empty vector is an empty
+stored value. Per-key Io/Corruption remains that entry's error, not absence.
+Preparation errors such as a moved database, invalid concurrency or a
+foreign/moved snapshot use the outer Result.
+
+`MultiGetOptions` contains `read_options` and `max_concurrency`, default four,
+accepted from one through sixteen. One executes on the caller without read
+workers; the caller counts toward the reader bound, so four uses three created
+threads plus the caller. A valid empty batch creates no worker or implicit
+registration, but configuration and a supplied snapshot are still validated.
+
+Every key uses one retained registered sequence. With no supplied Snapshot the
+batch creates one temporary registration; explicit batches retain their
+supplied registration. State inspection includes this implicit pin while it
+is active. Compaction preserves its history even between keys after individual
+read-source pins have gone.
+
+The call is synchronous: inputs stay alive and unchanged until return, all
+started workers are joined before publishing results or propagating an
+exception, and no read is submitted to the serial maintenance executor.
+Allocation/user callback exceptions retain the existing throwing model.
+Worker exceptions are rethrown after joining; failed startup takes precedence
+over a simultaneous worker exception.
+
+Concurrency is a per-call bound, not a database-wide budget, cancellation
+deadline, result-byte limit or retained-history limit. Concurrent batches
+multiply their costs. Worker startup and owning-output allocation are part
+of the call, so a warm one-key batch is not promised to beat ordinary Get.
+The admitted large-batch measurements beat serial Get, but not persistent
+application-managed concurrent readers; the single-key control is slower.
+Keep ordinary Get for that use rather than wrapping every key in a batch.
+See [ADR-0089](../adr/0089-bounded-snapshot-consistent-multiget.md) for the full
+positive and adverse measurements.
+
 ## Comparator and Bloom requirements
 
 A custom comparator must:
