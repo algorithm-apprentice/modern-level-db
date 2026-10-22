@@ -37,6 +37,19 @@ alternatives rather than pointer tagging or layout reinterpretation.
 Preserve the Table-facing value/arrow/dereference and retention contract.
 Measure facade overhead with explicit LRU as well as Automatic/CLOCK.
 
+The checked public entry point is
+`CreateBlockCacheWithOptions(const BlockCacheOptions&)`, returning
+`Result<shared_ptr<BlockCache>>`. The options contain capacity (default zero)
+and policy (default Automatic). Keep the legacy `CreateBlockCache(size_t)`
+name/signature separate: even `CreateBlockCache({})` must remain an unambiguous
+zero-capacity call, not become ambiguous with a new aggregate overload.
+
+Use an in-place typed backend variant, with construction-only monostate for
+the selected nonmovable backend. Its lease is a typed LRU-pin/CLOCK-handle
+variant; no separate per-hit allocation is introduced. Internal CLOCK
+diagnostics remain available for admission measurements, without adding a
+general public metadata/RSS observation promise.
+
 CLOCK accepts the exact 16-byte cache identity constructed by the table
 layer: cache instance/file identity plus block offset. Hashing chooses shards
 and buckets; comparison still uses every key byte. Generic LRU remains
@@ -99,6 +112,12 @@ array of atomic canonical-slot pointers. Null means a virgin empty bucket;
 a real typed sentinel represents a tombstone. No integer-as-pointer sentinel.
 Hash and mask choose the first bucket; complete key comparison chooses
 identity.
+
+The existing internal facade keeps ByteView for generic LRU callers. A selected
+CLOCK backend requires the exact 16-byte table key; the table's fixed-size key
+construction establishes that private precondition. Do not weaken arbitrary
+full-key LRU behavior or add a repeated recoverable-error path for a shape the
+table caller has already established.
 
 The acquired root owns immutable bucket count/mask alongside its array.
 Never pair an old pointer with a separately updated larger mask. Initialize
@@ -268,6 +287,21 @@ Externally retained standalone/erased value holders, their block data, and
 detached retired owners awaiting out-of-lock destruction are explicit
 exclusions, like existing uncached/erased retention; report their peaks
 separately rather than claiming a hard process-memory bound.
+
+Include the complete owning facade object in that fixed account, including
+inactive in-place variant storage. A CLOCK member inside a large LRU/CLOCK
+variant cannot report only `sizeof(ClockBlockCache)` as its owning footprint.
+Its private constructor receives the compile-time known complete owner size
+before publication; standalone construction supplies its own object size.
+This is internal accounting input, not a public budget knob, and adds no
+per-entry field or per-lookup work. Keep the same total allowance and reject
+retention when the complete fixed/storage account cannot fit.
+An accessible internal footprint tag constructor delegates to that private
+constructor, so `variant::emplace` does not need facade friendship to call a
+private constructor. Replace the old embedded-object-size term rather than
+counting both it and the complete owner. Independent architecture re-review
+approved this facade/accounting concretization, not an implementation or
+Automatic default change.
 
 The allowance applies to published cache-owned storage. Preparation can
 temporarily hold old and proposed allocations simultaneously; compute the
