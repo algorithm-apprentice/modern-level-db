@@ -451,6 +451,20 @@ TEST_F(TableTest, RecognizedFullFilterCorruptionDoesNotFallBackToLegacy) {
     ExpectValue(Get(*disabled, "key", MaxSequenceNumber), "value");
 }
 
+TEST_F(TableTest, MalformedSelectedFullHandleIsNotHiddenByAValidLegacyFilter) {
+    TableAssembler encoded;
+    FilterBlockBuilder legacy{BloomFilterPolicy(10)};
+    const auto old_filter = encoded.AddBlock(legacy.Finish());
+    const std::array invalid_full_handle{std::byte{0x80}};
+    const auto meta = encoded.AddBlock(BlockOf({
+        {AsBytes("filter.leveldb.BuiltinBloomFilter2"), HandleOf(old_filter)},
+        {AsBytes(FullFilterMetaKey), invalid_full_handle},
+    }));
+    const auto index = encoded.AddBlock(BlockOf({}));
+    const auto opened = TryOpen(encoded.Finish(meta, index), WithFilter());
+    ExpectError(opened, ErrorCode::Corruption);
+}
+
 TEST_F(TableTest, SelectedFullFilterIgnoresMalformedUnselectedLegacyHandlesAndPayloads) {
     for (const bool malformed_handle : {false, true}) {
         TableAssembler encoded;

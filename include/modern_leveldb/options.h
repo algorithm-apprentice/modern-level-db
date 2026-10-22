@@ -22,6 +22,12 @@ enum class Compression {
     Zstd = 2,
 };
 
+enum class BloomFilterLayout {
+    Automatic,
+    BlockBased,
+    FullTable,
+};
+
 struct Options {
     // Null selects BytewiseComparator. A custom comparator is retained by every
     // database and child handle that uses it.
@@ -37,10 +43,11 @@ struct Options {
     bool allow_mmap_reads = true;
     std::size_t block_size = std::size_t{4} << 10U;
     std::uint32_t block_restart_interval = 16;
-    // Enabling Bloom requires comparator equality to imply byte equality;
-    // otherwise equivalent keys can be reported missing. Leave unset for
-    // comparators that consider different byte strings equal.
-    std::optional<std::uint32_t> bloom_bits_per_key;
+    // Explicit nullopt disables filters. Automatic layout uses full-table
+    // filtering only for the known built-in bytewise comparator; custom
+    // comparators opt in explicitly and require comparator equality to imply
+    // identical key bytes.
+    std::optional<std::uint32_t> bloom_bits_per_key = 10;
     // Compression is selected per block; incompressible blocks are stored raw.
     Compression compression = Compression::Snappy;
     // Used only by Zstd; accepted levels are -5 through 22.
@@ -61,6 +68,9 @@ struct Options {
     std::shared_ptr<BlockCache> block_cache{};
     std::shared_ptr<Clock> clock{};
     std::shared_ptr<BackgroundExecutor> executor{};
+    // Selects newly written filters; enabled readers recognize both layouts.
+    // Appended to preserve the established positional aggregate members.
+    BloomFilterLayout bloom_filter_layout = BloomFilterLayout::Automatic;
 };
 
 struct ReadOptions {

@@ -17,6 +17,7 @@
 #include "table/block.h"
 #include "table/block_format.h"
 #include "table/compression.h"
+#include "table/full_filter.h"
 
 namespace modern_leveldb {
 namespace {
@@ -42,6 +43,18 @@ bool WithinDecodeBudget(ByteView bytes, BlockCompression type) {
     return true;
 }
 
+void FuzzFullFilter(ByteView input) {
+    auto borrowed = FullFilterReader::Create(BlockContents::Borrowed(input));
+    auto owned = FullFilterReader::Create(std::vector<std::byte>(input.begin(), input.end()));
+    Require(borrowed.has_value() == owned.has_value());
+    if (borrowed.has_value()) {
+        const auto key = input.first(std::min<std::size_t>(input.size(), 17));
+        Require(borrowed->KeyMayMatch(key) == owned->KeyMayMatch(key));
+        FullFilterReader moved(std::move(*borrowed));
+        Require(moved.KeyMayMatch({}) == owned->KeyMayMatch({}));
+    }
+}
+
 void FuzzFormat(ByteView input) {
     // Select one representation per input. Round-trip and traversal assertions
     // test internal consistency; independent golden bytes test format conventions.
@@ -50,6 +63,10 @@ void FuzzFormat(ByteView input) {
     }
     const unsigned command = std::to_integer<unsigned>(input[0]);
     input = input.subspan(1);
+    if ((command & 0x80U) != 0U) {
+        FuzzFullFilter(input);
+        return;
+    }
     switch (command % 8) {
         case 0: {
             auto edit = VersionEdit::Decode(input);

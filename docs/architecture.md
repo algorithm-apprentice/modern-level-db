@@ -212,6 +212,15 @@ higher layer.
 | 6 | `engine` | Table cache, recovery, read/write paths, flush, compaction, snapshots, DB state |
 | 7 | `api`, `diagnostics` | Public RAII facade; read-only storage-file diagnostics, native output, and tool support |
 
+Full-table filters are versioned optional SST metadata. The default public
+bytewise path collects key hashes while writing and tests a recognized full
+filter before Get seeks the index. Legacy range filters remain readable and
+are selected only when no recognized full filter exists. No filter is rebuilt
+by scanning a table at Open. Automatic mode does not enable byte-based
+exclusion for an unknown comparator; explicit disable and legacy writer
+selection remain available. The data/index/footer and checksum contracts
+stay native-readable.
+
 ### Implemented module graph
 
 Arrows point from a dependent module to a direct prerequisite.

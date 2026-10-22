@@ -73,7 +73,37 @@ Result<BlockCompression> EngineCompression(Compression compression) {
     return std::unexpected(Error::InvalidArgument("compression type is invalid"));
 }
 
-DatabaseEngineOptions EngineOptions(const Options& options, BlockCompression compression) {
+struct FilterSettings {
+    std::optional<BloomFilterPolicy> policy;
+    FilterLayout layout = FilterLayout::BlockBased;
+};
+
+Result<FilterSettings> PrepareFilterSettings(const Options& options) {
+    FilterSettings result;
+    switch (options.bloom_filter_layout) {
+        case BloomFilterLayout::Automatic:
+            result.layout = FilterLayout::FullTable;
+            break;
+        case BloomFilterLayout::BlockBased:
+            result.layout = FilterLayout::BlockBased;
+            break;
+        case BloomFilterLayout::FullTable:
+            result.layout = FilterLayout::FullTable;
+            break;
+        default:
+            return std::unexpected(Error::InvalidArgument("Bloom filter layout is invalid"));
+    }
+    const bool custom_automatic = options.bloom_filter_layout == BloomFilterLayout::Automatic &&
+                                  options.comparator != nullptr &&
+                                  options.comparator.get() != &BytewiseComparator();
+    if (options.bloom_bits_per_key.has_value() && !custom_automatic) {
+        result.policy.emplace(*options.bloom_bits_per_key);
+    }
+    return result;
+}
+
+DatabaseEngineOptions EngineOptions(const Options& options, BlockCompression compression,
+                                    const FilterSettings& filter) {
     DatabaseEngineOptions engine;
     engine.comparator =
         options.comparator != nullptr ? options.comparator.get() : &BytewiseComparator();
@@ -93,9 +123,8 @@ DatabaseEngineOptions EngineOptions(const Options& options, BlockCompression com
     engine.table_options.restart_interval = options.block_restart_interval;
     engine.table_options.compression = compression;
     engine.table_options.zstd_compression_level = options.zstd_compression_level;
-    if (options.bloom_bits_per_key.has_value()) {
-        engine.table_options.filter_policy.emplace(*options.bloom_bits_per_key);
-    }
+    engine.table_options.filter_policy = filter.policy;
+    engine.table_options.filter_layout = filter.layout;
     return engine;
 }
 
@@ -112,7 +141,11 @@ Result<DatabaseEngineOptions> PrepareEngineOptions(const Options& options) {
     if (!valid.has_value()) {
         return std::unexpected(valid.error());
     }
-    return EngineOptions(options, *compression);
+    const Result<FilterSettings> filter = PrepareFilterSettings(options);
+    if (!filter.has_value()) {
+        return std::unexpected(filter.error());
+    }
+    return EngineOptions(options, *compression, *filter);
 }
 
 }  // namespace

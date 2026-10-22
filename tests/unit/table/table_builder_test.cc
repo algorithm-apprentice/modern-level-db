@@ -283,6 +283,19 @@ TEST_F(TableBuilderTest, FullLayoutWithoutAPolicyDoesNotWriteFilterMetadata) {
     EXPECT_EQ(state_->data, FromHex(EmptyTable));
 }
 
+TEST_F(TableBuilderTest, EmptyFullFilterIsPersistedAsOneEmptyRegion) {
+    auto options = WithFilter();
+    options.filter_layout = FilterLayout::FullTable;
+    auto builder = MakeBuilder(options);
+    ASSERT_TRUE(builder->Finish().has_value());
+    TableContents decoded;
+    ASSERT_NO_FATAL_FAILURE(ReadTable(state_->data, comparator_, decoded));
+    ASSERT_TRUE(decoded.full_filter.has_value());
+    EXPECT_FALSE(decoded.full_filter->KeyMayMatch({}));
+    EXPECT_FALSE(decoded.full_filter->KeyMayMatch(AsBytes("absent")));
+    EXPECT_TRUE(decoded.entries.empty());
+}
+
 TEST_F(TableBuilderTest, InvalidFilterLayoutIsAnExplicitErrorEvenWithoutAPolicy) {
     TableBuilderOptions options;
     options.filter_layout = static_cast<FilterLayout>(99);
