@@ -44,6 +44,12 @@ MemTable reads pass the existing internal-key view, so each comparison decodes
 only the stored record's length prefix. MemTable iterators no longer create a
 temporary length-prefixed seek record.
 
+Entry-convertible arguments retain the original `Seek(const Entry&)` overload
+and convert once before searching, even for an empty list. Only an argument
+that is not convertible in its actual cv/ref category selects the prepared
+overload; traversal still borrows that target through a const reference.
+This preserves ordinary numeric calls and reference-qualified conversions.
+
 A search remembers the most recent node known not to precede the target.
 Descending a level can reuse that comparison because the target and published
 record are unchanged. This is a local search result, not a cache across calls.
@@ -102,9 +108,21 @@ Focused RED-to-GREEN cases establish:
 The literal replay-context regression failed against the first cache
 implementation. A separate probe compiled with the exact frozen pre-cache
 header and library confirmed the original predecessor independently.
-The corrected implementation passes 970 unit/public cases and 18 native
+The corrected implementation passes 974 unit/public cases and 18 native
 compatibility, crash, and database-model cases on Windows x64. The format
 fuzzer consumer also compiles; this is not a claim of a completed fuzz campaign.
+
+Full PR CI additionally exposed a signed-conversion diagnostic in the initial
+unconstrained heterogeneous overload. Restoring the stored-entry overload
+fixes the conversion boundary rather than suppressing compiler warnings or
+rewriting literal arguments. Two additional regressions cover eager exactly-once
+conversion and lvalue/rvalue-qualified conversion operators.
+
+GCC 13's changed-branch gate also exposed two meaningful test gaps: stored-target
+comparison reuse for the prepared comparator's separate template specialization,
+and corruption reached after reverse-cache budget admission has already failed.
+Model comparisons across multiple skip-list levels and a budget-limited malformed
+replay cover those paths without changing production code or coverage exclusions.
 
 ## Measurement protocol and provenance
 
@@ -115,7 +133,7 @@ Four independently frozen Release libraries represent:
 | B | `06cb3ad` | Existing owned decompression output and single-call read CRC |
 | K | `0a84284` | Complete-key borrowing |
 | S | `f6acff0` | Prepared MemTable targets and comparison reuse |
-| R | `080ad9b` | Bounded reverse cache with corrected replay epochs |
+| R | `049ca68` | Bounded reverse cache, corrected replay epochs, and conversion-preserving overloads |
 
 Both timing objects use only the unchanged public headers. The existing
 Get/forward-scan/retained-Seek object is reused without recompiling its loops.
@@ -147,15 +165,23 @@ Review found the replay-context defect after the initial final binary
 incomplete process. All 42 samples belonging to old-final comparisons are
 superseded, regardless of their timings. The 24 B-to-K and 24 K-to-S samples
 remain valid because those exact libraries and timing objects are unchanged.
-The corrected run collected all 12 S-to-R reverse samples and all 48 B-to-R
-integrated samples anew: 60 fresh plus 48 unchanged samples, or 108 accepted
-observations. Independent recomputation checked every accepted process output,
-paired-round identity, median, cost ratio, input hash, and operation count.
+The first corrected runtime, `080ad9b`, completed all 12 S-to-R reverse samples
+and all 48 B-to-R integrated samples. PR CI then required the conversion-boundary
+follow-up `049ca68`. A strict comparison found different Release runtime
+sections and layout, so the earlier final timings were not transferred to the
+changed code. All 60 final comparisons were collected again with the exact
+portable runtime, regardless of the earlier results.
+
+The final accepted matrix contains those 60 observations plus the same 48
+unchanged B-to-K/K-to-S observations, or 108 total. Independent recomputation
+checked every accepted process output, paired-round identity, median, cost ratio,
+input hash, and operation count. All superseded attempts remain archived.
 
 Raw plans, hashes, commands, complete/superseded samples, regression evidence,
 and corrected results are retained under
-`build\rocksdb-read-optimizations-20261021`; the corrected accepted matrix is
-under `corrected\measurements`.
+`build\rocksdb-read-optimizations-20261021`; the final portable accepted matrix
+is under `pr-portability\measurements`. The earlier replay-corrected matrix
+under `corrected\measurements` is historical evidence, not the final result.
 
 ## Measured outcomes
 
@@ -170,23 +196,25 @@ the two executions within each round, not a statistical-significance test.
 | B -> K | Get, 512 MiB cache | 5.453 us | 5.308 us | -2.67% | -3.02% | 5/6 |
 | K -> S | MemTable Get | 2.603 us | 2.619 us | +0.62% | -0.90% | 3/6 |
 | K -> S | Retained MemTable Seek | 2.501 us | 2.451 us | -1.99% | -2.80% | 5/6 |
-| S -> R | Reverse scan | 459.822 ms | 399.075 ms | -13.21% | -12.82% | 6/6 |
-| B -> R | Get, 8 MiB cache | 7.126 us | 6.799 us | -4.59% | -4.86% | 6/6 |
-| B -> R | Get, 512 MiB cache | 5.293 us | 5.042 us | -4.74% | -4.87% | 5/6 |
-| B -> R | Forward scan | 261.645 ms | 260.426 ms | -0.47% | -1.12% | 4/6 |
-| B -> R | Retained SST Seek | 7.217 us | 6.959 us | -3.57% | -3.91% | 6/6 |
+| S -> R | Reverse scan | 462.738 ms | 393.784 ms | -14.90% | -13.73% | 6/6 |
+| B -> R | Get, 8 MiB cache | 6.890 us | 6.716 us | -2.54% | -2.62% | 6/6 |
+| B -> R | Get, 512 MiB cache | 5.332 us | 5.138 us | -3.64% | -3.54% | 5/6 |
+| B -> R | Forward scan | 260.240 ms | 265.035 ms | +1.84% | +2.64% | 0/6 |
+| B -> R | Retained SST Seek | 7.333 us | 6.949 us | -5.24% | -5.36% | 6/6 |
 
-Reverse replay caching gives the clearest measured reduction. Integrated
+The reverse-path contrast gives the clearest measured reduction. Integrated
 cache-pressure Get and retained SST Seek also improve in every pair.
-The resident Get result improves in five pairs. Forward scan's small mixed
-change does not establish a substantial benefit. Prepared MemTable Get has
-no stable elapsed-time gain; retain that counterexample rather than treating
-fewer comparisons as proof of lower latency.
+The resident Get result improves in five pairs. Forward scan consistently
+regresses by 1.84%; retain that explicit tradeoff rather than calling the branch
+a universal read-speed improvement. Prepared MemTable Get has no stable
+elapsed-time gain; fewer comparisons are not proof of lower latency.
 
 The isolated and integrated phases ran at different times. Their percentages
 are not additive, and their difference is not a causal decomposition. The
 SST image has no searchable MemTable records, so its Get result is not evidence
-of a nonempty-MemTable speedup.
+of a nonempty-MemTable speedup. R also contains the overload-compatibility
+follow-up; S-to-R is a frozen-variant comparison, not pure attribution of every
+nanosecond to cache reuse.
 
 These warm single-foreground-thread results are per-process mean costs, not
 tail latencies. They do not establish cold-I/O, concurrent-read, write-throughput,
