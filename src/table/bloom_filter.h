@@ -11,6 +11,11 @@
 
 namespace modern_leveldb {
 
+enum class FilterLayout {
+    BlockBased,
+    FullTable,
+};
+
 // Probabilistic exclusion for byte-equal keys: a valid filter can rule a key out,
 // while "may match" still requires a table lookup. Builders/readers keep a policy copy.
 class BloomFilterPolicy final {

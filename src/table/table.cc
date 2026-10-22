@@ -25,6 +25,7 @@
 #include "table/block_format.h"
 #include "table/bloom_filter.h"
 #include "table/filter_block.h"
+#include "table/full_filter.h"
 
 namespace modern_leveldb {
 namespace {
@@ -185,8 +186,7 @@ Result<BlockHandle> DecodeFilterHandle(ByteView value) {
     return *handle;
 }
 
-Result<std::optional<BlockHandle>> FindFilterHandle(const Block& meta, BloomFilterPolicy policy) {
-    const std::string key = FilterMetaindexKey(policy);
+Result<std::optional<BlockHandle>> FindFilterHandle(const Block& meta, std::string_view key) {
     Block::Iterator entry(meta, BytewiseComparator());
     const Status sought = entry.Seek(AsBytes(key));
     // GCOVR_EXCL_START: full physical validation makes metaindex seek infallible
@@ -214,14 +214,38 @@ Result<FilterBlockReader> ReadFilterBlock(const RandomAccessFile& file, std::uin
     return FilterBlockReader::Create(std::move(*contents), policy);
 }
 
-// Reads the filter block that the metaindex maps to the policy, if any.
-Status ReadFilter(const RandomAccessFile& file, std::uint64_t blocks_end, BlockHandle metaindex,
-                  BloomFilterPolicy policy, std::optional<FilterBlockReader>& filter) {
+struct TableFilters {
+    std::optional<FilterBlockReader> legacy;
+    std::optional<FullFilterReader> full;
+};
+
+// Select exactly one recognized layout; unselected metadata is not decoded.
+Status ReadFilters(const RandomAccessFile& file, std::uint64_t blocks_end, BlockHandle metaindex,
+                   BloomFilterPolicy policy, TableFilters& filters) {
     Result<Block> meta = ReadValidatedMetaindex(file, blocks_end, metaindex);
     if (!meta.has_value()) {
         return std::unexpected(std::move(meta).error());
     }
-    Result<std::optional<BlockHandle>> handle = FindFilterHandle(*meta, policy);
+    Result<std::optional<BlockHandle>> full = FindFilterHandle(*meta, FullFilterMetaKey);
+    if (!full.has_value()) {
+        return std::unexpected(std::move(full).error());
+    }
+    if (full->has_value()) {
+        if (!IsFullFilterBlockSize((**full).size)) {
+            return std::unexpected(Error::Corruption("full filter block size is invalid"));
+        }
+        Result<BlockContents> contents = ReadStoredBlock(file, blocks_end, **full);
+        if (!contents.has_value()) {
+            return std::unexpected(std::move(contents).error());
+        }
+        Result<FullFilterReader> reader = FullFilterReader::Create(std::move(*contents));
+        if (!reader.has_value()) {
+            return std::unexpected(std::move(reader).error());
+        }
+        filters.full.emplace(std::move(*reader));
+        return {};
+    }
+    Result<std::optional<BlockHandle>> handle = FindFilterHandle(*meta, FilterMetaindexKey(policy));
     if (!handle.has_value()) {
         return std::unexpected(std::move(handle).error());
     }
@@ -232,7 +256,7 @@ Status ReadFilter(const RandomAccessFile& file, std::uint64_t blocks_end, BlockH
     if (!reader.has_value()) {
         return std::unexpected(std::move(reader).error());
     }
-    filter.emplace(std::move(*reader));
+    filters.legacy.emplace(std::move(*reader));
     return {};
 }
 
@@ -260,10 +284,10 @@ Result<std::unique_ptr<Table>> Table::Open(std::unique_ptr<RandomAccessFile> fil
         return std::unexpected(std::move(index).error());
     }
 
-    std::optional<FilterBlockReader> filter;
+    TableFilters filters;
     if (options.filter_policy.has_value()) {
         const Status loaded =
-            ReadFilter(*file, blocks_end, footer->metaindex, *options.filter_policy, filter);
+            ReadFilters(*file, blocks_end, footer->metaindex, *options.filter_policy, filters);
         if (!loaded.has_value()) {
             return std::unexpected(loaded.error());
         }
@@ -272,9 +296,9 @@ Result<std::unique_ptr<Table>> Table::Open(std::unique_ptr<RandomAccessFile> fil
     const std::uint64_t cache_id =
         options.block_cache != nullptr ? options.block_cache->NewId() : 0;
     // GCOVR_EXCL_START: allocation failure propagates as an exception
-    auto table = std::unique_ptr<Table>(
-        new Table(std::move(file), blocks_end, comparator, options.block_key_format,
-                  std::move(*index), std::move(filter), options.block_cache, cache_id));
+    auto table = std::unique_ptr<Table>(new Table(
+        std::move(file), blocks_end, comparator, options.block_key_format, std::move(*index),
+        std::move(filters.legacy), std::move(filters.full), options.block_cache, cache_id));
     // GCOVR_EXCL_STOP
     return table;
 }
@@ -282,8 +306,8 @@ Result<std::unique_ptr<Table>> Table::Open(std::unique_ptr<RandomAccessFile> fil
 // GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
 Table::Table(std::unique_ptr<RandomAccessFile> file, std::uint64_t blocks_end,
              const InternalKeyComparator& comparator, BlockKeyFormat block_key_format, Block index,
-             std::optional<FilterBlockReader> filter, BlockCache* block_cache,
-             std::uint64_t cache_id) noexcept
+             std::optional<FilterBlockReader> filter, std::optional<FullFilterReader> full_filter,
+             BlockCache* block_cache, std::uint64_t cache_id) noexcept
     : file_(std::move(file)),
       blocks_end_(blocks_end),
       comparator_(&comparator),
@@ -293,12 +317,16 @@ Table::Table(std::unique_ptr<RandomAccessFile> file, std::uint64_t blocks_end,
       block_key_format_(block_key_format),
       index_(std::move(index)),
       filter_(std::move(filter)),
+      full_filter_(std::move(full_filter)),
       block_cache_(block_cache),
       cache_id_(cache_id) {}
 // GCOVR_EXCL_STOP
 
 Result<TableLookupKind> Table::Get(const LookupKey& key, std::vector<std::byte>& value,
                                    const TableReadOptions& options) const {
+    if (full_filter_.has_value() && !full_filter_->KeyMayMatch(key.user_key())) {
+        return TableLookupKind::Missing;
+    }
     Block::Iterator index(index_, *block_comparator_, block_key_format_);
     const Status index_sought = index.Seek(key.internal_key());
     // GCOVR_EXCL_START: full physical index validation makes this seek infallible

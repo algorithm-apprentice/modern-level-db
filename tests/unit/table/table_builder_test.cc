@@ -283,6 +283,15 @@ TEST_F(TableBuilderTest, FullLayoutWithoutAPolicyDoesNotWriteFilterMetadata) {
     EXPECT_EQ(state_->data, FromHex(EmptyTable));
 }
 
+TEST_F(TableBuilderTest, InvalidFilterLayoutIsAnExplicitErrorEvenWithoutAPolicy) {
+    TableBuilderOptions options;
+    options.filter_layout = static_cast<FilterLayout>(99);
+    auto builder = MakeBuilder(options);
+    ExpectError(builder->Finish(), ErrorCode::InvalidArgument);
+    EXPECT_TRUE(state_->data.empty());
+    EXPECT_EQ(state_->close_calls, 1);
+}
+
 TEST_F(TableBuilderTest, FullFilterOverflowLatchesBeforeAcceptingTheNextEntry) {
     TableBuilderOptions options;
     options.filter_policy = BloomFilterPolicy(std::numeric_limits<std::uint32_t>::max());

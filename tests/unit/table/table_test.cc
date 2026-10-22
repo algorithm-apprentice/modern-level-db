@@ -531,6 +531,41 @@ TEST_F(TableTest, FullFilterUsesTheStoredBlockChecksumBeforeHeaderAdmission) {
     EXPECT_TRUE(TryOpen(bytes).has_value());
 }
 
+TEST_F(TableTest, ReadsWrittenFullFiltersAcrossVersionsCompressionAndBorrowedBacking) {
+    const std::vector<Entry> entries{
+        {Key("k", 30), Materialize(AsBytes("new"))},
+        {Key("k", 20, ValueKind::Deletion), {}},
+        {Key("k", 10), Materialize(AsBytes("old"))},
+        {Key("m", 5), Materialize(AsBytes("other"))},
+    };
+    for (const auto compression :
+         {BlockCompression::None, BlockCompression::Snappy, BlockCompression::Zstd}) {
+        TableBuilderOptions options;
+        options.filter_policy = BloomFilterPolicy(10);
+        options.filter_layout = FilterLayout::FullTable;
+        options.block_size = 1;
+        options.compression = compression;
+        const auto bytes = BuildTable(entries, options, comparator_);
+        for (const bool views : {false, true}) {
+            state_ = std::make_shared<ReadableState>();
+            state_->data = bytes;
+            state_->return_views = views;
+            auto opened = Table::Open(std::make_unique<MemoryRandomAccessFile>(state_),
+                                      bytes.size(), comparator_, WithFilter());
+            ASSERT_TRUE(opened.has_value());
+            ExpectValue(Get(**opened, "k", 30), "new");
+            const auto deleted = Get(**opened, "k", 29);
+            ASSERT_TRUE(deleted.has_value());
+            EXPECT_EQ(deleted->kind, ValueKind::Deletion);
+            ExpectValue(Get(**opened, "k", 19), "old");
+            EXPECT_FALSE(Get(**opened, "k", 0).has_value());
+            EXPECT_FALSE(Get(**opened, "absent", MaxSequenceNumber).has_value());
+            EXPECT_EQ(ScanForward(**opened), entries);
+            EXPECT_EQ(ScanBackward(**opened), entries);
+        }
+    }
+}
+
 TEST_F(TableTest, ReadsLevelDbTables) {
     const auto table = Open(FromHex(ThreeBlockTable), WithFilter());
     ASSERT_NE(table, nullptr);
