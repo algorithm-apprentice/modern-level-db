@@ -61,9 +61,17 @@ Each hint contains a complete cache-instance identity, file number, shard
 generation and weak table owner. Hashing selects a slot, not identity.
 Compare complete tags before weak locking.
 
-Every TableCache gets an independent process-unique identity. Object-address
-reuse must not make another database's hint valid. File-number reuse across
-databases and concurrent cache instances must not alias.
+Every TableCache gets a fresh nonempty ownership control block for an empty
+identity token. Hints hold only weak tokens; compare full ownership identity
+using both `owner_before` directions before locking the weak Table. An old
+hint retains its control block, so a new cache cannot alias that identity,
+even after object-address reuse or arbitrarily many prior cache lifetimes.
+There is no wrapping global numeric identity counter.
+
+Hashing may use the stable token object's address to select a hint position;
+that address is never the identity comparison. The extra weak token and tiny
+per-cache allocation remain bounded. A weak token owns no services or table.
+File-number reuse across databases and concurrent caches must not alias.
 
 Replacing a hint drops only a weak owner. Memory is bounded by the fixed array
 per thread, including when a thread touches many databases. Thread exit drops
@@ -107,6 +115,12 @@ Evict first erases the shared cache mapping, then advances the corresponding
 shard generation with release ordering. A hint carries the generation observed
 before its fallback Find and is usable only with the current generation.
 Do not publish a reusable hint when the generation changes during fallback.
+
+Generation saturates rather than wrapping. Before any contender publishes
+`UINT64_MAX`, permanently close the shard's monotonic hint gate; further Evict
+calls leave that generation unchanged. The successful-open CAS cannot lower
+a closed count. Closing only after a wrapping increment is unsafe: another
+Evict could return after recreating an ancient epoch while the first pauses.
 
 A Get overlapping Evict may retain a reader already obtained, as existing
 pins do. A later operation after Evict completes must not reuse an old hint
@@ -159,6 +173,9 @@ weak hints add no persistent open-file owners.
   obtaining its handle and hint publication; and an old open completing after
   Evict. Retain the documented allowed recache race but reject direct reuse
   of an old-generation hint.
+- Near-exhaustion and two-Evict overtake schedules: generation never repeats
+  and a terminal generation implies a closed gate. Acquire-load generation
+  before inspecting the gate, rather than sampling an earlier gate value.
 - A pressure corpus measuring handoff and disabled variants, not merely an
   all-resident hit test or a claim that disabling hints restores past history.
 - One/four-reader Get measurements with hints disabled/enabled and original
@@ -179,3 +196,8 @@ fallback now retains its real mapping pin through the read, and the pressure
 handoff explicitly admits lost promotion history rather than claiming exact
 LRU parity. Re-review approved this concrete design, not default-on adoption
 or implementation correctness.
+
+Independent pre-implementation re-review also approved weak control-block
+instance identity and the corrected terminal-generation ordering. Its
+two-Evict counterexample was resolved by closing the gate before terminal
+publication and never wrapping an epoch.
