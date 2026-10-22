@@ -826,6 +826,68 @@ TEST_F(TableCacheTest, WeakThreadHintsOutliveCacheClosureWithoutRetainingFiles) 
     EXPECT_EQ(file_system_.live_files(), 0);
 }
 
+TEST_F(TableCacheTest, DuplicateSuccessfulOpensCloseHintsBeforeEitherNewReaderIsReliedOn) {
+    const auto files = SameShardFiles(2);
+    const auto a = WriteTable(files[0], "a");
+    const auto b = WriteTable(files[1], "b");
+    TableCache cache(file_system_, directory_, comparator_, {}, 16, true);
+    std::optional<Result<TableLookupKind>> first_result;
+    std::optional<Result<TableLookupKind>> read_result;
+    std::exception_ptr error;
+    std::vector<std::byte> first_value;
+    std::vector<std::byte> read_value;
+    std::jthread opener;
+    std::jthread reader;
+    OneShotGate open;
+    OneShotGate second_read;
+    ClearFileHooks clear(file_system_);
+    file_system_.SetOpenHook([&](std::uint64_t number) {
+        if (number == files[0]) {
+            open.Pause();
+        }
+    });
+    opener = std::jthread([&] {
+        try {
+            first_result.emplace(PointRead(cache, files[0], a, first_value));
+        } catch (...) {
+            error = std::current_exception();
+        }
+    });
+    ASSERT_TRUE(open.Wait());
+    std::vector<std::byte> other;
+    ASSERT_EQ(PointRead(cache, files[0], a, other), TableLookupKind::Value);
+    open.Open();
+    opener.join();
+    ASSERT_FALSE(error);
+    ASSERT_TRUE(first_result.has_value());
+    ASSERT_EQ(*first_result, TableLookupKind::Value);
+    ASSERT_EQ(Opens(files[0]), 2);
+    std::atomic<int> data_reads = 0;
+    file_system_.SetReadHook([&](std::uint64_t number, std::uint64_t offset) {
+        if (number == files[0] && offset == 0 && ++data_reads == 2) {
+            second_read.Pause();
+        }
+    });
+    reader = std::jthread([&] {
+        try {
+            read_result.emplace(PointRead(cache, files[0], a, read_value));
+            read_result.emplace(PointRead(cache, files[0], a, read_value));
+        } catch (...) {
+            error = std::current_exception();
+        }
+    });
+    ASSERT_TRUE(second_read.Wait());
+    ASSERT_EQ(PointRead(cache, files[1], b, other), TableLookupKind::Value);
+    const auto pinned = cache.Find(files[0], a + 1);
+    EXPECT_TRUE(pinned.has_value());
+    second_read.Open();
+    reader.join();
+    ASSERT_FALSE(error);
+    ASSERT_TRUE(read_result.has_value());
+    ASSERT_EQ(*read_result, TableLookupKind::Value);
+    EXPECT_EQ(AsStringView(read_value), "a");
+}
+
 TEST(TableReaderReuseStateTest, OpenEventsIncludeTheBoundaryThenSaturatePermanently) {
     table_cache_detail::ReuseShard state;
     EXPECT_TRUE(state.enabled(3));

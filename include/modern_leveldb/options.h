@@ -71,6 +71,9 @@ struct Options {
     // Selects newly written filters; enabled readers recognize both layouts.
     // Appended to preserve the established positional aggregate members.
     BloomFilterLayout bloom_filter_layout = BloomFilterLayout::Automatic;
+    // Bounded weak point-read hints never permanently pin table files. False
+    // keeps ordinary table-cache lookup/release maintenance on every point read.
+    bool reuse_table_readers = false;
 };
 
 struct ReadOptions {

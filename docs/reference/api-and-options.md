@@ -58,6 +58,7 @@ when supplied through `ReadOptions`.
 | `clock` | null | Retain a supplied monotonic clock instead of using the system clock |
 | `executor` | null | Retain a supplied executor instead of creating a serial worker |
 | `bloom_filter_layout` | Automatic | Full-table filtering for the known bytewise comparator; explicit BlockBased or FullTable selects the writer layout |
+| `reuse_table_readers` | `false` | Bounded weak point-read hints; false preserves ordinary table-cache maintenance |
 
 The engine clips `max_open_files` to 74 through 50,000,
 `write_buffer_size` to 64 KiB through 1 GiB, `max_file_size` to 1 MiB through
@@ -69,6 +70,15 @@ types and defaults.
 `write_buffer_size` is measured using memtable arena reservations, including
 per-block pointer accounting. It is not exact payload size or a hard allocation
 cap; one write group can exceed the threshold.
+
+Reader reuse uses one fixed 64-slot weak hint array per thread across cache
+instances, not permanent file pins. Each fallback retains the ordinary table
+cache pin through the read. A shard permanently disables hints after its
+successful-open-event ceiling; explicit eviction invalidates its hints.
+Skipping promotions can change the initial pressure-handoff victim, so this
+is not exact LRU-history preservation. Iterator and maintenance pins retain
+their existing mapping/lifetime contracts. See
+[ADR-0087](../adr/0087-bounded-table-reader-reuse.md).
 
 ## Supplying runtime dependencies
 

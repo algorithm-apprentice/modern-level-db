@@ -214,6 +214,15 @@ eviction candidates.
 Replacement or erasure removes cache discoverability, not the validity of
 an already retained handle.
 
+Point-read reader reuse distinguishes another pair of lifetimes. A mapping
+pin protects both the cache entry and its Table. A temporary shared Table
+owner protects only the reader/file. The optional 64-slot per-thread weak
+hint array owns neither while idle; a hit locks a reader just for that Get.
+Fallback reads keep their real mapping pin. A monotonic per-shard open-event
+gate disables hints before pressure can exceed its known ceiling, and an
+eviction generation prevents an old live reader from becoming a stale hint.
+Past skipped LRU promotions cannot be reconstructed at that handoff.
+
 Capacity is an eviction budget, not a strict process memory limit.
 Pinned entries can exceed it, and per-shard rounding and ownership outside
 the cache also matter. The public facade currently creates an internal

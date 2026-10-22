@@ -339,6 +339,15 @@ Two internal state owners make cross-field invariants explicit:
   immutable-presence mirror. File creation, WAL close policy, scheduling, and
   VersionEdit installation remain DatabaseEngine responsibilities.
 
+TableCache stores shared immutable reader owners behind its original move-only
+mapping pins. Optional point-read reuse holds only a temporary strong reader
+owner obtained from a fixed per-thread weak hint. Complete ownership-token,
+file and generation tags reject stale or foreign hints; successful-open
+pressure permanently restores ordinary lookup/release maintenance. Find,
+iterator and maintenance callers still retain actual mapping pins. See
+[ADR-0087](adr/0087-bounded-table-reader-reuse.md) for the deliberately different
+pressure-handoff history and terminal-generation protocol.
+
 `DatabaseEngineOptions::Sanitize()` clips numeric resource settings in place.
 `EnginePolicy` then retains the memtable size threshold, target-file size,
 WAL-creation policy, and table-building settings. The public

@@ -58,11 +58,8 @@ std::optional<bool> SearchMemory(const MemTable& mutable_memtable,
 
 Result<Decision> SearchFile(TableCache& table_cache, const FileMetadata& file, const LookupKey& key,
                             std::vector<std::byte>& value, const TableReadOptions& options) {
-    const Result<TableCache::Handle> table = table_cache.Find(file.number, file.file_size);
-    if (!table.has_value()) {
-        return std::unexpected(table.error());
-    }
-    const Result<TableLookupKind> found = (*table)->Get(key, value, options);
+    const Result<TableLookupKind> found =
+        table_cache.Get(file.number, file.file_size, key, value, options);
     if (!found.has_value()) {
         return std::unexpected(std::move(found).error());
     }
