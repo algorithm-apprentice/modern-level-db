@@ -322,3 +322,39 @@ falls from 1,145 to 462 bytes, however, and the Unique branch now calls the
 original typed `FindUnique` pin and Table Get without weak-hint state or
 outward Handle visitation. Require the linked image to match that inspected
 route and measure its actual effect rather than inferring a gain from size.
+
+### Typed-route v3 result and direct disabled-path candidate
+
+The complete v3 campaign independently verified all 192 processes and the
+actual linked typed route. Enabled resident four-reader results beat the
+matched original by 7.55% and 10.84%, in all six pairs for each budget.
+The disabled resident path still costs 1.56% at 8 MiB and 1.11% at 512 MiB,
+with five slower pairs in each cell. Other disabled cells range from -0.73%
+to +1.55%. Do not relabel that remaining result as measured preservation.
+
+The next bounded design restores the original disabled production call graph:
+SearchFile obtains the original typed pin and calls Table Get directly, while
+the Shared branch keeps the complete hint-aware Get. Expose only an immutable
+ownership-mode observation and `FindUniqueForPoint` on the private engine
+interface. That typed method requires Unique mode, established by SearchFile
+before entry, and delegates to the same lookup/open/insert helper as outward
+Find. Keep complete Get valid for its existing direct callers in both modes.
+No ownership flag, pointer reinterpretation, hint/gate change, force-inline
+macro or public option is added.
+
+Use the existing TableLookupKind as the private source-decision type instead
+of converting every table result through an equivalent second enum. Memory
+lookup constructs only the same Missing/Value/Deletion alternatives; Table Get
+already returns this checked internal type. This removes redundant result
+conversion without weakening persistent-input or I/O validation.
+
+Require actual linked evidence that the disabled SearchFile branch calls the
+typed Find and Table Get without the added complete-Get wrapper. Keep all v3
+observations, verify every lifetime/error/seek/tombstone contract, obtain
+independent design/implementation reviews, and run fresh matched controls
+before admission. This is another measured hypothesis, not a claimed recovery
+or a preset percentage target.
+Independent architecture review approved this bounded design. The ownership
+observer must not report per-shard hint eligibility: Shared mode remains Shared
+after pressure closes a gate. The typed method's cache/comparator/filesystem
+borrows retain the existing Find lifetime obligations.
