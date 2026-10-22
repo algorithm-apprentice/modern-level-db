@@ -45,6 +45,27 @@ modern_leveldb_compression_dependencies(
 )
 modern_leveldb_crc32c_dependency(MODERN_LEVELDB_CRC32C_TARGET)
 
+set(MODERN_LEVELDB_AVX2_SOURCE "")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i.86)$" AND
+   (NOT CMAKE_OSX_ARCHITECTURES OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))
+  if(MSVC)
+    set(MODERN_LEVELDB_AVX2_FLAG "/arch:AVX2")
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set(MODERN_LEVELDB_AVX2_FLAG "-mavx2")
+  endif()
+  if(DEFINED MODERN_LEVELDB_AVX2_FLAG)
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("${MODERN_LEVELDB_AVX2_FLAG}" MODERN_LEVELDB_HAVE_AVX2_PROBE)
+    if(MODERN_LEVELDB_HAVE_AVX2_PROBE)
+      set(MODERN_LEVELDB_AVX2_SOURCE src/table/full_filter_avx2.cc)
+      set_property(
+        SOURCE "${MODERN_LEVELDB_AVX2_SOURCE}" APPEND PROPERTY
+        COMPILE_OPTIONS "${MODERN_LEVELDB_AVX2_FLAG}"
+      )
+    endif()
+  endif()
+endif()
+
 set(
   MODERN_LEVELDB_LIBRARY_SOURCES
     src/api/block_cache.cc
@@ -97,14 +118,19 @@ set(
     src/table/compression.cc
     src/table/filter_block.cc
     src/table/full_filter.cc
+    src/table/full_filter_dispatch.cc
     src/table/full_filter_scalar.cc
     src/table/table.cc
     src/table/table_builder.cc
     src/wal/wal_io.cc
+    ${MODERN_LEVELDB_AVX2_SOURCE}
 )
 
 function(modern_leveldb_add_library target)
   add_library("${target}" STATIC ${MODERN_LEVELDB_LIBRARY_SOURCES})
+  if(MODERN_LEVELDB_AVX2_SOURCE)
+    target_compile_definitions("${target}" PRIVATE MODERN_LEVELDB_HAVE_AVX2_PROBE)
+  endif()
   if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(
       "${target}"

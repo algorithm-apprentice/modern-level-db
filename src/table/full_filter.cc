@@ -107,7 +107,7 @@ FullFilterReader::FullFilterReader(BlockContents contents, std::uint32_t regions
     : contents_(std::move(contents)),
       regions_(regions),
       probes_(probes),
-      probe_(&full_filter_detail::ScalarMayMatch) {}
+      probe_(full_filter_detail::RuntimeProbe()) {}
 
 bool FullFilterReader::KeyMayMatch(ByteView user_key) const noexcept {
     const auto region = RegionOf(Hash32(user_key, BucketSeed), regions_);
