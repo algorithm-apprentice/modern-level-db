@@ -936,6 +936,30 @@ TEST(TableReaderReuseStateTest, TerminalGenerationClosesTheGateAndNeverWraps) {
     }
 }
 
+TEST(TableReaderReuseStateTest, CompletedEvictionCannotOvertakeAClosingEpochIntoAnAncientHint) {
+    table_cache_detail::ReuseShard state;
+    state.RecordOpen(1);
+    state.generation.store(std::numeric_limits<std::uint64_t>::max() - 1);
+    std::jthread delayed;
+    OneShotGate prepared;
+    delayed = std::jthread([&] {
+        const auto observed = state.BeginInvalidation(1);
+        prepared.Pause();
+        state.CompleteInvalidation(observed, 1);
+    });
+    ASSERT_TRUE(prepared.Wait());
+    EXPECT_FALSE(state.enabled(1));
+    state.Invalidate(1);
+    const auto completed_generation = state.generation.load(std::memory_order_acquire);
+    EXPECT_EQ(completed_generation, std::numeric_limits<std::uint64_t>::max());
+    EXPECT_FALSE(state.enabled(1));
+    prepared.Open();
+    delayed.join();
+    EXPECT_EQ(state.generation.load(), completed_generation);
+    EXPECT_EQ(state.opens.load(), 2U);
+    EXPECT_FALSE(state.enabled(1));
+}
+
 TEST(TableReaderReuseStateTest, ConcurrentEvictionsCannotPublishAReusedEpochOrReopenTheGate) {
     table_cache_detail::ReuseShard state;
     state.RecordOpen(1);
