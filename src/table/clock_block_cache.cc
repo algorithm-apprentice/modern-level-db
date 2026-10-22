@@ -492,7 +492,9 @@ void Release(Slot& slot) noexcept {
 
 struct State {
     explicit State(std::size_t capacity)
-        : diagnostics(new Diagnostics), allowance(std::max<std::size_t>(64 * 1024, capacity / 4)) {
+        : allowance(std::max<std::size_t>(64 * 1024, capacity / 4)) {
+        // Shard containers may throw; the remaining configuration does not.
+        diagnostics = new Diagnostics;
         const auto fixed = (sizeof(State) - sizeof(shards) + sizeof(Diagnostics) +
                             sizeof(ClockBlockCache) + Shards - 1) /
                            Shards;
@@ -518,7 +520,7 @@ struct State {
         diagnostics->Release();
     }
 
-    Diagnostics* diagnostics;
+    Diagnostics* diagnostics = nullptr;
     std::size_t allowance;
     std::atomic<std::uint64_t> next_id{0};
     std::array<Shard, Shards> shards;
