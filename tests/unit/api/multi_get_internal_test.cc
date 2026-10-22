@@ -13,6 +13,7 @@
 #include <latch>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -114,7 +115,10 @@ class ResetBatchObserver {
 public:
     explicit ResetBatchObserver(ObservedBatchFileSystem& file_system) noexcept
         : file_system_(file_system) {}
-    ~ResetBatchObserver() { file_system_.Observe({}); }
+    ~ResetBatchObserver() {
+        file_system_.Observe({});
+        file_system_.SetOperationHook({});
+    }
 
 private:
     ObservedBatchFileSystem& file_system_;
@@ -134,6 +138,7 @@ protected:
     }
     void TearDown() override {
         file_system_.Observe({});
+        file_system_.SetOperationHook({});
         executor_.RunAll();
         state_.reset();
     }
@@ -330,6 +335,67 @@ TEST_F(InternalMultiGetTest, OrdinaryPerKeyErrorsDoNotBecomeAbsenceOrCancelOther
     EXPECT_EQ(engine().GetState().value().snapshot_count, 0U);
 }
 
+TEST_F(InternalMultiGetTest, ActualEngineReadFailuresKeepTheirCodesAndOtherKeyResults) {
+    Put("a", "A");
+    Put("b", "B");
+    Put("c", "C");
+    Flush();
+    std::vector<std::byte> warmed;
+    ASSERT_TRUE(engine().Get(AsBytes("a"), warmed).value());
+    std::size_t reads = 0;
+    file_system_.SetOperationHook([&](std::string_view operation) -> Status {
+        if (operation.starts_with("read ") && operation.ends_with(".ldb")) {
+            if (++reads == 1) {
+                return std::unexpected(Error::Io("actual positioned read failed"));
+            }
+            if (reads == 2) {
+                return std::unexpected(Error::Corruption("actual read reported corruption"));
+            }
+        }
+        return {};
+    });
+    ResetBatchObserver reset(file_system_);
+    const std::array keys{AsBytes("a"), AsBytes("b"), AsBytes("c"), AsBytes("missing"),
+                          AsBytes("a")};
+    const auto results = detail::ReadBatch(state_, keys, {}, nullptr, 1);
+    ASSERT_EQ(results.size(), keys.size());
+    ASSERT_FALSE(results[0].has_value());
+    EXPECT_EQ(results[0].error().code(), ErrorCode::Io);
+    ASSERT_FALSE(results[1].has_value());
+    EXPECT_EQ(results[1].error().code(), ErrorCode::Corruption);
+    EXPECT_EQ(Value(results[2]), "C");
+    ASSERT_TRUE(results[3].has_value());
+    EXPECT_FALSE(results[3]->has_value());
+    EXPECT_EQ(Value(results[4]), "A");
+    EXPECT_EQ(reads, 4U);
+    EXPECT_FALSE(engine().GetState().value().sticky_error.has_value());
+    EXPECT_EQ(engine().GetState().value().snapshot_count, 0U);
+}
+
+TEST_F(InternalMultiGetTest, ActualWorkerAllocationExceptionIsRethrownAfterJoining) {
+    Put("a", "A");
+    Put("b", "B");
+    Flush();
+    std::vector<std::byte> warmed;
+    ASSERT_TRUE(engine().Get(AsBytes("a"), warmed).value());
+    const auto caller = std::this_thread::get_id();
+    std::atomic<int> worker_failures = 0;
+    file_system_.SetOperationHook([&](std::string_view operation) -> Status {
+        if (operation.starts_with("read ") && operation.ends_with(".ldb") &&
+            std::this_thread::get_id() != caller) {
+            ++worker_failures;
+            throw std::bad_alloc();
+        }
+        return {};
+    });
+    ResetBatchObserver reset(file_system_);
+    const std::array keys{AsBytes("a"), AsBytes("b")};
+    EXPECT_THROW(static_cast<void>(detail::ReadBatch(state_, keys, {}, nullptr, 2)),
+                 std::bad_alloc);
+    EXPECT_EQ(worker_failures.load(), 1);
+    EXPECT_EQ(engine().GetState().value().snapshot_count, 0U);
+}
+
 TEST_F(InternalMultiGetTest, CallerThreadExceptionReleasesItsImplicitPinWithoutStartingWorkers) {
     const std::array keys{AsBytes("a")};
     int starts = 0;
@@ -382,53 +448,68 @@ TEST_F(InternalMultiGetTest, StartupFailureJoinsBlockedIoWithoutHoldingTheEngine
     Put("a", "A");
     Put("b", "B");
     Put("c", "C");
+    Put("d", "D");
+    Put("e", "E");
+    Put("f", "F");
     Flush();
-    const std::array keys{AsBytes("a"), AsBytes("b"), AsBytes("c")};
-    std::latch blocked(1);
-    std::latch startup_failed(1);
-    std::latch release(1);
-    std::atomic<int> reads = 0;
-    file_system_.Observe([&](MutableByteView) {
-        ++reads;
-        blocked.count_down();
-        release.wait();
-        throw std::runtime_error("worker failure during failed startup");
-    });
-    int starts = 0;
-    detail::MultiGetRuntime runtime;
-    runtime.start = [&](std::function<void()> task) {
-        if (++starts == 2) {
-            blocked.wait();
-            startup_failed.count_down();
-            throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again),
-                                    "batch construction failure");
+    std::vector<std::byte> warmed;
+    ASSERT_TRUE(engine().Get(AsBytes("a"), warmed).value());
+    const std::array keys{AsBytes("a"), AsBytes("b"), AsBytes("c"),
+                          AsBytes("d"), AsBytes("e"), AsBytes("f")};
+    for (const bool worker_throws : {false, true}) {
+        SCOPED_TRACE(worker_throws);
+        std::latch blocked(1);
+        std::latch startup_failed(1);
+        std::latch release(1);
+        std::atomic<int> reads = 0;
+        file_system_.Observe([&](MutableByteView) {
+            if (reads.fetch_add(1) == 0) {
+                blocked.count_down();
+            }
+            release.wait();
+            if (worker_throws) {
+                throw std::runtime_error("worker failure during failed startup");
+            }
+        });
+        int starts = 0;
+        detail::MultiGetRuntime runtime;
+        runtime.start = [&](std::function<void()> task) {
+            if (++starts == 2) {
+                blocked.wait();
+                startup_failed.count_down();
+                throw std::system_error(
+                    std::make_error_code(std::errc::resource_unavailable_try_again),
+                    "batch construction failure");
+            }
+            return detail::StartBatchWorker(std::move(task));
+        };
+        std::future<DatabaseEngineState> progress;
+        std::future<std::vector<OwningReadResult>> reading;
+        ReleaseBatchLatch finish(release);
+        ResetBatchObserver reset(file_system_);
+        reading = std::async(std::launch::async, [&] {
+            return detail::ReadBatch(state_, keys, {}, nullptr, 3, runtime);
+        });
+        startup_failed.wait();
+        EXPECT_EQ(reading.wait_for(std::chrono::milliseconds(20)), std::future_status::timeout);
+        progress = std::async(std::launch::async, [&] {
+            Put("z", "writer progress");
+            return engine().GetState().value();
+        });
+        ASSERT_EQ(progress.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+        EXPECT_EQ(progress.get().snapshot_count, 1U);
+        finish.Open();
+        try {
+            static_cast<void>(reading.get());
+            FAIL() << "startup exception was hidden";
+        } catch (const std::system_error& error) {
+            EXPECT_EQ(error.code(),
+                      std::make_error_code(std::errc::resource_unavailable_try_again));
         }
-        return detail::StartBatchWorker(std::move(task));
-    };
-    std::future<DatabaseEngineState> progress;
-    std::future<std::vector<OwningReadResult>> reading;
-    ReleaseBatchLatch finish(release);
-    ResetBatchObserver reset(file_system_);
-    reading = std::async(std::launch::async,
-                         [&] { return detail::ReadBatch(state_, keys, {}, nullptr, 3, runtime); });
-    startup_failed.wait();
-    EXPECT_EQ(reading.wait_for(std::chrono::milliseconds(20)), std::future_status::timeout);
-    progress = std::async(std::launch::async, [&] {
-        Put("z", "writer progress");
-        return engine().GetState().value();
-    });
-    ASSERT_EQ(progress.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    EXPECT_EQ(progress.get().snapshot_count, 1U);
-    finish.Open();
-    try {
-        static_cast<void>(reading.get());
-        FAIL() << "startup exception was hidden";
-    } catch (const std::system_error& error) {
-        EXPECT_EQ(error.code(), std::make_error_code(std::errc::resource_unavailable_try_again));
+        EXPECT_EQ(starts, 2);
+        EXPECT_EQ(reads.load(), 1);
+        EXPECT_EQ(engine().GetState().value().snapshot_count, 0U);
     }
-    EXPECT_EQ(starts, 2);
-    EXPECT_EQ(reads.load(), 1);
-    EXPECT_EQ(engine().GetState().value().snapshot_count, 0U);
 }
 
 }  // namespace
