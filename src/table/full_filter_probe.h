@@ -1,6 +1,7 @@
 #ifndef MODERN_LEVELDB_TABLE_FULL_FILTER_PROBE_H_
 #define MODERN_LEVELDB_TABLE_FULL_FILTER_PROBE_H_
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -20,6 +21,10 @@ struct Avx2Features {
 // A true argument must represent both CPU and OS YMM-state support.
 [[nodiscard]] Probe SelectProbe(bool avx2_supported) noexcept;
 [[nodiscard]] Probe RuntimeProbe() noexcept;
+
+// Cache starts null or holds this detector's selection. The concurrently safe
+// detector returns a nonnull, process-stable leaf; its code needs no publication.
+[[nodiscard]] Probe CachedProbe(std::atomic<Probe>& cache, Probe (*detect)() noexcept) noexcept;
 
 // Requires 1..30 probes and one complete, stable 64-byte region.
 [[nodiscard]] bool ScalarMayMatch(std::uint32_t hash, std::uint32_t probes,

@@ -4,12 +4,15 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <latch>
 #include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -35,6 +38,49 @@ constexpr std::array<unsigned char, 80> Golden{
 static_assert(!std::is_copy_constructible_v<FullFilterReader>);
 static_assert(std::is_nothrow_move_constructible_v<FullFilterReader>);
 static_assert(!std::is_move_assignable_v<FullFilterReader>);
+
+struct ProbeDetectionContext {
+    std::atomic<std::size_t> calls{0};
+    std::latch* entered = nullptr;
+    std::latch* release = nullptr;
+};
+
+ProbeDetectionContext* ActiveProbeDetection = nullptr;
+
+class ScopedProbeDetection {
+public:
+    explicit ScopedProbeDetection(ProbeDetectionContext& context) noexcept {
+        ActiveProbeDetection = &context;
+    }
+    ~ScopedProbeDetection() { ActiveProbeDetection = nullptr; }
+};
+
+full_filter_detail::Probe CountingScalarDetector() noexcept {
+    auto& context = *ActiveProbeDetection;
+    context.calls.fetch_add(1, std::memory_order_relaxed);
+    if (context.entered != nullptr) {
+        context.entered->count_down();
+    }
+    if (context.release != nullptr) {
+        context.release->wait();
+    }
+    return &full_filter_detail::ScalarMayMatch;
+}
+
+class ReleaseProbeDetection {
+public:
+    explicit ReleaseProbeDetection(std::latch& gate) noexcept : gate_(gate) {}
+    ~ReleaseProbeDetection() { Open(); }
+    void Open() noexcept {
+        if (std::exchange(active_, false)) {
+            gate_.count_down();
+        }
+    }
+
+private:
+    std::latch& gate_;
+    bool active_ = true;
+};
 
 std::vector<std::byte> GoldenBytes() {
     const auto bytes = std::as_bytes(std::span(Golden));
@@ -255,6 +301,62 @@ TEST(FullFilterTest, UnsupportedCpuSelectionAlwaysUsesTheScalarLeaf) {
     EXPECT_TRUE(runtime == &full_filter_detail::ScalarMayMatch ||
                 runtime == full_filter_detail::SelectProbe(true));
     EXPECT_EQ(runtime, full_filter_detail::RuntimeProbe());
+}
+
+TEST(FullFilterProbeCacheTest, RepeatedAdmissionsDetectOnlyOnceAndPublishTheSafeLeaf) {
+    using namespace full_filter_detail;
+    std::atomic<Probe> selected{nullptr};
+    ProbeDetectionContext context;
+    ScopedProbeDetection binding(context);
+    for (int admission = 0; admission < 32; ++admission) {
+        EXPECT_EQ(CachedProbe(selected, &CountingScalarDetector), &ScalarMayMatch);
+    }
+    EXPECT_EQ(selected.load(std::memory_order_relaxed), &ScalarMayMatch);
+    EXPECT_EQ(context.calls.load(std::memory_order_relaxed), 1U);
+}
+
+TEST(FullFilterProbeCacheTest, AnAlreadySelectedLeafNeverInvokesTheDetector) {
+    using namespace full_filter_detail;
+    std::atomic<Probe> selected{&ScalarMayMatch};
+    ProbeDetectionContext context;
+    ScopedProbeDetection binding(context);
+    EXPECT_EQ(CachedProbe(selected, &CountingScalarDetector), &ScalarMayMatch);
+    EXPECT_EQ(context.calls.load(std::memory_order_relaxed), 0U);
+}
+
+TEST(FullFilterProbeCacheTest, ForcedColdReadersCanDuplicateDetectionWithoutChangingTheLeaf) {
+    using namespace full_filter_detail;
+    constexpr std::size_t Readers = 8;
+    std::atomic<Probe> selected{nullptr};
+    std::latch entered(Readers);
+    std::latch release(1);
+    ProbeDetectionContext context;
+    context.entered = &entered;
+    context.release = &release;
+    ScopedProbeDetection binding(context);
+    std::array<Probe, Readers> results{};
+    std::vector<std::jthread> workers(0);
+    workers.reserve(Readers);
+    ReleaseProbeDetection finish(release);
+    for (std::size_t reader = 0; reader < Readers; ++reader) {
+        workers.emplace_back(
+            [&, reader] { results[reader] = CachedProbe(selected, &CountingScalarDetector); });
+    }
+    entered.wait();
+    EXPECT_EQ(context.calls.load(std::memory_order_relaxed), Readers);
+    EXPECT_EQ(selected.load(std::memory_order_relaxed), nullptr);
+    finish.Open();
+    workers.clear();
+    for (const auto result : results) {
+        EXPECT_EQ(result, &ScalarMayMatch);
+    }
+    EXPECT_EQ(selected.load(std::memory_order_relaxed), &ScalarMayMatch);
+    context.entered = nullptr;
+    context.release = nullptr;
+    for (int admission = 0; admission < 16; ++admission) {
+        EXPECT_EQ(CachedProbe(selected, &CountingScalarDetector), &ScalarMayMatch);
+    }
+    EXPECT_EQ(context.calls.load(std::memory_order_relaxed), Readers);
 }
 
 TEST(FullFilterTest, RuntimeAndScalarProbesAgreeForEveryAlignmentAndPartialVector) {
