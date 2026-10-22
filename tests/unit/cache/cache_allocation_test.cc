@@ -31,6 +31,7 @@
 #include "support/memory_file_system.h"
 #include "table/block.h"
 #include "table/block_builder.h"
+#include "table/block_cache.h"
 #include "table/clock_block_cache.h"
 #include "table/table_builder.h"
 
@@ -360,6 +361,69 @@ TEST(CacheAllocationTest, ClockLookupAndOrdinaryReleaseAllocateNothing) {
         found.reset();
     }
     EXPECT_EQ(release.calls, 0U);
+}
+
+TEST(CacheAllocationTest, BothFacadePoliciesLookupAndReleaseWithoutAllocating) {
+    const auto key = ClockKeysForOneShard(1).front();
+    for (const auto policy : {BlockCachePolicy::Lru, BlockCachePolicy::Clock}) {
+        SCOPED_TRACE(static_cast<int>(policy));
+        BlockCache cache(16 * 4096, policy);
+        auto value = AllocationBlock("facade");
+        const auto* expected = value.get();
+        static_cast<void>(cache.Insert(key, std::move(value), 4096).value());
+        std::optional<BlockCache::Handle> found;
+        AllocationSnapshot lookup;
+        {
+            AllocationSession record(lookup);
+            found = cache.Lookup(key);
+        }
+        ASSERT_TRUE(found.has_value());
+        EXPECT_EQ(&found->value(), expected);
+        EXPECT_EQ(lookup.calls, 0U);
+        AllocationSnapshot release;
+        {
+            AllocationSession record(release);
+            found.reset();
+        }
+        EXPECT_EQ(release.calls, 0U);
+    }
+}
+
+TEST(CacheAllocationTest, EveryPolicyFactoryConstructorFailureReleasesAllSuccessfulAllocations) {
+    for (const auto policy : {BlockCachePolicy::Lru, BlockCachePolicy::Clock}) {
+        SCOPED_TRACE(static_cast<int>(policy));
+        const BlockCacheOptions options{.capacity = 16 * 4096, .policy = policy};
+        AllocationSnapshot complete;
+        std::shared_ptr<BlockCache> cache;
+        {
+            AllocationSession record(complete);
+            cache = CreateBlockCacheWithOptions(options).value();
+        }
+        cache.reset();
+        ASSERT_GT(complete.calls, 1U);
+        ASSERT_LE(complete.calls, complete.addresses.size());
+        for (std::size_t failure = 0; failure < complete.calls; ++failure) {
+            SCOPED_TRACE(failure);
+            AllocationSnapshot attempted;
+            DeallocationSnapshot released;
+            bool threw = false;
+            {
+                DeallocationSession track(released, nullptr);
+                released.allocations = &attempted;
+                AllocationSession fail(attempted, failure);
+                try {
+                    static_cast<void>(CreateBlockCacheWithOptions(options));
+                } catch (const std::bad_alloc&) {
+                    threw = true;
+                }
+            }
+            EXPECT_TRUE(threw);
+            EXPECT_EQ(attempted.calls, failure);
+            for (std::size_t allocation = 0; allocation < attempted.calls; ++allocation) {
+                EXPECT_EQ(released.freed[allocation], 1U) << allocation;
+            }
+        }
+    }
 }
 
 TEST(CacheAllocationTest,
