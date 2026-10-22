@@ -7,7 +7,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 #include "cache/sharded_lru_cache.h"
 #include "format/internal_key.h"
@@ -42,7 +44,23 @@ struct ReuseShard {
 // Find and Evict are safe for concurrent calls.
 class TableCache final {
     using TableOwner = std::shared_ptr<const Table>;
-    using Tables = ShardedLruCache<TableOwner>;
+    using UniqueTables = ShardedLruCache<Table>;
+    using SharedCache = ShardedLruCache<TableOwner>;
+
+    struct SharedTables {
+        explicit SharedTables(std::size_t capacity)
+            : shard_capacity(ShardedLruCacheCore::ShardCapacity(capacity)),
+              identity(std::make_shared<const std::byte>(std::byte{0})),
+              tables(capacity) {}
+
+        const std::size_t shard_capacity;
+        std::shared_ptr<const std::byte> identity;
+        std::array<table_cache_detail::ReuseShard, ShardedLruCacheCore::ShardCount> reuse;
+        SharedCache tables;
+    };
+
+    // Monostate exists only while this cache's selected backend is constructed.
+    using Tables = std::variant<std::monostate, UniqueTables, SharedTables>;
 
 public:
     // Retains the original cache mapping pin, including for iterators/maintenance.
@@ -54,15 +72,33 @@ public:
         Handle& operator=(Handle&&) noexcept = default;
         ~Handle() = default;
 
-        [[nodiscard]] const Table& value() const noexcept { return *pin_.value(); }
+        [[nodiscard]] const Table& value() const noexcept {
+            return std::visit(
+                [](const auto& pin) -> const Table& {
+                    if constexpr (std::is_same_v<std::remove_cvref_t<decltype(pin)>,
+                                                 UniqueTables::Handle>) {
+                        return pin.value();
+                    } else {
+                        return *pin.value();
+                    }
+                },
+                pin_);
+        }
         [[nodiscard]] const Table* operator->() const noexcept { return &value(); }
         [[nodiscard]] const Table& operator*() const noexcept { return value(); }
 
     private:
         friend class TableCache;
-        explicit Handle(Tables::Handle pin) noexcept : pin_(std::move(pin)) {}
+        explicit Handle(UniqueTables::Handle pin) noexcept
+            : pin_(std::in_place_type<UniqueTables::Handle>, std::move(pin)) {}
+        explicit Handle(SharedCache::Handle pin) noexcept
+            : pin_(std::in_place_type<SharedCache::Handle>, std::move(pin)) {}
+        // Called only for a lease produced by this cache's immutable Shared mode.
+        [[nodiscard]] const TableOwner& shared_owner() const noexcept {
+            return std::get<SharedCache::Handle>(pin_).value();
+        }
 
-        Tables::Handle pin_;
+        std::variant<UniqueTables::Handle, SharedCache::Handle> pin_;
     };
 
     // Each of the cache's 16 shards has a capacity of ceil(capacity / 16)
@@ -100,17 +136,13 @@ public:
 
 private:
     [[nodiscard]] Result<std::unique_ptr<Table>> OpenTable(std::uint64_t file_number,
-                                                           std::uint64_t file_size);
+                                                           std::uint64_t file_size,
+                                                           SharedTables* shared);
 
     FileSystem* file_system_;
     std::filesystem::path directory_;
     const InternalKeyComparator* comparator_;
     TableOptions options_;
-    const bool reuse_readers_;
-    const std::size_t shard_capacity_;
-    // Weak identity tokens cannot retain services or alias a reused cache address.
-    std::shared_ptr<const std::byte> identity_;
-    std::array<table_cache_detail::ReuseShard, ShardedLruCacheCore::ShardCount> reuse_;
     Tables tables_;
 };
 
