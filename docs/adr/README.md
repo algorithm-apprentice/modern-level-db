@@ -129,6 +129,7 @@ decision context and evidence available when each change was made.
 | [ADR-0080: Final Owned Decompression Output](0080-owned-decompression-output.md) | Decoded-byte ownership | Implemented | Decodes into final pointer/length array owners while preserving vector adoption, mmap borrowing, and move-stable backing bytes | [ADR-0039](0039-sstable-block-compression.md); [ADR-0056](0056-leveldb-table-mmap-parity.md) |
 | [ADR-0081: Compatible Read Fast Paths](0081-compatible-read-fast-paths.md) | Read fast paths | Implemented | Borrows complete keys, prepares MemTable targets, and bounds context-scoped reverse caching with paired measurement evidence | [ADR-0053](0053-leveldb-read-path-parity.md); [ADR-0055](0055-leveldb-block-iterator-parity.md) |
 | [ADR-0082: Bounded Hash Word Experiment](0082-bounded-hash-word-experiment.md) | Hash word decoding | Implemented | Adopts bounded endian-safe word loads and local cursors on repeated isolated evidence; preserves hash outputs and makes no whole-Get speedup claim | [ADR-0054](0054-leveldb-cache-parity.md); [benchmarking and profiling](../development/benchmarking-and-profiling.md) |
+| [ADR-0083: Direct LookupKey Construction](0083-direct-lookup-key-construction.md) | LookupKey construction | Implemented | Constructs the final encoding directly and overwrites heap backing; retains initialized inline storage and unchanged moves after rejecting prefix-copy regressions | [ADR-0057](0057-leveldb-version-output-parity.md); [ADR-0038](0038-public-raii-api.md) |
 
 ## Historical upstream-link provenance
 
