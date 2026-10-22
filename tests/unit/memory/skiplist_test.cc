@@ -367,6 +367,29 @@ TEST(SkipListTest, SeeksWithPreparedTargetsWithoutConvertingThemToStoredEntries)
     EXPECT_TRUE(list.Contains(30));
 }
 
+TEST(SkipListTest, PreparedAndStoredTargetsAgreeAcrossMultipleLevels) {
+    Arena arena;
+    PreparedIntegerCompare compare;
+    SkipList<std::uint64_t, PreparedIntegerCompare> list(compare, arena);
+    std::set<std::uint64_t> model;
+    for (std::uint64_t key = 2; key <= 512; key += 2) {
+        list.Insert(key);
+        model.insert(key);
+    }
+
+    SkipList<std::uint64_t, PreparedIntegerCompare>::Iterator iterator(list);
+    for (std::uint64_t target = 0; target <= 513; ++target) {
+        SCOPED_TRACE(target);
+        EXPECT_EQ(list.Contains(target), model.contains(target));
+        iterator.Seek(PreparedIntegerTarget{target});
+        const auto expected = model.lower_bound(target);
+        ASSERT_EQ(iterator.valid(), expected != model.end());
+        if (iterator.valid()) {
+            EXPECT_EQ(iterator.entry(), *expected);
+        }
+    }
+}
+
 TEST(SkipListTest, LowerBoundComparesEachVisitedNodeAtMostOnce) {
     Arena arena;
     RecordingIntegerCompare compare;

@@ -785,6 +785,34 @@ TEST(BlockIteratorTest, ReverseReplayDeclinesAmplifiedDecodedKeyStorage) {
     EXPECT_FALSE(iterator.valid());
 }
 
+TEST(BlockIteratorTest, BudgetLimitedReverseReplayReportsCorruptionAndRecovers) {
+    const std::string prefix(8192, 'a');
+    const auto first = EntryBytes(0, prefix + "1", "1");
+    const auto second = EntryBytes(8192, "2", "2");
+    const auto malformed = EntryBytes(8194, "", "");
+    const auto last = EntryBytes(0, "z", "last");
+    const auto last_offset =
+        static_cast<std::uint32_t>(first.size() + second.size() + malformed.size());
+    const Block block =
+        MakeBlock(WithRestarts(Concat({first, second, malformed, last}), {0, last_offset}));
+    Block::Iterator iterator(block, BytewiseComparator());
+
+    // Reconstructing the second key exceeds the cache budget before the bad entry.
+    for (int pass = 0; pass < 2; ++pass) {
+        SCOPED_TRACE(pass);
+        ExpectOk(iterator.SeekToLast());
+        ExpectAt(iterator, "z", "last");
+        ExpectCorruption(iterator.Prev());
+        EXPECT_FALSE(iterator.valid());
+        EXPECT_TRUE(iterator.key().empty());
+        EXPECT_TRUE(iterator.value().empty());
+    }
+    ExpectOk(iterator.SeekToFirst());
+    ExpectAt(iterator, prefix + "1", "1");
+    ExpectOk(iterator.Next());
+    ExpectAt(iterator, prefix + "2", "2");
+}
+
 TEST(BlockIteratorTest, DenseReverseReplayKeepsEveryEmptyKeyAndBorrowedValue) {
     BlockBuilder builder(256);
     for (unsigned int entry = 0; entry < 256; ++entry) {
