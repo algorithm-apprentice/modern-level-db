@@ -339,12 +339,14 @@ Two internal state owners make cross-field invariants explicit:
   immutable-presence mirror. File creation, WAL close policy, scheduling, and
   VersionEdit installation remain DatabaseEngine responsibilities.
 
-TableCache stores shared immutable reader owners behind its original move-only
-mapping pins. Optional point-read reuse holds only a temporary strong reader
-owner obtained from a fixed per-thread weak hint. Complete ownership-token,
-file and generation tags reject stale or foreign hints; successful-open
-pressure permanently restores ordinary lookup/release maintenance. Find,
-iterator and maintenance callers still retain actual mapping pins. See
+TableCache selects its typed backend once: ordinary unique Table ownership by
+default, shared immutable Table ownership when point-read reuse is enabled.
+The default production point path obtains its original typed pin and calls
+Table Get directly. Optional reuse holds only a temporary strong reader owner
+obtained from a fixed per-thread weak hint. Complete ownership-token, file and
+generation tags reject stale or foreign hints; successful-open pressure
+permanently restores ordinary lookup/release maintenance, not Unique ownership.
+Find, iterator and maintenance callers still retain actual mapping pins. See
 [ADR-0087](adr/0087-bounded-table-reader-reuse.md) for the deliberately different
 pressure-handoff history and terminal-generation protocol.
 

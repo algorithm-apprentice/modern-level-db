@@ -1,6 +1,6 @@
 # ADR-0087: Bounded Table-Reader Reuse
 
-- Status: Accepted
+- Status: Implemented
 - Date: 2026-10-22
 
 ## Context
@@ -51,13 +51,14 @@ iterator/maintenance callers, preserving their eviction and lifetime behavior.
 Access follows the lease's own alternative, including noexcept move assignment
 between alternatives; do not infer its type from an unrelated cache pointer.
 
-Add a point-read operation on TableCache that performs the complete Table Get.
-The next candidate dispatches the immutable backend at a header-defined boundary.
-Unique point Get retains the original underlying typed pin from a shared
-`FindUnique` helper; outward Find wraps that same pin for its existing typed
-Handle interface. Shared hint processing remains out of line. This removes
-the outward Handle variant from the disabled point path without changing
-ownership mode or the pin's lifetime.
+Point reads inspect the immutable backend in SearchFile. Unique mode obtains
+the original typed pin through `FindUniqueForPoint` and calls Table Get
+directly. Shared mode calls the complete, hint-aware TableCache Get.
+The complete operation remains valid in both modes; its Unique branch and
+outward Find use the same `FindUnique` helper. Outward Find wraps that pin for
+its existing typed Handle interface. Shared hint processing stays out of line.
+The production Unique route avoids both the outward Handle variant and the
+extra complete-Get wrapper without changing ownership or the pin's lifetime.
 
 Its hint-hit path holds only a temporary shared Table owner while calling Get.
 Every fallback obtains and retains its normal mapping pin through Table Get,
@@ -152,13 +153,15 @@ support external table mutation while a database is open.
 ### Options and defaults
 
 Provide a read-reuse switch for control measurements and operational opt-out.
-Keep it disabled by default. The measured resident/concurrent benefit supports
-an opt-in, not an unconditional default: constrained-table-cache pressure exposed
-additional work after hints stopped, but the earlier original arm also used a
-different CPU-selection lifetime. Repeat matched measurements after immutable
-ownership selection and the dispatch correction to verify default-off
-preservation, not just semantic equivalence. Do not extrapolate the strong-pin
-prototype or attribute cumulative costs to ownership alone.
+Keep it disabled by default. The final matched resident/concurrent benefit
+supports a workload-dependent opt-in, not an unconditional default.
+Constrained-table-cache pressure still exposes additional work after hints
+stop: the backend remains Shared, not Unique. Matched disabled results are
+mixed and do not establish an overhead-free default path. The final admission
+below explicitly accepts that residual performance risk; it does not report
+the earlier preservation goal as achieved. Do not extrapolate the strong-pin
+prototype or attribute the older CPU-selection-confounded costs to ownership
+alone.
 
 Retain the original shared-in-both-modes campaign as its distinct ownership
 baseline. A measurement-only SharedNoHints object may keep constructor-true
@@ -358,3 +361,59 @@ Independent architecture review approved this bounded design. The ownership
 observer must not report per-shard hint eligibility: Shared mode remains Shared
 after pressure closes a gate. The typed method's cache/comparator/filesystem
 borrows retain the existing Find lifetime obligations.
+
+### Final direct-route v4 evidence and admission
+
+The sealed `reader-production-direct-v4` campaign independently verified all
+192 fresh processes for source `6d75752f70f0e7f1a279ee64165a381767a9f882`
+against accepted `02ed212`. Every resident process had zero timed table opens;
+every pressure process had positive opens. Original and candidate filter and
+CPU-selection sources matched. Verification used separate nonaliased copies,
+and the final verdict was published only after all inherited and matched
+checks. Actual linked instructions establish the Unique branch's direct
+typed Find/Table Get route; there is no forced-inlining claim.
+
+These are paired median wall-time improvements against the original, with
+all six rounds retained. Positive is faster. The counts are faster pairs
+out of six, not an acceptance threshold.
+
+| max_open_files | Logical cache | Readers | Disabled | Faster pairs | Enabled | Faster pairs |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1000 | 8 MiB | 1 | +3.48% | 4/6 | +5.00% | 5/6 |
+| 1000 | 8 MiB | 4 | +0.34% | 4/6 | +8.55% | 6/6 |
+| 1000 | 512 MiB | 1 | +2.28% | 5/6 | +4.97% | 6/6 |
+| 1000 | 512 MiB | 4 | -1.92% | 2/6 | +10.09% | 6/6 |
+| 74 | 8 MiB | 1 | -0.91% | 1/6 | -0.26% | 2/6 |
+| 74 | 8 MiB | 4 | +0.63% | 4/6 | +0.93% | 4/6 |
+| 74 | 512 MiB | 1 | -0.51% | 3/6 | -0.11% | 2/6 |
+| 74 | 512 MiB | 4 | -0.57% | 2/6 | -3.17% | 0/6 |
+
+Enabled resident four-reader results beat the disabled candidate by 7.88%
+and 10.88%, in all six pairs for both budgets. The pressured 512 MiB,
+four-reader enabled case is slower than the original in every pair, and
+2.34% slower than the disabled candidate with only one faster pair.
+Gate closure does not remove Shared ownership/allocation costs or recover
+the previously skipped promotion history; these observations do not isolate
+one causal cost.
+
+The separate predeclared 36-process resident four-reader screen is retained,
+not pooled with the complete campaign. Disabled results were -0.65% and
++0.61% against the original, with two and three faster pairs respectively;
+enabled results were +9.24% and +14.18%, each with six faster pairs.
+Neither this screen nor the mixed complete disabled results proves
+neutrality. In particular, retain the complete campaign's -1.92% disabled
+resident result rather than dismissing it as noise.
+
+Independent architecture review approves bounded opt-in admission as this
+explicit tradeoff, not a default-preservation verdict. Independent
+implementation review retains approval for the exact `6d75752` changes and
+found no additional implementation blocker. The source passed 1,054 unit
+cases, 19 extended cases, strict GCC checks and ordinary cross-platform,
+coverage and sanitizer CI. Earlier campaigns, rejected verifier drafts and
+all adverse results remain distinct evidence.
+
+Admit the option with default `false`. Accept the documented residual
+default-path performance risk in exchange for the repeated concurrent-resident
+benefit and reviewed ownership/invalidation contracts. Do not enable it
+automatically, promise general acceleration, or claim disabling reuse erases
+every feature-related cost.
