@@ -41,10 +41,12 @@ public:
         : workers_(workers), stopped_(stopped) {}
     JoinBatch(const JoinBatch&) = delete;
     JoinBatch& operator=(const JoinBatch&) = delete;
-    ~JoinBatch() { Join(); }
-
-    void Join() {
+    ~JoinBatch() {
         stopped_.store(true, std::memory_order_release);
+        Wait();
+    }
+
+    void Wait() {
         for (auto& worker : workers_) {
             if (worker.joinable()) {
                 worker.join();
@@ -130,11 +132,7 @@ std::vector<OwningReadResult> ReadBatch(std::shared_ptr<DatabaseState> state,
         work.Run(0);
     }
     // Normal completion must not cancel partitions that have not finished yet.
-    for (auto& worker : workers) {
-        if (worker.joinable()) {
-            worker.join();
-        }
-    }
+    join.Wait();
     if (startup != nullptr) {
         std::rethrow_exception(startup);
     }
