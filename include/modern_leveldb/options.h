@@ -81,6 +81,12 @@ struct ReadOptions {
     bool fill_cache = true;
 };
 
+struct MultiGetOptions {
+    ReadOptions read_options{};
+    // Per-call bound, not an I/O deadline or a database-wide worker budget.
+    std::size_t max_concurrency = 4;
+};
+
 struct WriteOptions {
     // Requests a WAL data barrier before publishing success. Does not strengthen
     // namespace durability or guarantee rollback when a write fails.

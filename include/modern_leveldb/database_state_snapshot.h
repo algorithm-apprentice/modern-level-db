@@ -26,8 +26,8 @@ struct DatabaseStateSnapshot {
 
     // The sequence published to latest reads.
     std::uint64_t last_sequence = 0;
-    // Explicit snapshot registrations retained by Snapshot handles or iterators
-    // created from them. Duplicate registrations are counted separately.
+    // All registered read-sequence pins: public snapshots/retaining iterators
+    // and temporary implicit MultiGet registrations. Duplicates count separately.
     std::size_t snapshot_count = 0;
     std::optional<std::uint64_t> oldest_snapshot_sequence;
 
