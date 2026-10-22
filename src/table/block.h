@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -85,6 +86,8 @@ private:
 // Requires sorted keys under the borrowed comparator. Backing block storage and
 // comparator must outlive the iterator, including after an owning block is moved.
 // A new iterator is not positioned. Keys and values remain valid until it moves.
+// Complete keys borrow block bytes; prefix-compressed keys use reusable storage.
+// Reverse traversal lazily caches a restart interval and borrows its decoded keys.
 // Positioning calls recover from an earlier corruption and start over.
 class Block::Iterator final {
 public:
@@ -101,7 +104,7 @@ public:
     Iterator& operator=(const Iterator&) = delete;
     Iterator(Iterator&&) = delete;
     Iterator& operator=(Iterator&&) = delete;
-    ~Iterator() = default;
+    ~Iterator();
 
     [[nodiscard]] bool valid() const noexcept { return current_ < layout_.entries_end; }
     [[nodiscard]] ByteView key() const noexcept;
@@ -114,6 +117,8 @@ public:
     [[nodiscard]] Status Prev();
 
 private:
+    struct ReverseCache;
+
     void BeginPositioning() noexcept;
     [[nodiscard]] bool FindRestart(ByteView target, std::size_t left, std::size_t right,
                                    std::size_t& index) noexcept;
@@ -143,7 +148,12 @@ private:
     std::size_t next_;
     std::size_t restart_index_;
     std::string key_;
+    // A non-null pointer selects borrowed bytes, including a complete empty key.
+    ByteView borrowed_key_;
     ByteView value_;
+    std::unique_ptr<ReverseCache> reverse_cache_;
+    // Only uninterrupted cached Prev calls share one checked replay context.
+    bool reverse_cache_active_ = false;
     // Corruption invalidates the position before setting this error-only latch.
     bool corrupted_ = false;
 };

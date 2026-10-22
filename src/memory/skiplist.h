@@ -77,6 +77,13 @@ public:
 
         void Seek(const Entry& target) { node_ = list_->FindGreaterOrEqual(target, nullptr); }
 
+        // Distinct prepared targets are borrowed; Entry conversions stay at the call boundary.
+        template <typename Target>
+            requires(!std::is_convertible_v<Target &&, Entry>)
+        void Seek(Target&& target) {
+            node_ = list_->FindGreaterOrEqual(target, nullptr);
+        }
+
         void SeekToFirst() { node_ = list_->head_->Next(0); }
 
         void SeekToLast() { SetPosition(list_->FindLast()); }
@@ -216,18 +223,18 @@ private:
         return compare_(left, right) == 0;
     }
 
-    [[nodiscard]] bool EntryIsAfterNode(const Entry& entry, Node* node) const {
-        return node != nullptr && compare_(node->entry, entry) < 0;
-    }
-
-    [[nodiscard]] Node* FindGreaterOrEqual(const Entry& entry, Node** predecessors) const {
+    template <typename Target>
+    [[nodiscard]] Node* FindGreaterOrEqual(const Target& entry, Node** predecessors) const {
         Node* node = head_;
+        Node* last_not_less = nullptr;
         int level = CurrentHeight() - 1;
         while (true) {
             Node* next = node->Next(level);
-            if (EntryIsAfterNode(entry, next)) {
+            if (next != nullptr && next != last_not_less && compare_(next->entry, entry) < 0) {
                 node = next;
             } else {
+                // Immutable entries keep this upper-bound comparison valid across levels.
+                last_not_less = next;
                 if (predecessors != nullptr) {
                     predecessors[level] = node;
                 }

@@ -11,6 +11,11 @@ positioned internal key. It retains the reviewed minimum-length boundary and
 defers semantic value-kind parsing to point lookup, `DbIterator`, and
 compaction exactly as this ADR specifies.
 
+[ADR-0081](0081-compatible-read-fast-paths.md) subsequently adds complete-key
+borrowing and a bounded, context-scoped reverse replay cache. It replaces the
+key-storage and repeated-`Prev` cost-model choices below, not this ADR's
+checked-decoding, format, error, or positioning contracts.
+
 ## Context
 
 ADR-0053 requires the complete pinned Google LevelDB read path before any

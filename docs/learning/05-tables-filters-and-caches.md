@@ -86,6 +86,29 @@ corruption locally; the public movement call returns the corresponding
 committing a reconstructed entry, preserving a consistent position if
 allocation throws.
 
+An entry with shared length zero already contains its complete key. The
+iterator borrows those bytes directly, including an empty complete key.
+Only dependent entries materialize a key in reusable iterator storage.
+Switching back to a complete key retains that storage's capacity for later
+reconstruction. Both representations have the same movement-limited view
+lifetime, and moving the owning block preserves its backing addresses.
+
+Entries have no backward links. An uncached reverse step replays from a preceding
+restart and caches the checked entries, decoded keys, and borrowed values.
+Consecutive steps within that cached interval reuse those positions and key
+bytes instead of decoding the same prefixes again. Positioning and forward
+movement end that checked replay context, but keep its backing bytes alive
+until the current borrowed key has been consumed. A subsequent reverse step
+replays from its own checkpoint; a failed replay does not publish a partial cache.
+The cache is allocated lazily only when replay reaches multiple predecessors,
+so point reads, forward scans, and single-predecessor replays do not allocate it.
+Cached key views still expire on movement, just like forward key views.
+Descriptor and copied-key payload is budgeted to the greater of 4 KiB and
+the encoded entry region's size; allocator capacity overhead is additional.
+If prefix expansion or dense entries exceed that budget, checked replay
+continues without publishing the partial cache. A compact encoded block
+therefore cannot require an unbounded collection of expanded reverse keys.
+
 ## Index separators
 
 An index key need not repeat the complete last data key if a shorter key

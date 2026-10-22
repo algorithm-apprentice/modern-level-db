@@ -127,6 +127,7 @@ decision context and evidence available when each change was made.
 | [ADR-0078: Uniform Engine Dependency Ownership](0078-uniform-engine-dependency-ownership.md) | Dependency ownership | Implemented | Uses ordinary pointer/flag value members with direct destructor cleanup | [ADR-0004](0004-errors-ownership-and-runtime.md); [ADR-0037](0037-database-engine.md); [ADR-0074](0074-database-engine-coordination-structure.md) |
 | [ADR-0079: Public Runtime Dependency Injection](0079-public-runtime-dependency-injection.md) | Public dependency injection | Implemented | Exposes supplied services with engine-retaining ownership and an opaque block cache | [ADR-0038](0038-public-raii-api.md); [ADR-0078](0078-uniform-engine-dependency-ownership.md) |
 | [ADR-0080: Final Owned Decompression Output](0080-owned-decompression-output.md) | Decoded-byte ownership | Implemented | Decodes into final pointer/length array owners while preserving vector adoption, mmap borrowing, and move-stable backing bytes | [ADR-0039](0039-sstable-block-compression.md); [ADR-0056](0056-leveldb-table-mmap-parity.md) |
+| [ADR-0081: Compatible Read Fast Paths](0081-compatible-read-fast-paths.md) | Read fast paths | Implemented | Borrows complete keys, prepares MemTable targets, and bounds context-scoped reverse caching with paired measurement evidence | [ADR-0053](0053-leveldb-read-path-parity.md); [ADR-0055](0055-leveldb-block-iterator-parity.md) |
 
 ## Historical upstream-link provenance
 

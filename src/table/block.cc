@@ -1,9 +1,11 @@
 #include "table/block.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <limits>
+#include <memory>
 #include <source_location>
 #include <string_view>
 #include <utility>
@@ -19,6 +21,7 @@ namespace modern_leveldb {
 namespace {
 
 constexpr std::size_t Fixed32Size = sizeof(std::uint32_t);
+constexpr std::size_t MinimumReverseCachePayloadBudget = std::size_t{4} << 10U;
 
 const std::byte* DecodeVarint32Fallback(const std::byte* input, const std::byte* limit,
                                         std::uint32_t& value) noexcept {
@@ -212,7 +215,86 @@ Status Block::ValidateEntries(const EntryVisitor& visitor) const {
     return {};
 }
 
-// GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
+struct Block::Iterator::ReverseCache {
+    struct Entry {
+        std::size_t current;
+        std::size_t next;
+        std::size_t restart_index;
+        const std::byte* key_data;
+        std::size_t key_offset;
+        std::size_t key_size;
+        ByteView value;
+    };
+
+    void Reset() noexcept {
+        entries.clear();
+        keys.clear();
+        position = 0;
+        charged_bytes = 0;
+    }
+
+    bool Append(const Iterator& iterator, std::size_t budget) {
+        const ByteView key = iterator.key();
+        const bool copied = iterator.borrowed_key_.data() == nullptr;
+        const std::size_t key_bytes = copied ? key.size() : 0;
+        const std::size_t remaining = budget - charged_bytes;
+        if (remaining < sizeof(Entry) || key_bytes > remaining - sizeof(Entry)) {
+            return false;
+        }
+        const std::size_t key_offset = keys.size();
+        // Forward replay borrows only block bytes; dependent keys are copied once.
+        if (copied) {
+            keys.append(AsStringView(key));
+        }
+        entries.push_back(Entry{
+            .current = iterator.current_,
+            .next = iterator.next_,
+            .restart_index = iterator.restart_index_,
+            .key_data = iterator.borrowed_key_.data(),
+            .key_offset = key_offset,
+            .key_size = key.size(),
+            .value = iterator.value_,
+        });
+        charged_bytes += sizeof(Entry) + key_bytes;
+        return true;
+    }
+
+    void SelectLast(Iterator& iterator) noexcept {
+        position = entries.size() - 1;
+        Restore(iterator);
+        iterator.reverse_cache_active_ = true;
+    }
+
+    bool TryPrevious(Iterator& iterator) noexcept {
+        // Position stays zero until a complete replay has selected its last entry.
+        if (position == 0) {
+            return false;
+        }
+        --position;
+        Restore(iterator);
+        return true;
+    }
+
+    void Restore(Iterator& iterator) const noexcept {
+        const Entry& entry = entries[position];
+        const std::byte* key = entry.key_data;
+        if (key == nullptr) {
+            key = reinterpret_cast<const std::byte*>(keys.data() + entry.key_offset);
+        }
+        iterator.current_ = entry.current;
+        iterator.next_ = entry.next;
+        iterator.restart_index_ = entry.restart_index;
+        iterator.borrowed_key_ = ByteView(key, entry.key_size);
+        iterator.value_ = entry.value;
+    }
+
+    std::vector<Entry> entries;
+    std::string keys;
+    std::size_t position = 0;
+    std::size_t charged_bytes = 0;
+};
+
+// GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
 Block::Iterator::Iterator(const Block& block, const Comparator& comparator,
                           BlockKeyFormat format) noexcept
     : layout_(block.layout_),
@@ -221,9 +303,13 @@ Block::Iterator::Iterator(const Block& block, const Comparator& comparator,
       current_(layout_.entries_end),
       next_(layout_.entries_end),
       restart_index_(layout_.restart_count) {}
+
+Block::Iterator::~Iterator() = default;
 // GCOVR_EXCL_STOP
 
-ByteView Block::Iterator::key() const noexcept { return StringBytes(key_); }
+ByteView Block::Iterator::key() const noexcept {
+    return borrowed_key_.data() != nullptr ? borrowed_key_ : StringBytes(key_);
+}
 
 ByteView Block::Iterator::value() const noexcept { return value_; }
 
@@ -325,13 +411,16 @@ void Block::Iterator::ScanToLowerBound(ByteView target) {
 }
 
 Status Block::Iterator::Next() {
+    reverse_cache_active_ = false;
     ParseNextEntry();
     return CurrentStatus();
 }
 
 Status Block::Iterator::Prev() {
-    // Entries have no backward link/full key at every offset. Reconstruct from
-    // a preceding restart until the next entry would be the current one.
+    if (reverse_cache_active_ && reverse_cache_->TryPrevious(*this)) {
+        return CurrentStatus();
+    }
+    reverse_cache_active_ = false;
     const std::size_t original = current_;
     if (!FindPreviousRestart(original)) {
         return CurrentStatus();
@@ -365,11 +454,33 @@ bool Block::Iterator::FindPreviousRestart(std::size_t original) noexcept {
 }
 
 void Block::Iterator::ScanToPreviousEntry(std::size_t original) {
-    while (ParseNextEntry() && next_ < original) {
+    if (!ParseNextEntry() || next_ >= original) {
+        return;
     }
+    if (reverse_cache_ == nullptr) {
+        reverse_cache_ = std::make_unique<ReverseCache>();
+    }
+    // Restart positioning has detached the current key from any old cached bytes.
+    reverse_cache_->Reset();
+    const std::size_t budget = std::max(MinimumReverseCachePayloadBudget, layout_.entries_end);
+    do {
+        if (!reverse_cache_->Append(*this, budget)) {
+            reverse_cache_->Reset();
+            while (next_ < original && ParseNextEntry()) {
+            }
+            return;
+        }
+        if (next_ >= original) {
+            reverse_cache_->SelectLast(*this);
+            break;
+        }
+    } while (ParseNextEntry());
 }
 
-void Block::Iterator::BeginPositioning() noexcept { corrupted_ = false; }
+void Block::Iterator::BeginPositioning() noexcept {
+    corrupted_ = false;
+    reverse_cache_active_ = false;
+}
 
 bool Block::Iterator::RestartPoint(std::size_t index, std::size_t& offset) const noexcept {
     offset = layout_.RestartPoint(index);
@@ -403,6 +514,7 @@ bool Block::Iterator::SeekToRestartPoint(std::size_t index) noexcept {
     restart_index_ = index;
     next_ = offset;
     key_.clear();
+    borrowed_key_ = {};
     value_ = {};
     return true;
 }
@@ -419,7 +531,7 @@ bool Block::Iterator::ParseNextEntry() {
     std::uint32_t non_shared = 0;
     std::uint32_t value_size = 0;
     const std::byte* key = DecodeEntry(begin, limit, shared, non_shared, value_size);
-    if (key == nullptr || shared > key_.size()) {
+    if (key == nullptr || shared > this->key().size()) {
         return Corruption();
     }
     const std::size_t key_size = std::size_t{shared} + non_shared;
@@ -431,10 +543,19 @@ bool Block::Iterator::ParseNextEntry() {
 
 bool Block::Iterator::CommitEntry(const std::byte* key, std::uint32_t shared,
                                   std::uint32_t non_shared, std::uint32_t value_size) {
-    key_.reserve(std::size_t{shared} + non_shared);
+    if (shared == 0) {
+        borrowed_key_ = ByteView(key, non_shared);
+    } else {
+        key_.reserve(std::size_t{shared} + non_shared);
+        if (borrowed_key_.data() != nullptr) {
+            key_.assign(reinterpret_cast<const char*>(borrowed_key_.data()), shared);
+        } else {
+            key_.resize(shared);
+        }
+        key_.append(reinterpret_cast<const char*>(key), non_shared);
+        borrowed_key_ = {};
+    }
     current_ = next_;
-    key_.resize(shared);
-    key_.append(reinterpret_cast<const char*>(key), non_shared);
     value_ = ByteView(key + non_shared, value_size);
     next_ = static_cast<std::size_t>(value_.data() + value_.size() - layout_.contents.data());
     return AdvanceRestartIndex();
@@ -480,7 +601,9 @@ void Block::Iterator::Invalidate() noexcept {
     next_ = layout_.entries_end;
     restart_index_ = layout_.restart_count;
     key_.clear();
+    borrowed_key_ = {};
     value_ = {};
+    reverse_cache_active_ = false;
 }
 
 }  // namespace modern_leveldb

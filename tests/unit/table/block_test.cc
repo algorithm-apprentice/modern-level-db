@@ -218,6 +218,7 @@ TEST(BlockTest, LiteralHeaderPathsKeepBorrowedValuesAcrossBackingMoves) {
             ASSERT_TRUE(iterator.SeekToFirst().has_value());
             ASSERT_TRUE(iterator.valid());
             EXPECT_EQ(AsStringView(iterator.key()), "a");
+            EXPECT_EQ(iterator.key().data(), retained_value.data() - 1);
             EXPECT_EQ(iterator.value().data(), retained_value.data());
             EXPECT_EQ(Materialize(retained_value), Bytes({0xff}));
             EXPECT_TRUE(iterator.Next().has_value());
@@ -531,6 +532,54 @@ TEST(BlockIteratorTest, StartsUnpositioned) {
     EXPECT_FALSE(iterator.valid());
 }
 
+TEST(BlockIteratorTest, CompleteKeysBorrowEncodedBytesAcrossPositioningAndBackingMoves) {
+    const std::array keys{std::string{}, std::string(19, 'a'), std::string(128, 'a'),
+                          std::string(512, 'a'), std::string("b\0\xff", 3)};
+    BlockBuilder builder(1);
+    for (const auto& key : keys) {
+        builder.Add(AsBytes(key), AsBytes("value"));
+    }
+    const auto finished = Materialize(builder.Finish());
+
+    for (const bool owned : {false, true}) {
+        SCOPED_TRACE(owned);
+        auto encoded = finished;
+        auto block = Block::Create(owned ? BlockContents::Owned(std::move(encoded))
+                                         : BlockContents::Borrowed(encoded));
+        ASSERT_TRUE(block.has_value());
+        std::optional<Block> moved;
+        Block::Iterator iterator(*block, BytewiseComparator());
+        ExpectOk(iterator.SeekToFirst());
+        const std::byte* first_key = iterator.key().data();
+        moved.emplace(std::move(*block));
+        EXPECT_EQ(iterator.key().data(), first_key);
+
+        for (const auto& key : keys) {
+            ExpectAt(iterator, key, "value");
+            EXPECT_EQ(iterator.key().data(), iterator.value().data() - key.size());
+            ExpectOk(iterator.Next());
+        }
+        EXPECT_FALSE(iterator.valid());
+        EXPECT_TRUE(iterator.key().empty());
+
+        for (const auto& key : keys) {
+            ExpectOk(iterator.Seek(AsBytes(key)));
+            ExpectAt(iterator, key, "value");
+            EXPECT_EQ(iterator.key().data(), iterator.value().data() - key.size());
+        }
+
+        ExpectOk(iterator.SeekToLast());
+        for (std::size_t remaining = keys.size(); remaining > 0; --remaining) {
+            const auto& key = keys[remaining - 1];
+            ExpectAt(iterator, key, "value");
+            EXPECT_EQ(iterator.key().data(), iterator.value().data() - key.size());
+            ExpectOk(iterator.Prev());
+        }
+        EXPECT_FALSE(iterator.valid());
+        EXPECT_TRUE(iterator.key().empty());
+    }
+}
+
 TEST(BlockIteratorTest, IteratesForwardAndBackward) {
     const Block block = MakeBlock(BuildGoldenBlock());
     Block::Iterator iterator(block, BytewiseComparator());
@@ -645,6 +694,174 @@ TEST(BlockIteratorTest, ReverseEmptyAndBinaryEntriesKeepExactOwnedObservationsWi
     ExpectOk(iterator.Next());
     ExpectAt(iterator, BinaryPrefix, "first");
     EXPECT_TRUE(comparator.comparisons.empty());
+}
+
+TEST(BlockIteratorTest, ReverseTraversalBorrowsDistinctCachedDecodedKeys) {
+    const std::string prefix = std::string(80, 'a') + std::string("\0\xff", 2);
+    const std::array keys{prefix + "1", prefix + "2", prefix + "3", std::string("z")};
+    BlockBuilder builder(4);
+    for (std::size_t index = 0; index < keys.size(); ++index) {
+        builder.Add(AsBytes(keys[index]), AsBytes(std::to_string(index + 1)));
+    }
+    auto block = Block::Create(Materialize(builder.Finish()));
+    ASSERT_TRUE(block.has_value());
+    std::optional<Block> moved;
+    Block::Iterator iterator(*block, BytewiseComparator());
+
+    ExpectOk(iterator.SeekToLast());
+    ExpectAt(iterator, keys[3], "4");
+    ExpectOk(iterator.Prev());
+    ExpectAt(iterator, keys[2], "3");
+    const std::byte* third_key = iterator.key().data();
+    ExpectOk(iterator.Prev());
+    ExpectAt(iterator, keys[1], "2");
+    const std::byte* second_key = iterator.key().data();
+    EXPECT_NE(second_key, third_key);
+
+    moved.emplace(std::move(*block));
+    EXPECT_EQ(iterator.key().data(), second_key);
+    ExpectAt(iterator, keys[1], "2");
+    ExpectOk(iterator.Next());
+    ExpectAt(iterator, keys[2], "3");
+    ExpectOk(iterator.Prev());
+    ExpectAt(iterator, keys[1], "2");
+    ExpectOk(iterator.Prev());
+    ExpectAt(iterator, keys[0], "1");
+    EXPECT_EQ(iterator.key().data(), iterator.value().data() - keys[0].size());
+    ExpectOk(iterator.Prev());
+    EXPECT_FALSE(iterator.valid());
+    EXPECT_TRUE(iterator.key().empty());
+    EXPECT_TRUE(iterator.value().empty());
+    ExpectOk(iterator.SeekToLast());
+    ExpectOk(iterator.Prev());
+    ExpectAt(iterator, keys[2], "3");
+}
+
+TEST(BlockIteratorTest, RepositioningDoesNotReuseADifferentRestartReplay) {
+    const auto fake = EntryBytes(0, "a", "fake");
+    const auto first = EntryBytes(0, "b", AsStringView(fake));
+    const auto merged = EntryBytes(1, "2", "actual");
+    const auto last = EntryBytes(0, "z", "last");
+    const auto fake_offset = static_cast<std::uint32_t>(first.size() - fake.size());
+    const auto last_offset = static_cast<std::uint32_t>(first.size() + merged.size());
+    // The inner restart and the physical path share an offset, not a key history.
+    const Block block = MakeBlock(
+        WithRestarts(Concat({first, merged, last}), {0, last_offset, fake_offset, last_offset}));
+    Block::Iterator iterator(block, BytewiseComparator());
+
+    ExpectOk(iterator.SeekToLast());
+    ExpectAt(iterator, "z", "last");
+    ExpectOk(iterator.Prev());
+    ExpectAt(iterator, "a2", "actual");
+    ExpectOk(iterator.SeekToFirst());
+    ExpectAt(iterator, "b", AsStringView(fake));
+    ExpectOk(iterator.Next());
+    ExpectAt(iterator, "b2", "actual");
+    ExpectOk(iterator.Prev());
+    ExpectAt(iterator, "b", AsStringView(fake));
+}
+
+TEST(BlockIteratorTest, ReverseReplayDeclinesAmplifiedDecodedKeyStorage) {
+    const std::string prefix(8192, 'a');
+    BlockBuilder builder(16);
+    for (int entry = 1; entry <= 8; ++entry) {
+        builder.Add(AsBytes(prefix + std::to_string(entry)), AsBytes("v"));
+    }
+    builder.Add(AsBytes("z"), AsBytes("last"));
+    const Block block = MakeBlock(Materialize(builder.Finish()));
+    Block::Iterator iterator(block, BytewiseComparator());
+    ExpectOk(iterator.SeekToLast());
+    ExpectOk(iterator.Prev());
+    ExpectAt(iterator, prefix + "8", "v");
+    const std::byte* scratch = iterator.key().data();
+    ExpectOk(iterator.Prev());
+    ExpectAt(iterator, prefix + "7", "v");
+    EXPECT_EQ(iterator.key().data(), scratch);
+    for (int entry = 6; entry > 0; --entry) {
+        ExpectOk(iterator.Prev());
+        ExpectAt(iterator, prefix + std::to_string(entry), "v");
+    }
+    ExpectOk(iterator.Prev());
+    EXPECT_FALSE(iterator.valid());
+}
+
+TEST(BlockIteratorTest, BudgetLimitedReverseReplayReportsCorruptionAndRecovers) {
+    const std::string prefix(8192, 'a');
+    const auto first = EntryBytes(0, prefix + "1", "1");
+    const auto second = EntryBytes(8192, "2", "2");
+    const auto malformed = EntryBytes(8194, "", "");
+    const auto last = EntryBytes(0, "z", "last");
+    const auto last_offset =
+        static_cast<std::uint32_t>(first.size() + second.size() + malformed.size());
+    const Block block =
+        MakeBlock(WithRestarts(Concat({first, second, malformed, last}), {0, last_offset}));
+    Block::Iterator iterator(block, BytewiseComparator());
+
+    // Reconstructing the second key exceeds the cache budget before the bad entry.
+    for (int pass = 0; pass < 2; ++pass) {
+        SCOPED_TRACE(pass);
+        ExpectOk(iterator.SeekToLast());
+        ExpectAt(iterator, "z", "last");
+        ExpectCorruption(iterator.Prev());
+        EXPECT_FALSE(iterator.valid());
+        EXPECT_TRUE(iterator.key().empty());
+        EXPECT_TRUE(iterator.value().empty());
+    }
+    ExpectOk(iterator.SeekToFirst());
+    ExpectAt(iterator, prefix + "1", "1");
+    ExpectOk(iterator.Next());
+    ExpectAt(iterator, prefix + "2", "2");
+}
+
+TEST(BlockIteratorTest, DenseReverseReplayKeepsEveryEmptyKeyAndBorrowedValue) {
+    BlockBuilder builder(256);
+    for (unsigned int entry = 0; entry < 256; ++entry) {
+        const std::array value{static_cast<std::byte>(entry)};
+        builder.Add({}, value);
+    }
+    const Block block = MakeBlock(Materialize(builder.Finish()));
+    Block::Iterator iterator(block, BytewiseComparator());
+    ExpectOk(iterator.SeekToLast());
+    for (unsigned int remaining = 256; remaining > 0; --remaining) {
+        ASSERT_TRUE(iterator.valid());
+        EXPECT_TRUE(iterator.key().empty());
+        ASSERT_EQ(iterator.value().size(), 1U);
+        EXPECT_EQ(iterator.value()[0], static_cast<std::byte>(remaining - 1));
+        EXPECT_EQ(iterator.key().data(), iterator.value().data());
+        ExpectOk(iterator.Prev());
+    }
+    EXPECT_FALSE(iterator.valid());
+    EXPECT_TRUE(iterator.key().empty());
+    EXPECT_TRUE(iterator.value().empty());
+}
+
+TEST(BlockIteratorTest, ReverseCacheDoesNotHideEarlierCorruptionAfterRepositioning) {
+    const std::string prefix(64, 'm');
+    const auto malformed = EntryBytes(1, "", "");
+    const auto first = EntryBytes(0, prefix + "1", "1");
+    const auto second = EntryBytes(64, "2", "2");
+    const auto third = EntryBytes(64, "3", "3");
+    const auto last = EntryBytes(0, "z", "last");
+    const auto first_offset = static_cast<std::uint32_t>(malformed.size());
+    const auto last_offset =
+        static_cast<std::uint32_t>(malformed.size() + first.size() + second.size() + third.size());
+    const Block block = MakeBlock(WithRestarts(Concat({malformed, first, second, third, last}),
+                                               {0, first_offset, last_offset}));
+    Block::Iterator iterator(block, BytewiseComparator());
+
+    for (int pass = 0; pass < 2; ++pass) {
+        SCOPED_TRACE(pass);
+        ExpectOk(iterator.SeekToLast());
+        ExpectAt(iterator, "z", "last");
+        for (int entry = 3; entry > 0; --entry) {
+            ExpectOk(iterator.Prev());
+            ExpectAt(iterator, prefix + std::to_string(entry), std::to_string(entry));
+        }
+        ExpectCorruption(iterator.Prev());
+        EXPECT_FALSE(iterator.valid());
+        EXPECT_TRUE(iterator.key().empty());
+        EXPECT_TRUE(iterator.value().empty());
+    }
 }
 
 TEST(BlockIteratorTest, ReverseFailuresClearViewsAndSupportedPositioningRestoresReachableEntries) {

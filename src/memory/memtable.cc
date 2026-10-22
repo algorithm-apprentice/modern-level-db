@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <vector>
 
 #include "base/coding_internal.h"
 #include "format/internal_key.h"
@@ -107,7 +106,7 @@ MemTableLookup MemTable::Lookup(const LookupKey& key) const {
     // Descending sequence order skips versions newer than the lookup's sequence.
     // A lower-bound result still needs equality on the user-key portion.
     Table::Iterator iterator(table_);
-    iterator.Seek(key.memtable_key().data());
+    iterator.Seek(key.internal_key());
     if (!iterator.valid()) {
         return {};
     }
@@ -122,8 +121,11 @@ MemTableLookup MemTable::Lookup(const LookupKey& key) const {
 
 int MemTable::EntryComparator::operator()(const std::byte* left,
                                           const std::byte* right) const noexcept {
-    return internal_comparator.Compare(DecodeMemTableInternalKey(left),
-                                       DecodeMemTableInternalKey(right));
+    return (*this)(left, DecodeMemTableInternalKey(right));
+}
+
+int MemTable::EntryComparator::operator()(const std::byte* left, ByteView right) const noexcept {
+    return internal_comparator.Compare(DecodeMemTableInternalKey(left), right);
 }
 
 MemTable::Iterator::Iterator(const MemTable& table) noexcept : iterator_(table.table_) {}
@@ -134,12 +136,6 @@ ByteView MemTable::Iterator::key() const {
 
 ByteView MemTable::Iterator::value() const { return DecodeMemTableEntry(iterator_.entry()).value; }
 
-void MemTable::Iterator::Seek(ByteView internal_key) {
-    const std::size_t prefix_size = VarintLength(static_cast<std::uint32_t>(internal_key.size()));
-    seek_key_.resize(prefix_size + internal_key.size());
-    MutableByteView output(seek_key_);
-    EncodeLengthPrefixedTrusted(output, internal_key);
-    iterator_.Seek(seek_key_.data());
-}
+void MemTable::Iterator::Seek(ByteView internal_key) { iterator_.Seek(internal_key); }
 
 }  // namespace modern_leveldb

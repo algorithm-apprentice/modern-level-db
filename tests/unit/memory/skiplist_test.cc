@@ -43,6 +43,53 @@ struct RecordingIntegerCompare {
     mutable std::vector<std::pair<std::uint64_t, std::uint64_t>> comparisons;
 };
 
+struct PreparedIntegerTarget {
+    std::uint64_t value;
+};
+
+struct ConvertibleIntegerTarget {
+    std::uint64_t value;
+    std::size_t* conversions;
+
+    operator std::uint64_t() const noexcept {
+        ++*conversions;
+        return value;
+    }
+};
+
+struct LvalueIntegerTarget {
+    std::uint64_t value;
+    std::size_t* conversions;
+
+    operator std::uint64_t() & noexcept {
+        ++*conversions;
+        return value;
+    }
+};
+
+struct RvalueIntegerTarget {
+    std::uint64_t value;
+    std::size_t* conversions;
+
+    operator std::uint64_t() && noexcept {
+        ++*conversions;
+        return value;
+    }
+};
+
+struct PreparedIntegerCompare {
+    int operator()(std::uint64_t left, std::uint64_t right) const noexcept {
+        return IntegerCompare{}(left, right);
+    }
+
+    int operator()(std::uint64_t left, const PreparedIntegerTarget& right) const noexcept {
+        ++prepared_comparisons;
+        return IntegerCompare{}(left, right.value);
+    }
+
+    mutable std::size_t prepared_comparisons = 0;
+};
+
 struct DecadeCompare {
     int operator()(std::uint64_t left, std::uint64_t right) const noexcept {
         return IntegerCompare{}(left / 10U, right / 10U);
@@ -235,6 +282,140 @@ TEST(SkipListTest, LastPositioningAvoidsComparisonsAndPrevUsesStrictBounds) {
         saw_equal_bound = saw_equal_bound || left == right;
     }
     EXPECT_TRUE(saw_equal_bound);
+}
+
+TEST(SkipListTest, ConvertsEntryCompatibleTargetsOnceBeforeSearching) {
+    Arena arena;
+    IntegerCompare compare;
+    IntegerList list(compare, arena);
+    IntegerList::Iterator iterator(list);
+    std::size_t conversions = 0;
+    iterator.Seek(ConvertibleIntegerTarget{10, &conversions});
+    EXPECT_EQ(conversions, 1U);
+    EXPECT_FALSE(iterator.valid());
+
+    for (std::uint64_t key = 2; key <= 512; key += 2) {
+        list.Insert(key);
+    }
+    for (const std::uint64_t target : {0U, 255U, 256U, 511U, 512U, 513U}) {
+        SCOPED_TRACE(target);
+        conversions = 0;
+        iterator.Seek(ConvertibleIntegerTarget{target, &conversions});
+        EXPECT_EQ(conversions, 1U);
+        ASSERT_EQ(iterator.valid(), target <= 512);
+        if (iterator.valid()) {
+            const std::uint64_t expected = target < 2 ? 2 : ((target + 1) / 2) * 2;
+            EXPECT_EQ(iterator.entry(), expected);
+        }
+    }
+}
+
+TEST(SkipListTest, PreservesReferenceQualifiedEntryConversions) {
+    Arena arena;
+    IntegerCompare compare;
+    IntegerList list(compare, arena);
+    IntegerList::Iterator iterator(list);
+    std::size_t conversions = 0;
+    LvalueIntegerTarget target{20, &conversions};
+    iterator.Seek(target);
+    EXPECT_EQ(conversions, 1U);
+    EXPECT_FALSE(iterator.valid());
+
+    list.Insert(10);
+    list.Insert(30);
+    conversions = 0;
+    iterator.Seek(target);
+    EXPECT_EQ(conversions, 1U);
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(iterator.entry(), 30U);
+
+    conversions = 0;
+    iterator.Seek(RvalueIntegerTarget{10, &conversions});
+    EXPECT_EQ(conversions, 1U);
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(iterator.entry(), 10U);
+}
+
+TEST(SkipListTest, SeeksWithPreparedTargetsWithoutConvertingThemToStoredEntries) {
+    Arena arena;
+    PreparedIntegerCompare compare;
+    SkipList<std::uint64_t, PreparedIntegerCompare> list(compare, arena);
+    SkipList<std::uint64_t, PreparedIntegerCompare>::Iterator iterator(list);
+    iterator.Seek(PreparedIntegerTarget{20});
+    EXPECT_FALSE(iterator.valid());
+    EXPECT_EQ(compare.prepared_comparisons, 0U);
+
+    list.Insert(10);
+    list.Insert(30);
+    list.Insert(50);
+    for (const std::uint64_t target : {0U, 10U, 11U, 30U, 31U, 50U, 51U}) {
+        SCOPED_TRACE(target);
+        compare.prepared_comparisons = 0;
+        iterator.Seek(PreparedIntegerTarget{target});
+        EXPECT_GT(compare.prepared_comparisons, 0U);
+        ASSERT_EQ(iterator.valid(), target <= 50);
+        if (iterator.valid()) {
+            const std::uint64_t expected = target <= 10 ? 10 : (target <= 30 ? 30 : 50);
+            EXPECT_EQ(iterator.entry(), expected);
+        }
+    }
+
+    list.Insert(20);
+    iterator.Seek(PreparedIntegerTarget{20});
+    ASSERT_TRUE(iterator.valid());
+    EXPECT_EQ(iterator.entry(), 20U);
+    EXPECT_TRUE(list.Contains(30));
+}
+
+TEST(SkipListTest, PreparedAndStoredTargetsAgreeAcrossMultipleLevels) {
+    Arena arena;
+    PreparedIntegerCompare compare;
+    SkipList<std::uint64_t, PreparedIntegerCompare> list(compare, arena);
+    std::set<std::uint64_t> model;
+    for (std::uint64_t key = 2; key <= 512; key += 2) {
+        list.Insert(key);
+        model.insert(key);
+    }
+
+    SkipList<std::uint64_t, PreparedIntegerCompare>::Iterator iterator(list);
+    for (std::uint64_t target = 0; target <= 513; ++target) {
+        SCOPED_TRACE(target);
+        EXPECT_EQ(list.Contains(target), model.contains(target));
+        iterator.Seek(PreparedIntegerTarget{target});
+        const auto expected = model.lower_bound(target);
+        ASSERT_EQ(iterator.valid(), expected != model.end());
+        if (iterator.valid()) {
+            EXPECT_EQ(iterator.entry(), *expected);
+        }
+    }
+}
+
+TEST(SkipListTest, LowerBoundComparesEachVisitedNodeAtMostOnce) {
+    Arena arena;
+    RecordingIntegerCompare compare;
+    SkipList<std::uint64_t, RecordingIntegerCompare> list(compare, arena);
+    std::set<std::uint64_t> model;
+    for (std::uint64_t key = 2; key <= 512; key += 2) {
+        list.Insert(key);
+        model.insert(key);
+    }
+
+    SkipList<std::uint64_t, RecordingIntegerCompare>::Iterator iterator(list);
+    for (std::uint64_t target = 0; target <= 513; ++target) {
+        SCOPED_TRACE(target);
+        compare.comparisons.clear();
+        iterator.Seek(target);
+        const auto expected = model.lower_bound(target);
+        ASSERT_EQ(iterator.valid(), expected != model.end());
+        if (iterator.valid()) {
+            EXPECT_EQ(iterator.entry(), *expected);
+        }
+        std::set<std::uint64_t> visited;
+        for (const auto& [left, right] : compare.comparisons) {
+            EXPECT_EQ(right, target);
+            ASSERT_TRUE(visited.insert(left).second) << "repeated node " << left;
+        }
+    }
 }
 
 TEST(SkipListTest, IteratorsObserveLaterNeighborsWithoutLosingCurrentNodes) {
