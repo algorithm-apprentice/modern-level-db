@@ -28,6 +28,10 @@ struct ReuseShard {
     [[nodiscard]] bool enabled(std::size_t capacity) const noexcept;
     void RecordOpen(std::size_t capacity) noexcept;
     void Invalidate(std::size_t capacity) noexcept;
+    // Preparation closes an exhausted gate before any terminal publication.
+    // Complete takes an observation returned by Begin for this shard/capacity.
+    [[nodiscard]] std::uint64_t BeginInvalidation(std::size_t capacity) noexcept;
+    void CompleteInvalidation(std::uint64_t observed, std::size_t capacity) noexcept;
 };
 
 }  // namespace table_cache_detail

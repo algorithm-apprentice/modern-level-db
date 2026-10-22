@@ -29,12 +29,21 @@ void ReuseShard::RecordOpen(std::size_t capacity) noexcept {
 }
 
 void ReuseShard::Invalidate(std::size_t capacity) noexcept {
+    CompleteInvalidation(BeginInvalidation(capacity), capacity);
+}
+
+std::uint64_t ReuseShard::BeginInvalidation(std::size_t capacity) noexcept {
     constexpr auto Terminal = std::numeric_limits<std::uint64_t>::max();
-    auto observed = generation.load(std::memory_order_relaxed);
+    const auto observed = generation.load(std::memory_order_relaxed);
+    if (observed >= Terminal - 1) {
+        opens.store(capacity + 1, std::memory_order_release);
+    }
+    return observed;
+}
+
+void ReuseShard::CompleteInvalidation(std::uint64_t observed, std::size_t capacity) noexcept {
+    constexpr auto Terminal = std::numeric_limits<std::uint64_t>::max();
     for (;;) {
-        if (observed >= Terminal - 1) {
-            opens.store(capacity + 1, std::memory_order_release);
-        }
         if (observed == Terminal) {
             return;
         }
@@ -42,6 +51,7 @@ void ReuseShard::Invalidate(std::size_t capacity) noexcept {
                                              std::memory_order_relaxed)) {
             return;
         }
+        observed = BeginInvalidation(capacity);
     }
 }
 
