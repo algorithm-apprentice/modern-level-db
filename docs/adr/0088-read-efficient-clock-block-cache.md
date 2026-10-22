@@ -214,6 +214,44 @@ but must never return another key's bytes or free a retained value.
 Detach/queue owners under the mutex; destroy them after unlock. Reentrant
 destructors can call cache operations without self-deadlock.
 
+## Deterministic protocol test boundaries
+
+Use the actual production transitions for controlled schedules, not a second
+cache model or conditional profiling callbacks. Keep canonical Slot/Index
+declarations and pin-word constants in one private protocol header shared by
+the implementation and internal tests; do not create different inline bodies
+under different translation-unit flags.
+
+Factor root acquisition from probing the acquired root. Ordinary Lookup calls
+those same stages; an internal test peer can retain the typed root observation
+across growth, in-place refresh and canonical-position reuse. The observation
+borrows the cache, not a payload owner, and never combines its root with a
+later root's mask.
+
+Factor a single Live-pin CAS attempt from the bounded retry loop. The loop
+checks Live before each attempt, and only a successful acquire CAS permits
+the complete-key comparison. Tests can pause with the actual observed word
+before CAS or retain the acquired pin before erase/replacement. A successful
+stale-word ABA pins the current Live generation; it must still compare that
+generation's complete key before reporting a hit.
+
+Factor the release RMW from the rare serialized completion. Capture permanent
+shard identity before decrementing; return that typed identity only when an
+Erased last-pin transition needs cleanup. Completion rechecks current
+Erased/zero-pin eligibility under the writer mutex. Tests can pause after the
+actual decrement while a writer reclaims/reuses the position, including a
+replacement becoming Erased/zero-pin before the earlier completion resumes.
+Never carry a detached Entry or unpinned payload pointer across that gap.
+
+The test peer may consume a lease into such a pending cleanup, but must finish
+that cleanup before cache destruction, including on assertion unwinding.
+These boundaries add no production runtime hook, alternate read algorithm,
+allocation, metadata field or policy option. Confirm the optimized linked
+Lookup/normal Release do not acquire additional helper-call or allocation
+overhead; the private source factoring alone is not evidence of that result.
+Independent architecture re-review approved these boundaries, not their
+implementation, facade, default selection or performance.
+
 ## Metadata and allocation bounds
 
 Grow slot/index capacity lazily. Track segment, free-position and current/
