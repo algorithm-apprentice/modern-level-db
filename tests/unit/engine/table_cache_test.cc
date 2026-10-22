@@ -12,12 +12,14 @@
 #include <exception>
 #include <filesystem>
 #include <functional>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <semaphore>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -55,6 +57,7 @@ struct FileHooks {
     std::function<void(std::uint64_t)> closed;
 };
 
+// Pausers must finish before destruction; ScheduleCleanup enforces that on exits.
 class OneShotGate {
 public:
     ~OneShotGate() { Open(); }
@@ -242,18 +245,76 @@ private:
     std::shared_ptr<FileHooks> hooks_ = std::make_shared<FileHooks>();
 };
 
-class ClearFileHooks {
+class ScheduleCleanup {
 public:
-    explicit ClearFileHooks(MemoryFileSystem& file_system) : file_system_(file_system) {}
-    ~ClearFileHooks() {
-        file_system_.SetOpenHook({});
-        file_system_.SetReadHook({});
-        file_system_.SetCloseHook({});
+    ScheduleCleanup(std::initializer_list<OneShotGate*> gates,
+                    std::initializer_list<std::jthread*> workers,
+                    MemoryFileSystem* file_system = nullptr)
+        : gates_(gates), workers_(workers), file_system_(file_system) {}
+    ScheduleCleanup(const ScheduleCleanup&) = delete;
+    ScheduleCleanup& operator=(const ScheduleCleanup&) = delete;
+    ~ScheduleCleanup() {
+        if (file_system_ != nullptr) {
+            file_system_->SetOpenHook({});
+            file_system_->SetReadHook({});
+            file_system_->SetCloseHook({});
+        }
+        for (auto* gate : gates_) {
+            gate->Open();
+        }
+        for (auto* worker : workers_) {
+            if (worker->joinable()) {
+                worker->join();
+            }
+        }
     }
 
 private:
-    MemoryFileSystem& file_system_;
+    std::vector<OneShotGate*> gates_;
+    std::vector<std::jthread*> workers_;
+    MemoryFileSystem* file_system_;
 };
+
+TEST(TableReaderScheduleTest, CleanupOpensEveryGateAndJoinsBeforeBorrowedStateCanBeDestroyed) {
+    std::atomic<bool> completed = false;
+    std::jthread worker;
+    OneShotGate first;
+    OneShotGate second;
+    {
+        ScheduleCleanup cleanup({&first, &second}, {&worker});
+        worker = std::jthread([&] {
+            first.Pause();
+            second.Pause();
+            completed.store(true);
+        });
+        ASSERT_TRUE(first.Wait());
+    }
+    EXPECT_FALSE(worker.joinable());
+    EXPECT_TRUE(completed.load());
+}
+
+TEST(TableReaderScheduleTest, ExceptionCleanupJoinsBeforeCapturedStateCanBeDestroyed) {
+    std::atomic<bool> completed = false;
+    std::jthread worker;
+    OneShotGate first;
+    OneShotGate second;
+    EXPECT_THROW(
+        {
+            ScheduleCleanup cleanup({&first, &second}, {&worker});
+            worker = std::jthread([&] {
+                first.Pause();
+                second.Pause();
+                completed.store(true);
+            });
+            if (!first.Wait()) {
+                throw std::logic_error("worker did not reach its gate");
+            }
+            throw std::runtime_error("leave the assertion scope");
+        },
+        std::runtime_error);
+    EXPECT_FALSE(worker.joinable());
+    EXPECT_TRUE(completed.load());
+}
 
 class MemoryWritableFile final : public WritableFile {
 public:
@@ -688,13 +749,13 @@ TEST_F(TableCacheTest, FallbackReadPinsMappingButHintReadPinsOnlyTheReaderAcross
         std::vector<std::byte> output;
         std::jthread reader;
         OneShotGate data_read;
-        ClearFileHooks clear(file_system_);
         std::atomic<int> reads = 0;
         file_system_.SetReadHook([&](std::uint64_t number, std::uint64_t offset) {
             if (number == files[0] && offset == 0 && ++reads == (prime_hint ? 2 : 1)) {
                 data_read.Pause();
             }
         });
+        ScheduleCleanup cleanup({&data_read}, {&reader}, &file_system_);
         reader = std::jthread([&] {
             try {
                 if (prime_hint) {
@@ -735,12 +796,12 @@ TEST_F(TableCacheTest, OldOpenAfterEvictMayRecacheButCannotRetagItsHintAsTheNewG
     std::jthread reader;
     OneShotGate open;
     OneShotGate second_read;
-    ClearFileHooks clear(file_system_);
     file_system_.SetOpenHook([&](std::uint64_t number) {
         if (number == files[0]) {
             open.Pause();
         }
     });
+    ScheduleCleanup cleanup({&open, &second_read}, {&reader}, &file_system_);
     reader = std::jthread([&] {
         try {
             result.emplace(PointRead(cache, files[0], a, value));
@@ -781,12 +842,12 @@ TEST_F(TableCacheTest, InvalidationFollowsEraseEvenWhenNewReadsRecacheDuringClos
     ASSERT_EQ(PointRead(cache, files[0], old, value), TableLookupKind::Value);
     std::jthread evictor;
     OneShotGate close;
-    ClearFileHooks clear(file_system_);
     file_system_.SetCloseHook([&](std::uint64_t number) {
         if (number == files[0]) {
             close.Pause();
         }
     });
+    ScheduleCleanup cleanup({&close}, {&evictor}, &file_system_);
     evictor = std::jthread([&] { cache.Evict(files[0]); });
     ASSERT_TRUE(close.Wait());
     sizes[0] = WriteTable(files[0], "new");
@@ -811,6 +872,7 @@ TEST_F(TableCacheTest, WeakThreadHintsOutliveCacheClosureWithoutRetainingFiles) 
     std::vector<std::byte> value;
     std::jthread worker;
     OneShotGate thread_exit;
+    ScheduleCleanup cleanup({&thread_exit}, {&worker});
     worker = std::jthread([&] {
         result.emplace(PointRead(*cache, 7, size, value));
         thread_exit.Pause();
@@ -840,12 +902,13 @@ TEST_F(TableCacheTest, DuplicateSuccessfulOpensCloseHintsBeforeEitherNewReaderIs
     std::jthread reader;
     OneShotGate open;
     OneShotGate second_read;
-    ClearFileHooks clear(file_system_);
+    std::atomic<int> data_reads = 0;
     file_system_.SetOpenHook([&](std::uint64_t number) {
         if (number == files[0]) {
             open.Pause();
         }
     });
+    ScheduleCleanup cleanup({&open, &second_read}, {&opener, &reader}, &file_system_);
     opener = std::jthread([&] {
         try {
             first_result.emplace(PointRead(cache, files[0], a, first_value));
@@ -862,7 +925,6 @@ TEST_F(TableCacheTest, DuplicateSuccessfulOpensCloseHintsBeforeEitherNewReaderIs
     ASSERT_TRUE(first_result.has_value());
     ASSERT_EQ(*first_result, TableLookupKind::Value);
     ASSERT_EQ(Opens(files[0]), 2);
-    std::atomic<int> data_reads = 0;
     file_system_.SetReadHook([&](std::uint64_t number, std::uint64_t offset) {
         if (number == files[0] && offset == 0 && ++data_reads == 2) {
             second_read.Pause();
@@ -942,6 +1004,7 @@ TEST(TableReaderReuseStateTest, CompletedEvictionCannotOvertakeAClosingEpochInto
     state.generation.store(std::numeric_limits<std::uint64_t>::max() - 1);
     std::jthread delayed;
     OneShotGate prepared;
+    ScheduleCleanup cleanup({&prepared}, {&delayed});
     delayed = std::jthread([&] {
         const auto observed = state.BeginInvalidation(1);
         prepared.Pause();

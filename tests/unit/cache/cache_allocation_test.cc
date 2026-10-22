@@ -331,6 +331,8 @@ TEST(CacheAllocationTest, ReaderConstructionClosesHintsBeforeEveryLaterOwnership
         std::optional<Result<TableLookupKind>> read;
         std::exception_ptr error;
         std::vector<std::byte> output;
+        const auto operation = "read " + TableFileName("db", files[0]).filename().string();
+        std::thread::id reader_id;
         std::latch primed(1);
         std::latch continue_read(1);
         std::latch entered(1);
@@ -368,8 +370,7 @@ TEST(CacheAllocationTest, ReaderConstructionClosesHintsBeforeEveryLaterOwnership
         EXPECT_TRUE(threw);
         EXPECT_EQ(failed.calls, profiled.calls - 3 + later - 1);
 
-        const auto operation = "read " + TableFileName("db", files[0]).filename().string();
-        const auto reader_id = reader.get_id();
+        reader_id = reader.get_id();
         file_system.SetOperationHook([&](std::string_view current) -> Status {
             if (current == operation && std::this_thread::get_id() == reader_id) {
                 entered.count_down();
