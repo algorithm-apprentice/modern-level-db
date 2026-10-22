@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <leveldb/db.h>
 #include <leveldb/env.h>
+#include <leveldb/filter_policy.h>
 #include <leveldb/table_builder.h>
 #include <leveldb/write_batch.h>
 
@@ -11,9 +12,12 @@
 #include <string>
 #include <string_view>
 
+#include "engine/database.h"
+#include "format/write_batch.h"
 #include "support/database_model.h"
 #include "support/reference_directory.h"
 #include "support/temporary_directory.h"
+#include "table/bloom_filter.h"
 
 namespace modern_leveldb {
 namespace {
@@ -30,6 +34,7 @@ public:
         options_.create_if_missing = true;
         options_.write_buffer_size = 64 * 1024;
         options_.compression = static_cast<leveldb::CompressionType>(compression);
+        options_.filter_policy = filter_policy_.get();
         Open();
     }
     ReferenceClient(const ReferenceClient&) = delete;
@@ -126,6 +131,7 @@ private:
     }
 
     std::filesystem::path path_;
+    std::unique_ptr<const leveldb::FilterPolicy> filter_policy_{leveldb::NewBloomFilterPolicy(10)};
     leveldb::Options options_;
     std::unique_ptr<leveldb::DB> database_;
     std::array<Snapshot, test_support::SnapshotSlots> snapshots_;
@@ -187,6 +193,46 @@ TEST(LevelDbCompatibilityTest, MatchesTheModelAndSwapsDatabaseDirectories) {
                 EXPECT_EQ(reference.Read(key), value);
             }
         }
+    }
+}
+
+TEST(LevelDbCompatibilityTest, NativeLegacyFilterReaderIgnoresModernFullFilterMetadata) {
+    for (const auto compression :
+         {BlockCompression::None, BlockCompression::Snappy, BlockCompression::Zstd}) {
+        test_support::ReferenceTemporaryDirectory directory;
+        DatabaseEngineOptions options;
+        options.create_if_missing = true;
+#if defined(_WIN32)
+        options.allow_weak_namespace_durability = true;
+#endif
+        options.table_options.filter_policy = BloomFilterPolicy(10);
+        options.table_options.filter_layout = FilterLayout::FullTable;
+        options.table_options.compression = compression;
+        {
+            auto opened = DatabaseEngine::Open(options, directory.path());
+            ASSERT_TRUE(opened.has_value());
+            EncodedWriteBatch batch;
+            for (unsigned index = 0; index < 256; ++index) {
+                batch.Put(AsBytes("key-" + std::to_string(index)),
+                          AsBytes(std::string(1024, static_cast<char>('a' + index % 26))));
+            }
+            ASSERT_TRUE((*opened)->Write(batch, true).has_value());
+            ASSERT_TRUE((*opened)->FlushMemTable().has_value());
+        }
+        {
+            ReferenceClient native(directory.path(), static_cast<Compression>(compression));
+            for (unsigned index = 0; index < 256; ++index) {
+                EXPECT_EQ(native.Read("key-" + std::to_string(index)),
+                          std::string(1024, static_cast<char>('a' + index % 26)));
+            }
+            EXPECT_EQ(native.Scan(false).size(), 256U);
+            EXPECT_FALSE(native.Read("missing").has_value());
+        }
+        auto reopened = DatabaseEngine::Open(options, directory.path());
+        ASSERT_TRUE(reopened.has_value());
+        std::vector<std::byte> value;
+        ASSERT_TRUE((*reopened)->Get(AsBytes("key-42"), value).value());
+        EXPECT_EQ(AsStringView(value), std::string(1024, 'q'));
     }
 }
 

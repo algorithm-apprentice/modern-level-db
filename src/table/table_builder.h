@@ -17,6 +17,7 @@
 #include "table/bloom_filter.h"
 #include "table/compression.h"
 #include "table/filter_block.h"
+#include "table/full_filter.h"
 
 namespace modern_leveldb {
 
@@ -30,6 +31,7 @@ struct TableBuilderOptions {
     std::optional<BloomFilterPolicy> filter_policy;
     BlockCompression compression = BlockCompression::None;
     int zstd_compression_level = 1;
+    FilterLayout filter_layout = FilterLayout::BlockBased;
 };
 
 // Writes one SSTable of internal keys, which must strictly increase under the
@@ -99,6 +101,7 @@ private:
     BlockBuilder data_block_;
     BlockBuilder index_block_;
     std::optional<FilterBlockBuilder> filter_block_;
+    std::optional<FullFilterBuilder> full_filter_;
     // The metaindex key of the filter block.
     std::string filter_key_;
     std::vector<std::byte> compressed_output_;

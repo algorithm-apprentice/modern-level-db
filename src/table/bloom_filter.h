@@ -11,12 +11,20 @@
 
 namespace modern_leveldb {
 
+enum class FilterLayout {
+    BlockBased,
+    FullTable,
+};
+
 // Probabilistic exclusion for byte-equal keys: a valid filter can rule a key out,
 // while "may match" still requires a table lookup. Builders/readers keep a policy copy.
 class BloomFilterPolicy final {
 public:
     // Density controls space/probe tradeoffs; size bounds are enforced by builders.
     explicit BloomFilterPolicy(std::uint32_t bits_per_key) noexcept;
+
+    [[nodiscard]] std::uint32_t bits_per_key() const noexcept { return bits_per_key_; }
+    [[nodiscard]] std::uint32_t probes() const noexcept { return probes_; }
 
     [[nodiscard]] std::string_view Name() const noexcept { return "leveldb.BuiltinBloomFilter2"; }
 

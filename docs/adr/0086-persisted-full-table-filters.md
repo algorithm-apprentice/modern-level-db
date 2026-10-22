@@ -1,6 +1,6 @@
 # ADR-0086: Persisted Full-Table Filters
 
-- Status: Accepted
+- Status: Implemented
 - Date: 2026-10-22
 
 ## Context
@@ -210,3 +210,82 @@ Its two clarifications are incorporated above: selected handle size is admitted
 before payload I/O/allocation, and full/legacy corruption precedence follows
 explicit selection. This approval does not replace the independent
 implementation review or the default-selection measurements.
+
+## Implementation and measured default admission
+
+The scalar format, SST routing, public selection and isolated ISA implementation
+received separate independent implementation reviews. The production source
+measured here is `51c000a`; it includes the accepted Hash/LookupKey baseline.
+Debug validation executed 1,006 unit/public cases and 19 actual extended-preset
+cases, including native cross-reader and process-recovery contracts.
+
+The retained campaign is
+`build/read-adoption-20261022/full-production-v2/`. Its source archive,
+production library, original/native executables, codec/CRC libraries, command
+lines, images, all raw outputs and independent verifier are preserved.
+The 47 SSTs contain one million entries. A controlled offline fixture rebuild
+uses the production TableBuilder, not a scan added to Open. Unfiltered
+reconstruction is byte-identical; full/legacy images preserve every data block,
+stored index block, file number, key range and level. Only optional metadata,
+footer locations and corresponding MANIFEST sizes differ.
+
+Preflight caught a fixture MANIFEST bug before accepted timing: a same-level,
+same-number replacement history makes native recovery retain the earlier file
+size. The rejected v1, its native metadata/file-size diagnosis and zero accepted
+timings remain preserved. V2 emits a fresh final-state MANIFEST snapshot and
+passes actual native reads; no production format workaround was introduced.
+
+The admitted matrix has six fresh processes per arm/cell, one million total
+Get operations across one/four readers, 8/512 MiB logical budgets, physical-core
+affinity, balanced ordering and frozen original/native controls. Selected filter
+payload is subtracted from the block-cache budget. Current-disabled and full
+arms read the exact same full-filter image. New headers are compiled with the
+new library rather than mixed with the old Options ABI.
+
+Paired median Get-cost improvements on this Windows/MSVC machine were:
+
+| Logical budget | Readers | Scalar full vs legacy | Runtime full vs legacy | Runtime full vs disabled |
+|---|---:|---:|---:|---:|
+| 8 MiB | 1 | 11.79% | 12.69% | 35.00% |
+| 8 MiB | 4 | 6.21% | 8.61% | 32.41% |
+| 512 MiB | 1 | 15.22% | 12.54% | 30.45% |
+| 512 MiB | 4 | 10.76% | 11.63% | 24.95% |
+
+Each table comparison improved in all six pairs. These are measured corpus
+results, not promised hardware-independent gains. In particular, do not add
+the filter and ISA percentages: runtime versus scalar alone ranged from
+-1.31% to +3.95%, with only 3/6 faster pairs in both resident-cache cells.
+The complete persisted-filter mechanism is supported more strongly than a
+universal incremental SIMD gain.
+
+Twenty-four additional scan processes retained the iterator control. Runtime
+full versus disabled improved 2.70% at 8 MiB (6/6), and was essentially unchanged
+at 512 MiB (-0.04%, 3/6). All 168 accepted processes and original rounds remain
+in the report; independent verification checks raw outputs, exact work,
+budget, topology and pair calculations.
+
+The full payload totals 1,252,208 bytes versus 1,470,247 legacy bytes. The
+same-element-size, same-push-sequence MSVC vector model reports a largest
+218,480-byte reserved hash buffer and 247,744-byte hash-plus-final-payload
+buffer peak. This is an explicit builder-buffer model, not whole-builder or
+process RSS. `sizeof(Table)` is 240 bytes, FullFilterReader 48 and the legacy
+reader 56 on this build. Allocator overhead, other builder buffers, active
+leases and OS/mmap caching remain separate.
+
+Linked COFF/PE verification matches the actual scalar/AVX2 bodies to their
+source objects outside relocations, proves distinct addresses and AVX2-only
+`vpmulld`, checks the runtime pointer and executes a separately compiled scalar
+dispatch control. Both Get variants use the identical KeyMayMatch caller and
+one indirect call to the stored actual leaf.
+
+The ordinary CI follow-up removes an unnecessary process-static dispatch guard:
+CPU/OS selection runs at reader admission, and the reader still retains its
+pointer outside Get. The measured KeyMayMatch, scalar and AVX2 machine-code
+bodies are unchanged. The public-only fixture uses checked exact-size file
+reads instead of a GCC-13 `istreambuf_iterator` optimization warning; no warning
+or coverage exclusion was added.
+
+Admit Automatic with density ten for the known built-in bytewise comparator.
+Keep explicit disable and legacy selection, conservative custom-comparator
+handling, portable scalar fallback and ordinary CI gates. This decision does
+not admit a different cache policy, reader-reuse default or batch API.

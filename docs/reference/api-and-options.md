@@ -48,7 +48,7 @@ when supplied through `ReadOptions`.
 | `allow_mmap_reads` | `true` | Permit exact-size immutable table mappings |
 | `block_size` | 4 KiB | Approximate uncompressed data-block size |
 | `block_restart_interval` | 16 | Keys between full-key restart entries |
-| `bloom_bits_per_key` | unset | Enable the built-in Bloom policy |
+| `bloom_bits_per_key` | 10 | Filter density; explicit `std::nullopt` disables filters |
 | `compression` | Snappy | None, Snappy, or Zstd |
 | `zstd_compression_level` | 1 | Zstd level in the supported -5 through 22 range |
 | `sync_wal_creation` | `true` | Sync the initial empty WAL and request the backend namespace barrier before it accepts writes; later rotation requests the namespace barrier |
@@ -57,6 +57,7 @@ when supplied through `ReadOptions`.
 | `block_cache` | null | Retain a supplied decoded-block cache instead of creating an 8 MiB cache |
 | `clock` | null | Retain a supplied monotonic clock instead of using the system clock |
 | `executor` | null | Retain a supplied executor instead of creating a serial worker |
+| `bloom_filter_layout` | Automatic | Full-table filtering for the known bytewise comparator; explicit BlockBased or FullTable selects the writer layout |
 
 The engine clips `max_open_files` to 74 through 50,000,
 `write_buffer_size` to 64 KiB through 1 GiB, `max_file_size` to 1 MiB through
@@ -133,9 +134,24 @@ A custom comparator must:
 - support concurrent calls;
 - preserve separator/successor bounds.
 
-Changing its name does not migrate existing sorted data. Enable
-`bloom_bits_per_key` only when comparator equality implies byte equality;
-otherwise a Bloom filter can report equivalent keys missing.
+Changing its name does not migrate existing sorted data.
+
+The default automatic mode enables persisted full-table filtering for the
+built-in bytewise comparator. It disables filters for other comparator
+objects, even if their Name matches the built-in name. Explicitly empty
+`bloom_bits_per_key` disables filtering for every layout.
+
+A custom comparator can explicitly select `BlockBased` or `FullTable` only
+when comparator equality implies identical key bytes. Otherwise a byte-based
+Bloom filter can report equivalent keys missing. Setting density alone does
+not opt a custom comparator into filtering under Automatic mode.
+
+The layout selects newly written SST metadata. Enabled readers recognize both
+legacy offset-range filters and versioned full-table filters, preferring a
+recognized full filter when both exist. No table scan/rewrite happens at
+Open. Existing tables without filters remain readable. Native LevelDB and
+older Modern readers ignore the new optional metadata and still read the
+same data/index/footer; they do not obtain the full-filter exclusion benefit.
 
 ## Deliberate API differences from LevelDB
 

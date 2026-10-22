@@ -50,6 +50,25 @@ TEST(PublicOptionsTest, DefaultsToMmapReadsAndSnappyCompression) {
     EXPECT_EQ(options.zstd_compression_level, 1);
 }
 
+TEST(PublicOptionsTest, DefaultsToComparatorSafeAutomaticFullFiltering) {
+    const Options options;
+    EXPECT_EQ(options.bloom_bits_per_key, 10U);
+    EXPECT_EQ(options.bloom_filter_layout, BloomFilterLayout::Automatic);
+    Options disabled;
+    disabled.bloom_bits_per_key.reset();
+    EXPECT_FALSE(disabled.bloom_bits_per_key.has_value());
+}
+
+TEST(PublicOptionsTest, InvalidFilterLayoutIsRejectedEvenWhenFiltersAreDisabled) {
+    Options options;
+    options.bloom_bits_per_key.reset();
+    options.bloom_filter_layout = static_cast<BloomFilterLayout>(99);
+    const auto opened = Database::Open(options, {});
+    ASSERT_FALSE(opened.has_value());
+    EXPECT_EQ(opened.error().code(), ErrorCode::InvalidArgument);
+    EXPECT_EQ(opened.error().message(), "Bloom filter layout is invalid");
+}
+
 TEST(PublicOptionsTest, PreservesTheLegacyAggregateMemberOrder) {
     const Options options{nullptr,           true, false, 123U, 456U, 789U, false, 1024U, 8U, 12U,
                           Compression::Zstd, -3};
@@ -64,6 +83,7 @@ TEST(PublicOptionsTest, PreservesTheLegacyAggregateMemberOrder) {
     EXPECT_EQ(options.compression, Compression::Zstd);
     EXPECT_EQ(options.zstd_compression_level, -3);
     EXPECT_TRUE(options.sync_wal_creation);
+    EXPECT_EQ(options.bloom_filter_layout, BloomFilterLayout::Automatic);
 }
 
 TEST(PublicOptionsTest, PreservesAdmissionFailurePriorityBeforeBackendOpening) {

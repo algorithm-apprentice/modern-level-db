@@ -17,6 +17,7 @@
 #include "table/block_format.h"
 #include "table/bloom_filter.h"
 #include "table/filter_block.h"
+#include "table/full_filter.h"
 
 namespace modern_leveldb {
 
@@ -78,8 +79,8 @@ public:
 private:
     Table(std::unique_ptr<RandomAccessFile> file, std::uint64_t blocks_end,
           const InternalKeyComparator& comparator, BlockKeyFormat block_key_format, Block index,
-          std::optional<FilterBlockReader> filter, BlockCache* block_cache,
-          std::uint64_t cache_id) noexcept;
+          std::optional<FilterBlockReader> filter, std::optional<FullFilterReader> full_filter,
+          BlockCache* block_cache, std::uint64_t cache_id) noexcept;
 
     [[nodiscard]] Result<BlockReference> ReadDataBlock(BlockHandle handle,
                                                        const TableReadOptions& options) const;
@@ -94,6 +95,7 @@ private:
     BlockKeyFormat block_key_format_;
     Block index_;
     std::optional<FilterBlockReader> filter_;
+    std::optional<FullFilterReader> full_filter_;
     BlockCache* block_cache_;
     std::uint64_t cache_id_;
 };

@@ -1,16 +1,19 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "dependency_test_support.h"
 #include "modern_leveldb/base/bytes.h"
@@ -91,6 +94,147 @@ public:
 private:
     std::shared_ptr<std::atomic<bool>> destroyed_;
 };
+
+struct FilterInspection {
+    std::size_t tables = 0;
+    std::vector<std::string> names;
+};
+
+// The fixtures disable compression and contain only numeric/filler keys and
+// repeated value bytes; the two policy names are unambiguous wire markers.
+Result<FilterInspection> InspectFilters(const std::filesystem::path& directory) {
+    FilterInspection result;
+    for (const auto& path : std::filesystem::directory_iterator(directory)) {
+        if (path.path().extension() != ".ldb") {
+            continue;
+        }
+        ++result.tables;
+        std::ifstream input(path.path(), std::ios::binary | std::ios::ate);
+        if (!input.is_open()) {
+            return std::unexpected(Error::Io("cannot inspect generated table"));
+        }
+        const std::streamoff length = input.tellg();
+        if (!std::in_range<std::size_t>(length) || !std::in_range<std::streamsize>(length)) {
+            return std::unexpected(Error::Io("cannot inspect generated table size"));
+        }
+        std::string stored(static_cast<std::size_t>(length), '\0');
+        input.seekg(0);
+        if (!input.read(stored.data(), static_cast<std::streamsize>(stored.size()))) {
+            return std::unexpected(Error::Io("cannot read generated table"));
+        }
+        for (const auto name :
+             {"filter.modern_leveldb.FullBloom1", "filter.leveldb.BuiltinBloomFilter2"}) {
+            if (stored.find(name) != std::string::npos) {
+                result.names.emplace_back(name);
+            }
+        }
+    }
+    return result;
+}
+
+class AutomaticFilterComparator final : public Comparator {
+public:
+    int Compare(ByteView left, ByteView right) const noexcept override {
+        const auto common = std::min(left.size(), right.size());
+        for (std::size_t index = 0; index < common; ++index) {
+            const auto fold = [](std::byte value) {
+                const auto byte = std::to_integer<unsigned>(value);
+                return byte >= 'A' && byte <= 'Z' ? byte + ('a' - 'A') : byte;
+            };
+            if (fold(left[index]) != fold(right[index])) {
+                return fold(left[index]) < fold(right[index]) ? -1 : 1;
+            }
+        }
+        return left.size() == right.size() ? 0 : (left.size() < right.size() ? -1 : 1);
+    }
+    std::string_view Name() const noexcept override { return BytewiseComparator().Name(); }
+    void FindShortestSeparator(std::vector<std::byte>&, ByteView) const override {}
+    void FindShortSuccessor(std::vector<std::byte>&) const override {}
+};
+
+TEST(PublicFilterTest, AutomaticDefaultsExplicitLegacyAndDisableWriteTheSelectedMetadata) {
+    for (const auto mode : {0, 1, 2, 3, 4}) {
+        TemporaryDatabaseDirectory directory;
+        auto options = CreatingOptions();
+        options.write_buffer_size = 64 * 1024;
+        options.compression = Compression::None;
+        if (mode == 1) {
+            options.bloom_filter_layout = BloomFilterLayout::BlockBased;
+        } else if (mode == 2) {
+            options.bloom_bits_per_key.reset();
+        } else if (mode == 3) {
+            options.comparator =
+                std::shared_ptr<const Comparator>(&BytewiseComparator(), [](const Comparator*) {});
+        } else if (mode == 4) {
+            options.comparator =
+                std::make_shared<TrackingComparator>(std::make_shared<std::atomic<bool>>(false));
+            options.bloom_filter_layout = BloomFilterLayout::FullTable;
+        }
+        {
+            auto opened = Database::Open(options, directory.path());
+            ASSERT_TRUE(opened.has_value());
+            for (unsigned index = 0; index < 256; ++index) {
+                const auto key = "key-" + std::to_string(index);
+                const std::string value(1024, 'x');
+                ASSERT_TRUE(opened->Put(AsBytes(key), AsBytes(value)).has_value());
+            }
+        }
+        auto inspected = InspectFilters(directory.path());
+        ASSERT_TRUE(inspected.has_value());
+        ASSERT_GT(inspected->tables, 0U);
+        if (mode == 2) {
+            EXPECT_TRUE(inspected->names.empty());
+        } else {
+            ASSERT_FALSE(inspected->names.empty());
+            EXPECT_EQ(inspected->names.size(), inspected->tables);
+            for (const auto& name : inspected->names) {
+                EXPECT_EQ(name, mode == 1 ? "filter.leveldb.BuiltinBloomFilter2"
+                                          : "filter.modern_leveldb.FullBloom1");
+            }
+        }
+        options.create_if_missing = false;
+        if (mode == 0) {
+            options.bloom_filter_layout = BloomFilterLayout::BlockBased;
+        } else if (mode == 1) {
+            options.bloom_filter_layout = BloomFilterLayout::FullTable;
+        } else if (mode == 2) {
+            options.bloom_bits_per_key = 10;
+        } else if (mode == 3) {
+            options.bloom_bits_per_key.reset();
+        }
+        auto reopened = Database::Open(options, directory.path());
+        ASSERT_TRUE(reopened.has_value());
+        const auto value = reopened->Get(AsBytes("key-42"));
+        ASSERT_TRUE(value.has_value() && value->has_value());
+        EXPECT_EQ(AsStringView(**value), std::string(1024, 'x'));
+    }
+}
+
+TEST(PublicFilterTest, AutomaticCustomComparatorDoesNotInferByteEqualityFromItsName) {
+    TemporaryDatabaseDirectory directory;
+    auto options = CreatingOptions();
+    options.write_buffer_size = 64 * 1024;
+    options.compression = Compression::None;
+    options.comparator = std::make_shared<AutomaticFilterComparator>();
+    {
+        auto opened = Database::Open(options, directory.path());
+        ASSERT_TRUE(opened.has_value());
+        ASSERT_TRUE(opened->Put(AsBytes("Alice"), AsBytes("value")).has_value());
+        for (unsigned index = 0; index < 256; ++index) {
+            const auto key = "filler-" + std::to_string(index);
+            ASSERT_TRUE(opened->Put(AsBytes(key), AsBytes(std::string(1024, 'x'))).has_value());
+        }
+    }
+    auto inspected = InspectFilters(directory.path());
+    ASSERT_TRUE(inspected.has_value());
+    EXPECT_GT(inspected->tables, 0U);
+    EXPECT_TRUE(inspected->names.empty());
+    auto reopened = Database::Open(options, directory.path());
+    ASSERT_TRUE(reopened.has_value());
+    const auto value = reopened->Get(AsBytes("ALICE"));
+    ASSERT_TRUE(value.has_value() && value->has_value());
+    EXPECT_EQ(AsStringView(**value), "value");
+}
 
 TEST(PublicDependencyTest, RetainsSuppliedServicesUntilTheLastIteratorOrSnapshot) {
     for (bool keep_snapshot : {false, true}) {

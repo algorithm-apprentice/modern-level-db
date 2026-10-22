@@ -137,7 +137,7 @@ With `n` keys, `m` bits, and `k` probes, the usual approximation is:
 false-positive probability ~= (1 - exp(-k * n / m))^k
 ```
 
-Modern uses LevelDB's seeded hash and repeated probes from one hash plus a
+The legacy layout uses LevelDB's seeded hash and repeated probes from one hash plus a
 rotated delta. The probe count is `floor(bits_per_key * 0.69)`, clamped
 between one and thirty. Ten bits per key gives six probes and approximately
 a one-percent false-positive rate for a sufficiently large filter.
@@ -146,13 +146,29 @@ Filters cover user keys, not sequence-bearing internal keys. Otherwise a
 lookup at another snapshot could incorrectly reject a stored version.
 Deletion entries also contribute their keys.
 
-The filter block associates filters with 2 KiB ranges of data-block starting
-offsets. This is not necessarily one filter per data block.
-Bloom filtering is optional and disabled unless `bloom_bits_per_key` is set.
+The legacy filter block associates filters with 2 KiB ranges of data-block
+starting offsets. This is not necessarily one filter per data block, and
+selecting that filter requires an index result first.
 
-If a custom comparator treats different bytes as equal, the byte-based
-filter can violate lookup semantics. Enabling it requires comparator
-equality to imply byte equality.
+The default built-in bytewise path instead writes one versioned full-table
+filter. It rejects an absent SST candidate before index seek, not just before
+the data read. Its probes stay within a selected 64-byte region, improving
+locality without claiming that a positive result proves presence. The writer
+collects key hashes while building the table; the reader never scans the
+table to rebuild a filter. Its bytes are distinct optional metadata, so old
+readers safely ignore it.
+
+Both layouts use the exact integer probe formula and cover complete user
+keys, including deletion entries and duplicate versions.
+`bloom_bits_per_key` defaults to ten; explicit `std::nullopt` disables it.
+Automatic layout disables filters for a custom comparator because equality
+between different byte strings would make exclusion unsafe. Explicit layout
+selection promises comparator equality implies byte equality. Comparator
+names are not evidence for that promise.
+
+See [ADR-0086](../adr/0086-persisted-full-table-filters.md) for the wire-format
+and ownership proofs; use [API and options](../reference/api-and-options.md)
+for current selection behavior.
 
 ## Block compression
 

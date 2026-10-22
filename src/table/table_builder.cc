@@ -32,11 +32,21 @@ TableBuilder::TableBuilder(std::unique_ptr<WritableFile> file,
         first_error_ = Error::InvalidArgument("table builder has no file");
     }
     Record(ValidateCompressionOptions(compression_, zstd_compression_level_));
+    if (options.filter_layout != FilterLayout::BlockBased &&
+        options.filter_layout != FilterLayout::FullTable) {
+        Record(std::unexpected(Error::InvalidArgument("table filter layout is invalid")));
+        return;
+    }
     if (options.filter_policy.has_value()) {
-        filter_block_.emplace(*options.filter_policy);
-        static_cast<void>(filter_block_->StartBlock(0));
-        filter_key_.assign("filter.");
-        filter_key_.append(options.filter_policy->Name());
+        if (options.filter_layout == FilterLayout::FullTable) {
+            full_filter_.emplace(*options.filter_policy);
+            filter_key_.assign(FullFilterMetaKey);
+        } else {
+            filter_block_.emplace(*options.filter_policy);
+            static_cast<void>(filter_block_->StartBlock(0));
+            filter_key_.assign("filter.");
+            filter_key_.append(options.filter_policy->Name());
+        }
     }
 }
 
@@ -82,6 +92,9 @@ Status TableBuilder::AddValid(ByteView key, ByteView value) {
 }
 
 bool TableBuilder::AddFilterKey(ByteView key) {
+    if (full_filter_.has_value()) {
+        return Record(full_filter_->AddKey(key.first(key.size() - InternalKeyTrailerSize)));
+    }
     if (!filter_block_.has_value()) {
         return true;
     }
@@ -181,9 +194,11 @@ void TableBuilder::WriteRawBlock(ByteView contents, BlockCompression type, Block
 }
 
 void TableBuilder::AddFilterIndexEntry(BlockBuilder& metaindex) {
-    if (filter_block_.has_value()) {
+    if (filter_block_.has_value() || full_filter_.has_value()) {
         BlockHandle filter_handle{};
-        WriteRawBlock(filter_block_->Finish(), BlockCompression::None, filter_handle);
+        const ByteView payload =
+            full_filter_.has_value() ? full_filter_->Finish() : filter_block_->Finish();
+        WriteRawBlock(payload, BlockCompression::None, filter_handle);
         std::vector<std::byte> handle;
         AppendBlockHandle(handle, filter_handle);
         metaindex.Add(AsBytes(filter_key_), handle);

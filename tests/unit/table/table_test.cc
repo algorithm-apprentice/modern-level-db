@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -31,6 +32,7 @@
 #include "table/block_builder.h"
 #include "table/block_format.h"
 #include "table/bloom_filter.h"
+#include "table/full_filter.h"
 #include "table/table_builder.h"
 
 namespace modern_leveldb {
@@ -130,6 +132,8 @@ struct ReadableState {
     std::size_t maximum_chunk = std::numeric_limits<std::size_t>::max();
     bool return_oversized_count = false;
     bool return_views = false;
+    std::uint64_t forbidden_filter_offset = std::numeric_limits<std::uint64_t>::max();
+    std::atomic<int> forbidden_filter_requests = 0;
 };
 
 class MemoryRandomAccessFile final : public RandomAccessFile {
@@ -138,6 +142,9 @@ public:
         : state_(std::move(state)) {}
 
     Result<std::size_t> Read(std::uint64_t offset, MutableByteView output) const override {
+        if (offset == state_->forbidden_filter_offset) {
+            ++state_->forbidden_filter_requests;
+        }
         const int call = ++state_->read_calls;
         if (state_->fail_read_call == call) {
             return std::unexpected(Error::Io("injected read failure"));
@@ -158,6 +165,9 @@ public:
 
     std::optional<ByteView> TryReadView(std::uint64_t offset,
                                         std::size_t size) const noexcept override {
+        if (offset == state_->forbidden_filter_offset) {
+            ++state_->forbidden_filter_requests;
+        }
         if (!state_->return_views || offset > state_->data.size()) {
             return std::nullopt;
         }
@@ -371,6 +381,204 @@ protected:
     InternalKeyComparator comparator_{BytewiseComparator()};
     std::shared_ptr<ReadableState> state_;
 };
+
+std::vector<std::byte> FullFilterFor(std::string_view key) {
+    FullFilterBuilder builder{BloomFilterPolicy(10)};
+    const auto added = builder.AddKey(AsBytes(key));
+    if (!added.has_value()) {
+        throw std::runtime_error(added.error().ToString());
+    }
+    return Materialize(builder.Finish());
+}
+
+class CountingBytewiseComparator final : public Comparator {
+public:
+    int Compare(ByteView left, ByteView right) const noexcept override {
+        ++comparisons;
+        return BytewiseComparator().Compare(left, right);
+    }
+    std::string_view Name() const noexcept override { return "test.CountingBytewise"; }
+    void FindShortestSeparator(std::vector<std::byte>& start, ByteView limit) const override {
+        BytewiseComparator().FindShortestSeparator(start, limit);
+    }
+    void FindShortSuccessor(std::vector<std::byte>& key) const override {
+        BytewiseComparator().FindShortSuccessor(key);
+    }
+    mutable std::atomic<int> comparisons{0};
+};
+
+TEST_F(TableTest, FullFilterRejectsBeforeIndexComparisonOrDataReads) {
+    TableAssembler encoded;
+    const auto data = encoded.AddBlock(BlockOf({{Key("key", 1), AsBytes("value")}}));
+    const auto payload = FullFilterFor("key");
+    const auto full = encoded.AddBlock(payload);
+    const auto meta = encoded.AddBlock(BlockOf({{AsBytes(FullFilterMetaKey), HandleOf(full)}}));
+    const auto index = encoded.AddBlock(BlockOf({{Key("z", MaxSequenceNumber), HandleOf(data)}}));
+    state_ = std::make_shared<ReadableState>();
+    state_->data = encoded.Finish(meta, index);
+    CountingBytewiseComparator user_comparator;
+    InternalKeyComparator comparator(user_comparator);
+    auto opened = Table::Open(std::make_unique<MemoryRandomAccessFile>(state_), state_->data.size(),
+                              comparator, WithFilter());
+    ASSERT_TRUE(opened.has_value());
+    user_comparator.comparisons.store(0);
+    const auto reads = state_->read_calls.load();
+    EXPECT_FALSE(Get(**opened, "absent", MaxSequenceNumber).has_value());
+    EXPECT_EQ(user_comparator.comparisons.load(), 0);
+    EXPECT_EQ(state_->read_calls.load(), reads);
+    ExpectValue(Get(**opened, "key", MaxSequenceNumber), "value");
+}
+
+TEST_F(TableTest, RecognizedFullFilterCorruptionDoesNotFallBackToLegacy) {
+    TableAssembler encoded;
+    const auto data = encoded.AddBlock(BlockOf({{Key("key", 1), AsBytes("value")}}));
+    FilterBlockBuilder legacy{BloomFilterPolicy(10)};
+    ASSERT_TRUE(legacy.StartBlock(0).has_value());
+    ASSERT_TRUE(legacy.AddKey(AsBytes("key")).has_value());
+    const auto old_filter = encoded.AddBlock(legacy.Finish());
+    auto malformed = FullFilterFor("key");
+    malformed[4] = std::byte{0};
+    const auto full = encoded.AddBlock(malformed);
+    const auto meta = encoded.AddBlock(BlockOf({
+        {AsBytes("filter.leveldb.BuiltinBloomFilter2"), HandleOf(old_filter)},
+        {AsBytes(FullFilterMetaKey), HandleOf(full)},
+    }));
+    const auto index = encoded.AddBlock(BlockOf({{Key("z", MaxSequenceNumber), HandleOf(data)}}));
+    const auto bytes = encoded.Finish(meta, index);
+    ExpectError(TryOpen(bytes, WithFilter()), ErrorCode::Corruption);
+    const auto disabled = Open(bytes);
+    ASSERT_NE(disabled, nullptr);
+    ExpectValue(Get(*disabled, "key", MaxSequenceNumber), "value");
+}
+
+TEST_F(TableTest, MalformedSelectedFullHandleIsNotHiddenByAValidLegacyFilter) {
+    TableAssembler encoded;
+    FilterBlockBuilder legacy{BloomFilterPolicy(10)};
+    const auto old_filter = encoded.AddBlock(legacy.Finish());
+    const std::array invalid_full_handle{std::byte{0x80}};
+    const auto meta = encoded.AddBlock(BlockOf({
+        {AsBytes("filter.leveldb.BuiltinBloomFilter2"), HandleOf(old_filter)},
+        {AsBytes(FullFilterMetaKey), invalid_full_handle},
+    }));
+    const auto index = encoded.AddBlock(BlockOf({}));
+    const auto opened = TryOpen(encoded.Finish(meta, index), WithFilter());
+    ExpectError(opened, ErrorCode::Corruption);
+}
+
+TEST_F(TableTest, SelectedFullFilterIgnoresMalformedUnselectedLegacyHandlesAndPayloads) {
+    for (const bool malformed_handle : {false, true}) {
+        TableAssembler encoded;
+        const auto data = encoded.AddBlock(BlockOf({{Key("key", 1), AsBytes("value")}}));
+        const std::array invalid_legacy{std::byte{0}};
+        const auto legacy = encoded.AddBlock(invalid_legacy);
+        const auto full = encoded.AddBlock(FullFilterFor("key"));
+        const auto legacy_handle = malformed_handle ? std::vector{std::byte{0x80}} : HandleOf(legacy);
+        const auto meta = encoded.AddBlock(BlockOf({
+            {AsBytes("filter.leveldb.BuiltinBloomFilter2"), legacy_handle},
+            {AsBytes(FullFilterMetaKey), HandleOf(full)},
+        }));
+        const auto index =
+            encoded.AddBlock(BlockOf({{Key("z", MaxSequenceNumber), HandleOf(data)}}));
+        const auto opened = Open(encoded.Finish(meta, index), WithFilter());
+        ASSERT_NE(opened, nullptr);
+        ExpectValue(Get(*opened, "key", MaxSequenceNumber), "value");
+    }
+}
+
+TEST_F(TableTest, UnknownFullFilterVersionDoesNotSuppressRecognizedLegacyFiltering) {
+    for (const bool legacy_valid : {false, true}) {
+        TableAssembler encoded;
+        const auto data = encoded.AddBlock(BlockOf({{Key("key", 1), AsBytes("value")}}));
+        FilterBlockBuilder legacy{BloomFilterPolicy(10)};
+        ASSERT_TRUE(legacy.StartBlock(0).has_value());
+        ASSERT_TRUE(legacy.AddKey(AsBytes("key")).has_value());
+        auto payload = Materialize(legacy.Finish());
+        if (!legacy_valid) {
+            payload.back() = std::byte{10};
+        }
+        const auto old_filter = encoded.AddBlock(payload);
+        const std::array invalid_unknown_handle{std::byte{0x80}};
+        const auto meta = encoded.AddBlock(BlockOf({
+            {AsBytes("filter.leveldb.BuiltinBloomFilter2"), HandleOf(old_filter)},
+            {AsBytes("filter.modern_leveldb.FullBloom2"), invalid_unknown_handle},
+        }));
+        const auto index =
+            encoded.AddBlock(BlockOf({{Key("z", MaxSequenceNumber), HandleOf(data)}}));
+        const auto opened = TryOpen(encoded.Finish(meta, index), WithFilter());
+        if (legacy_valid) {
+            ASSERT_TRUE(opened.has_value());
+            ExpectValue(Get(**opened, "key", MaxSequenceNumber), "value");
+        } else {
+            ExpectError(opened, ErrorCode::Corruption);
+        }
+    }
+}
+
+TEST_F(TableTest, FullFilterPayloadShapeIsRejectedBeforeRequestingPayloadBytes) {
+    for (const bool views : {false, true}) {
+        TableAssembler encoded;
+        const auto full = encoded.AddBlock(std::vector<std::byte>(81));
+        const auto meta = encoded.AddBlock(BlockOf({{AsBytes(FullFilterMetaKey), HandleOf(full)}}));
+        const auto index = encoded.AddBlock(BlockOf({}));
+        state_ = std::make_shared<ReadableState>();
+        state_->data = encoded.Finish(meta, index);
+        state_->return_views = views;
+        state_->forbidden_filter_offset = full.offset;
+        const auto opened = Table::Open(std::make_unique<MemoryRandomAccessFile>(state_),
+                                         state_->data.size(), comparator_, WithFilter());
+        ExpectError(opened, ErrorCode::Corruption);
+        EXPECT_EQ(state_->forbidden_filter_requests.load(), 0);
+    }
+}
+
+TEST_F(TableTest, FullFilterUsesTheStoredBlockChecksumBeforeHeaderAdmission) {
+    TableAssembler encoded;
+    const auto full = encoded.AddBlock(FullFilterFor("key"));
+    const auto meta = encoded.AddBlock(BlockOf({{AsBytes(FullFilterMetaKey), HandleOf(full)}}));
+    const auto index = encoded.AddBlock(BlockOf({}));
+    auto bytes = encoded.Finish(meta, index);
+    bytes[static_cast<std::size_t>(full.offset)] ^= std::byte{1};
+    const auto opened = TryOpen(bytes, WithFilter());
+    ASSERT_FALSE(opened.has_value());
+    EXPECT_EQ(opened.error().code(), ErrorCode::Corruption);
+    EXPECT_NE(opened.error().message().find("checksum"), std::string_view::npos);
+    EXPECT_TRUE(TryOpen(bytes).has_value());
+}
+
+TEST_F(TableTest, ReadsWrittenFullFiltersAcrossVersionsCompressionAndBorrowedBacking) {
+    const std::vector<Entry> entries{
+        {Key("k", 30), Materialize(AsBytes("new"))},
+        {Key("k", 20, ValueKind::Deletion), {}},
+        {Key("k", 10), Materialize(AsBytes("old"))},
+        {Key("m", 5), Materialize(AsBytes("other"))},
+    };
+    for (const auto compression :
+         {BlockCompression::None, BlockCompression::Snappy, BlockCompression::Zstd}) {
+        TableBuilderOptions options;
+        options.filter_policy = BloomFilterPolicy(10);
+        options.filter_layout = FilterLayout::FullTable;
+        options.block_size = 1;
+        options.compression = compression;
+        const auto bytes = BuildTable(entries, options, comparator_);
+        for (const bool views : {false, true}) {
+            state_ = std::make_shared<ReadableState>();
+            state_->data = bytes;
+            state_->return_views = views;
+            auto opened = Table::Open(std::make_unique<MemoryRandomAccessFile>(state_),
+                                      bytes.size(), comparator_, WithFilter());
+            ASSERT_TRUE(opened.has_value());
+            ExpectValue(Get(**opened, "k", 30), "new");
+            const auto deleted = Get(**opened, "k", 29);
+            ASSERT_TRUE(deleted.has_value());
+            EXPECT_EQ(deleted->kind, ValueKind::Deletion);
+            ExpectValue(Get(**opened, "k", 19), "old");
+            EXPECT_FALSE(Get(**opened, "k", 0).has_value());
+            EXPECT_FALSE(Get(**opened, "absent", MaxSequenceNumber).has_value());
+            EXPECT_EQ(ScanForward(**opened), entries);
+            EXPECT_EQ(ScanBackward(**opened), entries);
+        }
+    }
+}
 
 TEST_F(TableTest, ReadsLevelDbTables) {
     const auto table = Open(FromHex(ThreeBlockTable), WithFilter());
