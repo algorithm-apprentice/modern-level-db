@@ -1,8 +1,86 @@
 # ADR-0082: Bounded Hash Word Experiment
 
-- Status: Measurement-only
+- Status: Implemented
 
-## Decision
+## Current decision
+
+Adopt output-identical hash word loading as a local computation improvement,
+not as a demonstrated whole-Get speedup. The accepted implementation uses
+endian-safe `memcpy` loads, a local pointer/remaining-byte cursor, and two
+sequential 32-bit mixing steps for each complete 64-bit load. A remaining
+complete 32-bit word and the original zero-to-three-byte tail follow.
+
+Every load is bounded by the remaining length. Native endianness is handled
+explicitly, with byte swapping for big-endian targets and byte assembly for
+mixed-endian targets. No typed unaligned dereference, new hash algorithm,
+wider hash arithmetic, or shortened cache identity is introduced.
+
+The seed, length contribution, multiplier, wraparound, mixing order, and every
+output remain unchanged. This is necessary because Hash32 also determines
+persistent Bloom-filter bits. Public checked codecs, I/O checksums, full-key
+cache collision matching, and file format are untouched.
+
+The acceptance criterion is reliable isolated computation evidence together
+with preserved correctness, bounded implementation complexity, independent
+review, and the ordinary quality gates. A significant whole-Get speedup is
+not a prerequisite for this local improvement; reliable evidence of a global
+regression would still require investigation. Do not describe the local gain
+as a Get throughput improvement.
+
+This change includes only hashing and its characterization. Block-header and
+LookupKey prototypes from the broader experiment are not included.
+
+## Accepted candidate evidence
+
+The follow-up fixed-binary microbenchmark contains six candidate functions,
+one common indirect callsite, and synthetic 8-/16-byte cache-key inputs.
+Six balanced variant orders produce 36 fresh processes. Each process performs
+16,777,216 fixed operations per size, alternates size order by round, and keeps
+warmup and correctness checks outside timing. No adaptive calibration or
+selected resampling is used.
+
+| Candidate | 8-byte median ns/hash | 16-byte median ns/hash |
+|---|---:|---:|
+| Original checked word decoding | 12.393 | 22.402 |
+| Inline byte assembly with span updates | 4.848 | 9.002 |
+| memcpy32 with span updates | 3.234 | 5.668 |
+| memcpy32 with a local cursor | 3.180 | 5.051 |
+| Two memcpy32 words per iteration | 3.149 | 4.528 |
+| One memcpy64 split into two words | 2.910 | 4.493 |
+
+Every non-original candidate beats original in all six paired rounds for both
+sizes. The selected packed-load implementation also beats the single-word
+cursor in six of six pairs and the same-unroll 32-bit control in five of six.
+Against that last control, its median advantage is 7.60% for 8-byte keys but
+only 0.77% for 16-byte keys. Most of the gain is removal of checked decoding
+and improved loads/cursor handling, not the use of 64-bit arithmetic.
+
+All six candidates match the pinned native hash over every length 0 through
+4096, eight starting offsets, and five seeds: 163,880 checks per candidate.
+The integrated candidate repeats the original frozen oracle. Its complete
+190-byte function, with no external relocations, is byte-identical between
+the microbenchmark, the real library, and the integrated executable images.
+The shipped Hash source and literal-vector test are identical to that measured
+candidate, rather than a newly unmeasured variant.
+
+The literal cache-width/long-key vectors and existing hash, unaligned, tail,
+collision, and serialized-filter tests remain the executable correctness
+contract. Big-/mixed-endian execution and cross-platform timing are not claimed
+from the local Windows x64 campaign.
+
+Broader warm resident Get measurements did not establish a stable overall
+benefit. Their negative controls and executable layouts varied. They remain
+diagnostic evidence, not a claimed speedup or an attribution of the entire
+native-engine gap to hashing.
+
+The follow-up plan, all 36 micro processes, original/native oracle, compiler
+and exact-function evidence, and all broader Get observations are retained
+locally under `build\read-compute-experiments-20261022`. The original experiment
+below is retained as history, not silently relabeled a successful Get result.
+
+## Initial word-extraction experiment
+
+### Original measurement-only decision
 
 Keep this candidate experimental. The implementation removes a redundant
 checked-codec call from each complete hash word, but this campaign does not
@@ -14,7 +92,7 @@ branch; this record is not a production-adoption decision. No decoder,
 cache-pin, LookupKey-initialization, API, ownership, or file-format experiment
 is combined with it.
 
-## Context
+### Context
 
 The existing `Hash32` processes every input byte and produces a 32-bit result.
 Its complete-word loop called `ConsumeFixed32` after already establishing that
@@ -27,7 +105,7 @@ is that removing Modern's additional checked-read machinery improves resident
 random Get, not that a different hash algorithm or shorter cache identity is
 needed. See [ADR-0054](0054-leveldb-cache-parity.md) for the cache baseline.
 
-## Candidate and correctness boundary
+### Candidate and correctness boundary
 
 Only `FoldHashWords` changes: assemble bytes zero through three into an unsigned
 32-bit little-endian word, advance the borrowed input by four, and use the
@@ -59,7 +137,7 @@ the same bucket, and cover lookup, replacement, erase, growth, and pinned old
 values. Testing supports the byte-equivalence argument; it does not exhaust
 all arbitrary-length inputs.
 
-## Frozen intervention
+### Frozen intervention
 
 - Modern baseline: main `8cd23628ad10a8da7de872b8a323fe694f37db30`;
   its production tree matches measured `049ca681a55ccec42e7a382f6733e3fbd86021a9`.
@@ -90,7 +168,7 @@ instruction-identical hash, **not an identical executable**. The campaign does
 not isolate the effects of placement, shared code, host variation, or their
 interaction.
 
-## Predeclared measurement
+### Predeclared measurement
 
 On October 22, 2026, run six four-arm rounds: Modern before/after and native
 before/after, totaling 24 fresh measured processes. Each engine has three
@@ -111,7 +189,7 @@ fingerprint is 2,355,815,558, timed checksum 114,131,307, and the seven-level
 file-count/byte topology is unchanged. This campaign does not collect cache
 visit counters or direct hash-throughput measurements.
 
-## Results
+### Results
 
 Costs are process mean nanoseconds per Get; each summary is the median of six
 fresh processes. Negative candidate deltas mean lower cost.
@@ -146,7 +224,7 @@ pre-change/candidate hash outputs and test reports, and recomputes medians,
 all paired deltas, and both diagnostic ratios without calling the measurement
 runner's summary routine.
 
-## Consequences and retained evidence
+### Consequences and retained evidence
 
 The bounded word read is a justified implementation simplification with
 preserved hash semantics. Its stable end-to-end benefit and contribution to
