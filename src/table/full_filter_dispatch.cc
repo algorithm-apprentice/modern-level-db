@@ -1,4 +1,5 @@
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -12,6 +13,7 @@ namespace modern_leveldb::full_filter_detail {
 namespace {
 
 constexpr std::uint32_t RequiredLeafOne = (1U << 26U) | (1U << 27U) | (1U << 28U);
+constinit std::atomic<Probe> ProcessProbe{nullptr};
 
 bool HardwareHasAvx2() noexcept {
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
@@ -39,6 +41,8 @@ bool HardwareHasAvx2() noexcept {
 #endif
 }
 
+Probe DetectRuntimeProbe() noexcept { return SelectProbe(HardwareHasAvx2()); }
+
 }  // namespace
 
 bool SupportsAvx2(Avx2Features features) noexcept {
@@ -57,6 +61,15 @@ Probe SelectProbe(bool avx2_supported) noexcept {
 #endif
 }
 
-Probe RuntimeProbe() noexcept { return SelectProbe(HardwareHasAvx2()); }
+Probe CachedProbe(std::atomic<Probe>& cache, Probe (*detect)() noexcept) noexcept {
+    if (const auto selected = cache.load(std::memory_order_relaxed); selected != nullptr) {
+        return selected;
+    }
+    const auto selected = detect();
+    cache.store(selected, std::memory_order_relaxed);
+    return selected;
+}
+
+Probe RuntimeProbe() noexcept { return CachedProbe(ProcessProbe, &DetectRuntimeProbe); }
 
 }  // namespace modern_leveldb::full_filter_detail
