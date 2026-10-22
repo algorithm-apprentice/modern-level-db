@@ -207,6 +207,7 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux" OR MODERN_LEVELDB_HAVE_WINDOWS_FI
     modern_leveldb_public_api_tests
     PRIVATE
       unit/api/public_api_native_test.cc
+      unit/api/public_multiget_test.cc
   )
 else()
   target_sources(
