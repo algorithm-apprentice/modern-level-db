@@ -278,6 +278,13 @@ source objects outside relocations, proves distinct addresses and AVX2-only
 dispatch control. Both Get variants use the identical KeyMayMatch caller and
 one indirect call to the stored actual leaf.
 
+The ordinary CI follow-up removes an unnecessary process-static dispatch guard:
+CPU/OS selection runs at reader admission, and the reader still retains its
+pointer outside Get. The measured KeyMayMatch, scalar and AVX2 machine-code
+bodies are unchanged. The public-only fixture uses checked exact-size file
+reads instead of a GCC-13 `istreambuf_iterator` optimization warning; no warning
+or coverage exclusion was added.
+
 Admit Automatic with density ten for the known built-in bytewise comparator.
 Keep explicit disable and legacy selection, conservative custom-comparator
 handling, portable scalar fallback and ordinary CI gates. This decision does

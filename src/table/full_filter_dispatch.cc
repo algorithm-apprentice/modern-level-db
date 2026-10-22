@@ -57,9 +57,6 @@ Probe SelectProbe(bool avx2_supported) noexcept {
 #endif
 }
 
-Probe RuntimeProbe() noexcept {
-    static const Probe probe = SelectProbe(HardwareHasAvx2());
-    return probe;
-}
+Probe RuntimeProbe() noexcept { return SelectProbe(HardwareHasAvx2()); }
 
 }  // namespace modern_leveldb::full_filter_detail
