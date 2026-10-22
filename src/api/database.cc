@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "api/api_internal.h"
+#include "api/multi_get.h"
 #include "format/write_batch.h"
 #include "modern_leveldb/db.h"
 #include "table/bloom_filter.h"
@@ -244,6 +245,27 @@ Result<std::optional<std::vector<std::byte>>> Database::Get(ByteView key,
         return std::optional<std::vector<std::byte>>();
     }
     return std::optional<std::vector<std::byte>>(std::move(value));
+}
+
+Result<std::vector<OwningReadResult>> Database::MultiGet(std::span<const ByteView> keys,
+                                                         const MultiGetOptions& options) {
+    const auto state = state_;
+    if (state == nullptr) {
+        return std::unexpected(MovedFromDatabase("MultiGet"));
+    }
+    if (options.max_concurrency < 1 || options.max_concurrency > 16) {
+        return std::unexpected(
+            Error::InvalidArgument("MultiGet max_concurrency must be in [1, 16]"));
+    }
+    auto snapshot = options.read_options.snapshot != nullptr
+                        ? options.read_options.snapshot->registration_
+                        : nullptr;
+    const auto prepared = PrepareReadOptions(*state, options.read_options.snapshot != nullptr,
+                                             snapshot.get(), options.read_options.fill_cache);
+    if (!prepared.has_value()) {
+        return std::unexpected(prepared.error());
+    }
+    return detail::ReadBatch(state, keys, *prepared, std::move(snapshot), options.max_concurrency);
 }
 
 Result<Iterator> Database::NewIterator(const ReadOptions& options) {

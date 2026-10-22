@@ -1,6 +1,6 @@
 # ADR-0089: Bounded Snapshot-Consistent MultiGet
 
-- Status: Accepted
+- Status: Implemented
 - Date: 2026-10-22
 
 ## Context
@@ -182,5 +182,85 @@ Update API/concurrency documentation with the exact meanings above.
 Independent design review resolved the observable state-inspection change
 from implicit registrations and clarified per-call resource bounds and
 startup/worker exception precedence. Re-review approved this concrete
-contract. The header/ADR-0061 amendments, decisive schedules and independent
-implementation review remain delivery requirements.
+contract. A different independent implementation persona reviewed the concrete
+implementation, decisive schedules and common completion/cleanup join loop.
+The public state comments and ADR-0061 now include implicit registered pins.
+
+## Implementation and admission evidence
+
+The public facade validates once and delegates to the private batch scheduler.
+An implicit registration spans the entire operation; workers call the ordinary
+engine Get with its retained sequence. Result slots are fixed before startup,
+partitions are strided and disjoint, and the caller is one of the bounded
+readers. Four readers therefore use the caller plus three created threads.
+
+Six public-only cases preserve the public include fence. Ten internal cases
+exercise actual non-mapped positioned-read overlap and distinct destinations,
+history preservation after the old SST is physically removed, actual backend
+Io/Corruption translation, worker `bad_alloc`, ordinary per-key errors,
+deterministic exception selection and partial-start failure. The partial-start
+schedule checks both a throwing in-flight read and a successful in-flight read
+that must not begin its next assigned key after cancellation. A writer and
+state inspection make progress while the failed call waits to join.
+
+The first ordinary CI coverage report exposed two evidence gaps: fake scheduler
+Result errors did not exercise the real engine-error adapter, and throwing
+in-flight reads did not exercise the next-assignment stop check. Both were
+repaired with the actual backend/worker schedules above, without production
+changes, exclusions or weakened gates.
+
+### Complete public API measurements
+
+The sealed production revision is
+`1a1754196b42f38e945e0a28c84d1b7dad87c4ae`, with source tree
+`1ba0786431a787ac0ffbbf494493e1e852893fb4`. The later coverage repair changes
+tests only; the measured production source and public headers are unchanged.
+The independently verified campaign retains all 156 accepted fresh processes
+and every negative observation.
+
+The closed fixture contains one million records in 47 persisted-full-filter
+SSTs. Each main process performs one million fixed-permutation Gets, with
+batch size 1,024 where applicable, six pair-balanced rounds, and one/four
+physical-core affinity. All data is checked against the independent seeded
+generator before and after timing. Logical 8/512 MiB budgets deduct the same
+1,252,208-byte selected filter payload in every arm.
+
+Worker construction/joining, temporary registration, owning result/value
+allocation and destruction remain inside public API timing. The persistent
+four-reader control creates four threads once per complete million-key pass;
+MultiGet creates its three worker threads for each batch. No maintenance work
+runs during timing. Buffered and mapped arms have a warmed OS page cache:
+these numbers are not cold-media latency or direct-I/O evidence.
+
+Positive percentages mean lower wall time per key for four-reader MultiGet.
+Every listed main comparison against either serial control is faster in all
+six pairs; every comparison against persistent concurrent Get is slower in all
+six pairs.
+
+| Read backend | Logical budget | Versus owning serial Get | Versus reused-output serial Get | Versus persistent four-reader owning Get |
+|---|---:|---:|---:|---:|
+| Buffered | 8 MiB | +48.37% | +48.65% | -15.04% |
+| Mapped | 8 MiB | +45.13% | +44.39% | -37.69% |
+| Buffered | 512 MiB | +44.66% | +42.81% | -44.52% |
+| Mapped | 512 MiB | +45.25% | +42.68% | -41.57% |
+
+Real scalar-dispatch controls retain the same direction: +47.38% and +43.44%
+versus owning serial Get for buffered 8 MiB and mapped 512 MiB respectively,
+but -14.99% and -47.92% versus persistent four-reader Get. The actual linked
+runtime/scalar leaf identity is verified, rather than inferred from build names.
+
+The mapped 512 MiB single-key control performs 200,000 fixed-prefix queries
+with one key per call. MultiGet is 7.24% slower in all six pairs. It creates no
+worker in that case; registration and owning batch packaging still have costs.
+
+This admits an explicit snapshot-consistent batch API, not a faster replacement
+for every Get or an implicit read pool. Applications already managing persistent
+concurrent readers can retain that approach; a persistent pool/coalesced-I/O
+design would require its own evidence. Existing Get and its defaults are
+unchanged.
+
+Retained artifacts are under
+`build\read-adoption-20261022\multiget-production`: sealed inputs/source/library,
+actual public driver, dispatch proof, raw command/stdout/result records, report
+and independently recomputed verification. The first coverage artifact is
+retained separately under `multiget-ci-coverage`.

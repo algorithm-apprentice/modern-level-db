@@ -238,6 +238,39 @@ Destructors cannot return a typed close failure. RAII guarantees resource
 cleanup, not that unsynced updates became durable; request the required
 write synchronization before relying on that guarantee.
 
+### Batch lifetime and read consistency are separate proofs
+
+A joined worker can safely borrow a result slot without guaranteeing that all
+keys observe one database sequence. Conversely, retaining a sequence does not
+keep a destroyed result vector alive. The bounded batch read needs both proofs:
+
+```text
+retain engine/services and one registered read sequence
+    -> allocate fixed result slots
+    -> run bounded readers on disjoint positions
+    -> stop new assignments on exceptions and join all started workers
+    -> publish complete results or rethrow
+    -> release registration and engine owners
+```
+
+The sequence registration preserves logical history across gaps between Gets;
+it does not pin an old SST or Version forever. A decisive test releases the
+first Get's sources, overwrites/deletes and rewrites the old SST away, then
+checks that a later batch key still sees the registered sequence.
+
+Failed startup needs the same lifetime argument as success. A started reader
+may be blocked in synchronous I/O when another thread cannot be created.
+Cleanup must stop the next assignment, wait without holding the database mutex,
+and retain borrowed buffers and services until the blocked read finishes.
+An Io result remains a per-key error; an allocation exception is joined and
+re-thrown, never published as a missing key.
+
+See the [batch implementation](../../src/api/multi_get.cc) and
+[actual failure schedules](../../tests/unit/api/multi_get_internal_test.cc).
+More parallelism is not a latency guarantee: per-batch startup and owning
+output have measured costs, especially for one-key batches or applications
+that already keep persistent read workers.
+
 ## Proven invariants, not repeated guesses
 
 There are two kinds of validation:
