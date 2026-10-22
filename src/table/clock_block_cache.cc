@@ -459,13 +459,13 @@ void Release(Slot& slot) noexcept {
 }
 
 struct State {
-    explicit State(std::size_t capacity)
+    State(std::size_t capacity, std::size_t owner_bytes)
         : allowance(std::max<std::size_t>(64 * 1024, capacity / 4)) {
         // Shard containers may throw; the remaining configuration does not.
         diagnostics = new Diagnostics;
-        const auto fixed = (sizeof(State) - sizeof(shards) + sizeof(Diagnostics) +
-                            sizeof(ClockBlockCache) + Shards - 1) /
-                           Shards;
+        const auto fixed =
+            (sizeof(State) - sizeof(shards) + sizeof(Diagnostics) + owner_bytes + Shards - 1) /
+            Shards;
         for (std::size_t position = 0; position < Shards; ++position) {
             auto& shard = shards[position];
             shard.capacity = ShardedLruCacheCore::ShardCapacity(capacity);
@@ -523,7 +523,13 @@ void ClockBlockCache::Handle::Reset() noexcept {
 const Block& ClockBlockCache::Handle::value() const noexcept { return *slot_->value; }
 
 ClockBlockCache::ClockBlockCache(std::size_t capacity)
-    : state_(std::make_unique<clock_detail::State>(capacity)) {}
+    : ClockBlockCache(capacity, sizeof(ClockBlockCache)) {}
+
+ClockBlockCache::ClockBlockCache(std::size_t capacity, clock_detail::OwnerFootprint owner)
+    : ClockBlockCache(capacity, owner.bytes) {}
+
+ClockBlockCache::ClockBlockCache(std::size_t capacity, std::size_t owner_bytes)
+    : state_(std::make_unique<clock_detail::State>(capacity, owner_bytes)) {}
 
 ClockBlockCache::~ClockBlockCache() = default;
 

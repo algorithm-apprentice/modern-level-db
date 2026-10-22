@@ -17,6 +17,11 @@ namespace clock_cache_detail {
 struct Slot;
 struct State;
 struct LookupRoot;
+
+// Complete storage of the object owning an embedded CLOCK member.
+struct OwnerFootprint {
+    std::size_t bytes;
+};
 }  // namespace clock_cache_detail
 
 struct ClockCacheStats {
@@ -66,6 +71,7 @@ public:
     };
 
     explicit ClockBlockCache(std::size_t capacity);
+    ClockBlockCache(std::size_t capacity, clock_cache_detail::OwnerFootprint owner);
     ClockBlockCache(const ClockBlockCache&) = delete;
     ClockBlockCache& operator=(const ClockBlockCache&) = delete;
     ClockBlockCache(ClockBlockCache&&) = delete;
@@ -82,6 +88,7 @@ public:
 
 private:
     friend class ClockBlockCacheTestPeer;
+    ClockBlockCache(std::size_t capacity, std::size_t owner_bytes);
     [[nodiscard]] clock_cache_detail::LookupRoot AcquireLookupRoot(Key key) const;
     [[nodiscard]] static std::optional<Handle> LookupInRoot(
         const clock_cache_detail::LookupRoot& root, Key key);
