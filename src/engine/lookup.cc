@@ -22,11 +22,7 @@ namespace {
 
 // The decision of one source: the value or the deletion of its newest visible
 // entry, or nothing if it has none.
-enum class Decision {
-    Missing,
-    Value,
-    Deletion,
-};
+using Decision = TableLookupKind;
 
 Decision SearchMemTable(const MemTable& source, const LookupKey& key,
                         std::vector<std::byte>& value) {
@@ -58,25 +54,14 @@ std::optional<bool> SearchMemory(const MemTable& mutable_memtable,
 
 Result<Decision> SearchFile(TableCache& table_cache, const FileMetadata& file, const LookupKey& key,
                             std::vector<std::byte>& value, const TableReadOptions& options) {
-    const Result<TableCache::Handle> table = table_cache.Find(file.number, file.file_size);
+    if (table_cache.uses_shared_readers()) {
+        return table_cache.Get(file.number, file.file_size, key, value, options);
+    }
+    auto table = table_cache.FindUniqueForPoint(file.number, file.file_size);
     if (!table.has_value()) {
-        return std::unexpected(table.error());
+        return std::unexpected(std::move(table).error());
     }
-    const Result<TableLookupKind> found = (*table)->Get(key, value, options);
-    if (!found.has_value()) {
-        return std::unexpected(std::move(found).error());
-    }
-    switch (*found) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/4 implicit default of an exhaustive enum
-        case TableLookupKind::Missing:
-            return Decision::Missing;
-        case TableLookupKind::Value:
-            return Decision::Value;
-        case TableLookupKind::Deletion:
-            return Decision::Deletion;
-    }
-    // GCOVR_EXCL_START: validated internal enum is exhaustive
-    return std::unexpected(Error::Corruption("unknown table lookup result"));
-    // GCOVR_EXCL_STOP
+    return (*table)->Get(key, value, options);
 }
 
 // A file of the version that a point read searches, at its level.

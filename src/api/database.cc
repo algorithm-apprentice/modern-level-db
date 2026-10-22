@@ -116,6 +116,7 @@ DatabaseEngineOptions EngineOptions(const Options& options, BlockCompression com
     engine.max_file_size = options.max_file_size;
     engine.max_open_files = options.max_open_files;
     engine.allow_mmap_reads = options.allow_mmap_reads;
+    engine.reuse_table_readers = options.reuse_table_readers;
     engine.file_system = options.file_system.get();
     engine.block_cache = options.block_cache.get();
     engine.clock = options.clock.get();

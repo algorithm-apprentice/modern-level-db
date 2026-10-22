@@ -172,10 +172,11 @@ unset(unit_test_timeout)
 add_executable(
   modern_leveldb_cache_allocation_tests
   unit/cache/cache_allocation_test.cc
+  support/memory_file_system.cc
 )
 target_include_directories(
   modern_leveldb_cache_allocation_tests
-  PRIVATE "${PROJECT_SOURCE_DIR}/src"
+  PRIVATE "${PROJECT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 target_link_libraries(
   modern_leveldb_cache_allocation_tests

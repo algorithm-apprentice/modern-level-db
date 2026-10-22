@@ -109,7 +109,7 @@ DatabaseEngine::DatabaseEngine(PrivateTag, const DatabaseEngineOptions& options,
       comparator_(*options.comparator),
       table_cache_(*file_system_.get(), directory_, comparator_,
                    ReadTableOptions(options, block_cache_.get()),
-                   options.max_open_files - ReservedNonTableFileCount),
+                   options.max_open_files - ReservedNonTableFileCount, options.reuse_table_readers),
       executor_(PrepareExecutor(options)) {}
 
 DatabaseEngine::~DatabaseEngine() {

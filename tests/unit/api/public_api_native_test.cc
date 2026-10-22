@@ -156,6 +156,7 @@ TEST(PublicFilterTest, AutomaticDefaultsExplicitLegacyAndDisableWriteTheSelected
     for (const auto mode : {0, 1, 2, 3, 4}) {
         TemporaryDatabaseDirectory directory;
         auto options = CreatingOptions();
+        options.reuse_table_readers = mode == 1 || mode == 3;
         options.write_buffer_size = 64 * 1024;
         options.compression = Compression::None;
         if (mode == 1) {
