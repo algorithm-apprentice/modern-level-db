@@ -230,8 +230,21 @@ also do not establish a universally cost-free feature.
 
 Capacity is an eviction budget, not a strict process memory limit.
 Pinned entries can exceed it, and per-shard rounding and ownership outside
-the cache also matter. The public facade currently creates an internal
-8 MiB block cache without exposing a capacity option.
+the cache also matter. With no supplied cache the engine creates an 8 MiB
+cache. The public capacity factory allows a different shared budget; the
+separate checked options factory also selects LRU or CLOCK. Automatic stays
+LRU, and retained block charge is not allocator metadata or RSS.
+
+CLOCK separates replacement preference from value lifetime. A visited bit
+approximates recency without moving a list on every hit; atomic pins still
+protect the complete immutable key and value. Stable slot addresses alone
+are not enough: a reused position can represent another generation, so a
+reader must acquire its pin before checking every identity byte. An erased
+last-pin cleanup must recheck eligibility after obtaining writer serialization.
+Bounded contention or index refresh may cause a cache miss, never a wrong-key
+hit or logical database absence. Evaluate both maintenance cost and the
+resulting hot/scan/shift miss curves instead of inferring a universal win
+from cheaper hits.
 
 `fill_cache=false` avoids admitting newly read data blocks.
 It does not disable existing cache hits, the table cache, or the OS cache.

@@ -130,6 +130,24 @@ Zero capacity disables cache retention. `BlockCacheCharge` observes retained
 block charges, not total process or allocator memory. Private decoded blocks
 and custom eviction-policy plugins are not part of this public interface.
 
+`CreateBlockCacheWithOptions(const BlockCacheOptions&)` additionally selects a
+built-in policy. Its options contain `capacity` (default zero) and `policy`
+(`Automatic`, `Lru`, or `Clock`, default Automatic). Unlike the capacity-only
+factory, it returns `Result<shared_ptr<BlockCache>>`: check the result before
+assigning its owner to `Options::block_cache`. An unknown policy returns
+InvalidArgument; allocation failures retain the ordinary throwing model.
+The distinct function name keeps existing capacity calls, including
+`CreateBlockCache({})` and function-address uses, unambiguous.
+
+Automatic currently selects LRU, including the cache created when no owner is
+supplied. Explicit CLOCK uses bounded reference-bit replacement and optimistic
+pin acquisition instead of ordinary LRU hit/release maintenance. Contention or
+index refresh may decline a cache hit; the database then performs its normal
+checked table read, not a missing-key result. Existing leases remain valid
+across replacement/eviction. CLOCK is not a strict RSS limit or a promise of
+better hit rates on every access pattern. See
+[ADR-0088](../adr/0088-read-efficient-clock-block-cache.md).
+
 ## Read and write options
 
 `ReadOptions` selects an optional live snapshot and whether newly read blocks

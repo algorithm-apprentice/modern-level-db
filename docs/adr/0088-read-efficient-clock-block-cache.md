@@ -354,3 +354,35 @@ Insert-result pin, rare mutex use by collision-pin cleanup, probe/admission
 bounds, complete metadata accounting, and uncached-replacement semantics.
 Re-review approved this design. It does not approve a concrete implementation
 or a new Automatic default.
+
+## Implementation and admission boundary
+
+The own backend, deterministic production-stage tests and checked typed
+facade are implemented. Independent implementation review covered the
+publication/release protocol, full-key ABA checks, old-root lookup, late
+cleanup after reuse, exceptional preparation, reentrant retirement and
+facade allocation/lifetime contracts. Tests use actual production stages
+without conditional hot-path callbacks or a second protocol model.
+
+Allocation testing exposed a real constructor leak when a raw Diagnostics
+owner was created before a later throwing Shard member. Allocate it only
+after those members finish construction. MSVC debug bookkeeping can allocate
+even for an empty vector: explicitly throwing construction preserves the
+documented bad-allocation model instead of terminating inside a noexcept
+default constructor. Cache-wide outstanding retired accounting also includes
+overlapping out-of-lock destruction, not just one writer's local list.
+
+The facade includes public-only source-compatibility/invalid-policy tests,
+both policies' allocation-free lookup/release checks, exhaustive constructor
+allocation failures and two real databases sharing/reopening each policy.
+These establish contracts, not a performance result.
+
+Optimized protocol inspection found no surviving stage-helper calls in the
+actual linked Lookup and handle destructor. Their observed bodies were
+323 and 73 bytes, versus 275 and 24 before factoring; unused Release/Reset
+functions were removed by the linker. Do not claim byte identity, zero
+instruction-cache effect, or a facade speedup from this observation.
+
+Production admission still requires the own backend/facade measurements and
+ordinary cross-platform sanitizer/coverage gates. Keep Automatic on LRU
+while that evidence is pending; the RocksDB prototype is not a substitute.

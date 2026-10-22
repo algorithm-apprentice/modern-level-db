@@ -350,6 +350,17 @@ Find, iterator and maintenance callers still retain actual mapping pins. See
 [ADR-0087](adr/0087-bounded-table-reader-reuse.md) for the deliberately different
 pressure-handoff history and terminal-generation protocol.
 
+The opaque decoded-block cache owns one in-place typed backend: the existing
+generic LRU or a block-only CLOCK cache. Its move-only lease carries the
+selected backend's pin without a lookup allocation. Automatic stays LRU.
+CLOCK uses stable canonical positions, retained immutable-mask index roots
+and an atomic state/visited/pin word; pin acquisition precedes complete-key
+and value access. Admission/erase/reclamation use a shard mutex, and rare
+last-Erased releases can take it too. Bounded contention/refresh misses use
+the checked SST path. Published metadata accounting includes the complete
+facade, even inactive variant storage, rather than claiming payload charge
+is total memory. See [ADR-0088](adr/0088-read-efficient-clock-block-cache.md).
+
 `DatabaseEngineOptions::Sanitize()` clips numeric resource settings in place.
 `EnginePolicy` then retains the memtable size threshold, target-file size,
 WAL-creation policy, and table-building settings. The public
