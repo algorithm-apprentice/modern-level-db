@@ -400,6 +400,46 @@ TEST(LookupKeyTest, MoveMatrixKeepsCompleteOwnersAndExactCanonicalSources) {
     }
 }
 
+TEST(LookupKeyTest, MoveChainsReuseCanonicalOwnersAcrossStorageTransitions) {
+    constexpr std::array<std::size_t, 9> Sizes{0, 1, 119, 120, 189, 190, 191, 512, 16384};
+    const std::vector<std::byte> canonical = Bytes({0x08, 0x01, 0, 0, 0, 0, 0, 0, 0});
+    LookupKey owner = LookupKey::CreateTrusted({}, 0);
+    for (const std::size_t size : Sizes) {
+        SCOPED_TRACE(size);
+        std::vector<std::byte> user(size);
+        for (std::size_t index = 0; index < user.size(); ++index) {
+            user[index] = static_cast<std::byte>((index * 37U + size) & 0xffU);
+        }
+        LookupKey source = LookupKey::CreateTrusted(user, MaxSequenceNumber);
+        const std::vector<std::byte> expected(source.memtable_key().begin(),
+                                              source.memtable_key().end());
+        const std::size_t prefix_size = expected.size() - user.size() - 8;
+        const std::byte* const source_address = source.memtable_key().data();
+
+        owner = std::move(source);
+        ExpectLookupRepresentation(owner, expected, prefix_size);
+        ExpectLookupRepresentation(source, canonical, 1);
+
+        LookupKey chain = std::move(owner);
+        ExpectLookupRepresentation(chain, expected, prefix_size);
+        ExpectLookupRepresentation(owner, canonical, 1);
+
+        source = std::move(chain);
+        ExpectLookupRepresentation(source, expected, prefix_size);
+        ExpectLookupRepresentation(chain, canonical, 1);
+        owner = std::move(source);
+        ExpectLookupRepresentation(owner, expected, prefix_size);
+        ExpectLookupRepresentation(source, canonical, 1);
+        if (size >= 191) {
+            EXPECT_EQ(owner.memtable_key().data(), source_address);
+        }
+        source = std::move(chain);
+        ExpectLookupRepresentation(source, canonical, 1);
+        ExpectLookupRepresentation(chain, canonical, 1);
+        ExpectLookupRepresentation(owner, expected, prefix_size);
+    }
+}
+
 TEST(LookupKeyTest, RejectsSequenceOutsideInternalKeyRange) {
     const auto key = LookupKey::Create(AsBytes("key"), MaxSequenceNumber + 1U);
 
