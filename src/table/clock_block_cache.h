@@ -16,6 +16,7 @@ class Block;
 namespace clock_cache_detail {
 struct Slot;
 struct State;
+struct LookupRoot;
 }  // namespace clock_cache_detail
 
 struct ClockCacheStats {
@@ -57,6 +58,7 @@ public:
 
     private:
         friend class ClockBlockCache;
+        friend class ClockBlockCacheTestPeer;
         explicit Handle(clock_cache_detail::Slot& slot) noexcept;
         void Reset() noexcept;
 
@@ -79,6 +81,11 @@ public:
     [[nodiscard]] std::uint64_t NewId() noexcept;
 
 private:
+    friend class ClockBlockCacheTestPeer;
+    [[nodiscard]] clock_cache_detail::LookupRoot AcquireLookupRoot(Key key) const;
+    [[nodiscard]] static std::optional<Handle> LookupInRoot(
+        const clock_cache_detail::LookupRoot& root, Key key);
+
     std::unique_ptr<clock_cache_detail::State> state_;
 };
 

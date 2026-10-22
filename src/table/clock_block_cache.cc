@@ -16,17 +16,11 @@
 
 #include "cache/sharded_lru_cache_core.h"
 #include "table/block.h"
+#include "table/clock_block_cache_protocol.h"
 
 namespace modern_leveldb::clock_cache_detail {
 namespace {
 
-constexpr std::uint64_t StateMask = 3;
-constexpr std::uint64_t Empty = 0;
-constexpr std::uint64_t Writing = 1;
-constexpr std::uint64_t Live = 2;
-constexpr std::uint64_t Erased = 3;
-constexpr std::uint64_t Visited = 4;
-constexpr std::uint64_t OnePin = 8;
 constexpr std::size_t SegmentSlots = 8;
 constexpr std::size_t PinAttempts = 8;
 constexpr std::size_t Shards = ShardedLruCacheCore::ShardCount;
@@ -57,24 +51,6 @@ struct Diagnostics {
             delete this;
         }
     }
-};
-
-struct Shard;
-struct Entry;
-
-struct Slot {
-    std::atomic<std::uint64_t> metadata{Empty};
-    std::array<std::byte, 16> key{};
-    const Block* value = nullptr;
-    Entry* owner = nullptr;
-    // These identities never change after the position becomes reachable.
-    Shard* shard = nullptr;
-    std::size_t clock_position = 0;
-    // Writer-only membership bookkeeping is not read by a lookup or lease.
-    std::size_t bucket_position = 0;
-    Slot* next_free = nullptr;
-    std::size_t charge = 0;
-    std::uint32_t hash = 0;
 };
 
 struct Entry {
@@ -143,21 +119,6 @@ struct Retired {
 
     Diagnostics& diagnostics;
     Entry* head = nullptr;
-};
-
-struct Index {
-    explicit Index(std::size_t count)
-        : bucket_count(count),
-          mask(count - 1),
-          buckets(std::make_unique<std::atomic<Slot*>[]>(count)) {}
-
-    [[nodiscard]] std::size_t bytes() const noexcept {
-        return sizeof(Index) + bucket_count * sizeof(std::atomic<Slot*>);
-    }
-
-    const std::size_t bucket_count;
-    const std::size_t mask;
-    std::unique_ptr<std::atomic<Slot*>[]> buckets;
 };
 
 struct Growth {
@@ -459,34 +420,41 @@ bool TryPin(Slot& slot) noexcept {
         if ((previous & StateMask) != Live) {
             return false;
         }
-        // The 61-bit count exceeds the number of addressable lease objects.
-        const auto pinned = (previous + OnePin) | Visited;
-        if (slot.metadata.compare_exchange_strong(previous, pinned, std::memory_order_acquire,
-                                                  std::memory_order_relaxed)) {
+        if (PinOnce(slot, previous)) {
             return true;
         }
     }
     return false;
 }
 
-void Release(Slot& slot) noexcept {
+Shard* DropPin(Slot& slot) noexcept {
     if (slot.shard == nullptr) {
         DeleteEntry(slot.owner);
-        return;
+        return nullptr;
     }
     auto* shard = slot.shard;
     const auto previous = slot.metadata.fetch_sub(OnePin, std::memory_order_release);
     if ((previous & StateMask) != Erased || previous / OnePin != 1) {
-        return;
+        return nullptr;
     }
-    Retired retired(*shard->diagnostics);
+    return shard;
+}
+
+void FinishRelease(Slot& slot, Shard& shard) noexcept {
+    Retired retired(*shard.diagnostics);
     {
-        const std::lock_guard lock(shard->mutex);
+        const std::lock_guard lock(shard.mutex);
         auto observed = slot.metadata.load(std::memory_order_acquire);
         if ((observed & StateMask) == Erased && observed / OnePin == 0) {
             slot.metadata.exchange(Writing, std::memory_order_acq_rel);
-            shard->Reclaim(slot, retired);
+            shard.Reclaim(slot, retired);
         }
+    }
+}
+
+void Release(Slot& slot) noexcept {
+    if (auto* shard = DropPin(slot)) {
+        FinishRelease(slot, *shard);
     }
 }
 
@@ -640,21 +608,26 @@ Result<ClockBlockCache::Handle> ClockBlockCache::Insert(Key key, std::unique_ptr
     return std::move(*lease);
 }
 
-std::optional<ClockBlockCache::Handle> ClockBlockCache::Lookup(Key key) {
+clock_detail::LookupRoot ClockBlockCache::AcquireLookupRoot(Key key) const {
     const auto hash = ShardedLruCacheCore::HashKey(key);
     auto& shard = state_->shards[ShardedLruCacheCore::ShardIndex(hash)];
-    const auto* index = shard.index.load(std::memory_order_acquire);
+    return {shard.index.load(std::memory_order_acquire), &shard.tombstone, hash};
+}
+
+std::optional<ClockBlockCache::Handle> ClockBlockCache::LookupInRoot(
+    const clock_detail::LookupRoot& root, Key key) {
+    const auto* index = root.index;
     if (index == nullptr) {
         return std::nullopt;
     }
-    auto bucket = hash & index->mask;
+    auto bucket = root.hash & index->mask;
     for (std::size_t probe = 0; probe < index->bucket_count; ++probe) {
         auto* slot = index->buckets[bucket].load(std::memory_order_acquire);
         if (slot == nullptr) {
             return std::nullopt;
         }
-        if (slot != &shard.tombstone && clock_detail::TryPin(*slot)) {
-            if (slot->hash == hash && std::memcmp(slot->key.data(), key.data(), key.size()) == 0) {
+        if (slot != root.tombstone && clock_detail::TryPin(*slot)) {
+            if (clock_detail::MatchesPinned(*slot, root.hash, key)) {
                 return Handle(*slot);
             }
             clock_detail::Release(*slot);
@@ -662,6 +635,10 @@ std::optional<ClockBlockCache::Handle> ClockBlockCache::Lookup(Key key) {
         bucket = (bucket + 1) & index->mask;
     }
     return std::nullopt;
+}
+
+std::optional<ClockBlockCache::Handle> ClockBlockCache::Lookup(Key key) {
+    return LookupInRoot(AcquireLookupRoot(key), key);
 }
 
 void ClockBlockCache::Erase(Key key) {
