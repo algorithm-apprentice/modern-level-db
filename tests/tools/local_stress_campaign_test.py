@@ -1,10 +1,12 @@
 from pathlib import Path
 import ctypes
+from ctypes import wintypes
 import contextlib
 import io
 import json
 import os
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 import tempfile
@@ -13,6 +15,155 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import local_stress_campaign as run_local_stress_campaign
+
+
+def _windows_process_api():
+    api = ctypes.WinDLL("kernel32", use_last_error=True)
+    api.GetModuleFileNameW.argtypes = [
+        wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD
+    ]
+    api.GetModuleFileNameW.restype = wintypes.DWORD
+    api.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    api.OpenProcess.restype = wintypes.HANDLE
+    api.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    api.WaitForSingleObject.restype = wintypes.DWORD
+    api.CloseHandle.argtypes = [wintypes.HANDLE]
+    api.CloseHandle.restype = wintypes.BOOL
+    return api
+
+
+def _process_group_python() -> str:
+    if os.name != "nt":
+        return sys.executable
+    api = _windows_process_api()
+    image = ctypes.create_unicode_buffer(32768)
+    length = api.GetModuleFileNameW(None, image, len(image))
+    if length == 0:
+        raise ctypes.WinError(ctypes.get_last_error())
+    if length >= len(image):
+        raise RuntimeError("running Python image path was truncated")
+    return image.value
+
+
+class PythonProcessFixtureTest(unittest.TestCase):
+    def test_windows_api_keeps_pointer_sized_handles(self):
+        api = SimpleNamespace(
+            GetModuleFileNameW=mock.Mock(),
+            OpenProcess=mock.Mock(),
+            WaitForSingleObject=mock.Mock(),
+            CloseHandle=mock.Mock(),
+        )
+        with mock.patch.object(ctypes, "WinDLL", return_value=api, create=True):
+            self.assertIs(_windows_process_api(), api)
+        self.assertIs(api.OpenProcess.restype, wintypes.HANDLE)
+        self.assertEqual(
+            api.WaitForSingleObject.argtypes, [wintypes.HANDLE, wintypes.DWORD]
+        )
+        self.assertEqual(api.CloseHandle.argtypes, [wintypes.HANDLE])
+
+    def test_posix_keeps_the_current_interpreter(self):
+        api = mock.Mock(side_effect=AssertionError("unexpected Windows query"))
+        with mock.patch.dict(
+            globals(), {"os": SimpleNamespace(name="posix"), "_windows_process_api": api}
+        ):
+            self.assertEqual(_process_group_python(), sys.executable)
+        api.assert_not_called()
+
+    def test_windows_uses_the_running_image_instead_of_an_alias(self):
+        image = r"C:\Concrete Python\python.exe"
+
+        def query_image(module, buffer, capacity):
+            self.assertIsNone(module)
+            self.assertGreater(capacity, len(image))
+            buffer.value = image
+            return len(image)
+
+        api = SimpleNamespace(GetModuleFileNameW=mock.Mock(side_effect=query_image))
+        with mock.patch.dict(
+            globals(),
+            {"os": SimpleNamespace(name="nt"), "_windows_process_api": lambda: api},
+        ):
+            self.assertEqual(_process_group_python(), image)
+
+    def test_windows_rejects_a_truncated_image_path(self):
+        api = SimpleNamespace(
+            GetModuleFileNameW=mock.Mock(side_effect=lambda module, buffer, capacity: capacity)
+        )
+        with mock.patch.dict(
+            globals(),
+            {"os": SimpleNamespace(name="nt"), "_windows_process_api": lambda: api},
+        ):
+            with self.assertRaisesRegex(RuntimeError, "truncated"):
+                _process_group_python()
+
+    def test_windows_image_query_errors_are_not_a_launcher_fallback(self):
+        api = SimpleNamespace(GetModuleFileNameW=mock.Mock(return_value=0))
+        with mock.patch.dict(
+            globals(),
+            {"os": SimpleNamespace(name="nt"), "_windows_process_api": lambda: api},
+        ), mock.patch.object(
+            ctypes, "get_last_error", return_value=5, create=True
+        ), mock.patch.object(
+            ctypes, "WinError", return_value=OSError("native image query failed"), create=True
+        ):
+            with self.assertRaisesRegex(OSError, "native image query failed"):
+                _process_group_python()
+
+    def test_windows_liveness_uses_process_completion(self):
+        for state, alive in ((0, False), (258, True)):
+            with self.subTest(state=state):
+                handle = 0x123456789
+                api = SimpleNamespace(
+                    OpenProcess=mock.Mock(return_value=handle),
+                    WaitForSingleObject=mock.Mock(return_value=state),
+                    CloseHandle=mock.Mock(return_value=True),
+                )
+                with mock.patch.dict(
+                    globals(),
+                    {"os": SimpleNamespace(name="nt"), "_windows_process_api": lambda: api},
+                ):
+                    self.assertEqual(
+                        LocalStressCampaignAttemptTest().process_exists(41), alive
+                    )
+                api.OpenProcess.assert_called_once_with(0x00100000, False, 41)
+                api.WaitForSingleObject.assert_called_once_with(handle, 0)
+                api.CloseHandle.assert_called_once_with(handle)
+
+    def test_windows_wait_failures_close_the_handle_and_remain_errors(self):
+        api = SimpleNamespace(
+            OpenProcess=mock.Mock(return_value=123),
+            WaitForSingleObject=mock.Mock(return_value=0xffffffff),
+            CloseHandle=mock.Mock(return_value=True),
+        )
+        with mock.patch.dict(
+            globals(),
+            {"os": SimpleNamespace(name="nt"), "_windows_process_api": lambda: api},
+        ), mock.patch.object(
+            ctypes, "get_last_error", return_value=5, create=True
+        ), mock.patch.object(
+            ctypes, "WinError", return_value=OSError("wait query failed"), create=True
+        ):
+            with self.assertRaisesRegex(OSError, "wait query failed"):
+                LocalStressCampaignAttemptTest().process_exists(41)
+        api.CloseHandle.assert_called_once_with(123)
+
+    def test_windows_only_treats_an_absent_pid_as_dead(self):
+        for error, absent in ((87, True), (5, False)):
+            with self.subTest(error=error):
+                api = SimpleNamespace(OpenProcess=mock.Mock(return_value=None))
+                with mock.patch.dict(
+                    globals(),
+                    {"os": SimpleNamespace(name="nt"), "_windows_process_api": lambda: api},
+                ), mock.patch.object(
+                    ctypes, "get_last_error", return_value=error, create=True
+                ), mock.patch.object(
+                    ctypes, "WinError", return_value=OSError("open denied"), create=True
+                ):
+                    if absent:
+                        self.assertFalse(LocalStressCampaignAttemptTest().process_exists(41))
+                    else:
+                        with self.assertRaisesRegex(OSError, "open denied"):
+                            LocalStressCampaignAttemptTest().process_exists(41)
 
 
 class LocalStressCampaignPlannerTest(unittest.TestCase):
@@ -323,19 +474,22 @@ class LocalStressCampaignAttemptTest(unittest.TestCase):
                 return True
             except ProcessLookupError:
                 return False
-        process_query_limited_information = 0x1000
-        still_active = 259
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(
-            process_query_limited_information, False, process_id
-        )
+        kernel32 = _windows_process_api()
+        handle = kernel32.OpenProcess(0x00100000, False, process_id)
         if not handle:
-            return False
-        try:
-            exit_code = ctypes.c_ulong()
-            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            error = ctypes.get_last_error()
+            if error == 87:
                 return False
-            return exit_code.value == still_active
+            raise ctypes.WinError(error)
+        try:
+            state = kernel32.WaitForSingleObject(handle, 0)
+            if state == 0:
+                return False
+            if state == 258:
+                return True
+            if state == 0xffffffff:
+                raise ctypes.WinError(ctypes.get_last_error())
+            raise RuntimeError(f"unexpected process wait state: {state}")
         finally:
             kernel32.CloseHandle(handle)
 
@@ -413,32 +567,67 @@ class LocalStressCampaignAttemptTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             child_pid = root / "child.pid"
+            parent_pid = root / "parent.pid"
+            interpreter = _process_group_python()
             script = self.script(
                 root,
                 """
                 from pathlib import Path
+                import os
                 import subprocess
                 import sys
                 import time
 
                 child = subprocess.Popen(
-                    [sys.executable, "-c", "import time; time.sleep(60)"]
+                    [sys.argv[3], "-c", "import time; time.sleep(60)"]
                 )
                 Path(sys.argv[1]).write_text(str(child.pid), encoding="utf-8")
+                Path(sys.argv[2]).write_text(str(os.getpid()), encoding="utf-8")
                 print("ready", flush=True)
                 time.sleep(60)
                 """,
             )
 
-            result = run_local_stress_campaign.execute_attempt(
-                self.job([sys.executable, str(script), str(child_pid)]),
-                root / "timeout",
-                timeout_seconds=0.2,
-                termination_grace_seconds=1.0,
-            )
+            spawn = run_local_stress_campaign.subprocess.Popen
+            launched = []
+
+            def launch_ready(command, **options):
+                process = spawn(command, **options)
+                launched.append(process)
+                ready = False
+                deadline = time.monotonic() + 5.0
+                try:
+                    while time.monotonic() < deadline:
+                        if parent_pid.is_file() and child_pid.is_file():
+                            if (
+                                parent_pid.read_text().isdigit()
+                                and child_pid.read_text().isdigit()
+                            ):
+                                ready = True
+                                return process
+                        if process.poll() is not None:
+                            raise RuntimeError("timeout fixture exited before readiness")
+                        time.sleep(0.005)
+                    raise RuntimeError("timeout fixture did not publish both process IDs")
+                finally:
+                    if not ready:
+                        run_local_stress_campaign._terminate_owned_process(process, 1.0)
+
+            command = [interpreter, str(script), str(child_pid), str(parent_pid), interpreter]
+            with mock.patch.object(
+                run_local_stress_campaign.subprocess, "Popen", side_effect=launch_ready
+            ):
+                result = run_local_stress_campaign.execute_attempt(
+                    self.job(command),
+                    root / "timeout",
+                    timeout_seconds=0.2,
+                    termination_grace_seconds=1.0,
+                )
 
             self.assertEqual(result.category, "timed_out")
             self.assertTrue(result.termination_sent)
+            self.assertEqual(len(launched), 1)
+            self.assertEqual(int(parent_pid.read_text()), launched[0].pid)
             self.assertTrue(child_pid.is_file())
             process_id = int(child_pid.read_text(encoding="utf-8"))
             deadline = time.monotonic() + 5.0
