@@ -1,9 +1,9 @@
 #include "modern_leveldb/base/hash.h"
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
-
-#include "modern_leveldb/base/coding.h"
+#include <cstring>
 
 namespace modern_leveldb {
 namespace {
@@ -15,10 +15,23 @@ void MixHashWord(std::uint32_t& hash, std::uint32_t word) noexcept {
     hash ^= hash >> 16U;
 }
 
-void FoldHashWords(ByteView& input, std::uint32_t& hash) noexcept {
-    while (input.size() >= sizeof(std::uint32_t)) {
-        const auto word = ConsumeFixed32(input);
-        MixHashWord(hash, *word);
+// Callers establish that a complete word remains before loading.
+template <typename UInt>
+UInt LoadHashWord(const std::byte* input) noexcept {
+    if constexpr (std::endian::native == std::endian::little ||
+                  std::endian::native == std::endian::big) {
+        UInt value;
+        std::memcpy(&value, input, sizeof(value));
+        if constexpr (std::endian::native == std::endian::big) {
+            value = std::byteswap(value);
+        }
+        return value;
+    } else {
+        UInt value = 0;
+        for (std::size_t index = 0; index < sizeof(UInt); ++index) {
+            value |= std::to_integer<UInt>(input[index]) << (index * 8U);
+        }
+        return value;
     }
 }
 
@@ -45,9 +58,21 @@ void FoldHashTail(ByteView input, std::uint32_t& hash) noexcept {
 
 std::uint32_t Hash32(ByteView input, std::uint32_t seed) noexcept {
     std::uint32_t hash = seed ^ (static_cast<std::uint32_t>(input.size()) * Multiplier);
-
-    FoldHashWords(input, hash);
-    FoldHashTail(input, hash);
+    const std::byte* cursor = input.data();
+    std::size_t remaining = input.size();
+    while (remaining >= sizeof(std::uint64_t)) {
+        const auto words = LoadHashWord<std::uint64_t>(cursor);
+        MixHashWord(hash, static_cast<std::uint32_t>(words));
+        MixHashWord(hash, static_cast<std::uint32_t>(words >> 32U));
+        cursor += sizeof(std::uint64_t);
+        remaining -= sizeof(std::uint64_t);
+    }
+    if (remaining >= sizeof(std::uint32_t)) {
+        MixHashWord(hash, LoadHashWord<std::uint32_t>(cursor));
+        cursor += sizeof(std::uint32_t);
+        remaining -= sizeof(std::uint32_t);
+    }
+    FoldHashTail(ByteView(cursor, remaining), hash);
     return hash;
 }
 
