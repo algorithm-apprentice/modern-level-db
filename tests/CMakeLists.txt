@@ -76,6 +76,7 @@ add_executable(
   unit/table/bloom_filter_test.cc
   unit/table/compression_test.cc
   unit/table/filter_block_test.cc
+  unit/table/full_filter_test.cc
   unit/table/table_builder_test.cc
   unit/table/table_test.cc
   unit/toolchain_test.cc
