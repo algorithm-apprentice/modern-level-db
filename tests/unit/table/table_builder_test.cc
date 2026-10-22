@@ -26,6 +26,7 @@
 #include "table/bloom_filter.h"
 #include "table/compression.h"
 #include "table/filter_block.h"
+#include "table/full_filter.h"
 
 namespace modern_leveldb {
 namespace {
@@ -164,6 +165,7 @@ struct TableContents {
     std::vector<std::uint64_t> entry_block_offsets;
     std::optional<BlockHandle> filter_handle;
     std::optional<FilterBlockReader> filter;
+    std::optional<FullFilterReader> full_filter;
 };
 
 BlockCompression StoredCompression(ByteView file, BlockHandle handle) {
@@ -189,15 +191,22 @@ void ReadTable(ByteView file, const Comparator& comparator, TableContents& table
     Block::Iterator meta(*metaindex, BytewiseComparator());
     ASSERT_TRUE(meta.SeekToFirst().has_value());
     while (meta.valid()) {
-        ASSERT_EQ(AsStringView(meta.key()), "filter.leveldb.BuiltinBloomFilter2");
+        const auto name = AsStringView(meta.key());
+        ASSERT_TRUE(name == "filter.leveldb.BuiltinBloomFilter2" || name == FullFilterMetaKey);
         ByteView value = meta.value();
         const auto handle = ConsumeBlockHandle(value);
         ASSERT_TRUE(handle.has_value());
         table.filter_handle = *handle;
-        auto filter =
-            FilterBlockReader::Create(StoredContents(file, *handle), BloomFilterPolicy(10));
-        ASSERT_TRUE(filter.has_value());
-        table.filter.emplace(std::move(*filter));
+        if (name == FullFilterMetaKey) {
+            auto filter = FullFilterReader::Create(StoredContents(file, *handle));
+            ASSERT_TRUE(filter.has_value());
+            table.full_filter.emplace(std::move(*filter));
+        } else {
+            auto filter =
+                FilterBlockReader::Create(StoredContents(file, *handle), BloomFilterPolicy(10));
+            ASSERT_TRUE(filter.has_value());
+            table.filter.emplace(std::move(*filter));
+        }
         ASSERT_TRUE(meta.Next().has_value());
     }
 
@@ -239,6 +248,84 @@ TEST_F(TableBuilderTest, WritesLevelDbEmptyTables) {
     ASSERT_TRUE(filtered->Finish().has_value());
 
     EXPECT_EQ(state_->data, FromHex(EmptyTableWithFilter));
+}
+
+TEST_F(TableBuilderTest, FullFilterCoversEveryVersionAndDeletionAcrossDataBlocks) {
+    auto options = WithFilter();
+    options.filter_layout = FilterLayout::FullTable;
+    options.block_size = 1;
+    options.compression = BlockCompression::Snappy;
+    auto builder = MakeBuilder(options);
+    ASSERT_TRUE(builder->Add(Key("apple", 3), AsBytes("new")).has_value());
+    ASSERT_TRUE(builder->Add(Key("apple", 2, ValueKind::Deletion), {}).has_value());
+    ASSERT_TRUE(builder->Add(Key("apple", 1), AsBytes("old")).has_value());
+    ASSERT_TRUE(builder->Add(Key("banana", 1), AsBytes("b")).has_value());
+    ASSERT_TRUE(builder->Finish().has_value());
+    TableContents decoded;
+    ASSERT_NO_FATAL_FAILURE(ReadTable(state_->data, comparator_, decoded));
+    ASSERT_TRUE(decoded.full_filter.has_value());
+    EXPECT_FALSE(decoded.filter.has_value());
+    EXPECT_TRUE(decoded.full_filter->KeyMayMatch(AsBytes("apple")));
+    EXPECT_TRUE(decoded.full_filter->KeyMayMatch(AsBytes("banana")));
+    EXPECT_FALSE(decoded.full_filter->KeyMayMatch(AsBytes("absent")));
+    ASSERT_TRUE(decoded.filter_handle.has_value());
+    EXPECT_EQ(StoredCompression(state_->data, *decoded.filter_handle), BlockCompression::None);
+    EXPECT_EQ(decoded.entries.size(), 4U);
+    EXPECT_EQ(state_->sync_calls, 1);
+    EXPECT_EQ(state_->close_calls, 1);
+}
+
+TEST_F(TableBuilderTest, FullLayoutWithoutAPolicyDoesNotWriteFilterMetadata) {
+    TableBuilderOptions options;
+    options.filter_layout = FilterLayout::FullTable;
+    auto builder = MakeBuilder(options);
+    ASSERT_TRUE(builder->Finish().has_value());
+    EXPECT_EQ(state_->data, FromHex(EmptyTable));
+}
+
+TEST_F(TableBuilderTest, FullFilterOverflowLatchesBeforeAcceptingTheNextEntry) {
+    TableBuilderOptions options;
+    options.filter_policy = BloomFilterPolicy(std::numeric_limits<std::uint32_t>::max());
+    options.filter_layout = FilterLayout::FullTable;
+    options.block_size = 1;
+    auto builder = MakeBuilder(options);
+    for (unsigned key = 0; key < 7; ++key) {
+        ASSERT_TRUE(builder->Add(Key(std::to_string(key), 1), {}).has_value());
+    }
+    const auto appended = state_->append_calls;
+    ExpectError(builder->Add(Key("7", 1), {}), ErrorCode::InvalidArgument);
+    EXPECT_EQ(builder->entry_count(), 7U);
+    ExpectError(builder->Finish(), ErrorCode::InvalidArgument);
+    EXPECT_EQ(state_->append_calls, appended);
+    EXPECT_EQ(state_->sync_calls, 0);
+    EXPECT_EQ(state_->close_calls, 1);
+}
+
+TEST_F(TableBuilderTest, EveryFullFilterAppendFailureClosesAndPreservesTheFirstError) {
+    auto options = WithFilter();
+    options.filter_layout = FilterLayout::FullTable;
+    options.block_size = 1;
+    auto build = [&](TableBuilder& builder) {
+        for (const auto name : {"apple", "banana"}) {
+            const auto added = builder.Add(Key(name, 1), AsBytes("value"));
+            if (!added.has_value()) {
+                break;
+            }
+        }
+        return builder.Finish();
+    };
+    auto success = MakeBuilder(options);
+    ASSERT_TRUE(build(*success).has_value());
+    const auto calls = state_->append_calls;
+    for (int failure = 1; failure <= calls; ++failure) {
+        state_ = std::make_shared<WritableState>();
+        state_->fail_append_call = failure;
+        auto builder = MakeBuilder(options);
+        ExpectError(build(*builder), ErrorCode::Io);
+        EXPECT_EQ(state_->append_calls, failure);
+        EXPECT_EQ(state_->close_calls, 1);
+        EXPECT_EQ(state_->sync_calls, 0);
+    }
 }
 
 TEST_F(TableBuilderTest, WritesLevelDbTablesWithShortenedIndexKeys) {
