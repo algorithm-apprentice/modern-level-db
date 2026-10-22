@@ -137,8 +137,9 @@ foreign/moved snapshot use the outer Result.
 
 `MultiGetOptions` contains `read_options` and `max_concurrency`, default four,
 accepted from one through sixteen. One executes on the caller without read
-workers. A valid empty batch creates no worker or implicit registration, but
-configuration and a supplied snapshot are still validated.
+workers; the caller counts toward the reader bound, so four uses three created
+threads plus the caller. A valid empty batch creates no worker or implicit
+registration, but configuration and a supplied snapshot are still validated.
 
 Every key uses one retained registered sequence. With no supplied Snapshot the
 batch creates one temporary registration; explicit batches retain their
@@ -157,7 +158,11 @@ Concurrency is a per-call bound, not a database-wide budget, cancellation
 deadline, result-byte limit or retained-history limit. Concurrent batches
 multiply their costs. Worker startup and owning-output allocation are part
 of the call, so a warm one-key batch is not promised to beat ordinary Get.
-See [ADR-0089](../adr/0089-bounded-snapshot-consistent-multiget.md).
+The admitted large-batch measurements beat serial Get, but not persistent
+application-managed concurrent readers; the single-key control is slower.
+Keep ordinary Get for that use rather than wrapping every key in a batch.
+See [ADR-0089](../adr/0089-bounded-snapshot-consistent-multiget.md) for the full
+positive and adverse measurements.
 
 ## Comparator and Bloom requirements
 
