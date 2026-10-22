@@ -21,6 +21,7 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 add_executable(
   modern_leveldb_unit_tests
+  unit/api/multi_get_internal_test.cc
   unit/base/bytes_test.cc
   unit/base/coding_test.cc
   unit/base/comparator_test.cc
