@@ -5,9 +5,11 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <barrier>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -567,6 +569,103 @@ TEST_F(TableCacheTest, PointReadErrorsRemainErrorsAndAreNotCachedAsAbsence) {
     ASSERT_EQ(PointRead(cache, 7, size, value), TableLookupKind::Value);
     EXPECT_EQ(AsStringView(value), "seven");
     EXPECT_EQ(Opens(7), 2);
+}
+
+TEST(TableReaderReuseStateTest, OpenEventsIncludeTheBoundaryThenSaturatePermanently) {
+    table_cache_detail::ReuseShard state;
+    EXPECT_TRUE(state.enabled(3));
+    for (std::size_t event = 1; event <= 3; ++event) {
+        state.RecordOpen(3);
+        EXPECT_EQ(state.opens.load(), event);
+        EXPECT_TRUE(state.enabled(3));
+    }
+    for (int event = 0; event < 10; ++event) {
+        state.RecordOpen(3);
+        EXPECT_EQ(state.opens.load(), 4U);
+        EXPECT_FALSE(state.enabled(3));
+    }
+    table_cache_detail::ReuseShard zero;
+    EXPECT_FALSE(zero.enabled(0));
+    zero.RecordOpen(0);
+    EXPECT_EQ(zero.opens.load(), 1U);
+    EXPECT_FALSE(zero.enabled(0));
+}
+
+TEST(TableReaderReuseStateTest, MaximumRoundedCapacityHasARepresentableClosedCount) {
+    const auto capacity =
+        ShardedLruCacheCore::ShardCapacity(std::numeric_limits<std::size_t>::max());
+    ASSERT_LT(capacity, std::numeric_limits<std::size_t>::max());
+    table_cache_detail::ReuseShard state;
+    state.opens.store(capacity);
+    state.RecordOpen(capacity);
+    EXPECT_EQ(state.opens.load(), capacity + 1);
+    EXPECT_FALSE(state.enabled(capacity));
+}
+
+TEST(TableReaderReuseStateTest, TerminalGenerationClosesTheGateAndNeverWraps) {
+    table_cache_detail::ReuseShard state;
+    state.RecordOpen(3);
+    state.generation.store(std::numeric_limits<std::uint64_t>::max() - 1);
+    state.Invalidate(3);
+    EXPECT_EQ(state.generation.load(), std::numeric_limits<std::uint64_t>::max());
+    EXPECT_FALSE(state.enabled(3));
+    EXPECT_EQ(state.opens.load(), 4U);
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        state.Invalidate(3);
+        state.RecordOpen(3);
+        EXPECT_EQ(state.generation.load(), std::numeric_limits<std::uint64_t>::max());
+        EXPECT_EQ(state.opens.load(), 4U);
+        EXPECT_FALSE(state.enabled(3));
+    }
+}
+
+TEST(TableReaderReuseStateTest, ConcurrentEvictionsCannotPublishAReusedEpochOrReopenTheGate) {
+    table_cache_detail::ReuseShard state;
+    state.RecordOpen(1);
+    state.generation.store(std::numeric_limits<std::uint64_t>::max() - 1);
+    std::barrier start(3);
+    std::atomic<int> completed = 0;
+    std::atomic<bool> terminal_with_open_gate = false;
+    const auto evict = [&] {
+        start.arrive_and_wait();
+        state.Invalidate(1);
+        state.RecordOpen(1);
+        ++completed;
+    };
+    std::jthread first(evict);
+    std::jthread second(evict);
+    start.arrive_and_wait();
+    while (completed.load() != 2) {
+        const auto generation = state.generation.load(std::memory_order_acquire);
+        if (generation == std::numeric_limits<std::uint64_t>::max() && state.enabled(1)) {
+            terminal_with_open_gate.store(true);
+        }
+    }
+    first.join();
+    second.join();
+    EXPECT_FALSE(terminal_with_open_gate.load());
+    EXPECT_EQ(state.generation.load(), std::numeric_limits<std::uint64_t>::max());
+    EXPECT_FALSE(state.enabled(1));
+    EXPECT_EQ(state.opens.load(), 2U);
+}
+
+TEST(TableReaderReuseStateTest, ConcurrentOpenEventsCannotUndoSaturation) {
+    table_cache_detail::ReuseShard state;
+    constexpr std::size_t Capacity = 200000;
+    std::barrier start(5);
+    std::vector<std::jthread> workers;
+    for (int worker = 0; worker < 4; ++worker) {
+        workers.emplace_back([&] {
+            start.arrive_and_wait();
+            for (std::size_t event = 0; event < Capacity; ++event) {
+                state.RecordOpen(Capacity);
+            }
+        });
+    }
+    start.arrive_and_wait();
+    workers.clear();
+    EXPECT_EQ(state.opens.load(), Capacity + 1);
+    EXPECT_FALSE(state.enabled(Capacity));
 }
 
 }  // namespace
