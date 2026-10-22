@@ -124,6 +124,18 @@ public:
     // ignores the size. Errors are returned unchanged and are not cached.
     [[nodiscard]] Result<Handle> Find(std::uint64_t file_number, std::uint64_t file_size);
 
+    // Immutable ownership mode, not the current shard hint-eligibility state.
+    [[nodiscard]] bool uses_shared_readers() const noexcept {
+        return std::holds_alternative<SharedTables>(tables_);
+    }
+
+    // SearchFile establishes Unique mode before entry. The original typed pin
+    // borrows this cache and its services under the same lifetime rules as Find.
+    [[nodiscard]] Result<UniqueTables::Handle> FindUniqueForPoint(std::uint64_t file_number,
+                                                                  std::uint64_t file_size) {
+        return FindUnique(std::get<UniqueTables>(tables_), file_number, file_size);
+    }
+
     // Reuses only weak per-thread hints when the shard has never exceeded its
     // open-event ceiling. Every fallback keeps its mapping pin through Table Get.
     [[nodiscard]] Result<TableLookupKind> Get(std::uint64_t file_number, std::uint64_t file_size,
