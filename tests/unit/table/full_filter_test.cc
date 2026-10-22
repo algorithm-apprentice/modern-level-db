@@ -70,6 +70,27 @@ bool ReferenceMayMatch(ByteView key, ByteView filter) {
     return true;
 }
 
+bool ReferenceProbe(std::uint32_t hash, std::uint32_t probes, ByteView region) {
+    std::uint64_t value = hash;
+    for (std::uint32_t index = 0; index < probes; ++index) {
+        const auto bit = static_cast<std::size_t>(value >> 23U);
+        if ((std::to_integer<unsigned>(region[bit / 8]) & (1U << (bit % 8))) == 0) {
+            return false;
+        }
+        value = (value * 0x9e3779b9ULL) & 0xffffffffULL;
+    }
+    return true;
+}
+
+void SetRequiredBits(std::uint32_t hash, std::uint32_t probes, MutableByteView region) {
+    std::uint64_t value = hash;
+    for (std::uint32_t index = 0; index < probes; ++index) {
+        const auto bit = static_cast<std::size_t>(value >> 23U);
+        region[bit / 8] |= static_cast<std::byte>(1U << (bit % 8));
+        value = (value * 0x9e3779b9ULL) & 0xffffffffULL;
+    }
+}
+
 TEST(FullFilterTest, PreservesTheLiteralVersionOneRepresentation) {
     const std::vector<std::string> keys{"", "a", "alpha", std::string("\0\xff", 2)};
     const auto bytes = BuildFullFilter(keys, 10);
@@ -201,6 +222,75 @@ TEST(FullFilterTest, ScalarProbeIncludesBit511WithoutReadingPastTheRegion) {
     region.back() = std::byte{0x80};
     EXPECT_TRUE(full_filter_detail::ScalarMayMatch(0xffffffffU, 1, region.data()));
     EXPECT_FALSE(full_filter_detail::ScalarMayMatch(0xffffffffU, 2, region.data()));
+}
+
+TEST(FullFilterTest, Avx2AdmissionRequiresCpuFeaturesAndBothOsRegisterStates) {
+    constexpr std::uint32_t RequiredLeafOne = (1U << 26U) | (1U << 27U) | (1U << 28U);
+    const full_filter_detail::Avx2Features complete{7, RequiredLeafOne, 1U << 5U, 6};
+    EXPECT_TRUE(full_filter_detail::SupportsAvx2(complete));
+    auto missing = complete;
+    missing.maximum_leaf = 6;
+    EXPECT_FALSE(full_filter_detail::SupportsAvx2(missing));
+    for (const auto flag : {26U, 27U, 28U}) {
+        missing = complete;
+        missing.leaf1_ecx &= ~(1U << flag);
+        EXPECT_FALSE(full_filter_detail::SupportsAvx2(missing));
+    }
+    missing = complete;
+    missing.leaf7_ebx = 0;
+    EXPECT_FALSE(full_filter_detail::SupportsAvx2(missing));
+    for (const auto state : {0ULL, 2ULL, 4ULL}) {
+        missing = complete;
+        missing.xcr0 = state;
+        EXPECT_FALSE(full_filter_detail::SupportsAvx2(missing));
+    }
+    missing = complete;
+    missing.xcr0 = 7;
+    EXPECT_TRUE(full_filter_detail::SupportsAvx2(missing));
+}
+
+TEST(FullFilterTest, UnsupportedCpuSelectionAlwaysUsesTheScalarLeaf) {
+    EXPECT_EQ(full_filter_detail::SelectProbe(false), &full_filter_detail::ScalarMayMatch);
+    const auto runtime = full_filter_detail::RuntimeProbe();
+    EXPECT_TRUE(runtime == &full_filter_detail::ScalarMayMatch ||
+                runtime == full_filter_detail::SelectProbe(true));
+    EXPECT_EQ(runtime, full_filter_detail::RuntimeProbe());
+}
+
+TEST(FullFilterTest, RuntimeAndScalarProbesAgreeForEveryAlignmentAndPartialVector) {
+    const auto scalar = full_filter_detail::SelectProbe(false);
+    const auto runtime = full_filter_detail::RuntimeProbe();
+    for (std::size_t alignment = 0; alignment < 32; ++alignment) {
+        std::vector<std::byte> storage(alignment + 64);
+        const auto region = MutableByteView(storage).subspan(alignment);
+        for (std::uint32_t probes = 1; probes <= 30; ++probes) {
+            auto hash = 0xffffffffU;
+            for (std::uint32_t sample = 0; sample < 128; ++sample) {
+                std::ranges::fill(region, std::byte{0});
+                SetRequiredBits(hash, probes, region);
+                ASSERT_TRUE(ReferenceProbe(hash, probes, region));
+                EXPECT_TRUE(scalar(hash, probes, region.data()));
+                EXPECT_TRUE(runtime(hash, probes, region.data()))
+                    << alignment << " " << probes << " " << sample;
+
+                const auto bit = hash >> 23U;
+                region[bit / 8] &= ~static_cast<std::byte>(1U << (bit % 8));
+                ASSERT_FALSE(ReferenceProbe(hash, probes, region));
+                EXPECT_FALSE(scalar(hash, probes, region.data()));
+                EXPECT_FALSE(runtime(hash, probes, region.data()))
+                    << alignment << " " << probes << " " << sample;
+
+                for (std::size_t byte = 0; byte < region.size(); ++byte) {
+                    region[byte] = static_cast<std::byte>((hash >> (byte % 24)) + byte);
+                }
+                const auto expected = ReferenceProbe(hash, probes, region);
+                EXPECT_EQ(scalar(hash, probes, region.data()), expected);
+                EXPECT_EQ(runtime(hash, probes, region.data()), expected)
+                    << alignment << " " << probes << " " << sample;
+                hash = hash * 1664525U + 1013904223U;
+            }
+        }
+    }
 }
 
 }  // namespace
