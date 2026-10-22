@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdlib>
@@ -50,6 +51,8 @@ struct DeallocationSnapshot {
     std::size_t target_sized_calls = 0;
     void (*callback)(void*) noexcept = nullptr;
     void* context = nullptr;
+    const AllocationSnapshot* allocations = nullptr;
+    std::array<std::size_t, 128> freed{};
 };
 
 thread_local AllocationSnapshot* active_allocations = nullptr;
@@ -142,7 +145,21 @@ public:
     ~DeallocationSession() { active_deallocations = nullptr; }
 };
 
+void RecordTrackedDelete(void* memory) noexcept {
+    if (active_deallocations != nullptr && active_deallocations->allocations != nullptr) {
+        const auto& recorded = *active_deallocations->allocations;
+        for (auto index = std::min(recorded.calls, recorded.addresses.size()); index != 0;) {
+            --index;
+            if (recorded.addresses[index] == memory && active_deallocations->freed[index] == 0) {
+                ++active_deallocations->freed[index];
+                break;
+            }
+        }
+    }
+}
+
 void RecordUnsizedDelete(void* memory) noexcept {
+    RecordTrackedDelete(memory);
     if (active_deallocations != nullptr && memory == active_deallocations->target) {
         ++active_deallocations->target_unsized_calls;
         if (active_deallocations->callback != nullptr) {
@@ -152,6 +169,7 @@ void RecordUnsizedDelete(void* memory) noexcept {
 }
 
 void RecordSizedDelete(void* memory) noexcept {
+    RecordTrackedDelete(memory);
     if (active_deallocations != nullptr && memory == active_deallocations->target) {
         ++active_deallocations->target_sized_calls;
         if (active_deallocations->callback != nullptr) {
@@ -342,6 +360,40 @@ TEST(CacheAllocationTest, ClockLookupAndOrdinaryReleaseAllocateNothing) {
         found.reset();
     }
     EXPECT_EQ(release.calls, 0U);
+}
+
+TEST(CacheAllocationTest,
+     EveryClockConstructorAllocationIsReleasedIfALaterConstructionStageThrows) {
+    AllocationSnapshot complete;
+    std::optional<ClockBlockCache> cache;
+    {
+        AllocationSession record(complete);
+        cache.emplace(16 * 4096);
+    }
+    cache.reset();
+    ASSERT_GT(complete.calls, 1U);
+    ASSERT_LE(complete.calls, complete.addresses.size());
+    for (std::size_t failure = 0; failure < complete.calls; ++failure) {
+        SCOPED_TRACE(failure);
+        AllocationSnapshot attempted;
+        DeallocationSnapshot released;
+        bool threw = false;
+        {
+            DeallocationSession track(released, nullptr);
+            released.allocations = &attempted;
+            AllocationSession fail(attempted, failure);
+            try {
+                ClockBlockCache incomplete(16 * 4096);
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+        }
+        EXPECT_TRUE(threw);
+        EXPECT_EQ(attempted.calls, failure);
+        for (std::size_t allocation = 0; allocation < attempted.calls; ++allocation) {
+            EXPECT_EQ(released.freed[allocation], 1U) << allocation;
+        }
+    }
 }
 
 TEST(CacheAllocationTest, ClockPreparationFailureNeverInvalidatesPreviouslyRetainedKeys) {
