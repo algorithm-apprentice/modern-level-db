@@ -21,6 +21,7 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 add_executable(
   modern_leveldb_unit_tests
+  unit/api/multi_get_internal_test.cc
   unit/base/bytes_test.cc
   unit/base/coding_test.cc
   unit/base/comparator_test.cc
@@ -209,6 +210,7 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux" OR MODERN_LEVELDB_HAVE_WINDOWS_FI
     modern_leveldb_public_api_tests
     PRIVATE
       unit/api/public_api_native_test.cc
+      unit/api/public_multiget_test.cc
   )
 else()
   target_sources(

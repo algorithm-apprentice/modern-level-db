@@ -645,22 +645,26 @@ TEST_F(TableCacheTest, SupportsConcurrentFindsAndEvictions) {
 
 TEST_F(TableCacheTest, PointReadsReuseTheReaderAndPreserveFillCacheControl) {
     const auto size = WriteTable(7, "seven");
-    BlockCache blocks(1 << 20);
-    TableOptions options;
-    options.block_cache = &blocks;
-    TableCache cache(file_system_, directory_, comparator_, options, 16, true);
-    std::vector<std::byte> value;
-    auto found = PointRead(cache, 7, size, value, 100, {.fill_cache = false});
-    ASSERT_TRUE(found.has_value());
-    EXPECT_EQ(*found, TableLookupKind::Value);
-    EXPECT_EQ(AsStringView(value), "seven");
-    EXPECT_EQ(blocks.total_charge(), 0U);
-    found = PointRead(cache, 7, size + 100, value);
-    ASSERT_TRUE(found.has_value());
-    EXPECT_EQ(*found, TableLookupKind::Value);
-    EXPECT_EQ(AsStringView(value), "seven");
-    EXPECT_GT(blocks.total_charge(), 0U);
-    EXPECT_EQ(Opens(7), 1);
+    for (const bool reuse : {false, true}) {
+        SCOPED_TRACE(reuse);
+        const auto opens = Opens(7);
+        BlockCache blocks(1 << 20);
+        TableOptions options;
+        options.block_cache = &blocks;
+        TableCache cache(file_system_, directory_, comparator_, options, 16, reuse);
+        std::vector<std::byte> value;
+        auto found = PointRead(cache, 7, size, value, 100, {.fill_cache = false});
+        ASSERT_TRUE(found.has_value());
+        EXPECT_EQ(*found, TableLookupKind::Value);
+        EXPECT_EQ(AsStringView(value), "seven");
+        EXPECT_EQ(blocks.total_charge(), 0U);
+        found = PointRead(cache, 7, size + 100, value);
+        ASSERT_TRUE(found.has_value());
+        EXPECT_EQ(*found, TableLookupKind::Value);
+        EXPECT_EQ(AsStringView(value), "seven");
+        EXPECT_GT(blocks.total_charge(), 0U);
+        EXPECT_EQ(Opens(7), opens + 1);
+    }
 }
 
 TEST_F(TableCacheTest, ReusedReaderDoesNotCacheSequenceVisibilityOrTombstoneResults) {
@@ -675,21 +679,25 @@ TEST_F(TableCacheTest, ReusedReaderDoesNotCacheSequenceVisibilityOrTombstoneResu
     ASSERT_TRUE(builder.Finish().has_value());
     const auto size = bytes.size();
     file_system_.Write(TableFileName(directory_, 7), std::move(bytes));
-    TableCache cache(file_system_, directory_, comparator_, {}, 16, true);
-    std::vector<std::byte> value;
-    auto found = PointRead(cache, 7, size, value, 1);
-    ASSERT_TRUE(found.has_value());
-    EXPECT_EQ(*found, TableLookupKind::Value);
-    EXPECT_EQ(AsStringView(value), "old");
-    found = PointRead(cache, 7, size, value, 2);
-    ASSERT_TRUE(found.has_value());
-    EXPECT_EQ(*found, TableLookupKind::Deletion);
-    EXPECT_EQ(AsStringView(value), "old");
-    found = PointRead(cache, 7, size, value, 0);
-    ASSERT_TRUE(found.has_value());
-    EXPECT_EQ(*found, TableLookupKind::Missing);
-    EXPECT_EQ(AsStringView(value), "old");
-    EXPECT_EQ(Opens(7), 1);
+    for (const bool reuse : {false, true}) {
+        SCOPED_TRACE(reuse);
+        const auto opens = Opens(7);
+        TableCache cache(file_system_, directory_, comparator_, {}, 16, reuse);
+        std::vector<std::byte> value;
+        auto found = PointRead(cache, 7, size, value, 1);
+        ASSERT_TRUE(found.has_value());
+        EXPECT_EQ(*found, TableLookupKind::Value);
+        EXPECT_EQ(AsStringView(value), "old");
+        found = PointRead(cache, 7, size, value, 2);
+        ASSERT_TRUE(found.has_value());
+        EXPECT_EQ(*found, TableLookupKind::Deletion);
+        EXPECT_EQ(AsStringView(value), "old");
+        found = PointRead(cache, 7, size, value, 0);
+        ASSERT_TRUE(found.has_value());
+        EXPECT_EQ(*found, TableLookupKind::Missing);
+        EXPECT_EQ(AsStringView(value), "old");
+        EXPECT_EQ(Opens(7), opens + 1);
+    }
 }
 
 TEST_F(TableCacheTest, CompletedEvictionInvalidatesAHintEvenWhileTheOldReaderIsPinned) {
@@ -719,13 +727,17 @@ TEST_F(TableCacheTest, WeakHintsKeepNoFilesOpenAfterCacheDestruction) {
 
 TEST_F(TableCacheTest, ZeroCapacityNeverRetainsReadersThroughHints) {
     const auto size = WriteTable(7, "seven");
-    TableCache cache(file_system_, directory_, comparator_, {}, 0, true);
-    std::vector<std::byte> value;
-    for (int attempt = 0; attempt < 3; ++attempt) {
-        ASSERT_EQ(PointRead(cache, 7, size, value), TableLookupKind::Value);
-        EXPECT_EQ(file_system_.live_files(), 0);
+    for (const bool reuse : {false, true}) {
+        SCOPED_TRACE(reuse);
+        const auto opens = Opens(7);
+        TableCache cache(file_system_, directory_, comparator_, {}, 0, reuse);
+        std::vector<std::byte> value;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            ASSERT_EQ(PointRead(cache, 7, size, value), TableLookupKind::Value);
+            EXPECT_EQ(file_system_.live_files(), 0);
+        }
+        EXPECT_EQ(Opens(7), opens + 3);
     }
-    EXPECT_EQ(Opens(7), 3);
 }
 
 TEST_F(TableCacheTest, CompleteCacheIdentityDistinguishesCollidingHintsForTheSameFileNumber) {
@@ -789,26 +801,31 @@ TEST_F(TableCacheTest, PressureHandoffAdmitsSkippedHistoryThenUsesOrdinaryPromot
 
 TEST_F(TableCacheTest, PointReadErrorsRemainErrorsAndAreNotCachedAsAbsence) {
     const auto size = WriteTable(7, "seven");
-    TableCache cache(file_system_, directory_, comparator_, {}, 16, true);
-    std::vector<std::byte> value{std::byte{0x5a}};
-    file_system_.FailOpens(Error::Io("point open failure"));
-    const auto failed = PointRead(cache, 7, size, value);
-    ASSERT_FALSE(failed.has_value());
-    EXPECT_EQ(failed.error().code(), ErrorCode::Io);
-    EXPECT_EQ(AsStringView(value), "Z");
-    file_system_.FailOpens(std::nullopt);
-    ASSERT_EQ(PointRead(cache, 7, size, value), TableLookupKind::Value);
-    EXPECT_EQ(AsStringView(value), "seven");
-    EXPECT_EQ(Opens(7), 2);
+    for (const bool reuse : {false, true}) {
+        SCOPED_TRACE(reuse);
+        const auto opens = Opens(7);
+        TableCache cache(file_system_, directory_, comparator_, {}, 16, reuse);
+        std::vector<std::byte> value{std::byte{0x5a}};
+        file_system_.FailOpens(Error::Io("point open failure"));
+        const auto failed = PointRead(cache, 7, size, value);
+        ASSERT_FALSE(failed.has_value());
+        EXPECT_EQ(failed.error().code(), ErrorCode::Io);
+        EXPECT_EQ(AsStringView(value), "Z");
+        file_system_.FailOpens(std::nullopt);
+        ASSERT_EQ(PointRead(cache, 7, size, value), TableLookupKind::Value);
+        EXPECT_EQ(AsStringView(value), "seven");
+        EXPECT_EQ(Opens(7), opens + 2);
+    }
 }
 
 TEST_F(TableCacheTest, FallbackReadPinsMappingButHintReadPinsOnlyTheReaderAcrossPressure) {
     const auto files = SameShardFiles(2);
     const auto a = WriteTable(files[0], "a");
     const auto b = WriteTable(files[1], "b");
-    for (const bool prime_hint : {false, true}) {
-        SCOPED_TRACE(prime_hint);
-        TableCache cache(file_system_, directory_, comparator_, {}, 16, true);
+    for (const auto& [reuse, prime_hint] :
+         {std::pair{false, false}, std::pair{true, false}, std::pair{true, true}}) {
+        SCOPED_TRACE(testing::Message() << "reuse=" << reuse << ", hint=" << prime_hint);
+        TableCache cache(file_system_, directory_, comparator_, {}, 16, reuse);
         std::optional<Result<TableLookupKind>> result;
         std::exception_ptr error;
         std::vector<std::byte> output;

@@ -71,6 +71,7 @@ set(
     src/api/block_cache.cc
     src/api/database.cc
     src/api/iterator.cc
+    src/api/multi_get.cc
     src/api/snapshot.cc
     src/api/write_batch.cc
     src/base/coding.cc
