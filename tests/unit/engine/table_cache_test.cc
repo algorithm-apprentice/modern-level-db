@@ -423,6 +423,28 @@ TEST_F(TableCacheTest, OpensTheTableFileOfTheNumber) {
     EXPECT_EQ(AsStringView(iterator.value()), "seven");
 }
 
+TEST_F(TableCacheTest, HandlesMoveAcrossImmutableOwnershipModesWithoutLosingTheirOwnPin) {
+    const auto size = WriteTable(7, "seven");
+    TableCache unique(file_system_, directory_, comparator_, {}, 16, false);
+    TableCache shared(file_system_, directory_, comparator_, {}, 16, true);
+    auto first = Found(unique.Find(7, size));
+    auto second = Found(shared.Find(7, size));
+    const auto* shared_table = &second.value();
+    first = std::move(second);
+    EXPECT_EQ(&first.value(), shared_table);
+    auto third = Found(unique.Find(7, size));
+    const auto* unique_table = &third.value();
+    second = std::move(third);
+    EXPECT_EQ(&second.value(), unique_table);
+    unique.Evict(7);
+    shared.Evict(7);
+    EXPECT_EQ(TryLookup(first, "key"), "seven");
+    EXPECT_EQ(TryLookup(second, "key"), "seven");
+    auto* same = &first;
+    first = std::move(*same);
+    EXPECT_EQ(TryLookup(first, "key"), "seven");
+}
+
 TEST_F(TableCacheTest, ReusesCachedTablesUntilEvicted) {
     const std::uint64_t seven = WriteTable(7, "seven");
     const std::uint64_t eight = WriteTable(8, "eight");

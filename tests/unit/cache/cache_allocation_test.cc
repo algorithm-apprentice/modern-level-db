@@ -286,6 +286,36 @@ Result<TableLookupKind> AllocationPointRead(TableCache& cache, std::uint64_t num
     return cache.Get(number, size, key, output);
 }
 
+TEST(CacheAllocationTest, DisabledReaderReuseAvoidsSharedControlHolderAndIdentityAllocations) {
+    const InternalKeyComparator comparator(BytewiseComparator());
+    std::array<std::size_t, 2> constructor_calls{};
+    std::array<std::size_t, 2> opening_calls{};
+    for (std::size_t mode = 0; mode < 2; ++mode) {
+        test_support::MemoryFileSystem file_system;
+        const auto size = WriteAllocationTable(file_system, comparator, 7);
+        std::optional<TableCache> cache;
+        AllocationSnapshot constructed;
+        {
+            AllocationSession record(constructed);
+            cache.emplace(file_system, "db", comparator, TableOptions{}, 16, mode != 0);
+        }
+        constructor_calls[mode] = constructed.calls;
+        AllocationSnapshot opened;
+        std::optional<TableCache::Handle> retained;
+        {
+            AllocationSession record(opened);
+            retained.emplace(std::move(cache->Find(7, size)).value());
+        }
+        opening_calls[mode] = opened.calls;
+        std::vector<std::byte> value;
+        const auto key = LookupKey::CreateTrusted(AsBytes("key"), 1);
+        EXPECT_EQ(retained->value().Get(key, value), TableLookupKind::Value);
+        EXPECT_EQ(AsStringView(value), "value");
+    }
+    EXPECT_EQ(constructor_calls[1], constructor_calls[0] + 1);
+    EXPECT_EQ(opening_calls[1], opening_calls[0] + 2);
+}
+
 TEST(CacheAllocationTest, ReaderConstructionClosesHintsBeforeEveryLaterOwnershipAllocation) {
     const InternalKeyComparator comparator(BytewiseComparator());
     const auto files = TableFilesForOneShard();
