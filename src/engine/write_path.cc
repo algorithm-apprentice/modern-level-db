@@ -49,29 +49,6 @@ Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log, Me
     return {};
 }
 
-// GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
-WriteQueue::LeaderGuard::LeaderGuard(WriteQueue& queue, std::unique_lock<std::mutex>& lock,
-                                     const Writer& leader) noexcept
-    : queue_(queue), lock_(lock), leader_(leader), last_(&leader) {}
-
-WriteQueue::LeaderGuard::~LeaderGuard() {
-    if (dismissed_) {
-        return;
-    }
-    if (!lock_.owns_lock()) {
-        lock_.lock();
-    }
-    queue_.Complete(leader_, last_, queue_.aborted_);
-}
-// GCOVR_EXCL_STOP
-
-// GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
-WriteQueue::SequenceGuard::SequenceGuard(EncodedWriteBatch& batch) noexcept
-    : batch_(batch), sequence_(batch.sequence()) {}
-
-WriteQueue::SequenceGuard::~SequenceGuard() { batch_.SetSequence(sequence_); }
-// GCOVR_EXCL_STOP
-
 // GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
 WriteQueue::WriteQueue()
     : aborted_(std::make_shared<const Status>(std::unexpected(

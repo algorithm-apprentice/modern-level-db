@@ -32,9 +32,9 @@ public:
                          std::shared_ptr<MemTable> mutable_table);
 
     [[nodiscard]] bool has_log() const noexcept { return log_ != nullptr; }
-    [[nodiscard]] WalWriter& log() noexcept;
+    [[nodiscard]] WalWriter& log() noexcept { return *log_; }
     [[nodiscard]] std::uint64_t log_number() const noexcept { return log_number_; }
-    [[nodiscard]] MemTable& mutable_table() noexcept;
+    [[nodiscard]] MemTable& mutable_table() noexcept { return *mutable_; }
     [[nodiscard]] const std::shared_ptr<MemTable>& mutable_owner() const noexcept {
         return mutable_;
     }
@@ -49,7 +49,9 @@ public:
     [[nodiscard]] std::size_t published_mutable_bytes() const noexcept {
         return published_mutable_bytes_;
     }
-    void PublishMutableMemoryUsage() noexcept;
+    void PublishMutableMemoryUsage() noexcept {
+        published_mutable_bytes_ = mutable_table().memory_usage();
+    }
 
     // Requires an installed immutable table whose VersionEdit was committed.
     void ClearImmutable();

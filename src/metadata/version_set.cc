@@ -417,8 +417,6 @@ Status VersionSet::MarkFileNumberUsed(std::uint64_t number) {
     return {};
 }
 
-void VersionSet::SetLastSequence(SequenceNumber sequence) noexcept { last_sequence_ = sequence; }
-
 Status VersionSet::LogAndApply(VersionEdit edit) {
     if (failure_.has_value()) {
         return std::unexpected(*failure_);

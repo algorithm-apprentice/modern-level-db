@@ -47,7 +47,8 @@ public:
     // Requires a unique entry, as established by reserved memtable write sequences.
     // Duplicate insertion is a caller error, not a recoverable result here.
     void Insert(Entry entry) {
-        std::array<Node*, MaxHeight> predecessors{};
+        // Search and height growth initialize every predecessor that insertion uses.
+        std::array<Node*, MaxHeight> predecessors;
         static_cast<void>(FindGreaterOrEqual(entry, predecessors.data()));
         InsertAfterSearch(entry, predecessors);
     }

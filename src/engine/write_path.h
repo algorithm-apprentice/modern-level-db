@@ -79,12 +79,21 @@ private:
     class LeaderGuard final {
     public:
         LeaderGuard(WriteQueue& queue, std::unique_lock<std::mutex>& lock,
-                    const Writer& leader) noexcept;
+                    const Writer& leader) noexcept
+            : queue_(queue), lock_(lock), leader_(leader), last_(&leader) {}
         LeaderGuard(const LeaderGuard&) = delete;
         LeaderGuard& operator=(const LeaderGuard&) = delete;
         LeaderGuard(LeaderGuard&&) = delete;
         LeaderGuard& operator=(LeaderGuard&&) = delete;
-        ~LeaderGuard();
+        ~LeaderGuard() {
+            if (dismissed_) {
+                return;
+            }
+            if (!lock_.owns_lock()) {
+                lock_.lock();
+            }
+            queue_.Complete(leader_, last_, queue_.aborted_);
+        }
 
         void TakeOn(const Writer* last) noexcept { last_ = last; }
         void Dismiss() noexcept { dismissed_ = true; }
@@ -99,10 +108,11 @@ private:
 
     class SequenceGuard final {
     public:
-        explicit SequenceGuard(EncodedWriteBatch& batch) noexcept;
+        explicit SequenceGuard(EncodedWriteBatch& batch) noexcept
+            : batch_(batch), sequence_(batch.sequence()) {}
         SequenceGuard(const SequenceGuard&) = delete;
         SequenceGuard& operator=(const SequenceGuard&) = delete;
-        ~SequenceGuard();
+        ~SequenceGuard() { batch_.SetSequence(sequence_); }
 
     private:
         EncodedWriteBatch& batch_;
