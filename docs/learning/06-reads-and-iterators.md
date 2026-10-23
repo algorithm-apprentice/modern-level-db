@@ -53,6 +53,24 @@ The search order is mutable, immutable, L0, and then deeper levels.
 Memtable generations contain newer update intervals than their older
 sources.
 
+### Make the representation invariant explicit
+
+For a fixed user key and read sequence, let each source's candidate be its
+newest visible value or deletion, if any. The layout must ensure that the
+first candidate in search order is not older than a candidate that should
+win later. This **per-key source dominance** is maintained by write
+generations and overlap-complete maintenance, not by sortedness alone.
+
+Under that invariant, stopping is correct: Missing supplies no decision;
+the first Value is the newest visible value; the first Deletion hides every
+older value. An error is never a proof that a source is empty.
+
+A counterexample shows the missing premise. Put an old visible record in a
+higher-priority source and a newer visible record for the same key in a
+later source. Both sources can be internally sorted, yet first-match lookup
+returns the wrong value. Level topology and the compaction inclusion rules
+must preserve more than individual file order.
+
 L0 is special: its files can overlap. The engine collects candidate ranges
 and searches them in descending file-number order, newest first.
 The Version's stored L0 vector order is not itself the lookup chronology.
@@ -65,6 +83,19 @@ Adjacent files can have boundary versions of the same user key; do not
 replace this search with a user-key-only shortcut.
 
 At most one candidate per deeper level is searched by this point-read path.
+
+### Prove the deeper-level candidate selection
+
+The binary search chooses the first file whose largest **internal** key is
+not before the snapshot target. Every excluded file contains only keys
+before that target. The candidate's smallest user key must then be checked:
+if it lies after the requested user key, later files cannot supply that key
+either.
+
+For one user key, file A might contain sequences 100 through 80 and adjacent
+file B sequences 40 through 10. A snapshot target at 50 must skip A and
+select B, even though both files' user-key bounds include that same key.
+A user-key-only binary search can choose A incorrectly.
 
 ```text
 mutable lookup
@@ -156,6 +187,24 @@ compaction; each caller still selects its own sources and cache options.
 The implementation selects among children directly; do not assume every
 merging iterator uses a heap.
 
+### Derive merge correctness and cost
+
+Suppose each of m child streams is sorted. Every unseen entry in a stream
+is at least its current head. The minimum valid head is therefore a global
+minimum. Emit it, advance only that child, and repeat. This invariant proves
+the merged order; it does not yet remove old user versions or tombstones.
+An errored child must propagate failure, not masquerade as an exhausted one.
+
+Choosing the minimum by scanning all heads costs O(m) comparisons per
+selection. A heap can reduce the selection model to O(log m) after building
+its state, but seeking all children and changing direction still have costs.
+Variable key comparison, tiny m, allocation, and cache behavior affect the
+real tradeoff.
+
+Count streams, not table files: many disjoint files in one nonzero level
+share one concatenating stream, while overlapping L0 files need separate
+children. A large directory does not automatically imply a large merge heap.
+
 For multiple children, each child caches its validity and borrowed key view.
 Only moving that child refreshes the cache; choosing the next stream does not
 repeatedly call through its iterator interface. Key views still expire when
@@ -230,6 +279,50 @@ An exhausted budget can request compaction even when size scores are low.
 This is read-amplification feedback, not an exact count of device seeks.
 Cache hits and mapped pages complicate the relationship to physical I/O.
 
+## Exercises: justify the whole read, not one container
+
+1. What must a latest read do after finding a visible deletion in memory?
+2. Why are two latest Gets not necessarily a consistent two-key read?
+3. Can you save an iterator's `ByteView` and use it after advancing?
+4. What can happen if overlapping L0 files are searched oldest first?
+5. Would joining several ordinary latest-read workers alone make their
+   results a shared read view?
+6. **Counterexample:** construct two sorted sources whose priority violates
+   per-key dominance. Why is sorting each source insufficient?
+7. **Trace:** reproduce the two-file snapshot-50 selection. Which internal
+   bound excludes the newer-only file?
+8. **Proof:** prove that the minimum child head is a global minimum, then
+   identify what fails if one child returns stale cached head metadata.
+9. **Cost:** compare a linear selector and heap for two versus many streams.
+   Which input size and costs must a meaningful experiment hold fixed?
+10. **Transfer:** a new engine has overlapping ranges at every level.
+    Which proof permits one candidate per deeper level here, and why can
+    that shortcut not be imported unchanged?
+
+<details>
+<summary>Answers</summary>
+
+1. Return absence immediately, not search tables for an old value.
+2. Each call can capture a different published sequence. Coordinate them
+   with one explicit Snapshot or use a one-sequence MultiGet batch.
+3. No. Copy the bytes into owned storage first.
+4. An older value or tombstone can hide the newer update from a higher file
+   number, producing the wrong logical result.
+5. No. Joining protects lifetime and completion, not sequence selection.
+   Every read must also use the same retained sequence.
+6. A higher-priority value at 20 and later value at 30, both visible at 40,
+   make first-match return 20. Source dominance is a layout/history invariant.
+7. A's largest internal key at 80 sorts before the target at 50 under
+   descending sequence order; B can contain the next eligible history.
+8. Every remaining stream element follows its head. A stale head breaks
+   the premise used to choose the global minimum.
+9. Count logical streams, moves, seeks/direction changes, and comparison
+   bytes, not just files. Asymptotic selection cost alone is insufficient.
+10. Nonoverlapping internal-key file ranges support the binary-search
+    argument. Overlapping ranges can require visiting several candidates.
+
+</details>
+
 ## Source tour
 
 | Entry point | Interface or symbol | Question to answer | Representative evidence |
@@ -244,26 +337,3 @@ Cache hits and mapped pages complicate the relationship to physical I/O.
 Follow with [ADR-0030](../adr/0030-point-reads.md),
 [ADR-0031](../adr/0031-iterators.md), and the completed baseline in
 [ADR-0053](../adr/0053-leveldb-read-path-parity.md).
-
-## Self-check
-
-1. What must a latest read do after finding a visible deletion in memory?
-2. Why are two latest Gets not necessarily a consistent two-key read?
-3. Can you save an iterator's `ByteView` and use it after advancing?
-4. What can happen if overlapping L0 files are searched oldest first?
-5. Would joining several ordinary latest-read workers alone make their
-   results a shared read view?
-
-<details>
-<summary>Answers</summary>
-
-1. Return absence immediately, not search tables for an old value.
-2. Each call can capture a different published sequence. Coordinate them
-   with one explicit Snapshot or use a one-sequence MultiGet batch.
-3. No. Copy the bytes into owned storage first.
-4. An older value or tombstone can hide the newer update from a higher file
-   number, producing the wrong logical result.
-5. No. Joining protects lifetime and completion, not sequence selection.
-   Every read must also use the same retained sequence.
-
-</details>
