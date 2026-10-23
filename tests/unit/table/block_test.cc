@@ -181,6 +181,35 @@ void ExpectAt(const Block::Iterator& iterator, std::string_view key, std::string
     EXPECT_EQ(AsStringView(iterator.value()), value);
 }
 
+TEST(BlockTest, BuilderKeepsLiteralMultiByteLengthTriplesAndRestartOffsets) {
+    const std::string first_key(256, 'a');
+    const std::string second_key = std::string(128, 'a') + std::string(128, 'b');
+    const std::string third_key(128, 'c');
+    const std::string short_value(128, 'v');
+    const std::string long_value(16'384, 'w');
+    BlockBuilder builder(2);
+    builder.Add(AsBytes(first_key), AsBytes(short_value));
+    builder.Add(AsBytes(second_key), AsBytes(short_value));
+    builder.Add(AsBytes(third_key), AsBytes(long_value));
+
+    auto expected = Bytes({0x00, 0x80, 0x02, 0x80, 0x01});
+    const auto append = [&expected](ByteView bytes) {
+        expected.insert(expected.end(), bytes.begin(), bytes.end());
+    };
+    append(AsBytes(first_key));
+    append(AsBytes(short_value));
+    append(Bytes({0x80, 0x01, 0x80, 0x01, 0x80, 0x01}));
+    append(AsBytes(second_key).subspan(128));
+    append(AsBytes(short_value));
+    append(Bytes({0x00, 0x80, 0x01, 0x80, 0x80, 0x01}));
+    append(AsBytes(third_key));
+    append(AsBytes(long_value));
+    append(Bytes({0, 0, 0, 0, 0x8b, 0x02, 0, 0, 2, 0, 0, 0}));
+
+    EXPECT_EQ(builder.CurrentSizeEstimate(), expected.size());
+    EXPECT_EQ(Materialize(builder.Finish()), expected);
+}
+
 TEST(BlockTest, LiteralHeaderPathsKeepBorrowedValuesAcrossBackingMoves) {
     const std::array entries{
         Bytes({0, 1, 1, 'a', 0xff}),
