@@ -470,3 +470,69 @@ exact-head CI before admission. Any production revision needs its own fresh
 matched campaign; do not pool revisions or silently reuse the first result
 as evidence for changed code. The RocksDB prototype remains historical context,
 not a substitute for either own campaign.
+
+### Reviewed deterministic control-path follow-up
+
+Independent architecture re-review approves the following bounded refinement
+before implementation. Keep v1 intact and Automatic on LRU. Introduce no
+runtime callback, profiling flag, alternate algorithm, public setting or
+per-entry field.
+
+Continue the actual peak-update CAS loop from a supplied observed value.
+Production loads the same atomic before continuing; tests place an intervening
+publisher between observation and continuation. Preserve relaxed ordering and
+monotonic publication rather than relying on an OS schedule to lose a CAS.
+
+Continue actual pin acquisition from its observed word and remaining attempt
+budget. Production starts with eight attempts; tests can resume with zero or
+one remaining. Check Live before each strong CAS, consume rather than reset
+the budget, and never access a payload without successful acquisition.
+
+Factor a clock position's metadata transition from serialized retirement.
+The stage returns Skipped, LiveClaim or ErasedClaim. The writer remains
+exclusive through that stage and retirement: LiveClaim still needs index/
+charge removal; ErasedClaim was already invalidated. A stale unvisited
+observation followed by an ordinary reader pin must decline the claim while
+that reader is still retained. Do not turn this into an unpinned payload
+observation.
+
+Continue the actual probe loop with the same acquired root/key, next bucket
+and remaining probes. Production starts at `hash & mask` with `bucket_count`
+remaining. Couple progress to consumed probes; never reload a different root
+or mask. Tests use a real acquired root and production admission/erase/refresh
+to establish successive nonempty observations, ending at a real tombstone
+with one probe left. Zero remaining performs no bucket load or pin. A
+fabricated full index must not masquerade as the writer's current root:
+every stable writer state retains virgin buckets, although refresh/churn can
+make every successive observation of a concurrent probe nonempty.
+
+Two additional complete-cache cases exercise real resource boundaries:
+retain erased handles until their stable pool storage alone exhausts the
+metadata allowance, and pin all eight canonical positions of a full shard
+so Reserve itself must decline. Keep the existing valid uncached leases and
+unchanged old values in both cases.
+
+Remove only proven redundant private guards. For current bucket count B,
+pointer-bucket bytes P, root-header bytes H and resident-owner bytes E,
+growth requires B/2 existing residents. With `E >= 2P`, committed accounting
+already gives `H + 2BP <= H + BP + (B/2)E <= allowance`; the old single-array
+budget rejection cannot fire. An actually allocated pointer array also
+establishes representable doubling. Assert these layout assumptions and the
+initial eight-bucket/segment minimum fit at compile time. The complete
+post-preparation Fits check remains authoritative.
+
+Writer Find holds the shard mutex and uses the current root. Completed
+insertion leaves `live + tombstones <= 3B/4`; erasure preserves that sum.
+Only Live mappings remain indexed. Its duplicate state test and full-domain
+failure exit can therefore be removed, with the virgin-bucket invariant
+documented. Concurrent Lookup keeps its bounded continuation.
+
+The two GCC13 implicit null-deletion exits can receive exact `1/2`
+branch-only markers under ADR-0019: valid member invocation makes the
+Diagnostics receiver nonnull, and DeleteEntry already dereferences its
+owned argument. Record these ownership reasons on the same lines. Exclude
+no real contention, allocation, budget or probe path.
+
+Require test-first implementation, independent implementation review,
+actual linked hot-path inspection, ordinary coverage/sanitizer gates and a
+fresh complete 180-process campaign for the revised production code.
