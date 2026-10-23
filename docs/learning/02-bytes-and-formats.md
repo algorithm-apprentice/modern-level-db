@@ -232,12 +232,20 @@ the portable calculation.
 header, lengths, tags, count, and absence of trailing bytes. Like pinned
 LevelDB, the batch codec does not impose an additional sequence-range policy.
 Its `Next` can then return an optional entry rather than a format error for every
-step.
+step. `ForEachRemaining` consumes that same validated cursor with a
+compiler-visible consumer, avoiding an optional return object for every
+production insertion. Both share the entry decoder. The cursor advances
+before a consumer runs, so a throwing consumer leaves that entry consumed
+and the later records available; it does not establish permission to retry
+an uncertain database commit.
 
 The current owned-batch implementation stores its bytes in `std::string`.
 Its mutators preserve the structural private representation, while the commit
 boundary assigns the sequence interval. The commit path can therefore use
 `OpenTrusted` without rescanning external data.
+Record construction reserves the complete suffix and writes its final
+encoding directly. Preserving the old header/records and forbidding input
+views into the private buffer are the premises for that operation.
 Early [ADR-0016](../adr/0016-write-batch-format.md) described vector storage;
 [ADR-0060](../adr/0060-leveldb-write-path-parity.md) records this later
 change.

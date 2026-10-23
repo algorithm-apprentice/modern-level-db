@@ -1,6 +1,6 @@
 # ADR-0092: Native Write Cost-Model Alignment
 
-- Status: Accepted
+- Status: Implemented
 
 ## Context
 
@@ -37,6 +37,13 @@ Native's source literally:
   Native flushes each physical fragment. The current complete-record
   visibility and durability contract does not require copying the extra
   fragment flushes.
+- Existing table construction also batches buffer draining instead of
+  explicitly flushing after every data block. A separate baseline counter
+  built 65,536 entries into byte-identical 7,528,491-byte uncompressed,
+  filter-free tables: 3,589 Appends on both sides, zero explicit Modern
+  Flush calls versus 1,792 Native Flush calls, and one Sync and Close on
+  both complete lifecycles. These are interface counts, not a measured
+  syscall ratio or a causal share of the complete write gap.
 
 `WriteOptions::sync=false` is already the per-write default in both engines.
 It does not make either write API fire-and-forget. Modern's separate
@@ -221,11 +228,151 @@ Include overwrite, batch, sync, and mixed read/write behavior; distinguish
 foreground acknowledgement from background drain. Component observations
 remain diagnostic and are not a preset numeric acceptance threshold.
 
+## Retained implementation and measurement outcome
+
+### Frozen runtime identities
+
+The implemented runtime revision is
+`0ea06e906f5b877d7a405fd8f5989a1bd64fd762`, with:
+
+- `src`: `868b5aad36c60815905589f7208c4ad7087cd954`;
+- unchanged `include`: `a426540434bb14f248c255ef8549e83ed59ee9f5`;
+- candidate archive SHA-256:
+  `3e662cd4f93ca8d49fb89892d464c51625bf0639f5875da657dfd5bf1c612136`;
+- candidate source archive SHA-256:
+  `7f1e0e4a3fc7af92a54dbf8034a3d6cddf91231f514630a6a39fbd62ab18d60f`.
+
+All sixty ordinary core translation units were rebuilt with the retained
+Release options, changing only object/PDB destinations. The experiment used
+the same frozen Native, CRC32C, Snappy, Zstd, and Google Benchmark archives.
+Public headers remained unchanged; each workload used the headers matching
+its role.
+
+The Native archive is the unchanged prior hardware-CRC reference, not a
+fresh rebuild of canonical disabled-CRC LevelDB. Its control-patch SHA was
+not reconstructed for this follow-up; the generated headers explicitly
+record that limitation. Exact prior archive identities and the shared
+linked CRC provider were checked rather than inventing a patch hash.
+
+Actual optimized callers show:
+
+- no outlined varint-length/fixed-word calls or whole-record clearing in
+  the batch record constructor and its resize callback;
+- one batch-level visitor loop whose entry path calls MemTable directly,
+  without per-entry Next/ConsumeEntry calls or optional result transport;
+- no separate sequence/header/active-buffer accessor calls in CommitWrite;
+- scalar WAL stepping and no status-returning WriteFragment envelope;
+- grouped block header emission instead of three public varint appends.
+
+Some caller bodies grow because formerly outlined work becomes visible.
+Static instruction totals and Status size are not cycle savings.
+
+### Complete 64-KiB fixture: keep every adverse observation
+
+The existing fixed-work callback and corpus were unchanged. Each process
+used one foreground caller, the actual process affinity mask 340 over four
+selected physical cores, matched Snappy/checksum providers, and no adaptive
+calibration or forced background drain. Three rotated, role-reversed rounds
+contained all 72 fresh processes. Twenty verified smoke cells were excluded.
+
+The matched roles disable filters, select exclusive batch ownership, and
+use LevelDB-equivalent WAL creation. Separate production-policy controls
+enable the current full filter, copying batch API, and default WAL-creation
+policy under the same fixture knobs. On Windows that creation policy still
+has the explicitly weak namespace contract; it is not a POSIX directory
+durability guarantee.
+
+Positive deltas below mean the composition is slower than its own before
+image. The estimator is the median of three within-round cost ratios, not
+the ratio of aggregate medians:
+
+| Policy | Workload | Wall delta | Process-CPU delta | All wall round deltas |
+|---|---|---:|---:|---|
+| Matched | overwrite | +2.30% | +2.62% | +2.30%, +1.71%, +5.60% |
+| Matched | writebatch | +1.04% | +0.59% | +5.68%, +1.04%, -2.20% |
+| Matched | writesync | +9.93% | +27.27% | +9.93%, +19.24%, +5.94% |
+| Matched | mixed50 | -1.76% | -1.80% | -3.47%, -1.76%, +0.12% |
+| Production policy | overwrite | -2.10% | -4.01% | -2.10%, -2.03%, -8.01% |
+| Production policy | writebatch | +2.72% | +2.48% | +4.90%, +0.75%, +2.72% |
+| Production policy | writesync | -3.89% | 0.00% | +6.24%, -3.89%, -7.68% |
+| Production policy | mixed50 | -0.59% | -4.01% | -0.59%, -4.84%, +0.56% |
+
+The matched sync regression is a real observation in all three rounds,
+not a speedup. Same-image Native A/A sync variation reached 14.70% in one
+round; that is descriptive context, not a correction factor, confidence
+bound, or proof that the regression is noise.
+
+Final state is not uniformly less indebted: matched overwrite retained
+median 6,001,039 table bytes before versus 10,035,883 after, and matched
+batch retained 9,260,257 versus 9,859,908. All logical fingerprints matched,
+but these runs do not establish equal completed background work or steady
+state.
+
+The full plan and raw-result SHA-256 values are:
+
+- plan: `c41fbb21cbcebdc70b5fc9a5315a6b6ce00dff9602e199e2317abf0b275c8919`;
+- results: `ec5b26f04ccd6995bdfa7ada407aac4bebd4c35b6323d0f9911a8370e435774b`;
+- summary: `4c5bc68a1c963464f42d138992ca69f2f373595030b7093cb01a7c40349058c2`.
+
+### Separately declared shared 4-MiB default-buffer control
+
+The small fixture rotates and performs maintenance frequently. A follow-up
+declared the actual shared 4-MiB write-buffer default, retaining exactly
+the same core archives, logical work, loop, filters/ownership/checksum
+roles, affinity, and acknowledgement boundary. Effective metadata was
+derived from the modified option factories. This is a different
+configuration, not a replacement, rerun, or pool of the 72-cell matrix.
+
+All 48 fresh processes in three case-rotated, alternating-role rounds
+completed, with twelve
+excluded smoke cells:
+
+| Workload | Wall delta | Process-CPU delta | All wall round deltas |
+|---|---:|---:|---|
+| overwrite | -1.79% | 0.00% | -1.79%, -3.40%, +6.44% |
+| writebatch | -2.60% | -6.78% | +3.71%, -2.60%, -4.45% |
+| writesync | +2.32% | +50.00% | +2.33%, +2.32%, -1.11% |
+| mixed50 | +1.20% | -0.36% | +1.64%, +1.20%, +1.20% |
+
+The mixed regression remains in every round. Sync CPU ratios were
+particularly coarse and unstable; the +50% median is not a precise
+mechanism-cost estimate. Native A/A wall variation reached 13.07% for
+sync and 9.74% for batch in individual rounds. Do not subtract it or infer
+formal equivalence from small deltas.
+
+Relative to the predeclared mean of the two Native wall slots per round,
+the candidate's overwrite deltas ranged from -8.18% to -2.88%, batch from
+-19.79% to -17.69%, sync from -4.43% to +2.34%, and mixed from -3.15% to
+-0.74%. These observations depend on the stated configuration and do not
+assign a causal fraction to allocation, comparisons, or buffer draining.
+
+### Engineering interpretation
+
+The composition removes the identified generated work and preserves the
+named boundaries. It does **not** demonstrate a consistent whole-write
+speedup. Keep the sync and mixed regressions, configuration dependence,
+Native A/A variation, and residual-state differences visible.
+
+A bounded implementation review found no significant issue. An independent
+evidence audit checked counts/order/nonoverlap, hashes, all sixty rebuild
+records, public-header identity, effective policies/affinity, regenerated
+fingerprints, and the estimators without a significant evidence issue.
+Three descriptive rounds are not perfect positional balance, equivalence
+testing, or an assessment of other machines and storage devices.
+
+Adoption is a bounded correctness/implementation-quality alignment and
+measurement-contract repair, not numerical performance admission or a
+claim that every component must independently win. The larger typed I/O
+result and real multi-writer shared completion allocation remain explicit
+residual differences. No exception, error, or durability guarantee was
+disabled to manufacture a result.
+
 ## Sources
 
 - [Pinned Native write pipeline](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/db_impl.cc)
 - [Pinned Native batch implementation](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/write_batch.cc)
 - [Pinned Native WAL writer](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/db/log_writer.cc)
+- [Pinned Native table builder](https://github.com/google/leveldb/blob/7ee830d02b623e8ffe0b95d59a74db1e58da04c5/table/table_builder.cc)
 - [Pinned RocksDB coding helpers](https://github.com/facebook/rocksdb/blob/553b52b4a709820fac1dbadc7796506740517582/util/coding.h)
 - [Pinned RocksDB block producer](https://github.com/facebook/rocksdb/blob/553b52b4a709820fac1dbadc7796506740517582/table/block_based/block_builder.cc)
 - [Behavioral write parity](0060-leveldb-write-path-parity.md)

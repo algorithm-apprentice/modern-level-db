@@ -50,12 +50,17 @@ publication ordering nor predicts caller tail latency.
 
 | Leader | Follower | Can the follower join, subject to other limits? |
 |---|---|---|
-| Async | Async | Yes |
-| Async | Sync | No |
-| Sync | Async | Yes; it receives the stronger grouped durability |
+| Non-sync | Non-sync | Yes |
+| Non-sync | Sync | No |
+| Sync | Non-sync | Yes; it receives the stronger grouped durability |
 | Sync | Sync | Yes |
 
-An async leader cannot acknowledge a sync follower without providing the
+Here non-sync means `WriteOptions::sync=false`, not a fire-and-forget API.
+The caller still waits for the complete successful write and sequence
+publication; it does not request the extra WAL content barrier.
+An ordinary buffer Flush is not that persistence barrier.
+
+A non-sync leader cannot acknowledge a sync follower without providing the
 required barrier.
 
 The group-size policy follows LevelDB: normally a 1 MiB grouping bound;
@@ -90,6 +95,11 @@ A group starts with the leader directly and needs reusable scratch only
 when a follower is actually included.
 The hidden sequence assignment is restored before the caller's batch
 returns. These are ownership-aware optimizations, not new data semantics.
+
+Tiny ownership envelopes can be compiler-visible while their error cleanup
+still has the same obligations. Eliminating an empty successful destructor
+call does not authorize dropping sequence restoration, mutex reacquisition,
+or follower completion after an exception.
 
 ## Rotation and flush
 
