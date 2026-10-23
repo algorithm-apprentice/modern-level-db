@@ -56,6 +56,8 @@ def report(case="modern/readrandom/4096", repetitions=3):
             "profile_case": case,
             "build_type": "Release",
             "timing": "wall_and_process_cpu",
+            "filter_policy": "none",
+            "filter_configuration_semantics": "shared-open-options-v1",
             "modern_file_access": "default" if engine == "modern" else "not_applicable",
             "modern_file_access_semantics": (
                 MODERN_FILE_ACCESS_SEMANTICS if engine == "modern" else "not_applicable"
@@ -371,6 +373,24 @@ class PerformanceReportTest(unittest.TestCase):
         self.assertEqual(result["process_cpu_ns_per_iteration"], [131072.0] * 3)
         self.assertEqual(result["wall_ns_per_item"], [1.0] * 3)
         self.assertEqual(result["process_cpu_ns_per_item"], [2.0] * 3)
+
+    def test_rejects_enabled_or_unreported_filters_in_the_matched_fixture(self):
+        for case in ("modern/readrandom/4096", "leveldb/readrandom/4096"):
+            data = report(case)
+            validate_benchmark(data, case, 3)
+            data["context"]["filter_policy"] = "enabled"
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                validate_benchmark(data, case, 3)
+            del data["context"]["filter_policy"]
+            with self.subTest(missing=case), self.assertRaises(ValueError):
+                validate_benchmark(data, case, 3)
+            data["context"]["filter_policy"] = "none"
+            data["context"]["filter_configuration_semantics"] = "unchecked"
+            with self.subTest(semantics=case), self.assertRaises(ValueError):
+                validate_benchmark(data, case, 3)
+            del data["context"]["filter_configuration_semantics"]
+            with self.subTest(missing_semantics=case), self.assertRaises(ValueError):
+                validate_benchmark(data, case, 3)
 
     def test_validates_reference_file_access_provenance(self):
         data = report("leveldb/readrandom/4096")
@@ -790,6 +810,21 @@ class PerformanceExecutableTest(unittest.TestCase):
         result = self.invoke("--check-mutation-stream", "--case", "modern/overwrite/65536")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_reports_the_filter_policy_from_shared_database_open_options(self):
+        for engine in ("modern", "leveldb"):
+            with self.subTest(engine=engine):
+                benchmark = self.root / f"{engine}-benchmark.json"
+                case = f"{engine}/readrandom/4096"
+                self.invoke(
+                    "--case", case,
+                    "--database", str(self.root / f"{engine}-db"),
+                    "--completion-report", str(self.root / f"{engine}-completion.json"),
+                    "--benchmark_min_time=1x", "--benchmark_repetitions=1",
+                    f"--benchmark_out={benchmark}", "--benchmark_out_format=json", check=True)
+                data = read_json(benchmark)
+                self.assertEqual(data["context"]["filter_policy"], "none")
+                validate_benchmark(data, case, 1)
 
     def test_mutable_fixed_counts_override_cli_and_smoke_is_explicit(self):
         self.invoke(

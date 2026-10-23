@@ -186,6 +186,12 @@ Comparing a stronger WAL-creation barrier with a weaker one can also mix
 durability and speed. Controls expose such differences rather than
 silently weakening the production default.
 
+Check effective options, not only their labels. A harness can keep reporting
+"no filter" after a library changes its default to enable one. Deriving
+configuration metadata from the same options used for opening the database,
+and checking its versioned meaning, prevents that difference from becoming
+an unexplained engine-speed claim.
+
 ### Read-only versus mutable measurement
 
 Read-only cases can use adaptive calibration.

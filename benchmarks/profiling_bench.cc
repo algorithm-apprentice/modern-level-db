@@ -479,6 +479,32 @@ ResidualFiles DescribeResidualFiles(const std::filesystem::path& path) {
     return result;
 }
 
+Options ModernOpenOptions() {
+    Options options;
+    options.create_if_missing = true;
+#if defined(_WIN32)
+    options.allow_weak_namespace_durability = true;
+#endif
+    options.write_buffer_size = 64 * 1024;
+    options.allow_mmap_reads = UseModernMmapReads;
+    options.block_size = 4096;
+    options.block_restart_interval = 16;
+    options.bloom_bits_per_key = std::nullopt;
+    options.compression = Compression::Snappy;
+    options.sync_wal_creation = UseModernDurableWalCreation;
+    return options;
+}
+
+leveldb::Options ReferenceOpenOptions() {
+    leveldb::Options options;
+    options.create_if_missing = true;
+    options.write_buffer_size = 64 * 1024;
+    options.block_size = 4096;
+    options.block_restart_interval = 16;
+    options.compression = leveldb::kSnappyCompression;
+    return options;
+}
+
 class Modern final {
 public:
     using Cursor = Iterator;
@@ -532,18 +558,7 @@ public:
 
 private:
     static Database Open(const std::filesystem::path& path) {
-        Options options;
-        options.create_if_missing = true;
-#if defined(_WIN32)
-        options.allow_weak_namespace_durability = true;
-#endif
-        options.write_buffer_size = 64 * 1024;
-        options.allow_mmap_reads = UseModernMmapReads;
-        options.block_size = 4096;
-        options.block_restart_interval = 16;
-        options.compression = Compression::Snappy;
-        options.sync_wal_creation = UseModernDurableWalCreation;
-        return Take(Database::Open(options, path));
+        return Take(Database::Open(ModernOpenOptions(), path));
     }
     Database database_;
     std::vector<std::byte> read_value_;
@@ -555,12 +570,7 @@ public:
     using Batch = leveldb::WriteBatch;
 
     explicit Reference(const std::filesystem::path& path) {
-        leveldb::Options options;
-        options.create_if_missing = true;
-        options.write_buffer_size = 64 * 1024;
-        options.block_size = 4096;
-        options.block_restart_interval = 16;
-        options.compression = leveldb::kSnappyCompression;
+        const leveldb::Options options = ReferenceOpenOptions();
         leveldb::DB* opened = nullptr;
         const auto status = leveldb::DB::Open(options, path.string(), &opened);
         database_.reset(opened);
@@ -1363,7 +1373,11 @@ void AddContext(const Case& selected, const Arguments& args) {
     add("write_buffer_bytes", "65536");
     add("block_bytes", "4096");
     add("block_restart_interval", "16");
-    add("filter_policy", "none");
+    const bool filter_enabled = selected.engine == "modern"
+                                    ? ModernOpenOptions().bloom_bits_per_key.has_value()
+                                    : ReferenceOpenOptions().filter_policy != nullptr;
+    add("filter_policy", filter_enabled ? "enabled" : "none");
+    add("filter_configuration_semantics", "shared-open-options-v1");
     add("compression", "snappy");
     add("wal", "enabled");
     add("preparation_sync", "false");

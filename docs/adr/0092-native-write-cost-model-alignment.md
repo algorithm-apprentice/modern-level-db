@@ -69,6 +69,27 @@ These measurements identify work to investigate. The null sink is not disk
 I/O, parser time is not complete batch latency, and the component ratios
 cannot be summed into a predicted write speedup.
 
+### Repair the current profiling fixture before comparing whole writes
+
+The current profiling adapter inherited Modern's newer enabled-filter
+default while its context still declared `filter_policy=none`. Native's
+adapter had no filter. That configuration can charge filter construction
+or exclusion benefits to an alleged core write/read difference.
+
+Use shared option factories for database opening and reported filter state.
+Explicitly disable Modern filters in the matched fixture and require
+`filter_configuration_semantics=shared-open-options-v1` in the runner.
+Missing or different semantics are unverified, not a successful default.
+This does not change the library's production filter policy.
+
+An executable regression first reported `enabled` for Modern and `none`
+for Native. The parser regression initially demonstrated acceptance of
+missing/mismatched information; the repaired runner rejects it.
+Historical ADR-0060's revision
+`e0723011c60e1e4cffa6a8b16ed1fa48beeb0480` had a disabled optional filter
+default, so this newer-default mismatch does not invalidate its retained
+original configuration.
+
 ## Decision
 
 Use Native as the behavioral and cost-model baseline while retaining

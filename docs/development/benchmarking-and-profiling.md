@@ -92,6 +92,15 @@ Mutable cases reject adaptive `--min-time` and repeated measurements in one
 process. Collect independent fresh processes in a predeclared alternating
 order.
 
+Selected workloads explicitly disable filters in both database adapters.
+Their `filter_policy=none` context is derived from the same option factories
+used to open the databases, with
+`filter_configuration_semantics=shared-open-options-v1`. The runner rejects
+missing semantics or an enabled filter rather than trusting an inherited
+library default or an old literal label. The library's enabled-filter
+production default is unchanged; a filter-policy experiment needs a separately
+declared control, not silently different preparation.
+
 ## Access and ownership controls
 
 | Platform | Modern copied control | Reference copied control |
