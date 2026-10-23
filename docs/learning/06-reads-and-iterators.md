@@ -78,9 +78,15 @@ mutable lookup
 Within a table:
 
 ```text
-table cache -> index seek -> optional Bloom test
-            -> data-block cache/read -> block seek -> visible entry
+table cache -> optional full-table filter -> index seek
+            -> optional legacy range filter -> data-block cache/read
+            -> block seek -> visible entry
 ```
+
+The filter checks are alternative layouts selected from table metadata, not
+two required passes. A full-table negative can avoid the index seek; a legacy
+range filter needs the selected data-block handle first. Tables without
+filters continue through the real lookup.
 
 ## Two public result shapes
 
@@ -102,6 +108,34 @@ An unchanged buffer after a miss is therefore not the result of the new
 read. Check the returned boolean before interpreting its contents.
 Reusing capacity can avoid repeated result-buffer allocation without
 returning a borrowed pointer into internal storage.
+
+## Several keys need one read view
+
+Two latest Gets can straddle an atomic write batch:
+
+```text
+Get(left) -> old
+writer atomically changes left and right
+Get(right) -> new
+```
+
+Each call is correct, but the pair is not a shared read view.
+An explicit Snapshot can coordinate separate Gets.
+`Database::MultiGet` instead retains one sequence for the complete ordered
+batch and uses it for every key, including duplicate positions. In this
+example, it observes the state before or after the atomic update, not a
+mixture of those two states.
+
+The results own their bytes and distinguish per-key absence from per-key
+errors. Bounded readers finish before the call returns. Joining workers
+protects their borrowed input/result lifetimes; retaining one sequence
+protects logical consistency. Neither proof replaces the other.
+See [lesson 08](08-cpp-ownership-errors-and-concurrency.md#batch-lifetime-and-read-consistency-are-separate-proofs)
+for the startup/exception proof and the
+[API reference](../reference/api-and-options.md) for bounds and result shapes.
+
+A batch coordinates ordinary reads; it is not a promise of vectorized I/O,
+lower latency, or better performance for a single key.
 
 ## Iteration has two layers
 
@@ -201,6 +235,7 @@ Cache hits and mapped pages complicate the relationship to physical I/O.
 | Entry point | Interface or symbol | Question to answer | Representative evidence |
 |---|---|---|---|
 | [`database_read.cc`](../../src/engine/database_read.cc) | `Get`, `ReadSources`, `NewIterator` | Which snapshot and source owners are captured under the mutex? | [`database_read_test.cc`](../../tests/unit/engine/database_read_test.cc) |
+| [`multi_get.cc`](../../src/api/multi_get.cc) | one-sequence bounded batch reads | Which proof gives a shared view, and which keeps worker state alive? | [`public_multiget_test.cc`](../../tests/unit/api/public_multiget_test.cc), [`multi_get_internal_test.cc`](../../tests/unit/api/multi_get_internal_test.cc) |
 | [`lookup.cc`](../../src/engine/lookup.cc) | `LookupValue`, overlapping-file visitation | Why do deletion and missing produce different control flow? | [`lookup_test.cc`](../../tests/unit/engine/lookup_test.cc) |
 | [`iterators.cc`](../../src/engine/iterators.cc) | `AppendLevelIterators`, merge and concatenating iterators | Why are L0 and nonzero levels composed differently? | [`iterators_test.cc`](../../tests/unit/engine/iterators_test.cc), [`compaction_test.cc`](../../tests/unit/engine/compaction_test.cc) |
 | [`db_iterator.cc`](../../src/engine/db_iterator.cc) | public visibility and direction state | How are internal versions collapsed into one user-key stream? | [`db_iterator_test.cc`](../../tests/unit/engine/db_iterator_test.cc) |
@@ -216,15 +251,19 @@ Follow with [ADR-0030](../adr/0030-point-reads.md),
 2. Why are two latest Gets not necessarily a consistent two-key read?
 3. Can you save an iterator's `ByteView` and use it after advancing?
 4. What can happen if overlapping L0 files are searched oldest first?
+5. Would joining several ordinary latest-read workers alone make their
+   results a shared read view?
 
 <details>
 <summary>Answers</summary>
 
 1. Return absence immediately, not search tables for an old value.
-2. Each call can capture a different published sequence. One explicit
-   Snapshot is needed for a shared read view.
+2. Each call can capture a different published sequence. Coordinate them
+   with one explicit Snapshot or use a one-sequence MultiGet batch.
 3. No. Copy the bytes into owned storage first.
 4. An older value or tombstone can hide the newer update from a higher file
    number, producing the wrong logical result.
+5. No. Joining protects lifetime and completion, not sequence selection.
+   Every read must also use the same retained sequence.
 
 </details>

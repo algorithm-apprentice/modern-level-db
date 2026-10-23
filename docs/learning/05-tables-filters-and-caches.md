@@ -120,6 +120,23 @@ Custom comparators may leave keys unchanged.
 An invalid shortened separator can route reads to the wrong block even if
 all block checksums are correct.
 
+### A checked index is a reusable proof
+
+Follow one index value across its lifetime:
+
+```text
+Open: validate both complete handle varints and their file bounds
+    -> retain the immutable index and its backing owner
+Get or iterator load: decode that validated offset/size pair privately
+    -> keep checking data entries lazily as they are reached
+```
+
+The trusted handle decoder relies on those same stable bytes, not on the
+belief that disk data is usually valid. A complete index handle says nothing
+about every entry in the selected data block. Changing the backing bytes or
+releasing their owner would invalidate the proof.
+See [formats and trusted loops](02-bytes-and-formats.md#checked-boundaries-and-trusted-loops).
+
 ## Bloom filters
 
 A Bloom filter answers a narrow question:
@@ -358,6 +375,8 @@ Follow with [ADR-0014](../adr/0014-sharded-lru-cache.md),
    into an independently owning block cache?
 6. Why does the cache retire a zero-reference entry under the shard mutex but
    invoke its value deleter only after unlocking?
+7. After Open validates an index handle, can every entry in its data block
+   use an unchecked decoder?
 
 <details>
 <summary>Answers</summary>
@@ -372,5 +391,7 @@ Follow with [ADR-0014](../adr/0014-sharded-lru-cache.md),
 6. The deleter is external code and may reenter the cache. The shard must first
    make the entry unreachable and restore its hash/list/charge invariants;
    otherwise destruction could deadlock or observe a partial mutation.
+7. No. The proof covers the complete handle in stable, retained index bytes.
+   It does not validate the data block's entries; their lazy checks remain.
 
 </details>

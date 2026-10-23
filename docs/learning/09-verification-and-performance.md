@@ -206,12 +206,80 @@ equal completed compaction work.
 | Logical bytes submitted | Physical bytes or write amplification |
 | Smoke success | A sustained-speed result |
 | Inclusive profile samples | Additive stage times or exact call counts |
+| Wall time / total operations with several readers | Individual request latency |
 | Same-machine ratio | A guarantee on another machine or workload |
 
 Separate throughput and instrumented diagnostics binaries avoid treating
 profiling overhead as production throughput.
 The ordinary severe-regression benchmark's 20x bound is deliberately loose,
 not a performance SLA.
+
+### Correctness, generated work, and timing are separate claims
+
+An implementation can preserve behavior while changing the work needed to
+express it. Keep three evidence layers separate:
+
+| Claim | Evidence to seek | What remains unproved |
+|---|---|---|
+| The bytes and outcomes are unchanged | Independent literal/Native oracles, malformed-input and lifetime tests | Runtime cost |
+| A wrapper or checked-codec call disappears | Actual optimized callers and linked bodies, with matching headers and symbols | Whole-Get speed or a per-call cycle saving |
+| The integrated workload improves | Verified equal work, paired runs, negative controls, and all raw observations | Each changed mechanism's causal share |
+
+An ABI-changing candidate needs callers compiled against its matching
+headers, not an old driver object forced onto new library symbols. The
+compiled interface/layout change is then part of the treatment.
+
+A flat profile can also hide equivalent work under different names. One
+engine may outline a word decoder while another inlines it into Seek.
+The first engine's decoder self percentage is not the fraction of the gap
+caused by decoding. Compare source-matched caller phases and assign each
+sample once; inclusive totals overlap. Even an exclusive phase difference
+is diagnostic evidence, not the saving an intervention will necessarily
+recover. Keep unclassified and unsampled CPU explicit rather than assigning
+it to a guessed cause.
+
+### Negative controls and combinations
+
+A/A controls execute the same program without the proposed mechanism
+change. Differences can still expose host load, placement, cache, or
+preconditioning variation. An unchanged function in a relinked executable
+is not the same control: its placement may have changed.
+Keep systematic drift and adverse observations visible. Do not subtract
+control drift to manufacture a candidate gain or resample until it wins.
+Observed A/A variation is descriptive, not a confidence bound proving
+equivalence.
+
+Combinations need a second distinction. For identical fixed work, let
+`T` be elapsed cost and define interaction as:
+
+```text
+I = T(A+B) - T(A) - T(B) + T(base)
+```
+
+Consider illustrative costs, not measurements:
+
+| Variant | Cost units |
+|---|---:|
+| Base | 100 |
+| A | 90 |
+| B | 120 |
+| A+B | 90 |
+
+Interaction is negative, but A+B is no faster than A. The combination
+merely avoids B's standalone harm. Report the direct A+B-versus-A contrast
+as well as the interaction and baseline comparison.
+
+Conversely, establishing a coherent reference architecture need not require
+each small mechanism to win its own noisy benchmark. Review the required
+invariants, verify the integrated generated work, and measure the declared
+composition. Its gain still cannot be divided into individual contributions
+or added to percentages from another campaign.
+
+[ADR-0090](../adr/0090-fixed-word-decoding.md) and
+[ADR-0091](../adr/0091-native-get-cost-model-parity.md) preserve the concrete
+negative controls, rejected interpretations, and integrated results. They
+are the evidence records; the transferable lesson is how to distinguish
+these claims.
 
 ## Source tour
 
@@ -242,6 +310,10 @@ optimization is not automatically an accepted end-to-end improvement.
    [ADR-0060](../adr/0060-leveldb-write-path-parity.md) be called a speedup?
 5. A helper microbenchmark improves while the end-to-end workload is
    unchanged. What claim is justified?
+6. Only one engine has a decoder self symbol. Can its profile share explain
+   the performance gap without examining callers?
+7. In the illustrative combination above, does negative interaction prove
+   that adding B to A improves throughput?
 
 <details>
 <summary>Answers</summary>
@@ -256,5 +328,9 @@ optimization is not automatically an accepted end-to-end improvement.
    matched-reference improvements and explains the measurement limits.
 5. Only that the isolated helper improved under its defined workload. The
    evidence does not establish an end-to-end application improvement.
+6. No. The other engine can charge inlined work to a caller. Comparable
+   phases help locate cost but do not replace a controlled intervention.
+7. No. A+B and A both cost 90. The direct incremental comparison shows no
+   benefit from adding B despite negative interaction.
 
 </details>

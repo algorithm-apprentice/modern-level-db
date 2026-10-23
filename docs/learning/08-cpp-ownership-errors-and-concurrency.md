@@ -42,6 +42,40 @@ These questions explain more of the design than "smart pointers are modern."
 `shared_ptr` protects lifetime, not the thread safety of the object it points
 to. A non-null pointer is not a complete lifetime argument.
 
+## A view is not a C++ reference
+
+`ByteView` is the standard `span<const byte>` alias. It borrows bytes while
+remaining a separate view object. Copying it copies the pointer/length
+descriptor, not the key or value:
+
+```cpp
+const std::string storage = "abc";
+const ByteView original = AsBytes(storage);
+ByteView cursor = original;
+cursor = cursor.subspan(1);
+const ByteView& borrowed = original;
+```
+
+`original` and `borrowed` describe three bytes; the independent `cursor`
+describes two. None owns `storage`. A `const ByteView&` borrows the descriptor
+itself as well as referring indirectly to its backing bytes. Both must stay
+stable for a synchronous read. A temporary view passed to a const-reference
+parameter survives the call, but the callee must not retain a reference to
+that descriptor. This does not extend the lifetime of its backing bytes.
+
+This distinction explains why not every view should become a reference.
+Returned views need their own descriptors: returning a reference to a local
+descriptor would dangle even if its backing bytes still exist. A parser may
+deliberately copy a cursor to avoid advancing its caller, or accept
+`ByteView&` when it should advance the caller.
+
+Selected non-inlined read boundaries instead use `const ByteView&`, matching
+Native's `const Slice&` forwarding model. Whether a descriptor copy survives
+depends on the calling convention and optimization context, not just the
+fact that the view is nonowning. Inspect the actual caller; do not infer that
+references are universally faster. Public override migration belongs in the
+[API reference](../reference/api-and-options.md#comparator-and-bloom-requirements).
+
 ## RAII and move-only handles
 
 **Resource acquisition is initialization**, or RAII, puts cleanup in an
@@ -108,6 +142,36 @@ released when executor deletion joins its worker.
 This separates cleanup mechanism from cleanup order; it does not make a
 borrowed object owned or extend its lifetime.
 
+### Ownership and generated work are different proofs
+
+RAII answers who releases a resource on normal return and exception unwinding.
+It does not promise that every handle move, empty destructor, or accessor
+disappears from optimized code. Several safe wrappers can still leave
+outlined calls between layers.
+
+The LRU lookup shows the separation:
+
+```text
+under shard mutex: find entry and acquire its reference
+after unlock:      nonthrowing wrapping in the move-only pin
+while pinned:      use the retained value
+on release:        update references under the shard mutex
+after unlock:      reclaim any retired value
+```
+
+No allocation, callback, or throwing step can intervene between acquiring
+that reference and establishing its RAII guard. The pin retains an entry;
+it still borrows the cache, whose owner must outlive every pin.
+
+Tiny pin moves, null checks, and accessors are visible in private headers;
+substantial lookup/reclamation work stays outlined. Header visibility lets
+the compiler eliminate wrapper work, but `inline` alone is not proof that
+it did. It also does not move synchronization obligations: database read pins
+still require the database mutex during acquisition and release, including
+after a lookup throws. Use behavioral tests for lifetime and
+[generated-code/whole-workload evidence](09-verification-and-performance.md)
+for cost. Neither replaces the other.
+
 ## Explicit error types
 
 `Result<T>` is an alias for `std::expected<T, Error>`.
@@ -133,6 +197,10 @@ operation. It does not replace an error:
 Errors carry a code, message, and source location.
 `[[nodiscard]]` makes accidental ignored results visible to the compiler.
 It does not force a caller to handle them correctly.
+
+Storage reserved for an `expected` error alternative does not mean that an
+Error is constructed or allocated on every success. Object size alone also
+does not establish its return convention or runtime cost.
 
 Normal storage failures do not use exceptions for control flow.
 That is not a guarantee that allocation cannot throw.
@@ -293,6 +361,7 @@ useful advanced exercise in making those arguments explicit.
 
 | Entry point | Interface or symbol | Question to answer | Representative evidence |
 |---|---|---|---|
+| [`bytes.h`](../../include/modern_leveldb/base/bytes.h), [`comparator.h`](../../include/modern_leveldb/base/comparator.h) | view objects and borrowed read descriptors | Which object is copied or borrowed, and which storage lifetime remains external? | [`bytes_test.cc`](../../tests/unit/base/bytes_test.cc), [`comparator_test.cc`](../../tests/unit/base/comparator_test.cc) |
 | [`result.h`](../../include/modern_leveldb/base/result.h) | `Error`, `Result`, `Status` | Which failures are ordinary typed results, and what may still throw? | [`result_test.cc`](../../tests/unit/base/result_test.cc) |
 | [`api_internal.h`](../../src/api/api_internal.h) | public handle implementations | Which owner keeps the engine and child state alive? | [`public_api_test.cc`](../../tests/unit/api/public_api_test.cc) |
 | [`dependency.h`](../../src/engine/dependency.h) | conditional dependency ownership | How do one pointer and one flag preserve ownership through moves and partial construction? | [`dependency_test.cc`](../../tests/unit/engine/dependency_test.cc) |
@@ -301,7 +370,7 @@ useful advanced exercise in making those arguments explicit.
 | [`database_read.cc`](../../src/engine/database_read.cc) | lock release and typed read pins | What keeps read sources alive while slow I/O runs without the mutex? | [`database_read_test.cc`](../../tests/unit/engine/database_read_test.cc) |
 | [`database_background.cc`](../../src/engine/database_background.cc) | sticky failure, unlocked maintenance, shutdown | How do background transitions regain the mutex and preserve failure ownership? | [`database_background_test.cc`](../../tests/unit/engine/database_background_test.cc) |
 | [`serial_executor.cc`](../../src/platform/serial_executor.cc) | queue ownership and stop/join | Who owns accepted work during teardown? | [`serial_executor_test.cc`](../../tests/unit/platform/serial_executor_test.cc) |
-| [`sharded_lru_cache_core.cc`](../../src/cache/sharded_lru_cache_core.cc) | retired-entry reclamation | Which mutation must finish under the shard mutex before a user value deleter may reenter the cache? | [`sharded_lru_cache_test.cc`](../../tests/unit/cache/sharded_lru_cache_test.cc) |
+| [`sharded_lru_cache_core.h`](../../src/cache/sharded_lru_cache_core.h), [`sharded_lru_cache_core.cc`](../../src/cache/sharded_lru_cache_core.cc) | inline pin envelope and outlined retention/reclamation | What makes pin wrapping nonthrowing, and which invariant must be restored before a value deleter reenters? | [`sharded_lru_cache_test.cc`](../../tests/unit/cache/sharded_lru_cache_test.cc) |
 
 Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),
 [ADR-0038](../adr/0038-public-raii-api.md), and
@@ -317,6 +386,10 @@ Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),
    cleanup operation that can throw?
 6. Why is moving an owning value out of a mutex-protected container not
    automatically enough to make destruction safe?
+7. Does copying a ByteView copy its bytes? Does a reference to that view own
+   or extend the backing storage?
+8. If a destructor is defined in a header, can you conclude its cost has
+   disappeared or its locking preconditions no longer matter?
 
 <details>
 <summary>Answers</summary>
@@ -332,5 +405,9 @@ Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),
 6. Destroying the moved value can still run external code. The protected
    indexes, references, and accounting must already describe a complete state,
    and the destructor itself must run after unlocking.
+7. Neither. Copying copies the descriptor; a reference borrows that descriptor.
+   Both still rely on a separate backing owner.
+8. No. Check actual generated work separately. Ownership, lock state, and
+   exception cleanup remain correctness obligations regardless of inlining.
 
 </details>

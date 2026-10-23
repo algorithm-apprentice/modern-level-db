@@ -20,14 +20,17 @@ Modern is not missing the basic LSM pipeline:
 |---|---|---|
 | Ordered binary keys and Put/Get/Delete | Yes | Yes |
 | Atomic Put/Delete batches | Yes | Yes, plus an explicitly exclusive batch path |
+| Ordered one-sequence batch reads | No public MultiGet | Bounded synchronous MultiGet with owning per-key results |
 | Snapshots and bidirectional iteration | Yes | Yes, with RAII child lifetimes |
 | WAL, MANIFEST, CURRENT, SSTable formats | Yes | Compatible core formats with golden/differential tests |
-| Bloom filters | Yes, configurable policy | Yes, optional built-in Bloom configuration |
+| Bloom filters | Legacy block-range layout, configurable policy | Built-in Legacy and persisted full-table layouts; automatic full filtering for the built-in bytewise path |
 | None/Snappy block compression | Yes | Yes |
 | Zstd block compression | Yes | Yes |
 | Leveled and seek-triggered compaction | Yes | Yes |
 | Concurrent API callers and grouped writes | Yes | Yes |
 | Table/block caches and native mapped reads | Yes | Yes on admitted POSIX and Windows backends, with an explicit copied-read option |
+| Block-cache replacement | Sharded LRU | Automatic remains LRU; explicit CLOCK is available through the checked options factory |
+| Point-read table-reader reuse | Shared table-cache lookup | Same baseline, with optional bounded weak hints that default off |
 | Public state/properties | Formatted string `GetProperty` | Typed owning `DatabaseStateSnapshot`; no arbitrary property strings |
 | Storage-file diagnostics | `DumpFile` and `leveldbutil dump` | Versioned `modern_leveldb_tool dump` for WAL, MANIFEST, and SSTable files |
 | Approximate disk usage by key range | `GetApproximateSizes` | Not exposed |
@@ -40,6 +43,16 @@ Read-path and write-path baseline parity are recorded as complete in
 [ADR-0060](../adr/0060-leveldb-write-path-parity.md).
 That does not mean identical performance on every workload or identical
 source APIs.
+[ADR-0091](../adr/0091-native-get-cost-model-parity.md) separately records
+alignment of generated read work: pin transfers, view forwarding, complete-word
+operations, and decoding of validated index handles. Algorithmic similarity
+alone does not establish the same calls, ownership cost, or timing.
+
+The full-table filter uses optional metadata, not a replacement for the core
+SST format. Native can read its data while ignoring the unknown filter;
+it does not receive the new exclusion benefit. See
+[lesson 05](05-tables-filters-and-caches.md#bloom-filters) for the layout and
+comparator-equality requirements.
 
 ## Intentional differences are not automatically gaps
 
@@ -126,15 +139,19 @@ Neither operation can promise immediate reclamation of pinned old files.
 
 ### Cache capacity is a budget
 
-Expose capacity only when a reproducible cache experiment or application
-needs it. Preserve the default and document that pinned blocks, mapped
-pages, table metadata, and memtables lie outside a simple hard-memory claim.
+Capacity is already configurable through the shared public cache factories.
+The checked options factory also selects LRU or CLOCK; Automatic remains LRU.
+The retained block charge is not RSS: pinned blocks, mapped pages, table
+metadata, memtables, and allocator/cache metadata complicate a hard-memory
+claim. A policy with cheaper hit maintenance can still lose through a worse
+miss pattern. Do not turn the explicit CLOCK or reader-reuse options into
+default recommendations without the relevant workload evidence.
 
 ## Features to defer
 
 | Feature | Reason to defer for the current learning scope |
 |---|---|
-| MultiGet and iterator bounds | Useful application-facing extensions, but first establish a concrete caller and common-snapshot/comparator semantics |
+| Iterator bounds | Still require a concrete caller and precise comparator/range semantics; one-sequence MultiGet is already implemented |
 | Live checkpoint/backup | Requires a consistent file/WAL boundary; not a primitive in the pinned LevelDB DB API |
 | Lossy repair | Large correctness/data-loss contract; an inspector and corruption exercises provide a safer first step |
 | Additional Windows platforms and storage | Native x64/MSVC local-NTFS opening, LevelDB-aligned mappings, diagnostics, benchmarks and profiling are implemented; strict namespace durability, other architectures/toolchains and non-NTFS/network storage remain outside the admitted scope |

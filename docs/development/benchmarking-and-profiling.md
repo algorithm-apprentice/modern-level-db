@@ -8,8 +8,10 @@ Performance evidence is separated into:
 2. selected Google Benchmark workloads;
 3. owned CPU capture.
 
-Do not compare timings across different workloads, operation counts, access
-policies, ownership modes, durability modes, binaries, or hosts.
+Declare what a comparison changes and what it holds fixed. Do not pool
+workloads, operation counts, access policies, ownership/durability modes,
+binaries, or hosts as interchangeable samples. An intentional before/after
+binary change is the treatment, not proof of one function's causal cost.
 
 ## Ordinary comparative benchmark
 
@@ -109,6 +111,45 @@ Modern writebatch defaults to public copying behavior; the explicit
 `--modern-write-batch-ownership exclusive` control calls `WriteExclusive`.
 Mutable Modern cases can select `--modern-wal-creation leveldb` to match the
 pinned reference's WAL-creation policy. The manifest records every policy.
+
+## Controlled read-path comparisons
+
+A focused experiment needs a declared contract beyond a successful smoke
+run. Record the source/header revisions, compiler commands, providers,
+executable/symbol hashes, input image, filter layout, logical cache budget,
+checksums, output ownership, readers, affinity, warmup, and timed work.
+State whether background work is queued or completed within the boundary.
+Equal cache charge does not establish equal RSS or miss behavior.
+
+Compile every driver and library against matching headers. If a candidate
+changes a signature or class contract, separately compile its caller; do not
+reuse an incompatible old object to preserve a supposedly common driver.
+Normalize only declared output-path differences when comparing compiler
+options. Verify actual linked objects and selected callees, not only source
+expressions or an unlinked prototype.
+
+For isolated process samples, run one owned workload process at a time
+unless cross-process contention is the stated experiment. A total of many
+fresh processes is not a request to run them concurrently. Match deliberate
+within-workload reader concurrency, and avoid local builds or stack sampling
+during accepted timing.
+
+Use a predeclared balanced order and work count. Read-only calibration remains
+available in the selected harness; do not mix calibrated and fixed work as
+if operation counts and measured boundaries were identical.
+When using A/A controls, retain the exact reference executable rather than
+relinking a no-op copy. Preserve every round, command, raw result, run identity,
+and cleanup record; invocation intervals can verify serial execution.
+Report directional control drift and adverse pairs, never subtract drift or
+select favorable replacement rounds.
+
+For fixed work, elapsed time divided by total operations is inverse aggregate
+throughput, not per-request latency with multiple readers. Distinguish paired
+median cost ratios, ratios of aggregate medians, and median per-process QPS;
+they are not generally interchangeable.
+Keep exact campaign results in their ADR rather than duplicating changing
+percentage tables in learning and operational guides. See
+[ADR-0091](../adr/0091-native-get-cost-model-parity.md) for one retained example.
 
 ## Current completion/report schemas
 
