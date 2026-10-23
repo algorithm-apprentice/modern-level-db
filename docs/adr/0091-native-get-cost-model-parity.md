@@ -111,6 +111,11 @@ or type erasure. Keep substantial release/reclamation work out of line.
 Include the `VersionSet::PinCurrent` construction wrapper and the cache
 pin's null-check/reset envelope, not just an inline destructor that still
 calls an opaque `Reset`.
+The cache's inline optional-pin wrapper may call an outlined private lookup
+that returns the already-referenced entry pointer. Pin wrapping is
+nonthrowing; no allocation or callback occurs between acquisition and the
+RAII owner. This keeps substantial shard/ref work out of line without
+exposing an unowned handle to a caller or changing the typed cache API.
 Moved-from handles remain empty and cannot release twice; move assignment
 releases its old pin exactly once; self-move remains valid.
 

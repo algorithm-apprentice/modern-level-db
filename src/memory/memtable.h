@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 #include "format/internal_key.h"
 #include "memory/arena.h"
@@ -125,6 +126,21 @@ private:
     Table table_;
     mutable std::size_t read_pins_ = 0;
 };
+
+inline MemTable::ReadPin::ReadPin(const MemTable& table) noexcept : table_(&table) {
+    ++table_->read_pins_;
+}
+
+inline MemTable::ReadPin::ReadPin(ReadPin&& source) noexcept
+    : table_(std::exchange(source.table_, nullptr)) {}
+
+inline MemTable::ReadPin::~ReadPin() {
+    if (table_ != nullptr) {
+        --table_->read_pins_;
+    }
+}
+
+inline const MemTable& MemTable::ReadPin::value() const noexcept { return *table_; }
 
 }  // namespace modern_leveldb
 

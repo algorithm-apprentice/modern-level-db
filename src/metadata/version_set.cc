@@ -208,29 +208,6 @@ VersionSet::VersionSet(FileSystem& file_system, std::filesystem::path directory,
                        const InternalKeyComparator& comparator) noexcept
     : file_system_(&file_system), directory_(std::move(directory)), comparator_(&comparator) {}
 
-// GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
-VersionSet::ReadPin::ReadPin(VersionSet& owner, const Version& version) noexcept
-    : owner_(&owner), version_(&version) {
-    ++version_->read_pins_;
-}
-
-VersionSet::ReadPin::ReadPin(ReadPin&& source) noexcept
-    : owner_(source.owner_), version_(source.version_) {
-    source.owner_ = nullptr;
-    source.version_ = nullptr;
-}
-
-VersionSet::ReadPin::~ReadPin() {
-    if (version_ != nullptr) {
-        owner_->ReleaseRead(*version_);
-    }
-}
-// GCOVR_EXCL_STOP
-
-const Version& VersionSet::ReadPin::value() const noexcept { return *version_; }
-
-VersionSet::ReadPin VersionSet::PinCurrent() noexcept { return ReadPin(*this, *current_); }
-
 Result<std::unique_ptr<VersionSet>> VersionSet::Create(FileSystem& file_system,
                                                        std::filesystem::path directory,
                                                        const InternalKeyComparator& comparator) {

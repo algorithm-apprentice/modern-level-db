@@ -75,24 +75,6 @@ const std::byte* EncodeMemTableEntry(Arena& arena, SequenceNumber sequence, Valu
 
 }  // namespace
 
-// GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
-MemTable::ReadPin::ReadPin(const MemTable& table) noexcept : table_(&table) {
-    ++table_->read_pins_;
-}
-
-MemTable::ReadPin::ReadPin(ReadPin&& source) noexcept : table_(source.table_) {
-    source.table_ = nullptr;
-}
-
-MemTable::ReadPin::~ReadPin() {
-    if (table_ != nullptr) {
-        --table_->read_pins_;
-    }
-}
-// GCOVR_EXCL_STOP
-
-const MemTable& MemTable::ReadPin::value() const noexcept { return *table_; }
-
 MemTable::MemTable(const Comparator& user_comparator)
     : entry_comparator_(user_comparator), table_(entry_comparator_, arena_) {}
 

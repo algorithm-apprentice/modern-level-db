@@ -25,36 +25,6 @@ bool ShardedLruCacheCore::Entry::Matches(ByteView candidate_key,
     return std::ranges::equal(key(), candidate_key);
 }
 
-// GCOVR_EXCL_START: GCC emits duplicate constructor/destructor ABI clones
-ShardedLruCacheCore::Pin::Pin(ShardedLruCacheCore& cache, Entry& entry) noexcept
-    : cache_(&cache), entry_(&entry) {}
-
-ShardedLruCacheCore::Pin::Pin(Pin&& source) noexcept
-    : cache_(std::exchange(source.cache_, nullptr)),
-      entry_(std::exchange(source.entry_, nullptr)) {}
-
-ShardedLruCacheCore::Pin& ShardedLruCacheCore::Pin::operator=(Pin&& source) noexcept {
-    if (this != &source) {
-        Reset();
-        cache_ = std::exchange(source.cache_, nullptr);
-        entry_ = std::exchange(source.entry_, nullptr);
-    }
-    return *this;
-}
-
-ShardedLruCacheCore::Pin::~Pin() { Reset(); }
-// GCOVR_EXCL_STOP
-
-const void* ShardedLruCacheCore::Pin::value() const noexcept { return entry_->value; }
-
-void ShardedLruCacheCore::Pin::Reset() noexcept {
-    if (entry_ != nullptr) {
-        cache_->Release(*entry_);
-        cache_ = nullptr;
-        entry_ = nullptr;
-    }
-}
-
 // GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
 ShardedLruCacheCore::HandleTable::HandleTable() : length_(4), buckets_(AllocateBuckets(length_)) {}
 // GCOVR_EXCL_STOP
@@ -231,15 +201,11 @@ void ShardedLruCacheCore::CommitAdmission(Shard& shard, Entry& entry,
     Evict(shard, retired);
 }
 
-std::optional<ShardedLruCacheCore::Pin> ShardedLruCacheCore::Lookup(ByteView key) {
+ShardedLruCacheCore::Entry* ShardedLruCacheCore::LookupAndRef(ByteView key) {
     const std::uint32_t hash = HashKey(key);
     Shard& shard = shards_[ShardIndex(hash)];
     std::lock_guard lock(shard.mutex);
-    Entry* entry = LookupAndRef(shard, key, hash);
-    if (entry == nullptr) {
-        return std::nullopt;
-    }
-    return Pin(*this, *entry);
+    return LookupAndRef(shard, key, hash);
 }
 
 void ShardedLruCacheCore::Erase(ByteView key) {

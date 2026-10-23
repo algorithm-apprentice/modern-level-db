@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <utility>
 
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/hash.h"
@@ -165,6 +166,7 @@ private:
     static void Unref(Shard& shard, Entry& entry, Entry*& retired) noexcept;
     [[nodiscard]] static Entry* LookupAndRef(Shard& shard, ByteView key,
                                              std::uint32_t hash) noexcept;
+    [[nodiscard]] Entry* LookupAndRef(ByteView key);
     static void EraseMapping(Shard& shard, ByteView key, std::uint32_t hash,
                              Entry*& retired) noexcept;
     static void FinishErase(Shard& shard, Entry* entry, Entry*& retired) noexcept;
@@ -180,6 +182,42 @@ private:
     std::array<Shard, ShardCount> shards_;
     std::atomic<std::uint64_t> next_id_{0};
 };
+
+inline ShardedLruCacheCore::Pin::Pin(ShardedLruCacheCore& cache, Entry& entry) noexcept
+    : cache_(&cache), entry_(&entry) {}
+
+inline ShardedLruCacheCore::Pin::Pin(Pin&& source) noexcept
+    : cache_(std::exchange(source.cache_, nullptr)),
+      entry_(std::exchange(source.entry_, nullptr)) {}
+
+inline ShardedLruCacheCore::Pin& ShardedLruCacheCore::Pin::operator=(Pin&& source) noexcept {
+    if (this != &source) {
+        Reset();
+        cache_ = std::exchange(source.cache_, nullptr);
+        entry_ = std::exchange(source.entry_, nullptr);
+    }
+    return *this;
+}
+
+inline ShardedLruCacheCore::Pin::~Pin() { Reset(); }
+
+inline const void* ShardedLruCacheCore::Pin::value() const noexcept { return entry_->value; }
+
+inline void ShardedLruCacheCore::Pin::Reset() noexcept {
+    if (entry_ != nullptr) {
+        cache_->Release(*entry_);
+        cache_ = nullptr;
+        entry_ = nullptr;
+    }
+}
+
+inline std::optional<ShardedLruCacheCore::Pin> ShardedLruCacheCore::Lookup(ByteView key) {
+    Entry* entry = LookupAndRef(key);
+    if (entry == nullptr) {
+        return std::nullopt;
+    }
+    return Pin(*this, *entry);
+}
 
 }  // namespace modern_leveldb
 
