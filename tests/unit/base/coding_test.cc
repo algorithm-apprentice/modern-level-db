@@ -747,6 +747,57 @@ TEST(CodingTest, RejectsTruncatedLengthPrefixedBytesWithoutConsumingInput) {
     EXPECT_EQ(input.size(), input_storage.size());
 }
 
+TEST(CodingTest, TrustedProducerMatchesCanonicalWidthsAndPreservesOutputSentinels) {
+    const std::array<std::uint64_t, 15> values{
+        0,
+        1,
+        127,
+        128,
+        16'383,
+        16'384,
+        (1ULL << 21U) - 1,
+        1ULL << 21U,
+        (1ULL << 28U) - 1,
+        1ULL << 28U,
+        (1ULL << 32U) - 1,
+        1ULL << 32U,
+        1ULL << 35U,
+        1ULL << 63U,
+        std::numeric_limits<std::uint64_t>::max(),
+    };
+    for (const std::uint64_t value : values) {
+        SCOPED_TRACE(value);
+        std::vector<std::byte> expected;
+        std::uint64_t remaining = value;
+        do {
+            const auto digit = static_cast<unsigned int>(remaining % 128U);
+            remaining /= 128U;
+            expected.push_back(static_cast<std::byte>(digit + (remaining == 0 ? 0U : 128U)));
+        } while (remaining != 0);
+        EXPECT_EQ(VarintLengthTrusted(value), expected.size());
+
+        const auto check = [&expected](auto number) {
+            for (std::size_t offset = 0; offset < 8; ++offset) {
+                std::array<std::byte, 24> storage;
+                storage.fill(std::byte{0x5a});
+                auto wanted = storage;
+                std::ranges::copy(expected, wanted.begin() + static_cast<std::ptrdiff_t>(offset));
+                MutableByteView output = MutableByteView(storage).subspan(offset, 10);
+
+                EncodeVarintTrusted(output, number);
+
+                EXPECT_EQ(storage, wanted);
+                EXPECT_EQ(output.data(), storage.data() + offset + expected.size());
+                EXPECT_EQ(output.size(), 10U - expected.size());
+            }
+        };
+        check(value);
+        if (value <= std::numeric_limits<std::uint32_t>::max()) {
+            check(static_cast<std::uint32_t>(value));
+        }
+    }
+}
+
 TEST(CodingTest, ComputesVarintLength) {
     EXPECT_EQ(VarintLength(0U), 1U);
     EXPECT_EQ(VarintLength(127U), 1U);

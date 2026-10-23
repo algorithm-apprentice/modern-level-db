@@ -1,6 +1,7 @@
 #ifndef MODERN_LEVELDB_FORMAT_INTERNAL_KEY_H_
 #define MODERN_LEVELDB_FORMAT_INTERNAL_KEY_H_
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -80,8 +81,15 @@ struct InternalKeyView {
 [[nodiscard]] Result<InternalKeyView> ParseInternalKey(ByteView encoded);
 
 // Requires enough output, a 56-bit sequence and a valid kind; advances past the key.
-void EncodeInternalKeyTrusted(MutableByteView& output, ByteView user_key, SequenceNumber sequence,
-                              ValueKind kind) noexcept;
+inline void EncodeInternalKeyTrusted(MutableByteView& output, ByteView user_key,
+                                     SequenceNumber sequence, ValueKind kind) noexcept {
+    std::ranges::copy(user_key, output.begin());
+    output = output.subspan(user_key.size());
+    EncodeFixedTrusted(
+        std::span<std::byte, InternalKeyTrailerSize>(output.data(), InternalKeyTrailerSize),
+        PackInternalKeyTrailer(sequence, kind));
+    output = output.subspan(InternalKeyTrailerSize);
+}
 
 // Owns a seek target in both length-prefixed memtable and internal-key forms.
 // Views borrow this object; reacquire them after a move (inline storage can relocate).

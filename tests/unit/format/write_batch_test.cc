@@ -179,6 +179,40 @@ TEST(WriteBatchTest, LiteralLengthBoundariesCommitCompleteRecordsAndCounts) {
                                          {ValueKind::Value, key128, value127}});
 }
 
+TEST(WriteBatchTest, AppendingAcrossLengthWidthsPreservesHeaderAndExistingRecords) {
+    for (const std::size_t length : {0U, 1U, 127U, 128U, 16'383U, 16'384U}) {
+        SCOPED_TRACE(length);
+        const auto key = Pattern(length, 23);
+        const auto value = Pattern(length, 31);
+        EncodedWriteBatch batch;
+        batch.SetSequence(0x00010203040506ULL);
+        batch.Put(AsBytes("prefix"), AsBytes("stable"));
+        const auto before = Materialize(batch.encoded());
+
+        batch.Put(key, value);
+        batch.Delete(key);
+
+        EXPECT_EQ(batch.sequence(), 0x00010203040506ULL);
+        EXPECT_EQ(batch.count(), 3U);
+        EXPECT_TRUE(std::ranges::equal(ByteView(before).first<8>(), batch.encoded().first<8>()));
+        EXPECT_TRUE(std::ranges::equal(
+            ByteView(before).subspan(WriteBatchHeaderSize),
+            batch.encoded().subspan(WriteBatchHeaderSize, before.size() - WriteBatchHeaderSize)));
+        auto reader = WriteBatchReader::OpenTrusted(batch);
+        ASSERT_TRUE(reader.Next().has_value());
+        const auto put = reader.Next();
+        const auto deleted = reader.Next();
+        ASSERT_TRUE(put.has_value());
+        ASSERT_TRUE(deleted.has_value());
+        EXPECT_TRUE(std::ranges::equal(put->key, key));
+        EXPECT_TRUE(std::ranges::equal(put->value, value));
+        EXPECT_EQ(deleted->kind, ValueKind::Deletion);
+        EXPECT_TRUE(std::ranges::equal(deleted->key, key));
+        EXPECT_TRUE(deleted->value.empty());
+        EXPECT_FALSE(reader.Next().has_value());
+    }
+}
+
 TEST(WriteBatchReaderTest, IteratesBorrowedEntriesWithAssignedSequences) {
     EncodedWriteBatch batch;
     batch.SetSequence(100);

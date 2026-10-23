@@ -41,30 +41,10 @@ template <typename UInt>
     return value;
 }
 
-void EmitVarintByte(MutableByteView& output, std::byte byte) noexcept {
-    output.front() = byte;
-    output = output.subspan(1);
-}
-
-template <typename UInt>
-void EmitVarintContinuation(MutableByteView& output, UInt& value) noexcept {
-    EmitVarintByte(output, static_cast<std::byte>((value & 0x7fU) | 0x80U));
-    value >>= VarintPayloadBits;
-}
-
-template <typename UInt>
-void EncodeVarintTrusted(MutableByteView& output, UInt value) noexcept {
-    static_assert(std::is_unsigned_v<UInt>);
-    while (value >= 0x80U) {
-        EmitVarintContinuation(output, value);
-    }
-    EmitVarintByte(output, static_cast<std::byte>(value));
-}
-
 template <typename UInt>
 bool EncodeVarint(MutableByteView& output, UInt value) noexcept {
     static_assert(std::is_unsigned_v<UInt>);
-    if (output.size() < VarintLength(value)) {
+    if (output.size() < VarintLengthTrusted(value)) {
         return false;
     }
     EncodeVarintTrusted(output, value);
@@ -180,10 +160,6 @@ void AppendVarint64(std::vector<std::byte>& output, std::uint64_t value) {
     AppendVarint(output, value);
 }
 
-void EncodeVarint32Trusted(MutableByteView& output, std::uint32_t value) noexcept {
-    EncodeVarintTrusted(output, value);
-}
-
 bool EncodeVarint32(MutableByteView& output, std::uint32_t value) noexcept {
     return EncodeVarint(output, value);
 }
@@ -222,13 +198,6 @@ Result<ByteView> ConsumeLengthPrefixed(ByteView& input) {
     return value;
 }
 
-std::size_t VarintLength(std::uint64_t value) noexcept {
-    std::size_t length = 1;
-    while (value >= 0x80U) {
-        value >>= 7U;
-        ++length;
-    }
-    return length;
-}
+std::size_t VarintLength(std::uint64_t value) noexcept { return VarintLengthTrusted(value); }
 
 }  // namespace modern_leveldb
