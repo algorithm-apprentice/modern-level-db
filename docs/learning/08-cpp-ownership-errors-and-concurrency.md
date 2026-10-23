@@ -30,6 +30,12 @@ What event invalidates the borrow?
 
 These questions explain more of the design than "smart pointers are modern."
 
+Model owners and borrowers as a graph. An owning edge controls destruction;
+a borrowing edge requires another path keeping the target alive.
+Releasing one edge is safe only after every dependent borrow is finished
+or another valid owner remains. Shared ownership cycles can keep objects
+alive forever, so "never dangling" is not the complete resource goal.
+
 | Mechanism | Use here | Obligation |
 |---|---|---|
 | Value | Encoded metadata, options, stack writers | Define valid copy/move behavior |
@@ -87,6 +93,26 @@ Moving transfers ownership; it does not duplicate the engine.
 Their moved-from behavior is explicit rather than guessed by callers.
 Some internal objects are non-movable because other members hold references
 to their stable addresses.
+
+For a move-only guard with a chosen empty-source contract, reason in states:
+
+```text
+move construction:
+    source guards R -> destination guards R; source becomes empty
+move assignment:
+    release destination's previous D exactly once
+    transfer R and empty source
+self-move:
+    follow the type's explicit policy, not an assumed universal C++ rule
+```
+
+The invariant assigns one release obligation to each guarded acquisition;
+an emptied source must not release R again. This is an obligation at the
+end of ownership, not a proof that every caller eventually drops its handle.
+A shared pin follows a counted version of the invariant rather than unique
+deletion. Not every C++ type
+has this exact moved-from contract: the project's LookupKey, for example,
+has a valid canonical representation after a move.
 
 The public facade hides implementations behind private state/PImpl types.
 Consumers include public headers, not internal engine or codec headers.
@@ -172,6 +198,19 @@ after a lookup throws. Use behavioral tests for lifetime and
 [generated-code/whole-workload evidence](09-verification-and-performance.md)
 for cost. Neither replaces the other.
 
+### Count cleanup separately from transfer
+
+In a fixed-size guard model, move construction needs O(1) field work.
+Move assignment also releases its destination's previous resource, so its
+cost is O(1) plus that release cost. Final release can execute a deleter,
+free a retained object graph, acquire locks, or perform native cleanup.
+It is not universally constant-time just because the handle is small.
+
+Count allocations, descriptor copies, reference transitions, and lock
+acquisitions separately. Contention, callbacks, and I/O need their own
+latency assumptions; a field-operation count cannot bound their wall time.
+Inlining can remove empty bookkeeping, not required resource lifetime.
+
 ## Explicit error types
 
 `Result<T>` is an alias for `std::expected<T, Error>`.
@@ -227,6 +266,13 @@ When the acquire observes that release publication, earlier initialization
 is visible to the reader. The stable arena lifetime then keeps the object
 available.
 
+The argument composes three edges: initialization is sequenced before the
+release store; the observing acquire synchronizes with that publication;
+subsequent field inspection follows the acquire. Together they establish
+the required happens-before relation. The proof additionally requires no
+unsynchronized mutation of those immutable fields and no premature free.
+Changing only the memory-order spelling does not establish those premises.
+
 Relaxed operations are used where a stronger ordering is unnecessary under
 the actual invariant, such as writer-private link access or a height hint.
 Do not copy `memory_order_relaxed` into another shared-state design without
@@ -247,6 +293,25 @@ contracts.
 A `unique_lock` can temporarily release a mutex around slow I/O.
 Before unlocking, the caller must have retained everything it will use.
 On every return or exception path, it must restore the required lock state.
+
+Trace one reader against a rotating writer:
+
+```text
+reader under mutex: retain old memtable/Version pins
+reader unlocks:     lookup can use their immutable entries
+writer:             rotate/flush/install, retaining pinned old owners
+reader:             finish lookup or catch an exception, then relock
+reader under mutex: release pins; final retention can end
+```
+
+Without the first pin, the writer could reclaim the source during lookup.
+Without relocking on the exception path, pin counters and retained-owner
+state could be changed outside their synchronization domain.
+
+Conversely, holding the database mutex is not proof for every field:
+mutable arena accounting can change during an unlocked write commit.
+An observation needs a published value or the actual writer synchronization,
+not a mutex that happens to protect neighboring metadata.
 
 A condition-variable notification is not a stored "permission token."
 Waiters recheck shared state:
@@ -357,26 +422,7 @@ does not automatically provide meaningful safety.
 The registry in [ADR-0060](../adr/0060-leveldb-write-path-parity.md) is a
 useful advanced exercise in making those arguments explicit.
 
-## Source tour
-
-| Entry point | Interface or symbol | Question to answer | Representative evidence |
-|---|---|---|---|
-| [`bytes.h`](../../include/modern_leveldb/base/bytes.h), [`comparator.h`](../../include/modern_leveldb/base/comparator.h) | view objects and borrowed read descriptors | Which object is copied or borrowed, and which storage lifetime remains external? | [`bytes_test.cc`](../../tests/unit/base/bytes_test.cc), [`comparator_test.cc`](../../tests/unit/base/comparator_test.cc) |
-| [`result.h`](../../include/modern_leveldb/base/result.h) | `Error`, `Result`, `Status` | Which failures are ordinary typed results, and what may still throw? | [`result_test.cc`](../../tests/unit/base/result_test.cc) |
-| [`api_internal.h`](../../src/api/api_internal.h) | public handle implementations | Which owner keeps the engine and child state alive? | [`public_api_test.cc`](../../tests/unit/api/public_api_test.cc) |
-| [`dependency.h`](../../src/engine/dependency.h) | conditional dependency ownership | How do one pointer and one flag preserve ownership through moves and partial construction? | [`dependency_test.cc`](../../tests/unit/engine/dependency_test.cc) |
-| [`skiplist.h`](../../src/memory/skiplist.h) | node initialization and publication | Which writes happen before a reader's acquire load can observe the node? | [`skiplist_test.cc`](../../tests/unit/memory/skiplist_test.cc) |
-| [`write_path.h`](../../src/engine/write_path.h) | stack writer and leader/sequence guards | How does exception unwinding restore queue and batch state? | [`write_path_test.cc`](../../tests/unit/engine/write_path_test.cc) |
-| [`database_read.cc`](../../src/engine/database_read.cc) | lock release and typed read pins | What keeps read sources alive while slow I/O runs without the mutex? | [`database_read_test.cc`](../../tests/unit/engine/database_read_test.cc) |
-| [`database_background.cc`](../../src/engine/database_background.cc) | sticky failure, unlocked maintenance, shutdown | How do background transitions regain the mutex and preserve failure ownership? | [`database_background_test.cc`](../../tests/unit/engine/database_background_test.cc) |
-| [`serial_executor.cc`](../../src/platform/serial_executor.cc) | queue ownership and stop/join | Who owns accepted work during teardown? | [`serial_executor_test.cc`](../../tests/unit/platform/serial_executor_test.cc) |
-| [`sharded_lru_cache_core.h`](../../src/cache/sharded_lru_cache_core.h), [`sharded_lru_cache_core.cc`](../../src/cache/sharded_lru_cache_core.cc) | inline pin envelope and outlined retention/reclamation | What makes pin wrapping nonthrowing, and which invariant must be restored before a value deleter reenters? | [`sharded_lru_cache_test.cc`](../../tests/unit/cache/sharded_lru_cache_test.cc) |
-
-Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),
-[ADR-0038](../adr/0038-public-raii-api.md), and
-[code style](../development/code-style.md) for the project's contracts.
-
-## Self-check
+## Exercises: prove ownership, publication, and cleanup
 
 1. Does wrapping a mutable object in `shared_ptr` eliminate its data races?
 2. Why is releasing a cache pin before using its value unsafe?
@@ -390,6 +436,16 @@ Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),
    or extend the backing storage?
 8. If a destructor is defined in a header, can you conclude its cost has
    disappeared or its locking preconditions no longer matter?
+9. **State:** trace move assignment when both guards own resources. At
+   which transition is the old destination released, and what would cause
+   a double release?
+10. **Interleaving:** remove the initial reader pin from the rotation trace.
+    Construct the exact use-after-reclamation sequence.
+11. **Publication:** which premise is missing if a reader uses an acquire
+    load but the writer mutates the ordinary payload after publication?
+12. **Transfer:** design a guard around a different asynchronous resource.
+    Draw its owner/borrow graph, terminal event, mutex obligations, and
+    cleanup-error policy before choosing a smart-pointer type.
 
 <details>
 <summary>Answers</summary>
@@ -409,5 +465,32 @@ Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),
    Both still rely on a separate backing owner.
 8. No. Check actual generated work separately. Ownership, lock state, and
    exception cleanup remain correctness obligations regardless of inlining.
+9. Release the old destination before replacing its ownership. The source
+   must become nonowning; otherwise both destructors can release R.
+10. The reader borrows an entry, unlocks, the writer retires and destroys
+    its arena, and the reader dereferences the old pointer.
+11. Immutable or synchronized post-publication access is missing. Seeing
+    initialized data does not authorize racing later writes.
+12. A valid answer identifies every borrower and the event ending its use.
+    Cleanup must respect that event even when an operation reports an error.
 
 </details>
+
+## Source tour
+
+| Entry point | Interface or symbol | Question to answer | Representative evidence |
+|---|---|---|---|
+| [`bytes.h`](../../include/modern_leveldb/base/bytes.h), [`comparator.h`](../../include/modern_leveldb/base/comparator.h) | view objects and borrowed read descriptors | Which object is copied or borrowed, and which storage lifetime remains external? | [`bytes_test.cc`](../../tests/unit/base/bytes_test.cc), [`comparator_test.cc`](../../tests/unit/base/comparator_test.cc) |
+| [`result.h`](../../include/modern_leveldb/base/result.h) | `Error`, `Result`, `Status` | Which failures are ordinary typed results, and what may still throw? | [`result_test.cc`](../../tests/unit/base/result_test.cc) |
+| [`api_internal.h`](../../src/api/api_internal.h) | public handle implementations | Which owner keeps the engine and child state alive? | [`public_api_test.cc`](../../tests/unit/api/public_api_test.cc) |
+| [`dependency.h`](../../src/engine/dependency.h) | conditional dependency ownership | How do one pointer and one flag preserve ownership through moves and partial construction? | [`dependency_test.cc`](../../tests/unit/engine/dependency_test.cc) |
+| [`skiplist.h`](../../src/memory/skiplist.h) | node initialization and publication | Which writes happen before a reader's acquire load can observe the node? | [`skiplist_test.cc`](../../tests/unit/memory/skiplist_test.cc) |
+| [`write_path.h`](../../src/engine/write_path.h) | stack writer and leader/sequence guards | How does exception unwinding restore queue and batch state? | [`write_path_test.cc`](../../tests/unit/engine/write_path_test.cc) |
+| [`database_read.cc`](../../src/engine/database_read.cc) | lock release and typed read pins | What keeps read sources alive while slow I/O runs without the mutex? | [`database_read_test.cc`](../../tests/unit/engine/database_read_test.cc) |
+| [`database_background.cc`](../../src/engine/database_background.cc) | sticky failure, unlocked maintenance, shutdown | How do background transitions regain the mutex and preserve failure ownership? | [`database_background_test.cc`](../../tests/unit/engine/database_background_test.cc) |
+| [`serial_executor.cc`](../../src/platform/serial_executor.cc) | queue ownership and stop/join | Who owns accepted work during teardown? | [`serial_executor_test.cc`](../../tests/unit/platform/serial_executor_test.cc) |
+| [`sharded_lru_cache_core.h`](../../src/cache/sharded_lru_cache_core.h), [`sharded_lru_cache_core.cc`](../../src/cache/sharded_lru_cache_core.cc) | inline pin envelope and outlined retention/reclamation | What makes pin wrapping nonthrowing, and which invariant must be restored before a value deleter reenters? | [`sharded_lru_cache_test.cc`](../../tests/unit/cache/sharded_lru_cache_test.cc) |
+
+Read [ADR-0004](../adr/0004-errors-ownership-and-runtime.md),
+[ADR-0038](../adr/0038-public-raii-api.md), and
+[code style](../development/code-style.md) for the project's contracts.
