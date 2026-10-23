@@ -18,6 +18,8 @@ namespace {
 using CompareSignature = int (Comparator::*)(const ByteView&, const ByteView&) const noexcept;
 static_assert(std::is_same_v<decltype(&Comparator::Compare), CompareSignature>);
 
+int ComparisonSign(int order) { return (order > 0) - (order < 0); }
+
 std::vector<std::byte> OwnedBytes(std::string_view value) {
     const ByteView bytes = AsBytes(value);
     return {bytes.begin(), bytes.end()};
@@ -48,12 +50,13 @@ TEST(ComparatorTest, HandlesEmptyViewsWithoutRequiringNonNullStorage) {
     EXPECT_EQ(BytewiseComparator().Compare(byte, empty), 1);
 }
 
-TEST(ComparatorTest, PreservesNormalizedUnsignedOrderingForEveryBytePair) {
+TEST(ComparatorTest, PreservesUnsignedOrderingForEveryBytePair) {
     for (unsigned a = 0; a < 256; ++a) {
         for (unsigned b = 0; b < 256; ++b) {
             const std::array left{static_cast<std::byte>(a)};
             const std::array right{static_cast<std::byte>(b)};
-            EXPECT_EQ(BytewiseComparator().Compare(left, right), ScalarCompare(left, right));
+            EXPECT_EQ(ComparisonSign(BytewiseComparator().Compare(left, right)),
+                      ScalarCompare(left, right));
         }
     }
 }
@@ -76,12 +79,15 @@ TEST(ComparatorTest, MatchesScalarOrderingForUnalignedOverlappingAndVariedViews)
         const ByteView a = ByteView(left).subspan(left_offset, left_size);
         const ByteView b = ByteView(right).subspan(right_offset, right_size);
         const ByteView overlap = ByteView(left).subspan(right_offset, right_size);
-        EXPECT_EQ(BytewiseComparator().Compare(a, b), ScalarCompare(a, b));
-        EXPECT_EQ(BytewiseComparator().Compare(a, overlap), ScalarCompare(a, overlap));
+        EXPECT_EQ(ComparisonSign(BytewiseComparator().Compare(a, b)), ScalarCompare(a, b));
+        EXPECT_EQ(ComparisonSign(BytewiseComparator().Compare(a, overlap)),
+                  ScalarCompare(a, overlap));
         EXPECT_EQ(BytewiseComparator().Compare(a, a), 0);
         const ByteView prefix = a.first(a.size() / 2);
-        EXPECT_EQ(BytewiseComparator().Compare(prefix, a), ScalarCompare(prefix, a));
-        EXPECT_EQ(BytewiseComparator().Compare(a, prefix), ScalarCompare(a, prefix));
+        EXPECT_EQ(ComparisonSign(BytewiseComparator().Compare(prefix, a)),
+                  ScalarCompare(prefix, a));
+        EXPECT_EQ(ComparisonSign(BytewiseComparator().Compare(a, prefix)),
+                  ScalarCompare(a, prefix));
     }
 }
 

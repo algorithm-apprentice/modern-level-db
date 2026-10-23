@@ -12,17 +12,9 @@
 namespace modern_leveldb {
 namespace {
 
-int NormalizeByteOrder(int order) noexcept {
-    if (order < 0) {
-        return -1;
-    }
-    return order > 0 ? 1 : 0;
-}
-
 int CompareCommonPrefix(ByteView left, ByteView right) noexcept {
     const std::size_t size = std::min(left.size(), right.size());
-    const int order = size == 0 ? 0 : std::memcmp(left.data(), right.data(), size);
-    return NormalizeByteOrder(order);
+    return size == 0 ? 0 : std::memcmp(left.data(), right.data(), size);
 }
 
 int CompareKeyLengths(std::size_t left, std::size_t right) noexcept {
