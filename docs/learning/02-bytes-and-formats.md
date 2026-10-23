@@ -20,6 +20,13 @@ Keys and values can contain zero bytes and arbitrary binary data.
 `ByteView` is a `std::span<const std::byte>`: a pointer and length, not an
 owning string and not a null-terminated C string.
 
+A view object and a C++ reference are different. Copying a `ByteView` copies
+its pointer/length descriptor, not the referenced bytes. A `const ByteView&`
+instead borrows the descriptor itself. Native LevelDB's `Slice` and
+`const Slice&` have the same distinction. Read-path interfaces use references
+at selected forwarding boundaries; stored/returned views and independent
+parser cursors remain values. Neither form extends backing-storage lifetime.
+
 This matters when comparing keys, computing checksums, decoding a length,
 and returning borrowed values. A zero byte does not end a key.
 The default comparator orders keys lexicographically by bytes.
@@ -180,12 +187,24 @@ specific caller has already established the required invariant and
 preserves the storage and lifetime that make it true.
 Table data entries, for example, are checked lazily as iterators reach them.
 
+For an index handle, `Table::Open` validates both complete uint64 varints and
+their file bounds before publishing the immutable index. Get and iterator
+loading can then share trusted decoding of those same stable bytes without
+repeating public error construction. This proof does not apply to unchecked
+data entries or externally modified files.
+
+Fixed-word helpers follow the same separation: a proven complete word can
+use an alignment-safe copy on a little-endian host, with byte assembly on
+other endianness. The persistent representation remains little-endian;
+checked consumers still reject short inputs without advancing their cursor.
+
 ## Source tour
 
 | Entry point | Interface or symbol | Question to answer | Representative evidence |
 |---|---|---|---|
 | [`bytes.h`](../../include/modern_leveldb/base/bytes.h) | `ByteView`, mutable views, conversions | Which object owns the bytes behind this view? | [`bytes_test.cc`](../../tests/unit/base/bytes_test.cc) |
 | [`coding.cc`](../../src/base/coding.cc) | fixed/varint encode and consume | Which failures leave the input unchanged? | [`coding_test.cc`](../../tests/unit/base/coding_test.cc) |
+| [`coding_internal.h`](../../src/base/coding_internal.h) | trusted fixed words and unsigned varints | Which caller proved the complete word/varint and stable backing? | [`coding_test.cc`](../../tests/unit/base/coding_test.cc), [`table_test.cc`](../../tests/unit/table/table_test.cc) |
 | [`internal_key.cc`](../../src/format/internal_key.cc) | `InternalKey`, `LookupKey`, comparator | How do sequence and kind affect physical ordering? | [`internal_key_test.cc`](../../tests/unit/format/internal_key_test.cc) |
 | [`write_batch.cc`](../../src/format/write_batch.cc) | `EncodedWriteBatch`, `WriteBatchReader` | Where does external validation end and trusted iteration begin? | [`write_batch_test.cc`](../../tests/unit/format/write_batch_test.cc) |
 

@@ -20,29 +20,11 @@ namespace {
 
 constexpr std::size_t VarintPayloadBits = 7;
 
-template <typename UInt, std::size_t Extent>
-void EncodeFixed(std::span<std::byte, Extent> output, UInt value) noexcept {
-    static_assert(Extent == sizeof(UInt));
-    for (std::size_t index = 0; index < Extent; ++index) {
-        output[index] = static_cast<std::byte>((value >> (index * 8U)) & static_cast<UInt>(0xffU));
-    }
-}
-
-template <typename UInt, std::size_t Extent>
-UInt DecodeFixed(std::span<const std::byte, Extent> input) noexcept {
-    static_assert(Extent == sizeof(UInt));
-    UInt value = 0;
-    for (std::size_t index = 0; index < Extent; ++index) {
-        value |= std::to_integer<UInt>(input[index]) << (index * 8U);
-    }
-    return value;
-}
-
 template <typename UInt>
 void AppendFixed(std::vector<std::byte>& output, UInt value) {
     static_assert(std::is_unsigned_v<UInt>);
     std::array<std::byte, sizeof(UInt)> encoded;
-    EncodeFixed(std::span(encoded), value);
+    EncodeFixedTrusted(std::span(encoded), value);
     output.insert(output.end(), encoded.begin(), encoded.end());
 }
 
@@ -54,7 +36,7 @@ template <typename UInt>
         return std::unexpected(Error::Corruption(truncated_message));
     }
 
-    const UInt value = DecodeFixed<UInt>(input.first<EncodedSize>());
+    const UInt value = DecodeFixedTrusted<UInt>(input.first<EncodedSize>());
     input = input.subspan(EncodedSize);
     return value;
 }
@@ -158,20 +140,20 @@ template <typename UInt>
 
 void EncodeFixed32(std::span<std::byte, sizeof(std::uint32_t)> output,
                    std::uint32_t value) noexcept {
-    EncodeFixed(output, value);
+    EncodeFixedTrusted(output, value);
 }
 
 void EncodeFixed64(std::span<std::byte, sizeof(std::uint64_t)> output,
                    std::uint64_t value) noexcept {
-    EncodeFixed(output, value);
+    EncodeFixedTrusted(output, value);
 }
 
 std::uint32_t DecodeFixed32(std::span<const std::byte, sizeof(std::uint32_t)> input) noexcept {
-    return DecodeFixed<std::uint32_t>(input);
+    return DecodeFixedTrusted<std::uint32_t>(input);
 }
 
 std::uint64_t DecodeFixed64(std::span<const std::byte, sizeof(std::uint64_t)> input) noexcept {
-    return DecodeFixed<std::uint64_t>(input);
+    return DecodeFixedTrusted<std::uint64_t>(input);
 }
 
 void AppendFixed32(std::vector<std::byte>& output, std::uint32_t value) {

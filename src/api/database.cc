@@ -218,7 +218,7 @@ Status Database::WriteExclusive(WriteBatch& batch, const WriteOptions& options) 
     return state->engine().Write(batch.impl_->batch(), options.sync);
 }
 
-Result<bool> Database::Get(ByteView key, std::vector<std::byte>& value,
+Result<bool> Database::Get(const ByteView& key, std::vector<std::byte>& value,
                            const ReadOptions& options) {
     detail::DatabaseState* const state = state_.get();
     if (state == nullptr) {
@@ -234,7 +234,7 @@ Result<bool> Database::Get(ByteView key, std::vector<std::byte>& value,
     return state->engine().Get(key, value, *prepared);
 }
 
-Result<std::optional<std::vector<std::byte>>> Database::Get(ByteView key,
+Result<std::optional<std::vector<std::byte>>> Database::Get(const ByteView& key,
                                                             const ReadOptions& options) {
     std::vector<std::byte> value;
     Result<bool> found = Get(key, value, options);

@@ -67,7 +67,7 @@ public:
 
     // Returns false only if no key of the data block at block_offset can equal
     // key. An offset beyond the last filter may match.
-    [[nodiscard]] bool KeyMayMatch(std::uint64_t block_offset, ByteView key) const noexcept;
+    [[nodiscard]] bool KeyMayMatch(std::uint64_t block_offset, const ByteView& key) const noexcept;
 
 private:
     FilterBlockReader(BlockContents contents, BloomFilterPolicy policy, std::size_t array_offset,

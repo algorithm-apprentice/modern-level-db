@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 #include "format/internal_key.h"
 #include "memory/arena.h"
@@ -43,7 +44,7 @@ private:
             : internal_comparator(user_comparator) {}
 
         [[nodiscard]] int operator()(const std::byte* left, const std::byte* right) const noexcept;
-        [[nodiscard]] int operator()(const std::byte* left, ByteView right) const noexcept;
+        [[nodiscard]] int operator()(const std::byte* left, const ByteView& right) const noexcept;
         [[nodiscard]] const Comparator& user_comparator() const noexcept {
             return internal_comparator.user_comparator();
         }
@@ -109,7 +110,7 @@ public:
         void Next() { iterator_.Next(); }
         void Prev() { iterator_.Prev(); }
         // Requires a valid internally constructed internal key.
-        void Seek(ByteView internal_key);
+        void Seek(const ByteView& internal_key);
         void SeekToFirst() { iterator_.SeekToFirst(); }
         void SeekToLast() { iterator_.SeekToLast(); }
 
@@ -125,6 +126,21 @@ private:
     Table table_;
     mutable std::size_t read_pins_ = 0;
 };
+
+inline MemTable::ReadPin::ReadPin(const MemTable& table) noexcept : table_(&table) {
+    ++table_->read_pins_;
+}
+
+inline MemTable::ReadPin::ReadPin(ReadPin&& source) noexcept
+    : table_(std::exchange(source.table_, nullptr)) {}
+
+inline MemTable::ReadPin::~ReadPin() {
+    if (table_ != nullptr) {
+        --table_->read_pins_;
+    }
+}
+
+inline const MemTable& MemTable::ReadPin::value() const noexcept { return *table_; }
 
 }  // namespace modern_leveldb
 

@@ -32,7 +32,7 @@ static_assert(Level0CompactionTrigger == 4);
 
 class ReverseComparator final : public Comparator {
 public:
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         return BytewiseComparator().Compare(right, left);
     }
     std::string_view Name() const noexcept override { return "test.ReverseComparator"; }
@@ -42,7 +42,7 @@ public:
 
 class ExpansionTrackingComparator final : public Comparator {
 public:
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         if (AsStringView(left) == "f" && AsStringView(right) == "h") {
             ++expanded_next_comparisons;
         }

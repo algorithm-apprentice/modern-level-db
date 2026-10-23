@@ -9,6 +9,7 @@
 #include <optional>
 #include <set>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "format/internal_key.h"
@@ -78,7 +79,7 @@ public:
     [[nodiscard]] const Version* current_raw() const noexcept { return current_.get(); }
     // Requires the same external synchronization as current-version changes;
     // the pin must be destroyed under it too.
-    [[nodiscard]] ReadPin PinCurrent() noexcept;
+    [[nodiscard]] ReadPin PinCurrent() noexcept { return ReadPin(*this, *current_); }
     [[nodiscard]] std::span<const std::optional<InternalKey>, NumLevels> compact_pointers()
         const noexcept {
         return compact_pointers_;
@@ -161,6 +162,23 @@ private:
     std::unique_ptr<WalWriter> manifest_;
     std::optional<Error> failure_;
 };
+
+inline VersionSet::ReadPin::ReadPin(VersionSet& owner, const Version& version) noexcept
+    : owner_(&owner), version_(&version) {
+    ++version_->read_pins_;
+}
+
+inline VersionSet::ReadPin::ReadPin(ReadPin&& source) noexcept
+    : owner_(std::exchange(source.owner_, nullptr)),
+      version_(std::exchange(source.version_, nullptr)) {}
+
+inline VersionSet::ReadPin::~ReadPin() {
+    if (version_ != nullptr) {
+        owner_->ReleaseRead(*version_);
+    }
+}
+
+inline const Version& VersionSet::ReadPin::value() const noexcept { return *version_; }
 
 }  // namespace modern_leveldb
 

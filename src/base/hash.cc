@@ -56,7 +56,7 @@ void FoldHashTail(ByteView input, std::uint32_t& hash) noexcept {
 
 }  // namespace
 
-std::uint32_t Hash32(ByteView input, std::uint32_t seed) noexcept {
+std::uint32_t Hash32(const ByteView& input, std::uint32_t seed) noexcept {
     std::uint32_t hash = seed ^ (static_cast<std::uint32_t>(input.size()) * Multiplier);
     const std::byte* cursor = input.data();
     std::size_t remaining = input.size();

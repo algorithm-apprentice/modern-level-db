@@ -62,7 +62,7 @@ public:
     BlockCache& operator=(BlockCache&&) = delete;
     ~BlockCache() = default;
 
-    [[nodiscard]] Result<Handle> Insert(ByteView key, std::unique_ptr<const Block> value,
+    [[nodiscard]] Result<Handle> Insert(const ByteView& key, std::unique_ptr<const Block> value,
                                         std::size_t charge) {
         if (auto* lru = std::get_if<Lru>(&backends_)) {
             return lru->Insert(key, std::move(value), charge).transform([](Lru::Handle pin) {
@@ -74,7 +74,7 @@ public:
             .transform([](ClockBlockCache::Handle pin) { return Handle(std::move(pin)); });
     }
 
-    [[nodiscard]] std::optional<Handle> Lookup(ByteView key) {
+    [[nodiscard]] std::optional<Handle> Lookup(const ByteView& key) {
         if (auto* lru = std::get_if<Lru>(&backends_)) {
             auto found = lru->Lookup(key);
             if (!found.has_value()) {
@@ -109,7 +109,7 @@ public:
 
 private:
     // Table's fixed identity/offset key establishes this shape for CLOCK.
-    [[nodiscard]] static ClockBlockCache::Key ClockKey(ByteView key) noexcept {
+    [[nodiscard]] static ClockBlockCache::Key ClockKey(const ByteView& key) noexcept {
         return ClockBlockCache::Key(key.data(), ClockBlockCache::Key::extent);
     }
 

@@ -35,7 +35,7 @@ public:
         iterator_.SeekToLast();
         return {};
     }
-    [[nodiscard]] Status Seek(ByteView target) override {
+    [[nodiscard]] Status Seek(const ByteView& target) override {
         iterator_.Seek(target);
         return {};
     }
@@ -85,7 +85,7 @@ public:
         return Enter(files_.size() - 1, Edge::Last);
     }
 
-    [[nodiscard]] Status Seek(ByteView target) override {
+    [[nodiscard]] Status Seek(const ByteView& target) override {
         // The first file whose largest key is not before the target.
         const auto found = std::ranges::partition_point(files_, [&](const Version::File& file) {
             return comparator_->Compare(file->largest.encoded(), target) < 0;
@@ -136,7 +136,7 @@ private:
                                  " has no entries");
     }
 
-    [[nodiscard]] Status SeekInOpenFile(ByteView target, std::size_t index) {
+    [[nodiscard]] Status SeekInOpenFile(const ByteView& target, std::size_t index) {
         const Status sought = entries_->Seek(target);
         if (!sought.has_value()) {
             return Fail(sought.error());
@@ -244,7 +244,7 @@ public:
         Refresh();
         return moved;
     }
-    [[nodiscard]] Status Seek(ByteView target) {
+    [[nodiscard]] Status Seek(const ByteView& target) {
         const Status moved = iterator_->Seek(target);
         Refresh();
         return moved;
@@ -314,7 +314,7 @@ public:
         return {};
     }
 
-    [[nodiscard]] Status Seek(ByteView target) override {
+    [[nodiscard]] Status Seek(const ByteView& target) override {
         current_ = nullptr;
         for (IteratorChild& child : children_) {
             const Status moved = child.Seek(target);

@@ -54,6 +54,21 @@ audit, and fixed plan are retained locally under
 
 ## Context
 
+### Later generated-work alignment
+
+The October 23, 2026 Windows follow-up distinguishes algorithmic parity from
+the compiled work needed to express it. Intrusive references and lazy lookup
+were already present, but outlined pin transfers, by-value view forwarding,
+word-codec boundaries, and checked decoding of already-validated index
+handles still differed from Native's cost model.
+[ADR-0091](0091-native-get-cost-model-parity.md) implements that reviewed
+composition and records all 108 serial fixed-work observations, identical
+Native A/A controls, approximate resident Legacy parity, and the remaining
+public/safety/measurement boundaries. Its results do not replace the older
+campaign's raw observations or identify additive per-function savings.
+
+### Original strategy
+
 The original read-performance strategy was to use pinned Google LevelDB as the
 baseline, first make Modern LevelDB's read path structurally equivalent, and
 only then optimize beyond it.

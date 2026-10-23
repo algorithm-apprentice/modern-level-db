@@ -148,7 +148,7 @@ public:
 
     // Writes the key's value and returns true, or leaves it unchanged and
     // returns false if the key is missing or deleted.
-    [[nodiscard]] Result<bool> Get(ByteView key, std::vector<std::byte>& value,
+    [[nodiscard]] Result<bool> Get(const ByteView& key, std::vector<std::byte>& value,
                                    const DatabaseEngineReadOptions& options = {});
 
     // Returns an iterator that must be destroyed before the database, since its

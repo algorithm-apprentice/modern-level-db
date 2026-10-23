@@ -9,7 +9,8 @@ namespace modern_leveldb {
 
 // Non-cryptographic hash for cache sharding and Bloom probes. Empty input returns
 // the seed; collisions are expected and do not establish key equality.
-[[nodiscard]] std::uint32_t Hash32(ByteView input, std::uint32_t seed) noexcept;
+// Borrows the stable descriptor and backing bytes only until return.
+[[nodiscard]] std::uint32_t Hash32(const ByteView& input, std::uint32_t seed) noexcept;
 
 }  // namespace modern_leveldb
 

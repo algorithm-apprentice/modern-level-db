@@ -77,7 +77,7 @@ Result<std::size_t> ReadRestartCount(
     if (data.size() < Fixed32Size) {
         return std::unexpected(Error::Corruption("block is too short", location));
     }
-    const std::size_t restart_count = DecodeFixed32(data.last<Fixed32Size>());
+    const std::size_t restart_count = DecodeFixedTrusted<std::uint32_t>(data.last<Fixed32Size>());
     if (restart_count > (data.size() - Fixed32Size) / Fixed32Size) {
         return std::unexpected(Error::Corruption("block restart count is invalid", location));
     }
@@ -148,7 +148,8 @@ Status Block::ValidateRestartEntry(const Layout& layout, std::size_t offset, std
 }
 
 std::size_t Block::Layout::RestartPoint(std::size_t index) const noexcept {
-    return DecodeFixed32(contents.subspan(entries_end + Fixed32Size * index).first<Fixed32Size>());
+    return DecodeFixedTrusted<std::uint32_t>(
+        contents.subspan(entries_end + Fixed32Size * index).first<Fixed32Size>());
 }
 
 Result<Block> Block::Create(std::vector<std::byte> contents) {
@@ -342,7 +343,7 @@ void Block::Iterator::ScanToLastEntry() {
     }
 }
 
-Status Block::Iterator::Seek(ByteView target) {
+Status Block::Iterator::Seek(const ByteView& target) {
     BeginPositioning();
     if (!AcceptsKeySize(target.size())) {
         Corruption();
@@ -376,7 +377,7 @@ Status Block::Iterator::Seek(ByteView target) {
     return CurrentStatus();
 }
 
-bool Block::Iterator::FindRestart(ByteView target, std::size_t left, std::size_t right,
+bool Block::Iterator::FindRestart(const ByteView& target, std::size_t left, std::size_t right,
                                   std::size_t& index) noexcept {
     // Prefix-compressed entries require reconstruction from the last restart
     // strictly before the target, rather than a binary search over all entries.
@@ -405,7 +406,7 @@ bool Block::Iterator::RestoreCheckpoint(std::size_t index, int current_key_compa
     return true;
 }
 
-void Block::Iterator::ScanToLowerBound(ByteView target) {
+void Block::Iterator::ScanToLowerBound(const ByteView& target) {
     while (ParseNextEntry() && Compare(key(), target) < 0) {
     }
 }
@@ -592,7 +593,7 @@ bool Block::Iterator::AcceptsKeySize(std::size_t size) const noexcept {
     return format_ != BlockKeyFormat::Internal || size >= InternalKeyTrailerSize;
 }
 
-int Block::Iterator::Compare(ByteView left, ByteView right) const noexcept {
+int Block::Iterator::Compare(const ByteView& left, const ByteView& right) const noexcept {
     return comparator_->Compare(left, right);
 }
 

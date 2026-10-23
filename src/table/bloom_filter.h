@@ -37,7 +37,7 @@ public:
 
     // A filter shorter than two bytes matches nothing; an unknown probe encoding
     // (>30) conservatively matches every key instead of risking a false negative.
-    [[nodiscard]] bool KeyMayMatch(ByteView key, ByteView filter) const noexcept;
+    [[nodiscard]] bool KeyMayMatch(const ByteView& key, const ByteView& filter) const noexcept;
 
 private:
     std::uint32_t bits_per_key_;

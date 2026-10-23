@@ -22,7 +22,9 @@ public:
     virtual ~Comparator() = default;
 
     // Returns negative, zero, or positive for less, equal, or greater logical keys.
-    [[nodiscard]] virtual int Compare(ByteView left, ByteView right) const noexcept = 0;
+    // Descriptors and backing bytes stay stable for the call; do not retain references.
+    [[nodiscard]] virtual int Compare(const ByteView& left,
+                                      const ByteView& right) const noexcept = 0;
     // Identifies exactly one ordering/equality contract in persisted metadata.
     // Reusing a name with changed semantics does not migrate existing data.
     [[nodiscard]] virtual std::string_view Name() const noexcept = 0;

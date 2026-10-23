@@ -44,7 +44,7 @@ static_assert(std::is_nothrow_constructible_v<DbIterator, std::unique_ptr<Intern
 // Orders keys by their bytes in reverse.
 class ReverseComparator final : public Comparator {
 public:
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         return BytewiseComparator().Compare(right, left);
     }
     std::string_view Name() const noexcept override { return "test.Reverse"; }
@@ -134,7 +134,7 @@ public:
     ByteView value() const noexcept override { return value_; }
     Status SeekToFirst() override { return Refresh(child_.SeekToFirst()); }
     Status SeekToLast() override { return Refresh(child_.SeekToLast()); }
-    Status Seek(ByteView target) override { return Refresh(child_.Seek(target)); }
+    Status Seek(const ByteView& target) override { return Refresh(child_.Seek(target)); }
     Status Next() override { return Refresh(child_.Next()); }
     Status Prev() override { return Refresh(child_.Prev()); }
 

@@ -6,11 +6,15 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 #include "modern_leveldb/base/bytes.h"
 
 namespace modern_leveldb {
 namespace {
+
+using HashSignature = std::uint32_t (*)(const ByteView&, std::uint32_t) noexcept;
+static_assert(std::is_same_v<decltype(&Hash32), HashSignature>);
 
 constexpr std::array<std::byte, 12> BinaryInput{
     std::byte{0xff}, std::byte{0x00}, std::byte{0x80}, std::byte{0x7f},

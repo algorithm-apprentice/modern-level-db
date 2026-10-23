@@ -55,11 +55,12 @@ public:
     [[nodiscard]] Status WriteExclusive(WriteBatch& batch, const WriteOptions& options = {});
     // Returns true and replaces value when found. Missing/deleted keys return
     // false without changing value; read failures are errors, not absence.
-    [[nodiscard]] Result<bool> Get(ByteView key, std::vector<std::byte>& value,
+    // The key descriptor and backing bytes must remain stable until return.
+    [[nodiscard]] Result<bool> Get(const ByteView& key, std::vector<std::byte>& value,
                                    const ReadOptions& options = {});
     // The owning alternative: an empty optional means missing/deleted, and an
     // engaged vector can itself be empty for a stored empty value.
-    [[nodiscard]] OwningReadResult Get(ByteView key, const ReadOptions& options = {});
+    [[nodiscard]] OwningReadResult Get(const ByteView& key, const ReadOptions& options = {});
     // Synchronous, ordered owning reads at one retained sequence. Inputs remain
     // stable until return; duplicates and per-key errors retain their positions.
     // Valid concurrency is 1..16; one runs on the caller without read workers.

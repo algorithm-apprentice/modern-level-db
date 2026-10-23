@@ -58,7 +58,7 @@ public:
     [[nodiscard]] Status SeekToLast();
     // Finds the first user key at or after the target. The caller supplies a
     // user-key length within the persistent representation.
-    [[nodiscard]] Status Seek(ByteView user_key);
+    [[nodiscard]] Status Seek(const ByteView& user_key);
     [[nodiscard]] Status Next();
     [[nodiscard]] Status Prev();
 

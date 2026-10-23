@@ -12,6 +12,7 @@
 #include <variant>
 #include <vector>
 
+#include "base/coding_internal.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/crc32c.h"
@@ -32,7 +33,8 @@ std::uint32_t BlockChecksum(ByteView contents, std::byte type) noexcept {
 }
 
 bool StoredBlockChecksumMatches(ByteView stored, std::size_t contents_size) noexcept {
-    const std::uint32_t checksum = DecodeFixed32(stored.last<sizeof(std::uint32_t)>());
+    const std::uint32_t checksum =
+        DecodeFixedTrusted<std::uint32_t>(stored.last<sizeof(std::uint32_t)>());
     return checksum == MaskCrc32c(Crc32c(stored.first(contents_size + 1)));
 }
 
@@ -140,12 +142,13 @@ std::array<std::byte, FooterSize> EncodeFooter(const Footer& footer) {
 
     std::array<std::byte, FooterSize> encoded{};
     std::ranges::copy(handles, encoded.begin());
-    EncodeFixed64(std::span(encoded).last<sizeof(TableMagicNumber)>(), TableMagicNumber);
+    EncodeFixedTrusted(std::span(encoded).last<sizeof(TableMagicNumber)>(), TableMagicNumber);
     return encoded;
 }
 
 Result<Footer> DecodeFooter(std::span<const std::byte, FooterSize> encoded) {
-    if (DecodeFixed64(encoded.last<sizeof(TableMagicNumber)>()) != TableMagicNumber) {
+    if (DecodeFixedTrusted<std::uint64_t>(encoded.last<sizeof(TableMagicNumber)>()) !=
+        TableMagicNumber) {
         return std::unexpected(Error::Corruption("table footer has a bad magic number"));
     }
     ByteView handles = encoded.first<FooterHandlesSize>();
@@ -163,8 +166,8 @@ std::array<std::byte, BlockTrailerSize> EncodeBlockTrailer(ByteView contents,
                                                            BlockCompression type) noexcept {
     std::array<std::byte, BlockTrailerSize> trailer{};
     trailer[0] = static_cast<std::byte>(type);
-    EncodeFixed32(std::span(trailer).last<sizeof(std::uint32_t)>(),
-                  BlockChecksum(contents, trailer[0]));
+    EncodeFixedTrusted(std::span(trailer).last<sizeof(std::uint32_t)>(),
+                       BlockChecksum(contents, trailer[0]));
     return trailer;
 }
 

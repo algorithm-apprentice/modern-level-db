@@ -275,6 +275,32 @@ TEST(ShardedLruCacheTest, MoveAssignmentReleasesThePreviousPin) {
     EXPECT_TRUE(cache.Lookup(AsBytes(keys[2])).has_value());
 }
 
+TEST(ShardedLruCacheTest, MovedFromPinCanRetakeOwnershipAfterErase) {
+    std::vector<int> destroyed;
+    destroyed.reserve(2);
+    CallbackCache cache(16);
+    auto first =
+        cache.Insert(AsBytes("first"),
+                     std::make_unique<const CallbackValue>(1, [&] { destroyed.push_back(1); }), 1);
+    auto second =
+        cache.Insert(AsBytes("second"),
+                     std::make_unique<const CallbackValue>(2, [&] { destroyed.push_back(2); }), 1);
+    ASSERT_TRUE(first.has_value());
+    ASSERT_TRUE(second.has_value());
+    {
+        CallbackCache::Handle owner(std::move(*first));
+        cache.Erase(AsBytes("first"));
+        cache.Erase(AsBytes("second"));
+        *first = std::move(*second);
+        EXPECT_TRUE(destroyed.empty());
+
+        owner = std::move(*first);
+        EXPECT_EQ(owner.value().value, 2);
+        EXPECT_EQ(destroyed, (std::vector{1}));
+    }
+    EXPECT_EQ(destroyed, (std::vector{1, 2}));
+}
+
 TEST(ShardedLruCacheTest, DestroysValuesAfterCacheAndHandleOwnershipEnd) {
     CallbackCache cache(16);
     std::atomic<bool> destroyed = false;

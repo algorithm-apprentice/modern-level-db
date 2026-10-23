@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <utility>
 
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/hash.h"
@@ -27,7 +28,9 @@ public:
     static constexpr std::size_t ShardCount = 16;
     static constexpr unsigned int ShardBits = 4;
 
-    [[nodiscard]] static std::uint32_t HashKey(ByteView key) noexcept { return Hash32(key, 0U); }
+    [[nodiscard]] static std::uint32_t HashKey(const ByteView& key) noexcept {
+        return Hash32(key, 0U);
+    }
     [[nodiscard]] static constexpr std::size_t ShardIndex(std::uint32_t hash) noexcept {
         return hash >> (32U - ShardBits);
     }
@@ -62,10 +65,10 @@ public:
     ShardedLruCacheCore& operator=(ShardedLruCacheCore&&) = delete;
     ~ShardedLruCacheCore();
 
-    [[nodiscard]] Pin Insert(ByteView key, const void* value, ValueDeleter deleter,
+    [[nodiscard]] Pin Insert(const ByteView& key, const void* value, ValueDeleter deleter,
                              std::size_t charge);
-    [[nodiscard]] std::optional<Pin> Lookup(ByteView key);
-    void Erase(ByteView key);
+    [[nodiscard]] std::optional<Pin> Lookup(const ByteView& key);
+    void Erase(const ByteView& key);
     // Charge of entries still indexed in the cache, not all retained values or
     // physical memory. Uncached/erased pins are outside this accounting.
     [[nodiscard]] std::size_t total_charge() const;
@@ -82,7 +85,7 @@ private:
               hash(entry_hash) {}
 
         [[nodiscard]] ByteView key() const noexcept;
-        [[nodiscard]] bool Matches(ByteView key, std::uint32_t hash) const noexcept;
+        [[nodiscard]] bool Matches(const ByteView& key, std::uint32_t hash) const noexcept;
 
         const void* value;
         ValueDeleter deleter;
@@ -110,13 +113,14 @@ private:
         HandleTable& operator=(const HandleTable&) = delete;
         ~HandleTable() = default;
 
-        [[nodiscard]] Entry* Lookup(ByteView key, std::uint32_t hash) const noexcept;
-        [[nodiscard]] PreparedInsert PrepareInsert(ByteView key, std::uint32_t hash) noexcept;
+        [[nodiscard]] Entry* Lookup(const ByteView& key, std::uint32_t hash) const noexcept;
+        [[nodiscard]] PreparedInsert PrepareInsert(const ByteView& key,
+                                                   std::uint32_t hash) noexcept;
         Entry* CommitInsert(PreparedInsert prepared, Entry* entry);
-        Entry* Remove(ByteView key, std::uint32_t hash) noexcept;
+        Entry* Remove(const ByteView& key, std::uint32_t hash) noexcept;
 
     private:
-        [[nodiscard]] Entry** FindPointer(ByteView key, std::uint32_t hash) noexcept;
+        [[nodiscard]] Entry** FindPointer(const ByteView& key, std::uint32_t hash) noexcept;
         [[nodiscard]] static std::unique_ptr<Entry*[]> PrepareGrowth(std::uint32_t growth_length);
         Entry* LinkEntry(PreparedInsert prepared, Entry* entry) noexcept;
         [[nodiscard]] static std::unique_ptr<Entry*[]> AllocateBuckets(std::uint32_t length);
@@ -150,9 +154,9 @@ private:
     using PendingEntry = std::unique_ptr<Entry, void (*)(Entry*) noexcept>;
 
     [[nodiscard]] static bool TryAddCharge(std::size_t& total, std::size_t charge) noexcept;
-    [[nodiscard]] static PendingEntry CreateEntry(ByteView key, PendingValue value,
+    [[nodiscard]] static PendingEntry CreateEntry(const ByteView& key, PendingValue value,
                                                   std::size_t charge);
-    static void CopyEntryKey(Entry& entry, ByteView key);
+    static void CopyEntryKey(Entry& entry, const ByteView& key);
     [[nodiscard]] static bool CanAdmit(const Shard& shard, const Entry& entry,
                                        HandleTable::PreparedInsert prepared) noexcept;
     static void CommitAdmission(Shard& shard, Entry& entry, HandleTable::PreparedInsert prepared,
@@ -163,9 +167,10 @@ private:
     static void MoveToList(Entry& list, Entry& entry) noexcept;
     static void Ref(Shard& shard, Entry& entry) noexcept;
     static void Unref(Shard& shard, Entry& entry, Entry*& retired) noexcept;
-    [[nodiscard]] static Entry* LookupAndRef(Shard& shard, ByteView key,
+    [[nodiscard]] static Entry* LookupAndRef(Shard& shard, const ByteView& key,
                                              std::uint32_t hash) noexcept;
-    static void EraseMapping(Shard& shard, ByteView key, std::uint32_t hash,
+    [[nodiscard]] Entry* LookupAndRef(const ByteView& key);
+    static void EraseMapping(Shard& shard, const ByteView& key, std::uint32_t hash,
                              Entry*& retired) noexcept;
     static void FinishErase(Shard& shard, Entry* entry, Entry*& retired) noexcept;
     static void EvictOldest(Shard& shard, Entry*& retired) noexcept;
@@ -180,6 +185,42 @@ private:
     std::array<Shard, ShardCount> shards_;
     std::atomic<std::uint64_t> next_id_{0};
 };
+
+inline ShardedLruCacheCore::Pin::Pin(ShardedLruCacheCore& cache, Entry& entry) noexcept
+    : cache_(&cache), entry_(&entry) {}
+
+inline ShardedLruCacheCore::Pin::Pin(Pin&& source) noexcept
+    : cache_(std::exchange(source.cache_, nullptr)),
+      entry_(std::exchange(source.entry_, nullptr)) {}
+
+inline ShardedLruCacheCore::Pin& ShardedLruCacheCore::Pin::operator=(Pin&& source) noexcept {
+    if (this != &source) {
+        Reset();
+        cache_ = std::exchange(source.cache_, nullptr);
+        entry_ = std::exchange(source.entry_, nullptr);
+    }
+    return *this;
+}
+
+inline ShardedLruCacheCore::Pin::~Pin() { Reset(); }
+
+inline const void* ShardedLruCacheCore::Pin::value() const noexcept { return entry_->value; }
+
+inline void ShardedLruCacheCore::Pin::Reset() noexcept {
+    if (entry_ != nullptr) {
+        cache_->Release(*entry_);
+        cache_ = nullptr;
+        entry_ = nullptr;
+    }
+}
+
+inline std::optional<ShardedLruCacheCore::Pin> ShardedLruCacheCore::Lookup(const ByteView& key) {
+    Entry* entry = LookupAndRef(key);
+    if (entry == nullptr) {
+        return std::nullopt;
+    }
+    return Pin(*this, *entry);
+}
 
 }  // namespace modern_leveldb
 

@@ -10,6 +10,7 @@
 #include <optional>
 #include <utility>
 
+#include "base/coding_internal.h"
 #include "metadata/filenames.h"
 #include "modern_leveldb/base/coding.h"
 
@@ -71,7 +72,7 @@ thread_local std::array<ReaderHint, HintCount> ReaderHints;
 
 std::array<std::byte, sizeof(std::uint64_t)> CacheKey(std::uint64_t file_number) noexcept {
     std::array<std::byte, sizeof(std::uint64_t)> key{};
-    EncodeFixed64(key, file_number);
+    EncodeFixedTrusted(std::span(key), file_number);
     return key;
 }
 
