@@ -60,6 +60,17 @@ public:
                                                                ClockBlockCache::Key key) {
         return ClockBlockCache::LookupInRoot(root, key);
     }
+    static std::optional<ClockBlockCache::Handle> ContinueLookup(
+        const Root& root, ClockBlockCache::Key key, clock_cache_detail::ProbePosition position) {
+        return ClockBlockCache::LookupFromPosition(root, key, position);
+    }
+    static std::optional<ClockBlockCache::Handle> ContinuePin(
+        Slot& slot, clock_cache_detail::PinObservation observation) {
+        if (!clock_cache_detail::PinFromObservation(slot, observation)) {
+            return std::nullopt;
+        }
+        return ClockBlockCache::Handle(slot);
+    }
     static Slot* Position(const ClockBlockCache::Handle& handle) { return handle.slot_; }
     static std::optional<ClockBlockCache::Handle> PinObserved(Slot& slot, std::uint64_t& observed) {
         if ((observed & clock_cache_detail::StateMask) != clock_cache_detail::Live ||
@@ -255,6 +266,70 @@ TEST(ClockBlockCacheTest, ActualMetadataAllowanceBoundsTinyChargedAdmissions) {
     EXPECT_EQ(stats.standalone_bytes, 0U);
 }
 
+TEST(ClockBlockCacheTest, ErasedPinsExhaustPoolStorageWithoutRetainingIndexedOwners) {
+    ClockBlockCache cache(16 * 4096);
+    std::vector<ClockBlockCache::Handle> retained;
+    retained.reserve(128);
+    bool declined = false;
+    for (std::uint32_t index = 0; index < 128; ++index) {
+        const auto key = CollidingKey(index);
+        auto inserted = cache.Insert(key, ValueOf(std::to_string(index)), 1);
+        ASSERT_TRUE(inserted.has_value());
+        const bool pooled = ClockBlockCacheTestPeer::Position(*inserted)->shard != nullptr;
+        cache.Erase(key);
+        retained.push_back(std::move(*inserted));
+        ASSERT_EQ(cache.GetStats().indexed_entries, 0U);
+        ASSERT_EQ(cache.total_charge(), 0U);
+        if (!pooled) {
+            declined = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(declined);
+    const auto full = cache.GetStats();
+    EXPECT_GT(full.pooled_slots, 8U);
+    EXPECT_GT(full.erased_bytes, 0U);
+    EXPECT_GT(full.standalone_bytes, 0U);
+    EXPECT_EQ(full.admission_rejections, 1U);
+    EXPECT_LE(full.metadata_bytes, full.metadata_allowance);
+    for (std::size_t index = 0; index < retained.size(); ++index) {
+        EXPECT_EQ(TextOf(retained[index]), std::to_string(index));
+    }
+    retained.clear();
+    EXPECT_EQ(cache.GetStats().erased_bytes, 0U);
+    EXPECT_EQ(cache.GetStats().standalone_bytes, 0U);
+    ASSERT_TRUE(cache.Insert(CollidingKey(200), ValueOf("reused"), 1).has_value());
+    const auto found = cache.Lookup(CollidingKey(200));
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(TextOf(*found), "reused");
+    EXPECT_EQ(cache.GetStats().pooled_slots, full.pooled_slots);
+}
+
+TEST(ClockBlockCacheTest, EightPinnedCanonicalPositionsDeclineReservationWithoutGrowing) {
+    constexpr std::size_t Charge = 4096;
+    ClockBlockCache cache(16 * 8 * Charge);
+    std::vector<ClockBlockCache::Handle> retained;
+    retained.reserve(8);
+    for (std::uint32_t index = 0; index < 8; ++index) {
+        auto inserted = cache.Insert(CollidingKey(index), ValueOf(std::to_string(index)), Charge);
+        ASSERT_TRUE(inserted.has_value());
+        retained.push_back(std::move(*inserted));
+    }
+    ASSERT_EQ(cache.GetStats().pooled_slots, 8U);
+    ASSERT_EQ(cache.GetStats().indexed_entries, 8U);
+    auto uncached = cache.Insert(CollidingKey(8), ValueOf("uncached"), Charge);
+    ASSERT_TRUE(uncached.has_value());
+    EXPECT_EQ(TextOf(*uncached), "uncached");
+    EXPECT_FALSE(cache.Lookup(CollidingKey(8)).has_value());
+    EXPECT_EQ(cache.GetStats().pooled_slots, 8U);
+    EXPECT_EQ(cache.GetStats().indexed_entries, 8U);
+    EXPECT_EQ(cache.GetStats().admission_rejections, 1U);
+    EXPECT_EQ(cache.total_charge(), 8 * Charge);
+    for (std::size_t index = 0; index < retained.size(); ++index) {
+        EXPECT_EQ(TextOf(retained[index]), std::to_string(index));
+    }
+}
+
 TEST(ClockBlockCacheTest, AggregateChargeSaturatesAcrossRoundedShardCapacities) {
     constexpr auto Maximum = std::numeric_limits<std::size_t>::max();
     ClockBlockCache cache(Maximum);
@@ -441,6 +516,110 @@ TEST(ClockBlockCacheProtocolTest, FailedStrongCasUpdatesTheObservationBeforeRetr
     auto retried = ClockBlockCacheTestPeer::PinObserved(*slot, observed);
     ASSERT_TRUE(retried.has_value());
     EXPECT_EQ(TextOf(*retried), "value");
+}
+
+TEST(ClockBlockCacheProtocolTest, PeakContinuationPreservesInterveningPublishersAndRetries) {
+    std::atomic<std::size_t> peak{3};
+    clock_cache_detail::RecordPeakFromObservation(peak, 0, 2);
+    EXPECT_EQ(peak.load(), 3U);
+    clock_cache_detail::RecordPeakFromObservation(peak, 0, 5);
+    EXPECT_EQ(peak.load(), 5U);
+    clock_cache_detail::RecordPeakFromObservation(peak, 5, 7);
+    EXPECT_EQ(peak.load(), 7U);
+    clock_cache_detail::RecordPeakFromObservation(peak, 7, 6);
+    EXPECT_EQ(peak.load(), 7U);
+}
+
+TEST(ClockBlockCacheProtocolTest, PinContinuationConsumesItsRemainingBudgetWithoutResetting) {
+    ClockBlockCache cache(16 * 4096);
+    const auto key = CollidingKey(1);
+    clock_cache_detail::Slot* slot = nullptr;
+    {
+        auto inserted = cache.Insert(key, ValueOf("value"), 4096);
+        ASSERT_TRUE(inserted.has_value());
+        slot = ClockBlockCacheTestPeer::Position(*inserted);
+    }
+    const auto old = slot->metadata.load(std::memory_order_acquire);
+    const auto competing = cache.Lookup(key);
+    ASSERT_TRUE(competing.has_value());
+    const auto current = slot->metadata.load(std::memory_order_acquire);
+    const auto exhausted = ClockBlockCacheTestPeer::ContinuePin(*slot, {old, 1});
+    EXPECT_FALSE(exhausted.has_value());
+    EXPECT_EQ(slot->metadata.load(std::memory_order_acquire), current);
+    const auto empty = ClockBlockCacheTestPeer::ContinuePin(*slot, {current, 0});
+    EXPECT_FALSE(empty.has_value());
+    EXPECT_EQ(slot->metadata.load(std::memory_order_acquire), current);
+    const auto pinned = ClockBlockCacheTestPeer::ContinuePin(*slot, {current, 8});
+    ASSERT_TRUE(pinned.has_value());
+    EXPECT_EQ(TextOf(*pinned), "value");
+    cache.Erase(key);
+    const auto erased = slot->metadata.load(std::memory_order_acquire);
+    EXPECT_FALSE(ClockBlockCacheTestPeer::ContinuePin(*slot, {erased, 8}).has_value());
+    EXPECT_EQ(slot->metadata.load(std::memory_order_acquire), erased);
+    EXPECT_EQ(TextOf(*competing), "value");
+}
+
+TEST(ClockBlockCacheProtocolTest, AnObservedClockClaimCannotOvertakeAStillRetainedReaderPin) {
+    ClockBlockCache cache(16 * 4096);
+    const auto key = CollidingKey(1);
+    clock_cache_detail::Slot* slot = nullptr;
+    {
+        auto inserted = cache.Insert(key, ValueOf("value"), 4096);
+        ASSERT_TRUE(inserted.has_value());
+        slot = ClockBlockCacheTestPeer::Position(*inserted);
+    }
+    // This thread is the sole writer; the ordinary lookup supplies the intervening reader.
+    const auto visited = slot->metadata.load(std::memory_order_acquire);
+    EXPECT_EQ(clock_cache_detail::ClaimObservedPosition(*slot, visited),
+              clock_cache_detail::PositionClaim::Skipped);
+    const auto old = slot->metadata.load(std::memory_order_acquire);
+    ASSERT_EQ(old, clock_cache_detail::Live);
+    const auto reader = cache.Lookup(key);
+    ASSERT_TRUE(reader.has_value());
+    const auto current = slot->metadata.load(std::memory_order_acquire);
+    EXPECT_EQ(clock_cache_detail::ClaimObservedPosition(*slot, old),
+              clock_cache_detail::PositionClaim::Skipped);
+    EXPECT_EQ(slot->metadata.load(std::memory_order_acquire), current);
+    EXPECT_EQ(TextOf(*reader), "value");
+    EXPECT_TRUE(cache.Lookup(key).has_value());
+    EXPECT_EQ(cache.total_charge(), 4096U);
+}
+
+TEST(ClockBlockCacheProtocolTest, ProbeContinuationKeepsItsRealRootAndConsumesItsFinalBudget) {
+    ClockBlockCache cache(16 * 4096);
+    constexpr std::uint32_t Target = 0x01234560U;
+    ASSERT_TRUE(cache.Insert(CollidingKey(0, Target), ValueOf("seed"), 1).has_value());
+    const auto query = CollidingKey(99, Target | 1U);
+    const auto root = ClockBlockCacheTestPeer::AcquireRoot(cache, query);
+    ASSERT_NE(root.index, nullptr);
+    ASSERT_EQ(root.index->bucket_count, 8U);
+    cache.Erase(CollidingKey(0, Target));
+    const auto before = cache.GetStats();
+    std::size_t final_bucket = 0;
+    // Refresh changes earlier buckets while this valid probe history observes no virgin bucket.
+    for (std::size_t consumed = 0; consumed < root.index->bucket_count; ++consumed) {
+        const auto bucket = (root.hash + consumed) & root.index->mask;
+        const auto key = CollidingKey(static_cast<std::uint32_t>(consumed + 1),
+                                      Target | static_cast<std::uint32_t>(bucket));
+        ASSERT_TRUE(cache.Insert(key, ValueOf("temporary"), 1).has_value());
+        cache.Erase(key);
+        ASSERT_EQ(root.index->buckets[bucket].load(std::memory_order_acquire), root.tombstone);
+        ASSERT_EQ(ClockBlockCacheTestPeer::AcquireRoot(cache, query).index, root.index);
+        final_bucket = bucket;
+    }
+    EXPECT_GT(cache.GetStats().index_refreshes, before.index_refreshes);
+    EXPECT_FALSE(
+        ClockBlockCacheTestPeer::ContinueLookup(root, query, {final_bucket, 1}).has_value());
+    ASSERT_TRUE(cache.Insert(query, ValueOf("query"), 1).has_value());
+    const auto found = cache.Lookup(query);
+    ASSERT_TRUE(found.has_value());
+    auto* slot = ClockBlockCacheTestPeer::Position(*found);
+    const auto word = slot->metadata.load(std::memory_order_acquire);
+    EXPECT_FALSE(
+        ClockBlockCacheTestPeer::ContinueLookup(root, query, {root.hash & root.index->mask, 0})
+            .has_value());
+    EXPECT_EQ(slot->metadata.load(std::memory_order_acquire), word);
+    EXPECT_EQ(TextOf(*found), "query");
 }
 
 TEST(ClockBlockCacheProtocolTest, AcquiredPinKeepsItsGenerationAcrossEraseAndReplacement) {
