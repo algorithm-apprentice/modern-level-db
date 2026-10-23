@@ -1,6 +1,6 @@
 # ADR-0088: Read-Efficient CLOCK Block Cache
 
-- Status: Accepted
+- Status: Implemented
 - Date: 2026-10-22
 
 ## Context and boundary
@@ -571,3 +571,73 @@ reviewed wrapper boundary remains; pin/drop stage and allocation calls do not.
 The distinct v2 preflight passes all 50 cases and reproduces every phase
 vector of all 18 v1 policy replays. Final v2 timing and exact-head CI still
 determine admission.
+
+## Final-source v2 evidence
+
+The distinct `clock-production-v2` campaign sealed production source
+`cdc9199932065847719450d27f101798cb18b07a`, seal
+`7848495bff57226e28c5f6126dfe36c4ca40cf4f31a679a190642818686449ca`.
+All 180 fresh processes passed the same independent checks, including
+distinct physical records and child identities. The reviewed fixture is
+byte-identical to v1; all 50 preflight cases pass, and every phase vector of
+all 18 deterministic policy replays matches v1. The subsequent test-only
+head `7c7124c` changes no production source, public header or build input.
+All its 20 ordinary checks pass, including the unchanged 100% GCC13
+changed-branch gate, ASan, TSan, fuzz and cross-platform configurations.
+
+These are paired median wall-time improvements; positive is faster.
+Keep all six rounds and v1 separately. Differences between campaigns do not
+isolate the causal cost of one helper, code-layout change or host effect.
+
+| Logical cache | Readers | Reader reuse | Facade LRU vs original | Faster pairs | CLOCK vs original | Faster pairs | CLOCK vs facade LRU | Faster pairs |
+|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| 8 MiB | 1 | off | +2.48% | 3/6 | +0.86% | 3/6 | -3.25% | 1/6 |
+| 8 MiB | 4 | off | -0.28% | 3/6 | -5.95% | 0/6 | -6.65% | 0/6 |
+| 512 MiB | 1 | off | -1.52% | 3/6 | +5.37% | 6/6 | +5.92% | 6/6 |
+| 512 MiB | 4 | off | +1.10% | 4/6 | +9.39% | 6/6 | +4.84% | 6/6 |
+| 8 MiB | 4 | on | -0.36% | 3/6 | -6.22% | 0/6 | -6.95% | 0/6 |
+| 512 MiB | 4 | on | +1.27% | 4/6 | +10.92% | 6/6 | +8.74% | 6/6 |
+
+The corresponding CLOCK CPU-time improvements versus the original are
++1.07%, -5.68%, +5.65%, +9.52%, -5.52% and +11.13% in table order.
+All three 512 MiB cells have six faster CPU pairs; both pressured four-reader
+cells have no faster CPU pair. The mixed single-reader 8 MiB cell is not a
+claim of pressure superiority.
+
+Final CLOCK maintenance improvements versus the original are 55.46%/67.38%
+for hot1 and 35.75%/72.00% for uniform16,384, one/four readers respectively,
+with six faster pairs in each cell. CPU improvements are 56.25%/67.61% and
+38.00%/72.39%, likewise six faster pairs. Four-reader hot1 still reports
+716, 4,949, 4,733, 2,403, 3,922 and 925 optimization misses per four million
+attempts; other cells report zero. Do not call these miss attempts successful
+data reads or include imaginary SST fallback in the microbenchmark.
+
+The final facade-LRU maintenance controls cost 16.79%/13.35% for hot1 and
+11.67% for single-reader uniform16,384, with no faster pair in those cells.
+Four-reader uniform16,384 is +0.57% with three faster pairs. Whole-Get facade
+controls range from -1.52% to +2.48%. These observations explicitly retain
+default-facade cost and residual performance risk; selecting the same LRU
+policy does not establish identical cost or universal neutrality.
+
+The unchanged adverse policy curves and repeatable 8 MiB four-reader losses
+rule out switching Automatic to CLOCK. The final resident benefit supports
+evaluating an explicit option, not a generally superior replacement policy.
+
+## Admission decision
+
+Independent architecture and implementation/evidence reviews approve the
+frozen `cdc9199` implementation and unchanged-source `7c7124c` as a checked,
+explicit CLOCK option. The repeated resident-workload gains justify that
+availability; they do not justify automatic selection.
+
+Automatic remains LRU, without a capacity-based CLOCK heuristic. The ordinary
+factory and unspecified database cache retain that policy. Accept the
+disclosed default facade-LRU cost as an integration tradeoff, not performance
+preservation. Keep all mixed controls, pressure/return/shift losses,
+optimization misses and the approved one-wrapper-call cost visible.
+
+The earlier no-added-call goal was amended explicitly; neither that goal nor
+default-cost neutrality is reported as achieved. Preserve v1 and v2 separately
+and infer no mechanism from their timing differences. Further production
+changes require renewed bounded review and affected evidence. Final
+documentation publication still uses ordinary exact-head CI, not a bypass.

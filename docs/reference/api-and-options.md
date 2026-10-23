@@ -147,6 +147,11 @@ checked table read, not a missing-key result. Existing leases remain valid
 across replacement/eviction. CLOCK is not a strict RSS limit or a promise of
 better hit rates on every access pattern. See
 [ADR-0088](../adr/0088-read-efficient-clock-block-cache.md).
+Production measurements support a workload-dependent resident-read option,
+not a default switch: pressured concurrent reads and hot/scan/shift traces
+include repeatable losses. Keeping Automatic on LRU preserves policy, not a
+promise of identical facade cost; the original/LRU/CLOCK controls are retained
+in that ADR.
 
 ## Read and write options
 

@@ -245,6 +245,10 @@ Bounded contention or index refresh may cause a cache miss, never a wrong-key
 hit or logical database absence. Evaluate both maintenance cost and the
 resulting hot/scan/shift miss curves instead of inferring a universal win
 from cheaper hits.
+The own CLOCK measurements demonstrate this distinction: resident maintenance
+and Get can improve while pressured concurrent reads and shifted hot sets
+regress. Automatic therefore retains LRU. Separate original/facade-LRU controls
+also matter: adding policy dispatch is not automatically free.
 
 `fill_cache=false` avoids admitting newly read data blocks.
 It does not disable existing cache hits, the table cache, or the OS cache.
