@@ -127,6 +127,81 @@ TEST(WalFragmenterTest, StreamsOneBorrowedFragmentAtATime) {
     EXPECT_FALSE(cursor.Next().has_value());
 }
 
+TEST(WalFragmenterTest, ScalarStepMatchesEveryBoundaryAndKeepsOutputAtExhaustion) {
+    const std::array<std::size_t, 6> offsets{
+        0,
+        WalBlockSize - WalHeaderSize - 1,
+        WalBlockSize - WalHeaderSize,
+        WalBlockSize - WalHeaderSize + 1,
+        WalBlockSize - 1,
+        WalBlockSize,
+    };
+    const std::array<std::size_t, 6> sizes{
+        0,
+        1,
+        WalBlockSize - WalHeaderSize - 1,
+        WalBlockSize - WalHeaderSize,
+        WalBlockSize - WalHeaderSize + 1,
+        WalBlockSize * 2 + 3,
+    };
+    for (const std::size_t offset : offsets) {
+        for (const std::size_t size : sizes) {
+            SCOPED_TRACE(offset);
+            SCOPED_TRACE(size);
+            const auto record = Pattern(size);
+            WalFragmenter optional_source(offset);
+            WalFragmenter scalar_source(offset);
+            auto optional = optional_source.Fragment(record);
+            auto scalar = scalar_source.Fragment(record);
+            WalFragment output{
+                .padding_before = 777,
+                .header = {std::byte{0xa5}},
+                .payload = AsBytes("sentinel"),
+            };
+            while (const auto expected = optional.Next()) {
+                ASSERT_TRUE(scalar.Next(output));
+                EXPECT_EQ(output.padding_before, expected->padding_before);
+                EXPECT_EQ(output.header, expected->header);
+                EXPECT_EQ(output.payload.data(), expected->payload.data());
+                EXPECT_EQ(output.payload.size(), expected->payload.size());
+            }
+            const WalFragment last = output;
+            for (int repeat = 0; repeat < 2; ++repeat) {
+                EXPECT_FALSE(scalar.Next(output));
+                EXPECT_EQ(output.padding_before, last.padding_before);
+                EXPECT_EQ(output.header, last.header);
+                EXPECT_EQ(output.payload.data(), last.payload.data());
+                EXPECT_EQ(output.payload.size(), last.payload.size());
+            }
+            EXPECT_EQ(scalar_source.block_offset(), optional_source.block_offset());
+        }
+    }
+}
+
+TEST(WalFragmenterTest, ScalarAndOptionalStepsShareOneAdvancingCursor) {
+    const auto record = Pattern((WalBlockSize - WalHeaderSize) * 2 + 1);
+    WalFragmenter fragmenter(WalBlockSize - WalHeaderSize);
+    auto cursor = fragmenter.Fragment(record);
+
+    const auto first = cursor.Next();
+    ASSERT_TRUE(first.has_value());
+    EXPECT_TRUE(first->payload.empty());
+    EXPECT_EQ(first->header[6], static_cast<std::byte>(WalRecordType::First));
+    WalFragment fragment{};
+    ASSERT_TRUE(cursor.Next(fragment));
+    EXPECT_EQ(fragment.header[6], static_cast<std::byte>(WalRecordType::Middle));
+    EXPECT_EQ(fragment.payload.data(), record.data());
+    const auto middle = cursor.Next();
+    ASSERT_TRUE(middle.has_value());
+    EXPECT_EQ(middle->header[6], static_cast<std::byte>(WalRecordType::Middle));
+    EXPECT_EQ(middle->payload.data(), record.data() + WalBlockSize - WalHeaderSize);
+    ASSERT_TRUE(cursor.Next(fragment));
+    EXPECT_EQ(fragment.header[6], static_cast<std::byte>(WalRecordType::Last));
+    EXPECT_EQ(fragment.payload.size(), 1U);
+    EXPECT_FALSE(cursor.Next().has_value());
+    EXPECT_FALSE(cursor.Next(fragment));
+}
+
 TEST(WalFragmenterTest, PadsShortBlockTrailerFromInitialOffset) {
     WalFragmenter fragmenter(WalBlockSize - 3U);
 
