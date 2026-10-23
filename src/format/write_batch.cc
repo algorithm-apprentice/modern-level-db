@@ -58,26 +58,6 @@ Status ValidateBatchRecords(ByteView remaining, std::uint32_t count) {
     return {};
 }
 
-struct TrustedBatchRecord {
-    ValueKind kind;
-    ByteView key;
-    ByteView value;
-};
-
-TrustedBatchRecord DecodeTrustedBatchRecord(ByteView& remaining) noexcept {
-    const ValueKind kind = ConsumeValueKindTrusted(remaining);
-    const ByteView key = ConsumeLengthPrefixedTrusted(remaining);
-    ByteView value;
-    if (kind == ValueKind::Value) {
-        value = ConsumeLengthPrefixedTrusted(remaining);
-    }
-    return {
-        .kind = kind,
-        .key = key,
-        .value = value,
-    };
-}
-
 std::size_t EncodedRecordSize(ValueKind kind, ByteView key, ByteView value) noexcept {
     const auto key_length = static_cast<std::uint32_t>(key.size());
     const auto value_length = static_cast<std::uint32_t>(value.size());
@@ -107,7 +87,7 @@ Result<WriteBatchReader> WriteBatchReader::Open(ByteView encoded) {
     const std::uint32_t count =
         DecodeFixed32(encoded.subspan<CountOffset, sizeof(std::uint32_t)>());
 
-    // Validate everything once so Next can decode borrowed records without
+    // Validate everything once so iteration can decode borrowed records without
     // repeating recoverable checks. Mutating the backing bytes breaks this proof.
     Status records = ValidateBatchRecords(encoded.subspan(WriteBatchHeaderSize), count);
     if (!records.has_value()) {
@@ -126,15 +106,7 @@ std::optional<WriteBatchEntry> WriteBatchReader::Next() noexcept {
         return std::nullopt;
     }
 
-    const TrustedBatchRecord record = DecodeTrustedBatchRecord(remaining_);
-    const WriteBatchEntry entry{
-        .sequence = sequence_ + index_,
-        .kind = record.kind,
-        .key = record.key,
-        .value = record.value,
-    };
-    ++index_;
-    return entry;
+    return ConsumeEntry();
 }
 
 // GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones

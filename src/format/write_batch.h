@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 
+#include "base/coding_internal.h"
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
@@ -50,9 +51,30 @@ public:
     [[nodiscard]] std::uint32_t count() const noexcept { return count_; }
     [[nodiscard]] std::optional<WriteBatchEntry> Next() noexcept;
 
+    // Advances before calling the consumer. Entry references last for that call;
+    // copied views still borrow this reader's unchanged backing bytes.
+    template <typename Consumer>
+    void ForEachRemaining(Consumer&& consumer) {
+        while (index_ != count_) {
+            consumer(ConsumeEntry());
+        }
+    }
+
 private:
     WriteBatchReader(ByteView records, SequenceNumber sequence, std::uint32_t count) noexcept
         : remaining_(records), sequence_(sequence), count_(count) {}
+
+    WriteBatchEntry ConsumeEntry() noexcept {
+        const ValueKind kind = ConsumeValueKindTrusted(remaining_);
+        const ByteView key = ConsumeLengthPrefixedTrusted(remaining_);
+        ByteView value;
+        if (kind == ValueKind::Value) {
+            value = ConsumeLengthPrefixedTrusted(remaining_);
+        }
+        const SequenceNumber sequence = sequence_ + index_;
+        ++index_;
+        return {.sequence = sequence, .kind = kind, .key = key, .value = value};
+    }
 
     ByteView remaining_;
     SequenceNumber sequence_;

@@ -5,7 +5,6 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
-#include <optional>
 
 #include "modern_leveldb/base/bytes.h"
 
@@ -34,9 +33,9 @@ Status PersistGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log) {
 }  // namespace
 
 void InsertBatch(WriteBatchReader& batch, MemTable& memtable) {
-    while (const std::optional<WriteBatchEntry> entry = batch.Next()) {
-        memtable.Add(entry->sequence, entry->kind, entry->key, entry->value);
-    }
+    batch.ForEachRemaining([&memtable](const WriteBatchEntry& entry) {
+        memtable.Add(entry.sequence, entry.kind, entry.key, entry.value);
+    });
 }
 
 Status CommitGroup(const EncodedWriteBatch& group, bool sync, WalWriter& log, MemTable& memtable) {
