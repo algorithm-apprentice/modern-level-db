@@ -40,10 +40,23 @@ Status WalWriter::AddRecord(ByteView logical_record) {
         return reopened;
     }
 
-    while (const std::optional<WalFragment> fragment = fragments.Next()) {
-        Status written = WriteFragment(*fragment);
-        if (!written.has_value()) {
-            return written;
+    WalFragment fragment;
+    while (fragments.Next(fragment)) {
+        if (fragment.padding_before != 0) {
+            Status padding = AppendPadding(fragment.padding_before);
+            if (!padding.has_value()) {
+                return padding;
+            }
+        }
+        Status header = file_->Append(fragment.header);
+        if (!header.has_value()) {
+            return header;
+        }
+        if (!fragment.payload.empty()) {
+            Status payload = file_->Append(fragment.payload);
+            if (!payload.has_value()) {
+                return payload;
+            }
         }
     }
 
@@ -66,26 +79,6 @@ Status WalWriter::PadReopenedBlock() {
             return padding;
         }
         reopen_padding_ = 0;
-    }
-    return {};
-}
-
-Status WalWriter::WriteFragment(const WalFragment& fragment) {
-    if (fragment.padding_before != 0) {
-        Status padding = AppendPadding(fragment.padding_before);
-        if (!padding.has_value()) {
-            return padding;
-        }
-    }
-    Status header = file_->Append(fragment.header);
-    if (!header.has_value()) {
-        return header;
-    }
-    if (!fragment.payload.empty()) {
-        Status payload = file_->Append(fragment.payload);
-        if (!payload.has_value()) {
-            return payload;
-        }
     }
     return {};
 }

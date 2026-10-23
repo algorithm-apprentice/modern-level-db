@@ -56,8 +56,8 @@ MemTableEntryView DecodeMemTableEntry(const std::byte* entry) noexcept {
 
 std::size_t EncodedMemTableEntrySize(ByteView key, ByteView value) noexcept {
     const std::size_t internal_key_size = key.size() + InternalKeyTrailerSize;
-    return VarintLength(static_cast<std::uint32_t>(internal_key_size)) + internal_key_size +
-           VarintLength(static_cast<std::uint32_t>(value.size())) + value.size();
+    return VarintLengthTrusted(static_cast<std::uint32_t>(internal_key_size)) + internal_key_size +
+           VarintLengthTrusted(static_cast<std::uint32_t>(value.size())) + value.size();
 }
 
 const std::byte* EncodeMemTableEntry(Arena& arena, SequenceNumber sequence, ValueKind kind,

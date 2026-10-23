@@ -103,16 +103,6 @@ void CommitSeparatorBeforeLimit(const InternalKeyComparator& comparator,
 
 }  // namespace
 
-void EncodeInternalKeyTrusted(MutableByteView& output, ByteView user_key, SequenceNumber sequence,
-                              ValueKind kind) noexcept {
-    std::ranges::copy(user_key, output.begin());
-    output = output.subspan(user_key.size());
-    EncodeFixedTrusted(
-        std::span<std::byte, InternalKeyTrailerSize>(output.data(), InternalKeyTrailerSize),
-        PackInternalKeyTrailer(sequence, kind));
-    output = output.subspan(InternalKeyTrailerSize);
-}
-
 Result<InternalKeyView> ParseInternalKey(ByteView encoded) {
     InternalKeyView decoded;
     const InternalKeyDecodeIssue issue = DecodeInternalKeyView(encoded, decoded);

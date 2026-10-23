@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 
+#include "base/coding_internal.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/crc32c.h"
@@ -48,9 +49,7 @@ std::array<std::byte, WalHeaderSize> EncodeHeader(WalRecordType type, ByteView p
     crc = MaskCrc32c(crc);
 
     std::array<std::byte, WalHeaderSize> header{};
-    for (std::size_t index = 0; index < sizeof(crc); ++index) {
-        header[index] = static_cast<std::byte>((crc >> (index * 8U)) & 0xffU);
-    }
+    EncodeFixedTrusted(std::span(header).first<sizeof(crc)>(), crc);
     header[4] = static_cast<std::byte>(payload.size() & 0xffU);
     header[5] = static_cast<std::byte>((payload.size() >> 8U) & 0xffU);
     header[6] = type_byte;
@@ -146,8 +145,16 @@ void WalFragmenter::Cursor::Advance(std::size_t fragment_size, bool end) noexcep
 }
 
 std::optional<WalFragment> WalFragmenter::Cursor::Next() noexcept {
-    if (done_) {
+    WalFragment fragment;
+    if (!Next(fragment)) {
         return std::nullopt;
+    }
+    return fragment;
+}
+
+bool WalFragmenter::Cursor::Next(WalFragment& fragment) noexcept {
+    if (done_) {
+        return false;
     }
 
     const std::size_t padding_before = TakePadding();
@@ -158,7 +165,8 @@ std::optional<WalFragment> WalFragmenter::Cursor::Next() noexcept {
     const WalRecordType type = SelectFragmentType(begin_, end);
     const ByteView payload = remaining_.first(fragment_size);
     Advance(fragment_size, end);
-    return BuildWalFragment(padding_before, type, payload, (*type_crc_)[TypeIndex(type)]);
+    fragment = BuildWalFragment(padding_before, type, payload, (*type_crc_)[TypeIndex(type)]);
+    return true;
 }
 
 WalDecodeResult DecodeWalFragment(ByteView encoded, bool verify_checksum) {

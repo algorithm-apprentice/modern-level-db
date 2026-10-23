@@ -1,10 +1,12 @@
 #include "table/block_builder.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
 #include "base/bytes_internal.h"
+#include "base/coding_internal.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
 
@@ -42,9 +44,14 @@ void BlockBuilder::BeginRestart() {
 
 void BlockBuilder::AppendEntryHeader(std::size_t shared, std::size_t non_shared,
                                      std::size_t value_size) {
-    AppendVarint32(buffer_, static_cast<std::uint32_t>(shared));
-    AppendVarint32(buffer_, static_cast<std::uint32_t>(non_shared));
-    AppendVarint32(buffer_, static_cast<std::uint32_t>(value_size));
+    // Each of the three uint32 lengths needs at most five bytes.
+    std::array<std::byte, 15> header;
+    MutableByteView output(header);
+    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(shared));
+    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(non_shared));
+    EncodeVarint32Trusted(output, static_cast<std::uint32_t>(value_size));
+    const ByteView encoded = ByteView(header).first(header.size() - output.size());
+    buffer_.insert(buffer_.end(), encoded.begin(), encoded.end());
 }
 
 void BlockBuilder::AppendEntryPayload(ByteView key_delta, ByteView value) {

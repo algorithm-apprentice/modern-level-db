@@ -34,14 +34,6 @@ void WriteBufferState::PromoteMutableToImmutable() noexcept {
     has_immutable_.store(true, std::memory_order_release);
 }
 
-WalWriter& WriteBufferState::log() noexcept { return *log_; }
-
-MemTable& WriteBufferState::mutable_table() noexcept { return *mutable_; }
-
-void WriteBufferState::PublishMutableMemoryUsage() noexcept {
-    published_mutable_bytes_ = mutable_table().memory_usage();
-}
-
 void WriteBufferState::ClearImmutable() {
     RetireImmutable();
     has_immutable_.store(false, std::memory_order_relaxed);

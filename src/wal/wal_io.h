@@ -40,7 +40,6 @@ public:
 private:
     [[nodiscard]] Status AppendPadding(std::size_t size);
     [[nodiscard]] Status PadReopenedBlock();
-    [[nodiscard]] Status WriteFragment(const WalFragment& fragment);
 
     std::unique_ptr<WritableFile> file_;
     WalFragmenter fragmenter_;

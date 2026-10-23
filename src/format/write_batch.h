@@ -4,9 +4,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
+#include "base/coding_internal.h"
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
@@ -49,9 +51,30 @@ public:
     [[nodiscard]] std::uint32_t count() const noexcept { return count_; }
     [[nodiscard]] std::optional<WriteBatchEntry> Next() noexcept;
 
+    // Advances before calling the consumer. Entry references last for that call;
+    // copied views still borrow this reader's unchanged backing bytes.
+    template <typename Consumer>
+    void ForEachRemaining(Consumer&& consumer) {
+        while (index_ != count_) {
+            consumer(ConsumeEntry());
+        }
+    }
+
 private:
     WriteBatchReader(ByteView records, SequenceNumber sequence, std::uint32_t count) noexcept
         : remaining_(records), sequence_(sequence), count_(count) {}
+
+    WriteBatchEntry ConsumeEntry() noexcept {
+        const ValueKind kind = ConsumeValueKindTrusted(remaining_);
+        const ByteView key = ConsumeLengthPrefixedTrusted(remaining_);
+        ByteView value;
+        if (kind == ValueKind::Value) {
+            value = ConsumeLengthPrefixedTrusted(remaining_);
+        }
+        const SequenceNumber sequence = sequence_ + index_;
+        ++index_;
+        return {.sequence = sequence, .kind = kind, .key = key, .value = value};
+    }
 
     ByteView remaining_;
     SequenceNumber sequence_;
@@ -77,16 +100,27 @@ public:
     void Delete(ByteView key);
     void Append(const EncodedWriteBatch& source);
     // Stores the caller-reserved starting sequence without an exhaustion policy.
-    void SetSequence(SequenceNumber sequence) noexcept;
+    void SetSequence(SequenceNumber sequence) noexcept {
+        MutableByteView bytes = AsWritableBytes(std::span<char>(encoded_.data(), encoded_.size()));
+        EncodeFixedTrusted(bytes.first<sizeof(SequenceNumber)>(), sequence);
+    }
     void Clear() noexcept;
 
-    [[nodiscard]] SequenceNumber sequence() const noexcept;
-    [[nodiscard]] std::uint32_t count() const noexcept;
+    [[nodiscard]] SequenceNumber sequence() const noexcept {
+        return DecodeFixedTrusted<SequenceNumber>(encoded().first<sizeof(SequenceNumber)>());
+    }
+    [[nodiscard]] std::uint32_t count() const noexcept {
+        return DecodeFixedTrusted<std::uint32_t>(
+            encoded().subspan<sizeof(SequenceNumber), sizeof(std::uint32_t)>());
+    }
     [[nodiscard]] ByteView encoded() const noexcept { return AsBytes(encoded_); }
 
 private:
     void AppendRecord(ValueKind kind, ByteView key, ByteView value);
-    void SetCount(std::uint32_t count) noexcept;
+    void SetCount(std::uint32_t count) noexcept {
+        MutableByteView bytes = AsWritableBytes(std::span<char>(encoded_.data(), encoded_.size()));
+        EncodeFixedTrusted(bytes.subspan<sizeof(SequenceNumber), sizeof(std::uint32_t)>(), count);
+    }
 
     std::string encoded_;
 };

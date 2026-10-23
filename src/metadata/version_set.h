@@ -98,7 +98,7 @@ public:
 
     [[nodiscard]] SequenceNumber last_sequence() const noexcept { return last_sequence_; }
     // Requires a sequence at least the current one and at most MaxSequenceNumber.
-    void SetLastSequence(SequenceNumber sequence) noexcept;
+    void SetLastSequence(SequenceNumber sequence) noexcept { last_sequence_ = sequence; }
     [[nodiscard]] std::uint64_t log_number() const noexcept { return log_number_; }
     [[nodiscard]] std::uint64_t prev_log_number() const noexcept { return prev_log_number_; }
 

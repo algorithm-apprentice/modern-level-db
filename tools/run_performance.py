@@ -175,6 +175,9 @@ def validate_benchmark(report, case, repetitions, smoke=False, modern_file_acces
     if not isinstance(report, dict) or not isinstance(report.get("context"), dict):
         raise ValueError("missing Google Benchmark context")
     context = report["context"]
+    if (context.get("filter_policy") != "none"
+            or context.get("filter_configuration_semantics") != "shared-open-options-v1"):
+        raise ValueError("unmatched or unverified benchmark filter configuration")
     reported_modern_access = context.get("modern_file_access")
     expected_modern_access = modern_file_access if engine == "modern" else "not_applicable"
     if reported_modern_access != expected_modern_access:

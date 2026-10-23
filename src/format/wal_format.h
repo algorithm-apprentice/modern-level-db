@@ -46,6 +46,8 @@ public:
         ~Cursor() = default;
 
         [[nodiscard]] std::optional<WalFragment> Next() noexcept;
+        // False means exhausted and leaves the previous output unchanged.
+        [[nodiscard]] bool Next(WalFragment& fragment) noexcept;
 
     private:
         friend class WalFragmenter;

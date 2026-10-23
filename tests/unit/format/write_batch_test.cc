@@ -56,6 +56,11 @@ struct LiteralBatchRecord {
     ByteView value;
 };
 
+struct CollectBatchEntries {
+    std::vector<WriteBatchEntry>& entries;
+    void operator()(const WriteBatchEntry& entry) const { entries.push_back(entry); }
+};
+
 void ExpectLiteralLengthAndBytes(ByteView encoded, std::size_t& offset, ByteView expected) {
     if (expected.size() == 127U) {
         ASSERT_LT(offset, encoded.size());
@@ -179,6 +184,40 @@ TEST(WriteBatchTest, LiteralLengthBoundariesCommitCompleteRecordsAndCounts) {
                                          {ValueKind::Value, key128, value127}});
 }
 
+TEST(WriteBatchTest, AppendingAcrossLengthWidthsPreservesHeaderAndExistingRecords) {
+    for (const std::size_t length : {0U, 1U, 127U, 128U, 16'383U, 16'384U}) {
+        SCOPED_TRACE(length);
+        const auto key = Pattern(length, 23);
+        const auto value = Pattern(length, 31);
+        EncodedWriteBatch batch;
+        batch.SetSequence(0x00010203040506ULL);
+        batch.Put(AsBytes("prefix"), AsBytes("stable"));
+        const auto before = Materialize(batch.encoded());
+
+        batch.Put(key, value);
+        batch.Delete(key);
+
+        EXPECT_EQ(batch.sequence(), 0x00010203040506ULL);
+        EXPECT_EQ(batch.count(), 3U);
+        EXPECT_TRUE(std::ranges::equal(ByteView(before).first<8>(), batch.encoded().first<8>()));
+        EXPECT_TRUE(std::ranges::equal(
+            ByteView(before).subspan(WriteBatchHeaderSize),
+            batch.encoded().subspan(WriteBatchHeaderSize, before.size() - WriteBatchHeaderSize)));
+        auto reader = WriteBatchReader::OpenTrusted(batch);
+        ASSERT_TRUE(reader.Next().has_value());
+        const auto put = reader.Next();
+        const auto deleted = reader.Next();
+        ASSERT_TRUE(put.has_value());
+        ASSERT_TRUE(deleted.has_value());
+        EXPECT_TRUE(std::ranges::equal(put->key, key));
+        EXPECT_TRUE(std::ranges::equal(put->value, value));
+        EXPECT_EQ(deleted->kind, ValueKind::Deletion);
+        EXPECT_TRUE(std::ranges::equal(deleted->key, key));
+        EXPECT_TRUE(deleted->value.empty());
+        EXPECT_FALSE(reader.Next().has_value());
+    }
+}
+
 TEST(WriteBatchReaderTest, IteratesBorrowedEntriesWithAssignedSequences) {
     EncodedWriteBatch batch;
     batch.SetSequence(100);
@@ -239,6 +278,99 @@ TEST(WriteBatchReaderTest, TrustedReaderUsesAnOwnedBatchWithoutRevalidation) {
     EXPECT_EQ(AsStringView(second->key), "beta");
     EXPECT_EQ(second->kind, ValueKind::Deletion);
     EXPECT_EQ(second->sequence, 78U);
+    EXPECT_FALSE(reader.Next().has_value());
+}
+
+TEST(WriteBatchReaderTest, VisitsCheckedAndOwnedEntriesWithoutChangingTheirBacking) {
+    const auto binary_key = Bytes({0, 0xff, 1});
+    const auto binary_value = Pattern(128, 37);
+    EncodedWriteBatch batch;
+    batch.SetSequence(70);
+    batch.Put(binary_key, binary_value);
+    batch.Delete(AsBytes("deleted"));
+    batch.Put({}, {});
+    const auto before = Materialize(batch.encoded());
+    for (const bool trusted : {false, true}) {
+        SCOPED_TRACE(trusted);
+        auto checked = WriteBatchReader::Open(batch.encoded());
+        ASSERT_TRUE(checked.has_value());
+        auto reader = trusted ? WriteBatchReader::OpenTrusted(batch) : std::move(*checked);
+        std::vector<WriteBatchEntry> entries;
+        CollectBatchEntries collect{entries};
+
+        reader.ForEachRemaining(collect);
+
+        ASSERT_EQ(entries.size(), 3U);
+        EXPECT_EQ(entries[0].sequence, 70U);
+        EXPECT_EQ(entries[0].kind, ValueKind::Value);
+        EXPECT_TRUE(std::ranges::equal(entries[0].key, binary_key));
+        EXPECT_TRUE(std::ranges::equal(entries[0].value, binary_value));
+        EXPECT_GE(entries[0].key.data(), batch.encoded().data());
+        EXPECT_LT(entries[0].value.data(), batch.encoded().data() + batch.encoded().size());
+        EXPECT_EQ(entries[1].sequence, 71U);
+        EXPECT_EQ(entries[1].kind, ValueKind::Deletion);
+        EXPECT_EQ(AsStringView(entries[1].key), "deleted");
+        EXPECT_EQ(entries[1].value.data(), nullptr);
+        EXPECT_EQ(entries[2].sequence, 72U);
+        EXPECT_EQ(entries[2].kind, ValueKind::Value);
+        EXPECT_TRUE(entries[2].key.empty());
+        EXPECT_TRUE(entries[2].value.empty());
+        EXPECT_EQ(Materialize(batch.encoded()), before);
+        EXPECT_FALSE(reader.Next().has_value());
+        reader.ForEachRemaining(collect);
+        EXPECT_EQ(entries.size(), 3U);
+    }
+}
+
+TEST(WriteBatchReaderTest, VisitingAfterAStepConsumesOnlyTheRemainingRecords) {
+    EncodedWriteBatch batch;
+    batch.SetSequence(90);
+    batch.Put(AsBytes("first"), AsBytes("one"));
+    batch.Delete(AsBytes("second"));
+    auto reader = WriteBatchReader::OpenTrusted(batch);
+    ASSERT_TRUE(reader.Next().has_value());
+    std::vector<WriteBatchEntry> entries;
+    CollectBatchEntries collect{entries};
+
+    reader.ForEachRemaining(collect);
+
+    ASSERT_EQ(entries.size(), 1U);
+    EXPECT_EQ(entries[0].sequence, 91U);
+    EXPECT_EQ(entries[0].kind, ValueKind::Deletion);
+    EXPECT_EQ(AsStringView(entries[0].key), "second");
+    EXPECT_FALSE(reader.Next().has_value());
+
+    EncodedWriteBatch empty;
+    auto empty_reader = WriteBatchReader::OpenTrusted(empty);
+    empty_reader.ForEachRemaining(collect);
+    EXPECT_EQ(entries.size(), 1U);
+}
+
+TEST(WriteBatchReaderTest, ThrowingVisitorLeavesTheCurrentEntryConsumedAndTheTailAvailable) {
+    struct VisitorFailure {};
+    EncodedWriteBatch batch;
+    batch.SetSequence(100);
+    batch.Put(AsBytes("first"), AsBytes("one"));
+    batch.Delete(AsBytes("second"));
+    batch.Put(AsBytes("third"), AsBytes("three"));
+    auto reader = WriteBatchReader::OpenTrusted(batch);
+    std::vector<SequenceNumber> visited;
+    auto visit = [&visited](const WriteBatchEntry& entry) {
+        visited.push_back(entry.sequence);
+        if (entry.sequence == 101) {
+            throw VisitorFailure{};
+        }
+    };
+
+    EXPECT_THROW(reader.ForEachRemaining(visit), VisitorFailure);
+
+    EXPECT_EQ(visited, (std::vector<SequenceNumber>{100, 101}));
+    const auto last = reader.Next();
+    ASSERT_TRUE(last.has_value());
+    EXPECT_EQ(last->sequence, 102U);
+    EXPECT_EQ(AsStringView(last->key), "third");
+    reader.ForEachRemaining(visit);
+    EXPECT_EQ(visited.size(), 2U);
     EXPECT_FALSE(reader.Next().has_value());
 }
 

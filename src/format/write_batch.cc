@@ -58,31 +58,11 @@ Status ValidateBatchRecords(ByteView remaining, std::uint32_t count) {
     return {};
 }
 
-struct TrustedBatchRecord {
-    ValueKind kind;
-    ByteView key;
-    ByteView value;
-};
-
-TrustedBatchRecord DecodeTrustedBatchRecord(ByteView& remaining) noexcept {
-    const ValueKind kind = ConsumeValueKindTrusted(remaining);
-    const ByteView key = ConsumeLengthPrefixedTrusted(remaining);
-    ByteView value;
-    if (kind == ValueKind::Value) {
-        value = ConsumeLengthPrefixedTrusted(remaining);
-    }
-    return {
-        .kind = kind,
-        .key = key,
-        .value = value,
-    };
-}
-
 std::size_t EncodedRecordSize(ValueKind kind, ByteView key, ByteView value) noexcept {
     const auto key_length = static_cast<std::uint32_t>(key.size());
     const auto value_length = static_cast<std::uint32_t>(value.size());
-    return 1 + VarintLength(key_length) + key.size() +
-           (kind == ValueKind::Value ? VarintLength(value_length) + value.size() : 0);
+    return 1 + VarintLengthTrusted(key_length) + key.size() +
+           (kind == ValueKind::Value ? VarintLengthTrusted(value_length) + value.size() : 0);
 }
 
 void EncodeTrustedBatchRecord(MutableByteView& output, ValueKind kind, ByteView key,
@@ -107,7 +87,7 @@ Result<WriteBatchReader> WriteBatchReader::Open(ByteView encoded) {
     const std::uint32_t count =
         DecodeFixed32(encoded.subspan<CountOffset, sizeof(std::uint32_t)>());
 
-    // Validate everything once so Next can decode borrowed records without
+    // Validate everything once so iteration can decode borrowed records without
     // repeating recoverable checks. Mutating the backing bytes breaks this proof.
     Status records = ValidateBatchRecords(encoded.subspan(WriteBatchHeaderSize), count);
     if (!records.has_value()) {
@@ -126,15 +106,7 @@ std::optional<WriteBatchEntry> WriteBatchReader::Next() noexcept {
         return std::nullopt;
     }
 
-    const TrustedBatchRecord record = DecodeTrustedBatchRecord(remaining_);
-    const WriteBatchEntry entry{
-        .sequence = sequence_ + index_,
-        .kind = record.kind,
-        .key = record.key,
-        .value = record.value,
-    };
-    ++index_;
-    return entry;
+    return ConsumeEntry();
 }
 
 // GCOVR_EXCL_START: GCC emits duplicate constructor ABI clones
@@ -173,34 +145,17 @@ void EncodedWriteBatch::Append(const EncodedWriteBatch& source) {
 void EncodedWriteBatch::AppendRecord(ValueKind kind, ByteView key, ByteView value) {
     const std::size_t record_size = EncodedRecordSize(kind, key, value);
     const std::size_t old_size = encoded_.size();
-    encoded_.resize(old_size + record_size);
-    MutableByteView output =
-        AsWritableBytes(std::span<char>(encoded_.data() + old_size, encoded_.size() - old_size));
-    EncodeTrustedBatchRecord(output, kind, key, value);
+    encoded_.resize_and_overwrite(old_size + record_size, [=](char* data, std::size_t) noexcept {
+        MutableByteView output = AsWritableBytes(std::span<char>(data + old_size, record_size));
+        EncodeTrustedBatchRecord(output, kind, key, value);
+        return old_size + record_size;
+    });
     SetCount(count() + 1U);
-}
-
-void EncodedWriteBatch::SetSequence(SequenceNumber sequence) noexcept {
-    MutableByteView bytes = AsWritableBytes(std::span<char>(encoded_.data(), encoded_.size()));
-    EncodeFixed64(bytes.subspan<SequenceOffset, sizeof(SequenceNumber)>(), sequence);
 }
 
 void EncodedWriteBatch::Clear() noexcept {
     encoded_.resize(WriteBatchHeaderSize);
     std::ranges::fill(encoded_, '\0');
-}
-
-SequenceNumber EncodedWriteBatch::sequence() const noexcept {
-    return DecodeFixed64(encoded().subspan<SequenceOffset, sizeof(SequenceNumber)>());
-}
-
-std::uint32_t EncodedWriteBatch::count() const noexcept {
-    return DecodeFixed32(encoded().subspan<CountOffset, sizeof(std::uint32_t)>());
-}
-
-void EncodedWriteBatch::SetCount(std::uint32_t count) noexcept {
-    MutableByteView bytes = AsWritableBytes(std::span<char>(encoded_.data(), encoded_.size()));
-    EncodeFixed32(bytes.subspan<CountOffset, sizeof(std::uint32_t)>(), count);
 }
 
 }  // namespace modern_leveldb

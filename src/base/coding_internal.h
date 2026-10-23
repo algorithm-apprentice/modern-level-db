@@ -52,8 +52,32 @@ inline void FoldVarintPayload(UInt& value, unsigned int payload, std::size_t shi
     value |= static_cast<UInt>(payload) << shift;
 }
 
+inline std::size_t VarintLengthTrusted(std::uint64_t value) noexcept {
+    std::size_t length = 1;
+    while (value >= 0x80U) {
+        value >>= 7U;
+        ++length;
+    }
+    return length;
+}
+
 // Requires enough output for the canonical encoding and advances past it.
-void EncodeVarint32Trusted(MutableByteView& output, std::uint32_t value) noexcept;
+template <typename UInt>
+inline void EncodeVarintTrusted(MutableByteView& output, UInt value) noexcept {
+    static_assert(std::is_unsigned_v<UInt>);
+    std::byte* const begin = output.data();
+    std::byte* cursor = begin;
+    while (value >= 0x80U) {
+        *cursor++ = static_cast<std::byte>((value & 0x7fU) | 0x80U);
+        value >>= 7U;
+    }
+    *cursor++ = static_cast<std::byte>(value);
+    output = output.subspan(static_cast<std::size_t>(cursor - begin));
+}
+
+inline void EncodeVarint32Trusted(MutableByteView& output, std::uint32_t value) noexcept {
+    EncodeVarintTrusted(output, value);
+}
 // Requires enough output for the uint32 length and payload, then advances past both.
 inline void EncodeLengthPrefixedTrusted(MutableByteView& output, ByteView value) noexcept {
     EncodeVarint32Trusted(output, static_cast<std::uint32_t>(value.size()));
