@@ -383,6 +383,90 @@ actual linked Lookup and handle destructor. Their observed bodies were
 functions were removed by the linker. Do not claim byte identity, zero
 instruction-cache effect, or a facade speedup from this observation.
 
-Production admission still requires the own backend/facade measurements and
-ordinary cross-platform sanitizer/coverage gates. Keep Automatic on LRU
-while that evidence is pending; the RocksDB prototype is not a substitute.
+### First own production campaign
+
+The independently reviewed `clock-production` fixture sealed source
+`a61607eba77e817d15ea0e695afa4237c8fcaf7b`, with exact original reader-v4
+headers/library and separate candidate headers/library. All 180 fresh timed
+processes passed independent verification: 72 maintenance and 108 whole-Get
+processes, six pair-balanced rounds, original/facade-LRU/CLOCK roles.
+Each whole Get uses a separately verified, closed/drained clone before a
+fresh point-warmed measurement clone, the same closed 47-table/million-record
+image, filter-deducted logical cache budget and zero timed table opens.
+
+Verification binds the exact approved matrix/order, complete input/plan seal,
+preflight, binary, arguments, environment, affinity and fixed work. Every arm
+has a canonical nonaliased physical evidence directory and a child-reported
+sealed run identity matching the actual launched PID; OS PID reuse alone is
+not rejected. Independent review caught missing arm binding and duplicate
+process-evidence admission before sealing. Twenty-one regression cases include
+actual final-verifier rejection/publication tests; no accepted timing used the
+earlier draft.
+
+The following are paired median wall-time improvements, positive faster,
+with all six rounds retained. Faster-pair counts are observations, not a
+preset acceptance threshold.
+
+| Logical cache | Readers | Reader reuse | Facade LRU vs original | Faster pairs | CLOCK vs original | Faster pairs | CLOCK vs facade LRU | Faster pairs |
+|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| 8 MiB | 1 | off | -1.14% | 3/6 | -6.06% | 0/6 | -4.23% | 1/6 |
+| 8 MiB | 4 | off | +0.46% | 3/6 | -3.66% | 0/6 | -3.49% | 0/6 |
+| 512 MiB | 1 | off | +1.80% | 5/6 | +6.39% | 6/6 | +4.82% | 6/6 |
+| 512 MiB | 4 | off | -0.57% | 1/6 | +2.32% | 5/6 | +5.83% | 5/6 |
+| 8 MiB | 4 | on | -0.86% | 2/6 | -5.65% | 0/6 | -4.90% | 0/6 |
+| 512 MiB | 4 | on | -0.98% | 2/6 | +6.92% | 4/6 | +7.08% | 6/6 |
+
+The facade is not free. Its whole-Get control is mixed, and its maintenance
+control is slower than the original by 15.86%/13.86% for one/four-reader hot1
+and 11.34%/2.18% for uniform16,384. Do not claim universal default-path
+preservation merely because Automatic still selects LRU.
+
+CLOCK maintenance beats the original by 56.50%/74.21% for hot1 and
+33.33%/72.03% for uniform16,384, with six faster pairs in every cell. The
+four-reader hot1 runs also report 873, 477, 717, 874, 449 and 2,140
+optimization misses per four million attempts; other maintenance cells report
+zero. These are attempted query checksums plus successful owner checks,
+not successful data/fallback work on misses. They exclude real SST fallback,
+CRC and decode, and cannot substitute for the adverse whole-Get results.
+
+### Own policy curves and default boundary
+
+Actual deterministic cache replays use recorded logical block charges with
+small identity Blocks. Every hit checks the complete identity. Original and
+facade-LRU counts match in every phase; each policy makes its own admission
+decision from the trace's retainable/fill settings, not its recorded LRU hit.
+The following miss counts are policy observations, not CPU timings, physical
+buffer memory, device I/O counts or RSS.
+
+| Trace phase | Logical cache | LRU misses | CLOCK misses |
+|---|---:|---:|---:|
+| Recorded timed demand | 8 MiB | 1,578,400 | 1,632,673 |
+| Recorded timed demand | 512 MiB | 0 | 0 |
+| Hot return after scan | 8 MiB | 1,024 | 10,820 |
+| Shifted hot set | 8 MiB | 1,024 | 39,464 |
+| Hot return after scan | 512 MiB | 0 | 0 |
+| Shifted hot set | 512 MiB | 1,024 | 1,024 |
+| One-shard cyclic demand | 8 MiB | 7,808 | 719 |
+| One-shard cyclic demand | 512 MiB | 0 | 0 |
+
+Keep Automatic on LRU. Resident maintenance/Get benefits do not override the
+repeatable pressured Get losses or hot/scan/shift miss curves. Explicit CLOCK
+can target a suitable resident workload, but is not universally superior.
+Do not ascribe the complete miss-curve difference to one unmeasured mechanism.
+
+### Remaining admission work
+
+The integrated source passes 1,097 current unit-label cases, 19 extended cases
+and 13 CMake package/consumer checks. Rebuilding only the main/public test
+targets initially left the separate allocation executable stale; comparing
+JUnit identities caught seven omitted new cases before any accepted timing.
+The complete build and rerun include them.
+
+The first ordinary CI head passed 19 jobs, including ASan and TSan; the
+changed-branch coverage gate alone failed. Retain that failure and the complete
+first campaign. It requires meaningful deterministic control-path evidence,
+removal of proven redundant private checks where appropriate, and ordinary
+exact-head CI before admission. Any production revision needs its own fresh
+matched campaign; do not pool revisions or silently reuse the first result
+as evidence for changed code. The RocksDB prototype remains historical context,
+not a substitute for either own campaign.
