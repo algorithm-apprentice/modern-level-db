@@ -1,6 +1,6 @@
 # ADR-0085: Reviewed Read Optimization Adoption
 
-- Status: Accepted
+- Status: Implemented
 - Date: 2026-10-22
 
 ## Context
@@ -97,6 +97,34 @@ ordinary CI and changed-code coverage gates without bypasses.
 An independent storage-architect persona approved the bounded staging and
 full-filter design. This accepts the review/selection framework, not a
 future component design that has not yet been independently reviewed.
+
+### Completed topic delivery
+
+Every selected mechanism now has its own independently reviewed design,
+test-first implementation, separate implementation review and production
+evidence:
+
+- [Full-table filters and portable probes](0086-persisted-full-table-filters.md)
+  use the comparator-safe automatic full-filter default and CPU/OS-admitted
+  scalar/AVX2 selection. Repeated admission-time CPU detection was separately
+  repaired and measured rather than hidden in reader comparisons.
+- [Bounded reader reuse](0087-bounded-table-reader-reuse.md) is explicitly
+  default-off. Weak hints add no permanent file pins; resident gains, pressure
+  losses and residual disabled-path risk remain documented.
+- [Own CLOCK caching](0088-read-efficient-clock-block-cache.md) is a checked
+  opt-in. Automatic remains LRU: resident wins do not erase pressure/scan/shift
+  losses, optimization misses, facade cost or the reviewed wrapper-call cost.
+- [Snapshot-consistent MultiGet](0089-bounded-snapshot-consistent-multiget.md)
+  bounds and joins readers around one sequence. Serial-owning-Get gains,
+  losses against persistent concurrent readers and single-key overhead all
+  remain part of its admission.
+
+The reader/cache reviews consciously accept their disclosed integration
+costs; this does not establish the earlier preservation goal or permit
+silently relabeling overhead as neutral. Unchanged default policy is not
+identical execution cost. These topic-specific tradeoffs do not authorize a
+future default-policy change with an unaddressed reliable adverse path.
+Keep each campaign distinct and do not add independent percentage gains.
 
 ## Alternatives not selected
 

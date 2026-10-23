@@ -328,35 +328,41 @@ TEST(PublicDependencyTest, UsesInjectedSchedulingClockAndCacheAcrossReopen) {
 }
 
 TEST(PublicDependencyTest, SharesOneCacheAcrossDatabasesWithoutMixingValues) {
-    TemporaryDatabaseDirectory directory;
-    ASSERT_TRUE(std::filesystem::create_directory(directory.path()));
-    Options options = CreatingOptions();
-    options.allow_mmap_reads = false;
-    options.block_cache = CreateBlockCache(1024 * 1024);
-    const auto first_path = directory.path() / "first";
-    const auto second_path = directory.path() / "second";
-    {
+    for (const auto policy :
+         {BlockCachePolicy::Automatic, BlockCachePolicy::Lru, BlockCachePolicy::Clock}) {
+        SCOPED_TRACE(static_cast<int>(policy));
+        TemporaryDatabaseDirectory directory;
+        ASSERT_TRUE(std::filesystem::create_directory(directory.path()));
+        Options options = CreatingOptions();
+        options.allow_mmap_reads = false;
+        auto cache = CreateBlockCacheWithOptions({.capacity = 1024 * 1024, .policy = policy});
+        ASSERT_TRUE(cache.has_value()) << cache.error().ToString();
+        options.block_cache = std::move(*cache);
+        const auto first_path = directory.path() / "first";
+        const auto second_path = directory.path() / "second";
+        {
+            auto first = Database::Open(options, first_path);
+            auto second = Database::Open(options, second_path);
+            ASSERT_TRUE(first.has_value()) << first.error().ToString();
+            ASSERT_TRUE(second.has_value()) << second.error().ToString();
+            ASSERT_TRUE(first->Put(AsBytes("key"), AsBytes("first")).has_value());
+            ASSERT_TRUE(second->Put(AsBytes("key"), AsBytes("other")).has_value());
+        }
         auto first = Database::Open(options, first_path);
         auto second = Database::Open(options, second_path);
         ASSERT_TRUE(first.has_value()) << first.error().ToString();
         ASSERT_TRUE(second.has_value()) << second.error().ToString();
-        ASSERT_TRUE(first->Put(AsBytes("key"), AsBytes("first")).has_value());
-        ASSERT_TRUE(second->Put(AsBytes("key"), AsBytes("other")).has_value());
-    }
-    auto first = Database::Open(options, first_path);
-    auto second = Database::Open(options, second_path);
-    ASSERT_TRUE(first.has_value()) << first.error().ToString();
-    ASSERT_TRUE(second.has_value()) << second.error().ToString();
 
-    for (int pass = 0; pass < 2; ++pass) {
-        const auto first_value = first->Get(AsBytes("key"));
-        const auto second_value = second->Get(AsBytes("key"));
-        ASSERT_TRUE(first_value.has_value() && first_value->has_value());
-        ASSERT_TRUE(second_value.has_value() && second_value->has_value());
-        EXPECT_EQ(AsStringView(**first_value), "first");
-        EXPECT_EQ(AsStringView(**second_value), "other");
+        for (int pass = 0; pass < 2; ++pass) {
+            const auto first_value = first->Get(AsBytes("key"));
+            const auto second_value = second->Get(AsBytes("key"));
+            ASSERT_TRUE(first_value.has_value() && first_value->has_value());
+            ASSERT_TRUE(second_value.has_value() && second_value->has_value());
+            EXPECT_EQ(AsStringView(**first_value), "first");
+            EXPECT_EQ(AsStringView(**second_value), "other");
+        }
+        EXPECT_GT(BlockCacheCharge(*options.block_cache), 0U);
     }
-    EXPECT_GT(BlockCacheCharge(*options.block_cache), 0U);
 }
 
 TEST(PublicDatabaseTest, WritesReadsDeletesBatchesAndReopens) {

@@ -1,6 +1,6 @@
 # ADR-0088: Read-Efficient CLOCK Block Cache
 
-- Status: Accepted
+- Status: Implemented
 - Date: 2026-10-22
 
 ## Context and boundary
@@ -36,6 +36,19 @@ LRU handle or a CLOCK lease; it never allocates on lookup. Use proper typed
 alternatives rather than pointer tagging or layout reinterpretation.
 Preserve the Table-facing value/arrow/dereference and retention contract.
 Measure facade overhead with explicit LRU as well as Automatic/CLOCK.
+
+The checked public entry point is
+`CreateBlockCacheWithOptions(const BlockCacheOptions&)`, returning
+`Result<shared_ptr<BlockCache>>`. The options contain capacity (default zero)
+and policy (default Automatic). Keep the legacy `CreateBlockCache(size_t)`
+name/signature separate: even `CreateBlockCache({})` must remain an unambiguous
+zero-capacity call, not become ambiguous with a new aggregate overload.
+
+Use an in-place typed backend variant, with construction-only monostate for
+the selected nonmovable backend. Its lease is a typed LRU-pin/CLOCK-handle
+variant; no separate per-hit allocation is introduced. Internal CLOCK
+diagnostics remain available for admission measurements, without adding a
+general public metadata/RSS observation promise.
 
 CLOCK accepts the exact 16-byte cache identity constructed by the table
 layer: cache instance/file identity plus block offset. Hashing chooses shards
@@ -99,6 +112,12 @@ array of atomic canonical-slot pointers. Null means a virgin empty bucket;
 a real typed sentinel represents a tombstone. No integer-as-pointer sentinel.
 Hash and mask choose the first bucket; complete key comparison chooses
 identity.
+
+The existing internal facade keeps ByteView for generic LRU callers. A selected
+CLOCK backend requires the exact 16-byte table key; the table's fixed-size key
+construction establishes that private precondition. Do not weaken arbitrary
+full-key LRU behavior or add a repeated recoverable-error path for a shape the
+table caller has already established.
 
 The acquired root owns immutable bucket count/mask alongside its array.
 Never pair an old pointer with a separately updated larger mask. Initialize
@@ -214,6 +233,45 @@ but must never return another key's bytes or free a retained value.
 Detach/queue owners under the mutex; destroy them after unlock. Reentrant
 destructors can call cache operations without self-deadlock.
 
+## Deterministic protocol test boundaries
+
+Use the actual production transitions for controlled schedules, not a second
+cache model or conditional profiling callbacks. Keep canonical Slot/Index
+declarations and pin-word constants in one private protocol header shared by
+the implementation and internal tests; do not create different inline bodies
+under different translation-unit flags.
+
+Factor root acquisition from probing the acquired root. Ordinary Lookup calls
+those same stages; an internal test peer can retain the typed root observation
+across growth, in-place refresh and canonical-position reuse. The observation
+borrows the cache, not a payload owner, and never combines its root with a
+later root's mask.
+
+Factor a single Live-pin CAS attempt from the bounded retry loop. The loop
+checks Live before each attempt, and only a successful acquire CAS permits
+the complete-key comparison. Tests can pause with the actual observed word
+before CAS or retain the acquired pin before erase/replacement. A successful
+stale-word ABA pins the current Live generation; it must still compare that
+generation's complete key before reporting a hit.
+
+Factor the release RMW from the rare serialized completion. Capture permanent
+shard identity before decrementing; return that typed identity only when an
+Erased last-pin transition needs cleanup. Completion rechecks current
+Erased/zero-pin eligibility under the writer mutex. Tests can pause after the
+actual decrement while a writer reclaims/reuses the position, including a
+replacement becoming Erased/zero-pin before the earlier completion resumes.
+Never carry a detached Entry or unpinned payload pointer across that gap.
+
+The test peer may consume a lease into such a pending cleanup, but must finish
+that cleanup before cache destruction, including on assertion unwinding.
+These boundaries add no production runtime hook, alternate read algorithm,
+allocation, metadata field or policy option. The initial protocol-factoring
+gate required no added linked Lookup/normal Release helper or allocation calls;
+the final scalar refinement explicitly amends the single-call boundary below.
+Private source factoring alone is not evidence of either result.
+Independent architecture re-review approved these boundaries, not their
+implementation, facade, default selection or performance.
+
 ## Metadata and allocation bounds
 
 Grow slot/index capacity lazily. Track segment, free-position and current/
@@ -230,6 +288,21 @@ Externally retained standalone/erased value holders, their block data, and
 detached retired owners awaiting out-of-lock destruction are explicit
 exclusions, like existing uncached/erased retention; report their peaks
 separately rather than claiming a hard process-memory bound.
+
+Include the complete owning facade object in that fixed account, including
+inactive in-place variant storage. A CLOCK member inside a large LRU/CLOCK
+variant cannot report only `sizeof(ClockBlockCache)` as its owning footprint.
+Its private constructor receives the compile-time known complete owner size
+before publication; standalone construction supplies its own object size.
+This is internal accounting input, not a public budget knob, and adds no
+per-entry field or per-lookup work. Keep the same total allowance and reject
+retention when the complete fixed/storage account cannot fit.
+An accessible internal footprint tag constructor delegates to that private
+constructor, so `variant::emplace` does not need facade friendship to call a
+private constructor. Replace the old embedded-object-size term rather than
+counting both it and the complete owner. Independent architecture re-review
+approved this facade/accounting concretization, not an implementation or
+Automatic default change.
 
 The allowance applies to published cache-owned storage. Preparation can
 temporarily hold old and proposed allocations simultaneously; compute the
@@ -282,3 +355,289 @@ Insert-result pin, rare mutex use by collision-pin cleanup, probe/admission
 bounds, complete metadata accounting, and uncached-replacement semantics.
 Re-review approved this design. It does not approve a concrete implementation
 or a new Automatic default.
+
+## Implementation and admission boundary
+
+The own backend, deterministic production-stage tests and checked typed
+facade are implemented. Independent implementation review covered the
+publication/release protocol, full-key ABA checks, old-root lookup, late
+cleanup after reuse, exceptional preparation, reentrant retirement and
+facade allocation/lifetime contracts. Tests use actual production stages
+without conditional hot-path callbacks or a second protocol model.
+
+Allocation testing exposed a real constructor leak when a raw Diagnostics
+owner was created before a later throwing Shard member. Allocate it only
+after those members finish construction. MSVC debug bookkeeping can allocate
+even for an empty vector: explicitly throwing construction preserves the
+documented bad-allocation model instead of terminating inside a noexcept
+default constructor. Cache-wide outstanding retired accounting also includes
+overlapping out-of-lock destruction, not just one writer's local list.
+
+The facade includes public-only source-compatibility/invalid-policy tests,
+both policies' allocation-free lookup/release checks, exhaustive constructor
+allocation failures and two real databases sharing/reopening each policy.
+These establish contracts, not a performance result.
+
+Historical v1 optimized protocol inspection found no surviving stage-helper calls in the
+actual linked Lookup and handle destructor. Their observed bodies were
+323 and 73 bytes, versus 275 and 24 before factoring; unused Release/Reset
+functions were removed by the linker. Do not claim byte identity, zero
+instruction-cache effect, or a facade speedup from this observation.
+
+### First own production campaign
+
+The independently reviewed `clock-production` fixture sealed source
+`a61607eba77e817d15ea0e695afa4237c8fcaf7b`, with exact original reader-v4
+headers/library and separate candidate headers/library. All 180 fresh timed
+processes passed independent verification: 72 maintenance and 108 whole-Get
+processes, six pair-balanced rounds, original/facade-LRU/CLOCK roles.
+Each whole Get uses a separately verified, closed/drained clone before a
+fresh point-warmed measurement clone, the same closed 47-table/million-record
+image, filter-deducted logical cache budget and zero timed table opens.
+
+Verification binds the exact approved matrix/order, complete input/plan seal,
+preflight, binary, arguments, environment, affinity and fixed work. Every arm
+has a canonical nonaliased physical evidence directory and a child-reported
+sealed run identity matching the actual launched PID; OS PID reuse alone is
+not rejected. Independent review caught missing arm binding and duplicate
+process-evidence admission before sealing. Twenty-one regression cases include
+actual final-verifier rejection/publication tests; no accepted timing used the
+earlier draft.
+
+The following are paired median wall-time improvements, positive faster,
+with all six rounds retained. Faster-pair counts are observations, not a
+preset acceptance threshold.
+
+| Logical cache | Readers | Reader reuse | Facade LRU vs original | Faster pairs | CLOCK vs original | Faster pairs | CLOCK vs facade LRU | Faster pairs |
+|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| 8 MiB | 1 | off | -1.14% | 3/6 | -6.06% | 0/6 | -4.23% | 1/6 |
+| 8 MiB | 4 | off | +0.46% | 3/6 | -3.66% | 0/6 | -3.49% | 0/6 |
+| 512 MiB | 1 | off | +1.80% | 5/6 | +6.39% | 6/6 | +4.82% | 6/6 |
+| 512 MiB | 4 | off | -0.57% | 1/6 | +2.32% | 5/6 | +5.83% | 5/6 |
+| 8 MiB | 4 | on | -0.86% | 2/6 | -5.65% | 0/6 | -4.90% | 0/6 |
+| 512 MiB | 4 | on | -0.98% | 2/6 | +6.92% | 4/6 | +7.08% | 6/6 |
+
+The facade is not free. Its whole-Get control is mixed, and its maintenance
+control is slower than the original by 15.86%/13.86% for one/four-reader hot1
+and 11.34%/2.18% for uniform16,384. Do not claim universal default-path
+preservation merely because Automatic still selects LRU.
+
+CLOCK maintenance beats the original by 56.50%/74.21% for hot1 and
+33.33%/72.03% for uniform16,384, with six faster pairs in every cell. The
+four-reader hot1 runs also report 873, 477, 717, 874, 449 and 2,140
+optimization misses per four million attempts; other maintenance cells report
+zero. These are attempted query checksums plus successful owner checks,
+not successful data/fallback work on misses. They exclude real SST fallback,
+CRC and decode, and cannot substitute for the adverse whole-Get results.
+
+### Own policy curves and default boundary
+
+Actual deterministic cache replays use recorded logical block charges with
+small identity Blocks. Every hit checks the complete identity. Original and
+facade-LRU counts match in every phase; each policy makes its own admission
+decision from the trace's retainable/fill settings, not its recorded LRU hit.
+The following miss counts are policy observations, not CPU timings, physical
+buffer memory, device I/O counts or RSS.
+
+| Trace phase | Logical cache | LRU misses | CLOCK misses |
+|---|---:|---:|---:|
+| Recorded timed demand | 8 MiB | 1,578,400 | 1,632,673 |
+| Recorded timed demand | 512 MiB | 0 | 0 |
+| Hot return after scan | 8 MiB | 1,024 | 10,820 |
+| Shifted hot set | 8 MiB | 1,024 | 39,464 |
+| Hot return after scan | 512 MiB | 0 | 0 |
+| Shifted hot set | 512 MiB | 1,024 | 1,024 |
+| One-shard cyclic demand | 8 MiB | 7,808 | 719 |
+| One-shard cyclic demand | 512 MiB | 0 | 0 |
+
+Keep Automatic on LRU. Resident maintenance/Get benefits do not override the
+repeatable pressured Get losses or hot/scan/shift miss curves. Explicit CLOCK
+can target a suitable resident workload, but is not universally superior.
+Do not ascribe the complete miss-curve difference to one unmeasured mechanism.
+
+### Remaining admission work
+
+The integrated source passes 1,097 current unit-label cases, 19 extended cases
+and 13 CMake package/consumer checks. Rebuilding only the main/public test
+targets initially left the separate allocation executable stale; comparing
+JUnit identities caught seven omitted new cases before any accepted timing.
+The complete build and rerun include them.
+
+The first ordinary CI head passed 19 jobs, including ASan and TSan; the
+changed-branch coverage gate alone failed. Retain that failure and the complete
+first campaign. It requires meaningful deterministic control-path evidence,
+removal of proven redundant private checks where appropriate, and ordinary
+exact-head CI before admission. Any production revision needs its own fresh
+matched campaign; do not pool revisions or silently reuse the first result
+as evidence for changed code. The RocksDB prototype remains historical context,
+not a substitute for either own campaign.
+
+### Reviewed deterministic control-path follow-up
+
+Independent architecture re-review approves the following bounded refinement
+before implementation. Keep v1 intact and Automatic on LRU. Introduce no
+runtime callback, profiling flag, alternate algorithm, public setting or
+per-entry field.
+
+Continue the actual peak-update CAS loop from a supplied observed value.
+Production loads the same atomic before continuing; tests place an intervening
+publisher between observation and continuation. Preserve relaxed ordering and
+monotonic publication rather than relying on an OS schedule to lose a CAS.
+
+Continue actual pin acquisition from its observed word and remaining attempt
+budget. Production starts with eight attempts; tests can resume with zero or
+one remaining. Check Live before each strong CAS, consume rather than reset
+the budget, and never access a payload without successful acquisition.
+
+Factor a clock position's metadata transition from serialized retirement.
+The stage returns Skipped, LiveClaim or ErasedClaim. The writer remains
+exclusive through that stage and retirement: LiveClaim still needs index/
+charge removal; ErasedClaim was already invalidated. A stale unvisited
+observation followed by an ordinary reader pin must decline the claim while
+that reader is still retained. Do not turn this into an unpinned payload
+observation.
+
+Continue the actual probe loop with the same acquired root/key, next bucket
+and remaining probes. Pass only the remaining count and derive the bucket
+as `(hash + bucket_count - remaining) & mask`, coupling progress by construction.
+Production starts at `hash & mask` with `bucket_count` remaining. Never reload a different root
+or mask. Tests use a real acquired root and production admission/erase/refresh
+to establish successive nonempty observations, ending at a real tombstone
+with one probe left. Zero remaining performs no bucket load or pin. A
+fabricated full index must not masquerade as the writer's current root:
+every stable writer state retains virgin buckets, although refresh/churn can
+make every successive observation of a concurrent probe nonempty.
+
+Two additional complete-cache cases exercise real resource boundaries:
+retain erased handles until their stable pool storage alone exhausts the
+metadata allowance, and pin all eight canonical positions of a full shard
+so Reserve itself must decline. Keep the existing valid uncached leases and
+unchanged old values in both cases.
+
+Remove only proven redundant private guards. For current bucket count B,
+pointer-bucket bytes P, root-header bytes H and resident-owner bytes E,
+growth requires B/2 existing residents. With `E >= 2P`, committed accounting
+already gives `H + 2BP <= H + BP + (B/2)E <= allowance`; the old single-array
+budget rejection cannot fire. An actually allocated pointer array also
+establishes representable doubling. Assert these layout assumptions and the
+initial eight-bucket/segment minimum fit at compile time. The complete
+post-preparation Fits check remains authoritative.
+
+Writer Find holds the shard mutex and uses the current root. Completed
+insertion leaves `live + tombstones <= 3B/4`; erasure preserves that sum.
+Only Live mappings remain indexed. Its duplicate state test and full-domain
+failure exit can therefore be removed, with the virgin-bucket invariant
+documented. Concurrent Lookup keeps its bounded continuation.
+
+The two GCC13 implicit null-deletion exits can receive exact `1/2`
+branch-only markers under ADR-0019: valid member invocation makes the
+Diagnostics receiver nonnull, and DeleteEntry already dereferences its
+owned argument. Record these ownership reasons on the same lines. Exclude
+no real contention, allocation, budget or probe path.
+
+Require test-first implementation, independent implementation review,
+actual linked hot-path inspection, ordinary coverage/sanitizer gates and a
+fresh complete 180-process campaign for the revised production code.
+Independent architecture re-review approved the scalar remaining-count
+refinement after the aggregate progress interface left a real optimized
+wrapper call. Approval is not an inlining guarantee; preserve original
+Lookup-to-LookupInRoot routing and inspect the actual revised linked image.
+
+The scalar refinement still leaves one CLOCK-only Lookup-to-LookupInRoot call
+in optimized MSVC output. Independent architecture review explicitly amends the
+initial no-added-call gate for this one shared, auditable loop boundary.
+Inspect both caller and callee in the final Get/maintenance PE images; this
+does not permit new allocation, Pin/Drop-stage calls, duplicated algorithms,
+force-inline flags or a zero-overhead claim. The 323-byte no-wrapper-call
+inspection belongs to v1, not the final candidate. Fresh measurements include
+the actual extra call and any instruction-cache effect. Implementation review
+approves the scalar continuation's correctness, not its performance.
+
+The revised source's second coverage report leaves only two resource branches:
+the storage-only side of Fits, and unpinned replacement when the canonical
+free list is empty. Complete these with tests, not another production change.
+The erased-pin fixture owns a real 4 KiB inactive member and passes the
+complete containing object's size, as the facade does. The replacement case
+fills eight positions without pins, replaces an existing key in place, and
+checks pool size, all other values and charge. Independent implementation
+review approves these valid owner/pool schedules; authoritative coverage is
+still required.
+
+The current tests pass 1,104 unit-label cases; the revised production source
+also passed 19 extended cases and strict GCC checks. Actual final Get and
+maintenance PE images match the inspected COFF caller (130 bytes), outlined
+LookupInRoot (317 bytes) and real handle destructor (73 bytes). Only the
+reviewed wrapper boundary remains; pin/drop stage and allocation calls do not.
+The distinct v2 preflight passes all 50 cases and reproduces every phase
+vector of all 18 v1 policy replays. Final v2 timing and exact-head CI still
+determine admission.
+
+## Final-source v2 evidence
+
+The distinct `clock-production-v2` campaign sealed production source
+`cdc9199932065847719450d27f101798cb18b07a`, seal
+`7848495bff57226e28c5f6126dfe36c4ca40cf4f31a679a190642818686449ca`.
+All 180 fresh processes passed the same independent checks, including
+distinct physical records and child identities. The reviewed fixture is
+byte-identical to v1; all 50 preflight cases pass, and every phase vector of
+all 18 deterministic policy replays matches v1. The subsequent test-only
+head `7c7124c` changes no production source, public header or build input.
+All its 20 ordinary checks pass, including the unchanged 100% GCC13
+changed-branch gate, ASan, TSan, fuzz and cross-platform configurations.
+
+These are paired median wall-time improvements; positive is faster.
+Keep all six rounds and v1 separately. Differences between campaigns do not
+isolate the causal cost of one helper, code-layout change or host effect.
+
+| Logical cache | Readers | Reader reuse | Facade LRU vs original | Faster pairs | CLOCK vs original | Faster pairs | CLOCK vs facade LRU | Faster pairs |
+|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| 8 MiB | 1 | off | +2.48% | 3/6 | +0.86% | 3/6 | -3.25% | 1/6 |
+| 8 MiB | 4 | off | -0.28% | 3/6 | -5.95% | 0/6 | -6.65% | 0/6 |
+| 512 MiB | 1 | off | -1.52% | 3/6 | +5.37% | 6/6 | +5.92% | 6/6 |
+| 512 MiB | 4 | off | +1.10% | 4/6 | +9.39% | 6/6 | +4.84% | 6/6 |
+| 8 MiB | 4 | on | -0.36% | 3/6 | -6.22% | 0/6 | -6.95% | 0/6 |
+| 512 MiB | 4 | on | +1.27% | 4/6 | +10.92% | 6/6 | +8.74% | 6/6 |
+
+The corresponding CLOCK CPU-time improvements versus the original are
++1.07%, -5.68%, +5.65%, +9.52%, -5.52% and +11.13% in table order.
+All three 512 MiB cells have six faster CPU pairs; both pressured four-reader
+cells have no faster CPU pair. The mixed single-reader 8 MiB cell is not a
+claim of pressure superiority.
+
+Final CLOCK maintenance improvements versus the original are 55.46%/67.38%
+for hot1 and 35.75%/72.00% for uniform16,384, one/four readers respectively,
+with six faster pairs in each cell. CPU improvements are 56.25%/67.61% and
+38.00%/72.39%, likewise six faster pairs. Four-reader hot1 still reports
+716, 4,949, 4,733, 2,403, 3,922 and 925 optimization misses per four million
+attempts; other cells report zero. Do not call these miss attempts successful
+data reads or include imaginary SST fallback in the microbenchmark.
+
+The final facade-LRU maintenance controls cost 16.79%/13.35% for hot1 and
+11.67% for single-reader uniform16,384, with no faster pair in those cells.
+Four-reader uniform16,384 is +0.57% with three faster pairs. Whole-Get facade
+controls range from -1.52% to +2.48%. These observations explicitly retain
+default-facade cost and residual performance risk; selecting the same LRU
+policy does not establish identical cost or universal neutrality.
+
+The unchanged adverse policy curves and repeatable 8 MiB four-reader losses
+rule out switching Automatic to CLOCK. The final resident benefit supports
+evaluating an explicit option, not a generally superior replacement policy.
+
+## Admission decision
+
+Independent architecture and implementation/evidence reviews approve the
+frozen `cdc9199` implementation and unchanged-source `7c7124c` as a checked,
+explicit CLOCK option. The repeated resident-workload gains justify that
+availability; they do not justify automatic selection.
+
+Automatic remains LRU, without a capacity-based CLOCK heuristic. The ordinary
+factory and unspecified database cache retain that policy. Accept the
+disclosed default facade-LRU cost as an integration tradeoff, not performance
+preservation. Keep all mixed controls, pressure/return/shift losses,
+optimization misses and the approved one-wrapper-call cost visible.
+
+The earlier no-added-call goal was amended explicitly; neither that goal nor
+default-cost neutrality is reported as achieved. Preserve v1 and v2 separately
+and infer no mechanism from their timing differences. Further production
+changes require renewed bounded review and affected evidence. Final
+documentation publication still uses ordinary exact-head CI, not a bypass.
