@@ -1,6 +1,6 @@
 # ADR-0091: Native Get Cost-Model Parity
 
-- Status: Accepted
+- Status: Implemented
 
 ## Decision boundary
 
@@ -23,8 +23,8 @@ was found for the internal changes below. C++23, typed handles, RAII, and
 exception support do not require opaque copies, repeated checked decoding,
 or additional word-codec calls at every internal layer.
 
-Exact public calling-interface equality is a separate compatibility choice:
-Modern's comparator takes two `ByteView` values; Native takes `const Slice&`.
+Before this alignment, Modern's comparator took two `ByteView` values while
+Native took `const Slice&`.
 Both views occupy sixteen bytes in the measured MSVC x64 build. Changing a
 public virtual signature changes custom overrides and binary compatibility.
 Review targeted const-reference boundaries rather than declaring public
@@ -59,7 +59,7 @@ suspicions about `shared_ptr`, `unordered_map`, or output allocation.
 
 ## Diagnostic location of the remaining cost
 
-The current owned-process profiles include sixteen captured and sixteen
+The pre-alignment owned-process profiles include sixteen captured and sixteen
 uncaptured processes, with fixed sixteen-million-Get work per process.
 Assign every weighted stack to exactly one nearest source-matched phase.
 This puts Native's inlined word decoding and Modern's outlined decoding
@@ -172,7 +172,7 @@ ordering/equality.
 
 ### 5. Native-style view-reference boundaries
 
-The proposed comparator signature is
+The implemented comparator signature is
 `Compare(const ByteView& left, const ByteView& right) const noexcept`,
 including custom overrides and the internal block-comparison forwarding
 method. It matches Native's reference-to-view model while retaining the
@@ -181,8 +181,8 @@ contract.
 
 An isolated MSVC Release code-generation check uses three identical virtual
 forwarding wrappers, all receiving existing view descriptors by const
-reference. Forwarding into the actual Modern by-value comparator creates a
-42-byte wrapper with two descriptor copies and a call. The proposed span
+reference. Forwarding into the original Modern by-value comparator creates a
+42-byte wrapper with two descriptor copies and a call. The implemented span
 reference signature and Native's actual `const Slice&` interface each
 produce the same seven-byte tail jump. No key/value payload is copied.
 This is evidence about this non-inlined boundary, not an end-to-end
@@ -196,7 +196,7 @@ copies. Do not change mutating cursor-reference semantics.
 
 The reviewed boundary ledger is:
 
-| Boundary | Planned reference parameters | Unchanged responsibility |
+| Boundary | Implemented reference parameters | Unchanged responsibility |
 |---|---|---|
 | Public `Comparator::Compare` and all overrides | Both input views | Sign, equality, `noexcept`, and persistent comparator identity |
 | Both public `Database::Get` overloads and engine Get | Input key | Output ownership/reuse, snapshots, errors, and exception cleanup |
@@ -268,3 +268,123 @@ Independent implementation/evidence review, ordinary exact-head quality
 gates, normal merge, and merged-branch cleanup remain required. Every public
 ABI change and any further retained mechanism must remain explicit, not
 silent scope expansion.
+
+## Integrated outcome: October 23, 2026
+
+The five slices are implemented at
+`2570b9f0628fcf9cb1366aa9433629ffc6803a8f`, following separate independent
+architecture/ABI and implementation reviews. The implementation review found
+no significant issues. A third independent evidence review recomputed the
+complete campaign before publication.
+
+The measured source trees are:
+
+- `src`: `9869858df64f217b7501abe7fe561ca607cc7ffb`;
+- `include`: `a426540434bb14f248c255ef8549e83ed59ee9f5`.
+
+The integrated experiment rebuilds all sixty Modern core translation units
+with the original normalized compiler commands; only object/PDB output
+locations differ. Every archive member matches its recorded object. The
+same driver source and hook source are recompiled against the candidate's
+matching changed header ABI rather than mixing an old caller with new
+symbols. Baseline Modern is `9320351`; Native is the pinned revision above.
+All Native controls and baseline Modern use one immutable original
+executable. The unused Native copy inside the candidate is never timed.
+CRC32C, Snappy, and Zstd providers remain frozen and identical.
+
+Actual linked caller bodies match their archive objects and have no opaque
+tiny pin construction/move/destruction/accessor calls or hot exported
+word/checked-handle codec calls. The public reference-forwarder proof uses
+the actual migrated interface, not only a hypothetical test class.
+Function sizes and removed references establish generated-work changes,
+not individual elapsed-time savings.
+
+### Fixed-work results
+
+All 108 fresh workload processes ran serially, one owned workload at a time.
+Each executed eight million Gets over the same million-record, 256-byte-value
+corpus. Six balanced rounds rotate cell order and reverse role order. The
+Legacy cells use original Modern, aligned Modern, and two labels invoking
+the exact same immutable Native program. Full-filter cells compare Modern
+before/after only. Fifteen independent functional preflights are excluded.
+
+Both libraries use reusable owning output buffers, checksums, the same
+providers, and matched decoded-data-plus-selected-filter budgets. Verification
+and point warmup are outside timing. Every raw result passes workload,
+binary/command/environment, affinity, topology, ownership, clone-isolation,
+and cleanup checks. Monotonic invocation intervals independently establish
+that no workload processes overlap; total accepted work is 864 million Gets.
+
+Changes below are median within-round after/before cost ratios. Negative
+means less time. Four-reader wall cost is reciprocal aggregate throughput,
+including the matched launch/join overhead, not request latency.
+
+| Image / logical cache / readers | Wall cost change | CPU cost change | Faster pairs, wall / CPU |
+|---|---:|---:|---:|
+| Legacy / 512 MiB / 1 | -11.88% | -11.71% | 6/6 / 6/6 |
+| Legacy / 512 MiB / 4 | -7.15% | -8.02% | 6/6 / 6/6 |
+| Full / 512 MiB / 1 | -8.70% | -8.87% | 6/6 / 6/6 |
+| Full / 512 MiB / 4 | -9.08% | -9.13% | 6/6 / 6/6 |
+| Legacy / 8 MiB / 4 | -6.31% | -6.11% | 6/6 / 6/6 |
+| Full / 8 MiB / 4 | -4.17% | -4.94% | 5/6 / 5/6 |
+
+The Full/8-MiB/four-reader third round is adverse: wall cost increases
+1.217269% and CPU cost increases 0.745629%. It remains in every summary;
+the campaign is not described as winning every pair.
+
+### Remaining Native difference and control variation
+
+The predeclared Native comparison anchor is the arithmetic mean of the two
+identical Native slots within each round. It is a same-cell cost reference,
+not subtraction of control drift from the Modern treatment effect.
+
+| Legacy cell | Original Modern extra wall cost versus Native | Aligned Modern observed difference versus Native | Native A/A median absolute wall variation |
+|---|---:|---:|---:|
+| 512 MiB / 1 reader | +11.93% | -2.00% | 2.64% |
+| 512 MiB / 4 readers | +6.46% | -1.27% | 2.84% |
+| 8 MiB / 4 readers | -0.38% | -5.60% | 1.77% |
+
+The resident results support approximate parity in this campaign, not a
+formal equivalence result or a general claim of beating Native. The A/A
+figures are descriptive variability measures, not confidence bounds.
+For the single-reader resident control, `native_b` is slower in all six
+pairs, by 0.451544% through 6.570261%, despite identical code. This unexplained
+directionality is retained explicitly; the control is not noise-free.
+
+The integrated treatment consistently improves its own before version, but
+the experiment cannot allocate the improvement to individual pin, view,
+word, handle, or comparison changes. Driver/header ABI and compiled-layout
+effects are part of the composition. Do not add the earlier profile phase
+deltas, subtract Native drift, or pool this campaign with the rejected/noisy
+isolated experiments. Default Full results above are versus Modern's own
+before, not an unfiltered Native baseline.
+
+Scope remains this shared Windows x64 host/compiler, warmed fixed SST corpus,
+and logical cache budgets, not RSS. No tail-latency, cold-device, mixed/write,
+cross-platform speedup, or single-reader pressure result is claimed.
+
+### Verification and retained evidence
+
+The exact production library additionally matches 1,048,576 unaligned word
+decode cases, 2,097,152 guarded word-store cases, and 49,152 Native block seeks.
+Permanent tests cover exact-size outputs/inputs, cursor/error contracts,
+nonminimal uint64 varints and excess terminal payloads, pin moves/reclamation,
+and exhaustive unsigned comparison signs. Local validation passes 1,110
+unit/public cases, all nineteen Native/extended cases, and thirteen CMake
+consumer checks. All twenty ordinary checks pass at the reviewed source head.
+
+Independent evidence review verifies all 123 raw process records, all sixty
+archive members, original compiler flags, source/header identity, actual
+linked instructions/relocations, the complete paired math, and every A/A
+and adverse observation. No workload is rerun or selected away for review.
+
+Retained artifacts are under
+`build/native-read-attribution/native-parity-integrated`, including
+`inputs.json`, `build-inputs.json`, `compile-commands.json`, `linked-proof.json`,
+`production-oracles.json`, the complete raw process directories, and
+`verification.json`. Build seal:
+`5edf1e4826ca1ae7ddf6c5910c03720737e39e54abb1479afe0025f5780107b4`.
+Campaign seal:
+`1a4de7e29c3794d74eeb5b3cbeed82343d63ee4d57d460c880a59986e36aea25`.
+These identities distinguish this integrated campaign from ADR-0090's
+measurement-only factorials.
