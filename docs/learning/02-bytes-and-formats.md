@@ -44,6 +44,12 @@ fixed32(0x12345678) = 78 56 34 12
 
 The least significant byte comes first.
 
+For an unsigned w-bit value x, byte i contains
+`floor(x / 2^(8*i)) mod 256`. Decoding sums those bytes multiplied by
+`2^(8*i)`. This expansion proves the round trip for values in the model;
+independent golden bytes are still needed to establish that the model
+matches the persistent format.
+
 **Varint encoding** stores seven value bits per byte. The high bit says
 whether another byte follows:
 
@@ -59,9 +65,53 @@ Small lengths usually need only one byte. Large lengths need more.
 Varints are useful for compact lengths and offsets; fixed-width trailers
 are useful when the decoder must find fields directly from a known position.
 
+### Derive the varint length and decoder invariant
+
+Canonical base-128 emission repeatedly takes the low seven bits, sets their
+continuation bit while more payload remains, and divides by 128. Thus:
+
+```text
+canonical bytes(x) = max(1, ceil(bit_length(x) / 7))
+maximum bytes for a w-bit unsigned result = ceil(w / 7)
+```
+
+Zero still needs one terminal byte. These examples are canonical emissions:
+
+<!-- canonical-varint-examples -->
+
+| Value | Hex bytes | Byte count |
+|---|---|---|
+| 0 | `00` | 1 |
+| 127 | `7f` | 1 |
+| 128 | `80 01` | 2 |
+| 300 | `ac 02` | 2 |
+| 16383 | `ff 7f` | 2 |
+| 16384 | `80 80 01` | 3 |
+| 4294967295 | `ff ff ff ff 0f` | 5 |
+
+After consuming i payload groups, the accumulator contains the unsigned
+result-width truncation of
+`sum(payload[j] * 2^(7*j), j=0..i-1)`. The next read must remain within the
+input and the maximum group count. A terminal group completes the result;
+a missing group is truncation, and continuation beyond the maximum is
+overflow.
+
+The compatible decoder accepts nonminimal encodings such as `80 00` for
+zero, and truncates excess terminal payload bits to the result width.
+Do not confuse the canonical encoder's range with a stricter decoder policy:
+nonminimal representations can map to the same value. Continued input past
+the maximum group count remains an error.
+
 Checked `Consume*` helpers update the input view only on success.
 This lets a caller propagate an error without accidentally continuing from
 a partially consumed representation.
+
+This requires a second invariant besides the accumulator: the caller's
+cursor is unchanged until the complete operation succeeds. Decode through
+a local cursor, validate the field or payload, then commit its advancement.
+For `ac 02 55`, consuming a varint yields 300 and leaves `55`; for `80`,
+failure leaves the entire original input. A length-prefixed field must
+commit only after its declared payload also fits.
 
 ## Internal keys
 
@@ -92,6 +142,11 @@ defines internal-key ordering:
 Thus `"color"@42` appears before `"color"@41`.
 Descending history makes a seek at a snapshot land on the newest visible
 entry instead of scanning forward from the oldest one.
+
+The byte layout does not itself implement that order. For one user key,
+ordinary ascending comparison of the trailers for sequences 1 and 2 would
+put 1 first; internal-key ordering requires 2 first. Search must use the same
+numeric-trailer comparator as the writer's sorted representation.
 
 Custom comparators must keep the same identity and ordering semantics on
 every reopen. Renaming a comparator does not migrate already sorted files,
@@ -134,6 +189,11 @@ The operations receive sequences 50 and 51. The batch header stores only
 the starting sequence, not one sequence per record.
 The public application builds the operations; the engine assigns sequences
 when it commits them.
+
+In this example, the header occupies offsets 0 through 11. The Put tag is
+at 12, its key length at 13, key at 14, value length at 15, and value at
+16 through 18. The Delete tag, key length, and key occupy 19, 20, and 21.
+The count describes logical operations, not the number of fields or bytes.
 
 An empty Put value is still a Value record. It is not a deletion.
 Likewise, an empty key is valid.
@@ -198,6 +258,57 @@ use an alignment-safe copy on a little-endian host, with byte assembly on
 other endianness. The persistent representation remains little-endian;
 checked consumers still reject short inputs without advancing their cursor.
 
+## Costs depend on what the operation promises
+
+For a fixed result width, a varint examines at most five or ten bytes.
+For a width parameter allowed to grow, the bound is proportional to its
+number of seven-bit groups. Copying an L-byte key/value costs at least
+proportional byte work; returning a borrowed view does not copy L bytes.
+
+Structural validation can check a declared payload extent and skip it
+without comparing every payload byte. Checksums and copying do examine
+bytes. Do not describe these operations as equal work merely because they
+all return a view over the same data.
+
+## Exercises: derive a representation and its parser
+
+1. Encode 128 as a varint.
+2. Which sorts first: `(a, 7, Value)` or `(a, 9, Deletion)`?
+3. Why is a successful encode/decode round trip insufficient to prove
+   LevelDB format compatibility?
+4. After `WriteBatchReader::Open` validates a batch, should MemTable reparse
+   every tag and length during insertion?
+5. **Derive:** encode 16384 by dividing into seven-bit groups. Explain the
+   extra byte relative to 16383.
+6. **Parser proof:** design a length-prefixed consume operation with a local
+   cursor. Show what happens when its prefix is valid but its payload is
+   one byte short.
+7. **Counterexample:** construct an encoder and decoder that agree with
+   each other but disagree with the fixed32 golden example.
+8. **Transfer:** design a format extension containing an unknown tag and
+   explain whether an old reader can skip it safely. Which framing
+   information is necessary before that policy is possible?
+
+<details>
+<summary>Answers</summary>
+
+1. `80 01`.
+2. Sequence 9's deletion sorts first. Sequence takes precedence over kind.
+3. An encoder and decoder can share the same wrong convention.
+   Independent golden bytes or a reference implementation are needed.
+4. No. The checked boundary establishes the framing invariant; insertion uses
+   the trusted representation while preserving its storage lifetime.
+5. Its groups are 0, 0, and 1, so the bytes are `80 80 01`. Two payload
+   groups hold only fourteen bits.
+6. The result is an error and the caller's cursor remains unchanged.
+   Advancing after the prefix alone breaks the compound consume contract.
+7. Big-endian emission and matching big-endian decoding round-trip, but
+   produce `12 34 56 78` instead of `78 56 34 12`.
+8. A skippable record needs a trusted extent or another unambiguous framing
+   rule. Guessing an unknown payload length cannot safely find the next tag.
+
+</details>
+
 ## Source tour
 
 | Entry point | Interface or symbol | Question to answer | Representative evidence |
@@ -211,24 +322,3 @@ checked consumers still reject short inputs without advancing their cursor.
 Then read [ADR-0012](../adr/0012-internal-key-format.md),
 [ADR-0016](../adr/0016-write-batch-format.md), and the owned-batch decisions
 in [ADR-0060](../adr/0060-leveldb-write-path-parity.md).
-
-## Self-check
-
-1. Encode 128 as a varint.
-2. Which sorts first: `(a, 7, Value)` or `(a, 9, Deletion)`?
-3. Why is a successful encode/decode round trip insufficient to prove
-   LevelDB format compatibility?
-4. After `WriteBatchReader::Open` validates a batch, should MemTable reparse
-   every tag and length during insertion?
-
-<details>
-<summary>Answers</summary>
-
-1. `80 01`.
-2. Sequence 9's deletion sorts first. Sequence takes precedence over kind.
-3. An encoder and decoder can share the same wrong convention.
-   Independent golden bytes or a reference implementation are needed.
-4. No. The checked boundary establishes the framing invariant; insertion uses
-   the trusted representation while preserving its storage lifetime.
-
-</details>
