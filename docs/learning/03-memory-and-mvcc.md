@@ -3,6 +3,8 @@
 [Learning path](README.md) | Next: [WAL and recovery](04-wal-and-recovery.md)
 
 Prerequisite: [internal keys](02-bytes-and-formats.md).
+Use [the reasoning toolkit](00-reasoning-toolkit.md) for the probability
+and invariant arguments below.
 
 ## Lesson map
 
@@ -15,6 +17,18 @@ Prerequisite: [internal keys](02-bytes-and-formats.md).
 | What should you be able to do afterward? | Explain which version a snapshot sees and why readers can traverse while one writer inserts |
 
 ## Why an arena fits a memtable
+
+The abstract component accepts unique versioned records, maintains their
+internal-key order, and finds a lower bound for a prepared target. Reads
+must return the newest visible value/deletion for their sequence, while
+one serialized writer can add records. No node is removed during the
+component's live lifetime. Let n count entries and L bound key bytes.
+
+A sorted array makes search simple but insertion can shift many entries;
+a balanced tree changes shape and needs its own concurrent-reader proof.
+The arena/skip-list combination instead exploits append-only lifetimes and
+immutable published node contents. The following reasoning is conditional
+on those constraints, not a general concurrent-map recipe.
 
 Memtable entries are created together, remain at stable addresses, and are
 reclaimed together when the memtable is no longer needed.
@@ -49,6 +63,27 @@ Alignment makes an address suitable for a type; it does not construct that
 type. Skip-list nodes and their trailing atomic links are explicitly
 constructed in aligned arena storage.
 
+### Analyze the lifetime match, not just allocation speed
+
+The model has append-only allocations whose last borrower leaves before the
+whole memtable is destroyed. Under that condition, bulk reclamation removes
+the need to maintain an individual free operation for each entry.
+
+In a toy sixteen-byte arena block, three five-byte requests use fifteen
+payload bytes while reserving sixteen. A fourth needs another block:
+payload becomes twenty and reservation thirty-two. Alignment padding and
+allocator/owner metadata would add further differences. Reserved bytes and
+live user bytes are not interchangeable units.
+
+For request i with alignment a[i], padding is less than a[i]. Total storage
+must cover payload, padding, and block slack. Bump advancement is constant
+metadata work; acquiring backing memory and touching its pages have their
+own costs. Do not call every allocation constant-time without that model.
+
+The lifetime assumption is essential. An independently freed object or a
+borrower surviving arena destruction requires a different ownership design,
+not a faster bump pointer.
+
 ## The skip list
 
 A skip list is an ordered linked structure with additional shortcut levels:
@@ -60,8 +95,70 @@ level 0: head -> A -> D -> H -> K -> M -> P -> T -> W -> Z
 ```
 
 Search moves forward while it can, then drops to a lower level.
-Random node heights give expected logarithmic search without tree rotations.
-Here the branching factor is four and the maximum height is twelve.
+Random node heights permit expected logarithmic search in the growing-height
+model below, without tree rotations. This implementation has branching
+factor four and maximum height twelve; a fixed cap limits that asymptotic
+claim.
+
+### Derive search and its invariant
+
+Treat the head as smaller than every key:
+
+```text
+node = head
+for level from the highest active level down to zero:
+    while node.next[level] exists and node.next[level].key < target:
+        node = node.next[level]
+return node.next[0]
+```
+
+The returned node is either the first key at least target or absent.
+Maintain that node is the head or a key smaller than target, and every
+level-zero entry at or before it is excluded from the answer. Advancing
+to a smaller next key preserves that claim by sorted order; dropping a
+level excludes nothing new. At level zero, the next entry is the first
+not excluded, and the loop has established that it is not smaller.
+
+Forward moves and the finite number of level drops establish termination.
+This proof assumes sorted links and stable, fully initialized reachable
+nodes. It does not establish concurrent publication; that is a separate
+argument below and in lesson 08.
+
+### Derive expected space and search cost
+
+In an idealized model, promote each node independently with probability
+`0 < p < 1`. A node reaches zero-based level j with probability p^j, so
+linearity of expectation gives n*p^j nodes at that level.
+For n = 1024 and p = 1/4:
+
+<!-- skip-height-model -->
+
+| Level j | Probability of reaching j | Expected nodes |
+|---|---|---|
+| 0 | 1 | 1024 |
+| 1 | 1/4 | 256 |
+| 2 | 1/16 | 64 |
+| 3 | 1/64 | 16 |
+| 4 | 1/256 | 4 |
+| 5 | 1/1024 | 1 |
+
+Each node needs one link per reached level. Summing the geometric series
+gives expected links per node `1/(1-p)`, or 4/3 for p = 1/4 before a cap.
+With cap M it is `(1-p^M)/(1-p)`, excluding the head and allocator overhead.
+
+For search, reason backward through a search path: reaching a predecessor
+that also appears one level higher needs a geometrically bounded number
+of trials, with expected O(1/p) horizontal work per level. When useful
+height grows on the order of `log_(1/p) n`, the resulting expected path
+cost is `O((1/p) * log_(1/p) n)` under the random-height assumptions.
+This is expectation over the shape, not a bound for every possible shape.
+
+A fixed height cap changes the large-n model. The highest level alone has
+expected n*p^(M-1) nodes; a far-right search can traverse them. A useful
+capped bound is `O(n*p^(M-1) + M/p)`. For constant M and p, it is not
+asymptotically logarithmic as n grows without limit. The implementation's
+finite cap is an engineering choice, not a stronger mathematical theorem.
+Variable-length comparisons add their byte cost to these path counts.
 
 The SkipList is an ordered set whose Entry type is a pointer to one packed
 MemTable record. That referenced record contains both the internal key and
@@ -128,6 +225,18 @@ color@40 Value "red"
 For snapshot sequence `S`, seek the first entry for the key with
 `sequence <= S`.
 
+### Why an internal-key lower bound implements visibility
+
+Order one user key's records by decreasing sequence. A target containing
+that user key and sequence S sorts after all its newer records and before
+its older ones. A lower bound therefore skips sequences greater than S
+and reaches the newest eligible record. The resulting user key still needs
+an equality check: the next larger user key is not a value for this one.
+
+If the first eligible record is a deletion, absence is decided immediately.
+Continuing to an older value would violate the logical history definition,
+not merely choose a slower search.
+
 | Visible sequence | First visible entry | Result |
 |---|---|---|
 | 39 | None of these entries | Missing, unless an older source has history |
@@ -148,6 +257,14 @@ New latest reads therefore choose either the pre-batch or post-batch
 boundary, not the artificial boundary between its operations.
 An explicit snapshot also captures a published boundary.
 
+The publication argument has three premises: one serialized commit controls
+the interval, inserted nodes are safely readable, and final sequence
+publication occurs only after all entries are inserted. A reader capturing
+49 ignores even already linked records 50 and 51. A reader capturing 51 can
+encounter both completed insertions. Publishing 51 after inserting only
+record 50 would admit a counterexample: the reader could observe the first
+update but not the second.
+
 This does not make separate reads a transaction:
 
 ```text
@@ -155,7 +272,8 @@ Get("a") -> concurrent batch commits -> Get("b")
 ```
 
 Those calls can choose different latest sequences.
-Use one explicit snapshot when several reads must share a view.
+Use one explicit snapshot or a one-sequence MultiGet when several reads must
+share a view.
 Atomic write batches do not provide conflict detection or read-modify-write
 transaction semantics.
 
@@ -177,6 +295,55 @@ Long-lived snapshots can retain old entries in future compaction outputs.
 Long-lived iterators can retain old source files.
 Both can increase resource use without copying the entire database.
 
+## Exercises: search, probability, and visibility
+
+1. Why can deleting `"color"` not simply remove its newest memtable entry?
+2. Why can a reader safely hold a pointer while another thread inserts?
+3. Does a 4 MiB write buffer imply a strict 4 MiB database memory limit?
+4. What must retain the arena if a lookup or iterator uses a packed-entry
+   pointer after the database mutex is released?
+5. **Derive:** reproduce the height table and expected link count. Does
+   summing expectations require independence? Which other step does?
+6. **Limit:** can the twelve-level implementation promise expected O(log n)
+   for arbitrarily large n? State the missing growth assumption.
+7. **Proof:** for records at sequences 42, 41, and 40, explain every entry
+   excluded by a lower bound at S = 40. What if it reaches another user key?
+8. **Counterexample:** move batch sequence publication before its final
+   insertion. Give a read interleaving violating atomic visibility.
+9. **Transfer:** suppose nodes can be removed while readers traverse.
+   Which premise of the concurrency/lifetime proof is lost? Does release
+   publication alone solve reclamation?
+
+<details>
+<summary>Answers</summary>
+
+1. Older values may exist in other sources, and snapshots may need them.
+   A tombstone hides them for newer readers.
+2. The writer publishes initialized nodes, nodes do not move or disappear,
+   and a retained memtable keeps the arena alive. The publication details
+   are covered in lesson 08.
+3. No. There can be mutable and immutable memtables, retained readers,
+   caches, metadata, and allocation slack. Rotation also checks usage at
+   write boundaries rather than enforcing an allocation cap.
+4. An owner must keep the MemTable and Arena alive. The engine's read-pin
+   protocol retains a rotated table while its count is nonzero; a standalone
+   counter pin does not itself own the table.
+5. Reaching level j requires j promotions; its expected population is
+   1024/4^j. Adding indicator expectations does not need independence;
+   multiplying promotion probabilities does. Expected link count sums the
+   height tail, not logarithms of node counts.
+6. No. Growing-height analysis needs enough levels. With a fixed cap,
+   highest-level traversal eventually dominates.
+7. Newer records sort before the target. The first same-key record at most
+   S decides the value/deletion; another user key means no eligible record
+   was found in this source.
+8. A reader captures the new final sequence between the two insertions and
+   misses the not-yet-inserted member of the batch.
+9. Stable lifetime is lost. Publication orders initialization but does not
+   prevent a later free while an existing reader still uses the node.
+
+</details>
+
 ## Source tour
 
 | Entry point | Interface or symbol | Question to answer | Representative evidence |
@@ -191,27 +358,3 @@ Both can increase resource use without copying the entire database.
 For design history, read [ADR-0015](../adr/0015-concurrent-skiplist.md),
 [ADR-0017](../adr/0017-arena-backed-memtable.md), and the memory invariants
 in [ADR-0060](../adr/0060-leveldb-write-path-parity.md).
-
-## Self-check
-
-1. Why can deleting `"color"` not simply remove its newest memtable entry?
-2. Why can a reader safely hold a pointer while another thread inserts?
-3. Does a 4 MiB write buffer imply a strict 4 MiB database memory limit?
-4. What must retain the arena if a lookup or iterator uses a packed-entry
-   pointer after the database mutex is released?
-
-<details>
-<summary>Answers</summary>
-
-1. Older values may exist in other sources, and snapshots may need them.
-   A tombstone hides them for newer readers.
-2. The writer publishes initialized nodes, nodes do not move or disappear,
-   and a retained memtable keeps the arena alive. The publication details
-   are covered in lesson 08.
-3. No. There can be mutable and immutable memtables, retained readers,
-   caches, metadata, and allocation slack. Rotation also checks usage at
-   write boundaries rather than enforcing an allocation cap.
-4. A MemTable owner or read pin must keep the MemTable, and therefore its
-   Arena, alive until the borrowed pointer is no longer used.
-
-</details>
