@@ -268,7 +268,12 @@ TEST(ClockBlockCacheTest, ActualMetadataAllowanceBoundsTinyChargedAdmissions) {
 }
 
 TEST(ClockBlockCacheTest, ErasedPinsExhaustPoolStorageWithoutRetainingIndexedOwners) {
-    ClockBlockCache cache(16 * 4096);
+    struct OwningCache {
+        // The complete owner includes inactive storage, just like the typed facade.
+        std::array<std::byte, 4096> inactive{};
+        ClockBlockCache cache{16 * 4096, clock_cache_detail::OwnerFootprint{sizeof(OwningCache)}};
+    } owner;
+    auto& cache = owner.cache;
     std::vector<ClockBlockCache::Handle> retained;
     retained.reserve(128);
     bool declined = false;
@@ -328,6 +333,36 @@ TEST(ClockBlockCacheTest, EightPinnedCanonicalPositionsDeclineReservationWithout
     EXPECT_EQ(cache.total_charge(), 8 * Charge);
     for (std::size_t index = 0; index < retained.size(); ++index) {
         EXPECT_EQ(TextOf(retained[index]), std::to_string(index));
+    }
+}
+
+TEST(ClockBlockCacheTest, UnpinnedReplacementReusesAFullCanonicalPoolWithoutGrowing) {
+    constexpr std::size_t Charge = 4096;
+    ClockBlockCache cache(16 * 8 * Charge);
+    for (std::uint32_t index = 0; index < 8; ++index) {
+        ASSERT_TRUE(
+            cache.Insert(CollidingKey(index), ValueOf(std::to_string(index)), Charge).has_value());
+    }
+    ASSERT_EQ(cache.GetStats().pooled_slots, 8U);
+    ASSERT_EQ(cache.GetStats().indexed_entries, 8U);
+    clock_cache_detail::Slot* position = nullptr;
+    {
+        const auto old = cache.Lookup(CollidingKey(0));
+        ASSERT_TRUE(old.has_value());
+        position = ClockBlockCacheTestPeer::Position(*old);
+    }
+    auto replacement = cache.Insert(CollidingKey(0), ValueOf("replacement"), Charge);
+    ASSERT_TRUE(replacement.has_value());
+    EXPECT_EQ(ClockBlockCacheTestPeer::Position(*replacement), position);
+    EXPECT_EQ(TextOf(*replacement), "replacement");
+    EXPECT_EQ(cache.GetStats().pooled_slots, 8U);
+    EXPECT_EQ(cache.GetStats().indexed_entries, 8U);
+    EXPECT_EQ(cache.GetStats().admission_rejections, 0U);
+    EXPECT_EQ(cache.total_charge(), 8 * Charge);
+    for (std::uint32_t index = 1; index < 8; ++index) {
+        const auto found = cache.Lookup(CollidingKey(index));
+        ASSERT_TRUE(found.has_value());
+        EXPECT_EQ(TextOf(*found), std::to_string(index));
     }
 }
 

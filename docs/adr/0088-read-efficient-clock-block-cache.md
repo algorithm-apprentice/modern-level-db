@@ -552,3 +552,22 @@ force-inline flags or a zero-overhead claim. The 323-byte no-wrapper-call
 inspection belongs to v1, not the final candidate. Fresh measurements include
 the actual extra call and any instruction-cache effect. Implementation review
 approves the scalar continuation's correctness, not its performance.
+
+The revised source's second coverage report leaves only two resource branches:
+the storage-only side of Fits, and unpinned replacement when the canonical
+free list is empty. Complete these with tests, not another production change.
+The erased-pin fixture owns a real 4 KiB inactive member and passes the
+complete containing object's size, as the facade does. The replacement case
+fills eight positions without pins, replaces an existing key in place, and
+checks pool size, all other values and charge. Independent implementation
+review approves these valid owner/pool schedules; authoritative coverage is
+still required.
+
+The current tests pass 1,104 unit-label cases; the revised production source
+also passed 19 extended cases and strict GCC checks. Actual final Get and
+maintenance PE images match the inspected COFF caller (130 bytes), outlined
+LookupInRoot (317 bytes) and real handle destructor (73 bytes). Only the
+reviewed wrapper boundary remains; pin/drop stage and allocation calls do not.
+The distinct v2 preflight passes all 50 cases and reproduces every phase
+vector of all 18 v1 policy replays. Final v2 timing and exact-head CI still
+determine admission.
