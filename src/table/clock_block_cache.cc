@@ -19,18 +19,24 @@
 #include "table/clock_block_cache_protocol.h"
 
 namespace modern_leveldb::clock_cache_detail {
+
+void RecordPeakFromObservation(std::atomic<std::size_t>& peak, std::size_t observed,
+                               std::size_t value) noexcept {
+    while (observed < value &&
+           !peak.compare_exchange_weak(observed, value, std::memory_order_relaxed)) {
+    }
+}
+
 namespace {
 
 constexpr std::size_t SegmentSlots = 8;
-constexpr std::size_t PinAttempts = 8;
+constexpr std::size_t InitialBuckets = 8;
+constexpr std::size_t MinimumMetadataAllowance = 64 * 1024;
 constexpr std::size_t Shards = ShardedLruCacheCore::ShardCount;
 using Key = ClockBlockCache::Key;
 
 void RecordPeak(std::atomic<std::size_t>& peak, std::size_t value) noexcept {
-    auto previous = peak.load(std::memory_order_relaxed);
-    while (previous < value &&
-           !peak.compare_exchange_weak(previous, value, std::memory_order_relaxed)) {
-    }
+    RecordPeakFromObservation(peak, peak.load(std::memory_order_relaxed), value);
 }
 
 }  // namespace
@@ -48,7 +54,7 @@ struct Diagnostics {
     void Retain() noexcept { refs.fetch_add(1, std::memory_order_relaxed); }
     void Release() noexcept {
         if (refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            delete this;
+            delete this;  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 nonnull Release receiver
         }
     }
 };
@@ -89,7 +95,7 @@ void DeleteEntry(Entry* entry) noexcept {
     auto* diagnostics = entry->accounting;
     const auto bytes = entry->external_bytes;
     const auto standalone = entry->counted_standalone;
-    delete entry;
+    delete entry;  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 owned entry was already dereferenced
     if (diagnostics != nullptr) {
         auto& current = standalone ? diagnostics->standalone : diagnostics->erased;
         current.fetch_sub(bytes, std::memory_order_relaxed);
@@ -168,6 +174,12 @@ struct Shard {
     void RetireWriting(Slot& slot, Retired& retired) noexcept;
 };
 
+static_assert(sizeof(std::atomic<Slot*>) >= 2);
+static_assert(sizeof(Entry) + sizeof(Block) >= 2 * sizeof(std::atomic<Slot*>));
+static_assert(sizeof(Index) + InitialBuckets * sizeof(std::atomic<Slot*>) <=
+              MinimumMetadataAllowance / Shards);
+static_assert(SegmentSlots * sizeof(Slot) <= MinimumMetadataAllowance / Shards);
+
 std::size_t Shard::StorageBytes(const Growth* growth) const noexcept {
     auto bytes = fixed_bytes + slot_count() * sizeof(Slot);
     for (const auto& root : roots) {
@@ -201,12 +213,11 @@ bool Shard::Fits(const Growth& growth, std::size_t resident) const noexcept {
 
 bool Shard::Prepare(Growth& growth, std::size_t resident, bool need_segment) {
     const auto* current = index.load(std::memory_order_acquire);
-    const auto buckets = current == nullptr                     ? std::size_t{8}
+    const auto buckets = current == nullptr                     ? InitialBuckets
                          : resident > current->bucket_count / 2 ? current->bucket_count * 2
                                                                 : current->bucket_count;
-    if (buckets > (allowance - std::min(allowance, sizeof(Index))) / sizeof(std::atomic<Slot*>)) {
-        return false;
-    }
+    // Allocated roots establish representable doubling. At half load the existing
+    // resident-owner account also bounds one doubled root; Fits checks the full proposal.
     if (current == nullptr || buckets != current->bucket_count) {
         growth.index = std::make_unique<Index>(buckets);
         if (roots.size() == roots.capacity()) {
@@ -214,9 +225,6 @@ bool Shard::Prepare(Growth& growth, std::size_t resident, bool need_segment) {
         }
     }
     if (need_segment) {
-        if (SegmentSlots * sizeof(Slot) > allowance) {
-            return false;
-        }
         growth.segment = std::make_unique<Slot[]>(SegmentSlots);
         for (std::size_t position = 0; position < SegmentSlots; ++position) {
             growth.segment[position].shard = this;
@@ -295,19 +303,18 @@ Slot* Shard::Find(Key key, std::uint32_t hash) const noexcept {
         return nullptr;
     }
     auto bucket = hash & current->mask;
-    for (std::size_t probe = 0; probe < current->bucket_count; ++probe) {
+    // Under the writer mutex only Live mappings remain, and live+tombstones <= 3B/4.
+    for (;;) {
         auto* slot = current->buckets[bucket].load(std::memory_order_acquire);
         if (slot == nullptr) {
             return nullptr;
         }
         if (slot != &tombstone && slot->hash == hash &&
-            (slot->metadata.load(std::memory_order_acquire) & StateMask) == Live &&
             std::memcmp(slot->key.data(), key.data(), key.size()) == 0) {
             return slot;
         }
         bucket = (bucket + 1) & current->mask;
     }
-    return nullptr;
 }
 
 void Shard::IndexSlot(Slot& slot) noexcept {
@@ -388,26 +395,16 @@ Slot* Shard::ReserveVictim(Retired& retired, std::size_t& scan_budget) noexcept 
         --scan_budget;
         auto& slot = Position(clock_hand);
         clock_hand = clock_hand + 1 == count ? 0 : clock_hand + 1;
-        auto previous = slot.metadata.load(std::memory_order_acquire);
-        if ((previous & StateMask) == Erased && previous / OnePin == 0) {
-            slot.metadata.exchange(Writing, std::memory_order_acq_rel);
+        const auto claim =
+            ClaimObservedPosition(slot, slot.metadata.load(std::memory_order_acquire));
+        if (claim == PositionClaim::LiveClaim) {
+            RetireWriting(slot, retired);
+            return &slot;
+        }
+        if (claim == PositionClaim::ErasedClaim) {
             retired.Push(*slot.owner);
             slot.owner = nullptr;
             slot.value = nullptr;
-            return &slot;
-        }
-        if (previous / OnePin != 0 || (previous & StateMask) != Live) {
-            continue;
-        }
-        if ((previous & Visited) != 0) {
-            static_cast<void>(slot.metadata.compare_exchange_strong(previous, previous & ~Visited,
-                                                                    std::memory_order_acq_rel,
-                                                                    std::memory_order_acquire));
-            continue;
-        }
-        if (slot.metadata.compare_exchange_strong(previous, Writing, std::memory_order_acq_rel,
-                                                  std::memory_order_acquire)) {
-            RetireWriting(slot, retired);
             return &slot;
         }
     }
@@ -415,16 +412,7 @@ Slot* Shard::ReserveVictim(Retired& retired, std::size_t& scan_budget) noexcept 
 }
 
 bool TryPin(Slot& slot) noexcept {
-    auto previous = slot.metadata.load(std::memory_order_acquire);
-    for (std::size_t attempt = 0; attempt < PinAttempts; ++attempt) {
-        if ((previous & StateMask) != Live) {
-            return false;
-        }
-        if (PinOnce(slot, previous)) {
-            return true;
-        }
-    }
-    return false;
+    return PinFromObservation(slot, {slot.metadata.load(std::memory_order_acquire), PinAttempts});
 }
 
 Shard* DropPin(Slot& slot) noexcept {
@@ -460,7 +448,7 @@ void Release(Slot& slot) noexcept {
 
 struct State {
     State(std::size_t capacity, std::size_t owner_bytes)
-        : allowance(std::max<std::size_t>(64 * 1024, capacity / 4)) {
+        : allowance(std::max(MinimumMetadataAllowance, capacity / 4)) {
         // Shard containers may throw; the remaining configuration does not.
         diagnostics = new Diagnostics;
         const auto fixed =
@@ -626,8 +614,14 @@ std::optional<ClockBlockCache::Handle> ClockBlockCache::LookupInRoot(
     if (index == nullptr) {
         return std::nullopt;
     }
-    auto bucket = root.hash & index->mask;
-    for (std::size_t probe = 0; probe < index->bucket_count; ++probe) {
+    return LookupFromPosition(root, key, index->bucket_count);
+}
+
+std::optional<ClockBlockCache::Handle> ClockBlockCache::LookupFromPosition(
+    const clock_detail::LookupRoot& root, Key key, std::size_t remaining) {
+    const auto* index = root.index;
+    auto bucket = (root.hash + (index->bucket_count - remaining)) & index->mask;
+    for (std::size_t probe = 0; probe < remaining; ++probe) {
         auto* slot = index->buckets[bucket].load(std::memory_order_acquire);
         if (slot == nullptr) {
             return std::nullopt;

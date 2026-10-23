@@ -19,6 +19,7 @@ inline constexpr std::uint64_t Live = 2;
 inline constexpr std::uint64_t Erased = 3;
 inline constexpr std::uint64_t Visited = 4;
 inline constexpr std::uint64_t OnePin = 8;
+inline constexpr std::size_t PinAttempts = 8;
 
 struct Shard;
 struct Entry;
@@ -61,6 +62,16 @@ struct LookupRoot {
     std::uint32_t hash;
 };
 
+// Continues a possibly stale observation without restarting consumed attempts.
+struct PinObservation {
+    std::uint64_t word;
+    std::size_t remaining;
+};
+
+// The observed peak came from an earlier load; intervening publishers only raise it.
+void RecordPeakFromObservation(std::atomic<std::size_t>& peak, std::size_t observed,
+                               std::size_t value) noexcept;
+
 // TryPin and the deterministic peer establish a Live observed word first.
 // Success owns a pin before field access; failure refreshes the observation.
 [[nodiscard]] inline bool PinOnce(Slot& slot, std::uint64_t& observed) noexcept {
@@ -68,6 +79,44 @@ struct LookupRoot {
     const auto pinned = (observed + OnePin) | Visited;
     return slot.metadata.compare_exchange_strong(observed, pinned, std::memory_order_acquire,
                                                  std::memory_order_relaxed);
+}
+
+// The caller supplies at most PinAttempts remaining. Success owns one new pin.
+[[nodiscard]] inline bool PinFromObservation(Slot& slot, PinObservation observation) noexcept {
+    for (std::size_t attempt = 0; attempt < observation.remaining; ++attempt) {
+        if ((observation.word & StateMask) != Live) {
+            return false;
+        }
+        if (PinOnce(slot, observation.word)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+enum class PositionClaim { Skipped, LiveClaim, ErasedClaim };
+
+// Writer exclusivity covers this transition and the caller's retirement.
+// LiveClaim still needs index/charge removal; ErasedClaim is already invalidated.
+[[nodiscard]] inline PositionClaim ClaimObservedPosition(Slot& slot,
+                                                         std::uint64_t observed) noexcept {
+    if ((observed & StateMask) == Erased && observed / OnePin == 0) {
+        slot.metadata.exchange(Writing, std::memory_order_acq_rel);
+        return PositionClaim::ErasedClaim;
+    }
+    if (observed / OnePin != 0 || (observed & StateMask) != Live) {
+        return PositionClaim::Skipped;
+    }
+    if ((observed & Visited) != 0) {
+        static_cast<void>(slot.metadata.compare_exchange_strong(
+            observed, observed & ~Visited, std::memory_order_acq_rel, std::memory_order_acquire));
+        return PositionClaim::Skipped;
+    }
+    if (slot.metadata.compare_exchange_strong(observed, Writing, std::memory_order_acq_rel,
+                                              std::memory_order_acquire)) {
+        return PositionClaim::LiveClaim;
+    }
+    return PositionClaim::Skipped;
 }
 
 // The caller owns a successfully acquired pin through both comparisons.

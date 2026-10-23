@@ -92,6 +92,9 @@ private:
     [[nodiscard]] clock_cache_detail::LookupRoot AcquireLookupRoot(Key key) const;
     [[nodiscard]] static std::optional<Handle> LookupInRoot(
         const clock_cache_detail::LookupRoot& root, Key key);
+    // The same nonnull root and remaining <= bucket_count determine the next bucket.
+    [[nodiscard]] static std::optional<Handle> LookupFromPosition(
+        const clock_cache_detail::LookupRoot& root, Key key, std::size_t remaining);
 
     std::unique_ptr<clock_cache_detail::State> state_;
 };

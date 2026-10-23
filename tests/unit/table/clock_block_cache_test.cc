@@ -60,9 +60,10 @@ public:
                                                                ClockBlockCache::Key key) {
         return ClockBlockCache::LookupInRoot(root, key);
     }
-    static std::optional<ClockBlockCache::Handle> ContinueLookup(
-        const Root& root, ClockBlockCache::Key key, clock_cache_detail::ProbePosition position) {
-        return ClockBlockCache::LookupFromPosition(root, key, position);
+    static std::optional<ClockBlockCache::Handle> ContinueLookup(const Root& root,
+                                                                 ClockBlockCache::Key key,
+                                                                 std::size_t remaining) {
+        return ClockBlockCache::LookupFromPosition(root, key, remaining);
     }
     static std::optional<ClockBlockCache::Handle> ContinuePin(
         Slot& slot, clock_cache_detail::PinObservation observation) {
@@ -608,16 +609,14 @@ TEST(ClockBlockCacheProtocolTest, ProbeContinuationKeepsItsRealRootAndConsumesIt
         final_bucket = bucket;
     }
     EXPECT_GT(cache.GetStats().index_refreshes, before.index_refreshes);
-    EXPECT_FALSE(
-        ClockBlockCacheTestPeer::ContinueLookup(root, query, {final_bucket, 1}).has_value());
+    EXPECT_EQ(final_bucket, (root.hash + root.index->bucket_count - 1) & root.index->mask);
+    EXPECT_FALSE(ClockBlockCacheTestPeer::ContinueLookup(root, query, 1).has_value());
     ASSERT_TRUE(cache.Insert(query, ValueOf("query"), 1).has_value());
     const auto found = cache.Lookup(query);
     ASSERT_TRUE(found.has_value());
     auto* slot = ClockBlockCacheTestPeer::Position(*found);
     const auto word = slot->metadata.load(std::memory_order_acquire);
-    EXPECT_FALSE(
-        ClockBlockCacheTestPeer::ContinueLookup(root, query, {root.hash & root.index->mask, 0})
-            .has_value());
+    EXPECT_FALSE(ClockBlockCacheTestPeer::ContinueLookup(root, query, 0).has_value());
     EXPECT_EQ(slot->metadata.load(std::memory_order_acquire), word);
     EXPECT_EQ(TextOf(*found), "query");
 }

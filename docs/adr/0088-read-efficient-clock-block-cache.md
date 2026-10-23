@@ -265,9 +265,10 @@ Never carry a detached Entry or unpinned payload pointer across that gap.
 The test peer may consume a lease into such a pending cleanup, but must finish
 that cleanup before cache destruction, including on assertion unwinding.
 These boundaries add no production runtime hook, alternate read algorithm,
-allocation, metadata field or policy option. Confirm the optimized linked
-Lookup/normal Release do not acquire additional helper-call or allocation
-overhead; the private source factoring alone is not evidence of that result.
+allocation, metadata field or policy option. The initial protocol-factoring
+gate required no added linked Lookup/normal Release helper or allocation calls;
+the final scalar refinement explicitly amends the single-call boundary below.
+Private source factoring alone is not evidence of either result.
 Independent architecture re-review approved these boundaries, not their
 implementation, facade, default selection or performance.
 
@@ -377,7 +378,7 @@ both policies' allocation-free lookup/release checks, exhaustive constructor
 allocation failures and two real databases sharing/reopening each policy.
 These establish contracts, not a performance result.
 
-Optimized protocol inspection found no surviving stage-helper calls in the
+Historical v1 optimized protocol inspection found no surviving stage-helper calls in the
 actual linked Lookup and handle destructor. Their observed bodies were
 323 and 73 bytes, versus 275 and 24 before factoring; unused Release/Reset
 functions were removed by the linker. Do not claim byte identity, zero
@@ -497,8 +498,9 @@ that reader is still retained. Do not turn this into an unpinned payload
 observation.
 
 Continue the actual probe loop with the same acquired root/key, next bucket
-and remaining probes. Production starts at `hash & mask` with `bucket_count`
-remaining. Couple progress to consumed probes; never reload a different root
+and remaining probes. Pass only the remaining count and derive the bucket
+as `(hash + bucket_count - remaining) & mask`, coupling progress by construction.
+Production starts at `hash & mask` with `bucket_count` remaining. Never reload a different root
 or mask. Tests use a real acquired root and production admission/erase/refresh
 to establish successive nonempty observations, ending at a real tombstone
 with one probe left. Zero remaining performs no bucket load or pin. A
@@ -536,3 +538,17 @@ no real contention, allocation, budget or probe path.
 Require test-first implementation, independent implementation review,
 actual linked hot-path inspection, ordinary coverage/sanitizer gates and a
 fresh complete 180-process campaign for the revised production code.
+Independent architecture re-review approved the scalar remaining-count
+refinement after the aggregate progress interface left a real optimized
+wrapper call. Approval is not an inlining guarantee; preserve original
+Lookup-to-LookupInRoot routing and inspect the actual revised linked image.
+
+The scalar refinement still leaves one CLOCK-only Lookup-to-LookupInRoot call
+in optimized MSVC output. Independent architecture review explicitly amends the
+initial no-added-call gate for this one shared, auditable loop boundary.
+Inspect both caller and callee in the final Get/maintenance PE images; this
+does not permit new allocation, Pin/Drop-stage calls, duplicated algorithms,
+force-inline flags or a zero-overhead claim. The 323-byte no-wrapper-call
+inspection belongs to v1, not the final candidate. Fresh measurements include
+the actual extra call and any instruction-cache effect. Implementation review
+approves the scalar continuation's correctness, not its performance.
