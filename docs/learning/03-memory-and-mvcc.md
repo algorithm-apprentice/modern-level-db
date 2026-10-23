@@ -227,11 +227,30 @@ For snapshot sequence `S`, seek the first entry for the key with
 
 ### Why an internal-key lower bound implements visibility
 
-Order one user key's records by decreasing sequence. A target containing
-that user key and sequence S sorts after all its newer records and before
-its older ones. A lower bound therefore skips sequences greater than S
-and reaches the newest eligible record. The resulting user key still needs
-an equality check: the next larger user key is not a value for this one.
+Order one user key's records by decreasing sequence, then decreasing kind.
+Construct the target `(user key, S, Value)`: Value=1 is the greatest supported
+kind, above Deletion=0. The target sorts after all newer records and before
+all older ones. At sequence S it equals a Value record and precedes a
+Deletion record, so neither eligible kind is skipped.
+
+A lower bound therefore reaches the newest eligible record. The resulting
+user key still needs an equality check: the next larger user key is not a
+value for this one.
+
+The kind is a necessary premise, not an incidental encoding detail.
+For a separate history containing `color@40 Value` and `color@39 Value`,
+compare targets at S=40. Trailers pack `(sequence << 8) | kind` and compare
+numerically in descending order:
+
+<!-- mvcc-seek-kind-example -->
+
+| Target kind | Packed target trailer | First found sequence |
+|---|---|---|
+| Value | 10241 | 40 |
+| Deletion | 10240 | 39 |
+
+The wrong Deletion target sorts after the visible Value at 40 and misses it.
+Sequence alone does not define the required lower-bound position.
 
 If the first eligible record is a deletion, absence is decided immediately.
 Continuing to an older value would violate the logical history definition,
@@ -313,6 +332,9 @@ Both can increase resource use without copying the entire database.
 9. **Transfer:** suppose nodes can be removed while readers traverse.
    Which premise of the concurrency/lifetime proof is lost? Does release
    publication alone solve reclamation?
+10. **Boundary:** reconstruct the seek-kind table from numeric trailers.
+    Why would adding a new kind above Value require reconsidering the seek
+    target rather than only extending the enum?
 
 <details>
 <summary>Answers</summary>
@@ -335,12 +357,15 @@ Both can increase resource use without copying the entire database.
 6. No. Growing-height analysis needs enough levels. With a fixed cap,
    highest-level traversal eventually dominates.
 7. Newer records sort before the target. The first same-key record at most
-   S decides the value/deletion; another user key means no eligible record
-   was found in this source.
+   S decides the value/deletion because the target uses the greatest supported
+   kind; another user key means no eligible record was found in this source.
 8. A reader captures the new final sequence between the two insertions and
    misses the not-yet-inserted member of the batch.
 9. Stable lifetime is lost. Publication orders initialization but does not
    prevent a later free while an existing reader still uses the node.
+10. At 40, the Value trailer is 10241 and Deletion is 10240. Descending order
+    puts Value first. A newly supported greater kind would also sort before
+    the old target at equal sequence and could be skipped.
 
 </details>
 
@@ -351,6 +376,7 @@ Both can increase resource use without copying the entire database.
 | [`arena.cc`](../../src/memory/arena.cc) | `Arena::Allocate`, aligned allocation | What lifetime and accounting does one allocation join? | [`arena_test.cc`](../../tests/unit/memory/arena_test.cc) |
 | [`skiplist.h`](../../src/memory/skiplist.h) | `Insert`, search, iterator | What does the single writer establish before release publication? | [`skiplist_test.cc`](../../tests/unit/memory/skiplist_test.cc) |
 | [`memtable.cc`](../../src/memory/memtable.cc) | `Add`, `Lookup`, `Iterator`, read pin | How does one packed entry support snapshots and deletions? | [`memtable_test.cc`](../../tests/unit/memory/memtable_test.cc) |
+| [`internal_key.h`](../../src/format/internal_key.h) | `SeekValueKind`, `LookupKey::Create` | Why must the target include the greatest supported kind? | [`internal_key_test.cc`](../../tests/unit/format/internal_key_test.cc) |
 | [`database_write.cc`](../../src/engine/database_write.cc) | `CommitWrite` | When does a completed MemTable mutation become visible? | [`database_write_test.cc`](../../tests/unit/engine/database_write_test.cc) |
 | [`snapshot_registry.h`](../../src/engine/snapshot_registry.h) | opaque linked registration, release, oldest sequence | How do duplicate snapshots keep distinct nodes and the oldest visible sequence? | [`snapshot_registry_test.cc`](../../tests/unit/engine/snapshot_registry_test.cc) |
 | [`database_read.cc`](../../src/engine/database_read.cc) | `GetSnapshot`, `ReleaseSnapshot` | Which sequence keeps old state visible to a reader? | [`public_api_native_test.cc`](../../tests/unit/api/public_api_native_test.cc) |

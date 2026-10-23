@@ -1,3 +1,4 @@
+import bisect
 from fractions import Fraction
 import itertools
 import math
@@ -106,6 +107,24 @@ class CourseWorkedExamplesTest(unittest.TestCase):
         for level, probability, expected_nodes in rows:
             self.assertEqual(Fraction(probability), Fraction(1, 4 ** int(level)))
             self.assertEqual(Fraction(expected_nodes), 1024 * Fraction(probability))
+
+    def test_mvcc_seek_kind_includes_a_value_at_the_exact_snapshot(self):
+        rows = table_rows("03-memory-and-mvcc.md", "mvcc-seek-kind-example")
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([row[0] for row in rows], ["Value", "Deletion"])
+        sequences = (40, 39)
+        ordered = sorted(-((sequence << 8) | 1) for sequence in sequences)
+        expected_visible = max(sequence for sequence in sequences if sequence <= 40)
+        for kind, packed, first_sequence in rows:
+            tag = {"Value": 1, "Deletion": 0}[kind]
+            self.assertEqual(int(packed), (40 << 8) | tag)
+            index = bisect.bisect_left(ordered, -int(packed))
+            actual_sequence = (-ordered[index]) >> 8
+            self.assertEqual(actual_sequence, int(first_sequence))
+            if kind == "Value":
+                self.assertEqual(actual_sequence, expected_visible)
+            else:
+                self.assertNotEqual(actual_sequence, expected_visible)
 
     def test_durability_cuts_separate_guarantees_from_unsynced_possibility(self):
         rows = table_rows("04-wal-and-recovery.md", "install-crash-cuts")
