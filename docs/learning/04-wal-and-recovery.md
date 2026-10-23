@@ -17,6 +17,21 @@ Prerequisites: [formats](02-bytes-and-formats.md) and
 
 ## Visibility is not durability
 
+### Model the failure before promising recovery
+
+Assume an exclusively owned database directory and the supported backend's
+documented synchronization behavior. A process crash loses process-owned
+buffers; a modeled power loss can additionally lose unsynchronized bytes
+and names. A completed file barrier and a completed directory barrier
+protect different state. Unsynchronized data may already have persisted:
+"not guaranteed" does not mean "definitely absent."
+
+The argument does not cover arbitrary device failure, undetected checksum
+collisions, external file mutation, or a filesystem violating its advertised
+contract. Windows weak-namespace mode deliberately supplies a weaker model.
+Every theorem-like durability statement below is conditional on these
+assumptions, not on the mere presence of a `Sync` method.
+
 A value can be readable in memory while its durable representation is
 still incomplete. It can also reach durable storage before its caller
 receives success.
@@ -86,6 +101,25 @@ The engine records a sticky first error rather than continuing later
 writes on the assumption that nothing happened.
 An error is not a promise that the attempted batch is absent after recovery.
 
+### Prove the acknowledged-sync property by dependency order
+
+For a successful synchronized write, the complete logical batch reaches its
+WAL content barrier before the engine publishes its final sequence and
+returns success. The necessary WAL name barrier belongs to the surrounding
+creation policy. Recovery either replays that complete batch or finds its
+history in already installed tables; it must not depend on a partial batch.
+
+Cut before acknowledgement and an update may already be durable, so recovery
+can include an operation whose caller never received success. Cut after an
+asynchronous acknowledgement and the content barrier may not have happened,
+so the same survival claim does not follow. The distinction is part of the
+specification, not a failure of the write-ahead argument.
+
+An early-publication counterexample is simpler: link the memtable record,
+publish its sequence, then fail before logging it. A reader can observe a
+state for which recovery has no required representation. Publishing later
+does not repair what the reader already observed.
+
 ## Logical records and physical fragments
 
 One logical WAL record carries a complete write batch. The file consists
@@ -110,6 +144,21 @@ block 1: Last  header (7) + payload (8199)  =  8206 bytes
 
 The reader returns a batch only after reconstructing the complete logical
 record. It cannot apply the first fragment as a partial batch.
+
+Starting a nonempty P-byte record exactly at a block boundary, each fragment
+can carry at most B-H bytes, with B = 32768 and H = 7. In this simplified
+starting-position model:
+
+```text
+F = ceil(P / (B-H))
+stored record bytes = P + F*H
+```
+
+For the 40-KiB example, F = 2 and stored bytes are 40974. An arbitrary initial
+block offset can introduce padding or different fragmentation; do not apply
+this exact count without its starting-position assumption. Parsing,
+checksumming, and worst-case reconstruction perform work proportional to
+the bytes processed, not just the number of logical batches.
 
 Two compatibility details are worth noticing:
 
@@ -277,6 +326,96 @@ File cleanup must never run ahead of a certain durable installation.
 After an uncertain metadata failure, the engine stops mutation and
 obsolete-file cleanup instead of guessing.
 
+### Worked failure cuts: guarantees are not observed persistence
+
+For this illustration, append to an already selected MANIFEST; do not switch
+CURRENT. Assume the old topology is recoverable and a prefix-loss model in
+which the new edit is absent, tolerably truncated, or complete, rather than
+arbitrarily corrupted. The table describes successful replay under that
+model. Arbitrary metadata corruption can instead be a recovery error.
+
+In a guarantee column, **no means not guaranteed**, not definitely lost:
+
+<!-- install-crash-cuts -->
+
+| Last completed stage | Output contents guaranteed | Output name guaranteed | Edit guaranteed | Permitted recovered topology |
+|---|---|---|---|---|
+| Output written | no | no | no | old |
+| Output synced | yes | no | no | old |
+| Output name synced | yes | yes | no | old |
+| Edit appended | yes | yes | no | old or new |
+| Edit synced | yes | yes | yes | new |
+
+Before the edit exists, a persisted output is an orphan, not a live table.
+After an unsynced append, a complete edit may already have persisted.
+After the edit barrier, every newly referenced output has the contents and
+name guarantees required for new-topology recovery.
+
+The invariant is a dependency, not just a list of calls:
+
+```text
+durable authoritative reference
+    implies referenced contents and names are recoverable
+```
+
+Reversing the output-name and metadata barriers gives a counterexample:
+recovery selects a complete edit but cannot open its missing output name.
+Pinning the old in-memory Version cannot repair that persistent dependency.
+
+## Exercises: enumerate failures and prove an installation
+
+1. Does `Flush` mean an acknowledged write must survive power loss?
+2. Why can a table exist on disk but not belong to the recovered database?
+3. Why is an in-flight sync batch allowed to appear after a crash even
+   though its caller never received success?
+4. If closing the old WAL throws during rotation, should the engine install
+   the replacement log and memtable?
+5. Why does VersionSet allocate the candidate owner and reserve tracking
+   capacity before releasing the database mutex for MANIFEST I/O?
+6. Can cleanup delete every file absent from the newly published current
+   Version?
+7. **Trace:** in the worked table, explain why an unsynced edit can recover
+   new topology while an unreferenced durable output cannot install itself.
+8. **Derive:** count headers for a 40960-byte record beginning exactly at a
+   WAL block boundary. Which assumptions fail at a different starting offset?
+9. **Counterexample:** sync output contents but omit the namespace barrier
+   before durable metadata. Give the missing-name recovery state.
+10. **Transfer:** design replacement of a persistent root file with a new
+    generation. Draw contents, names, selector, and old-reader dependencies;
+    do not use a generic "rename is atomic, therefore durable" argument.
+
+<details>
+<summary>Answers</summary>
+
+1. No. File and relevant namespace durability require synchronization.
+2. Its installing MANIFEST edit may never have become durable.
+3. Durability can precede acknowledgement. Recovery may include the complete
+   in-flight batch, but must not manufacture a partially applied batch.
+4. No. It records a sticky error and leaves the installed state
+   unchanged; otherwise the rotation would publish a partially completed
+   transition.
+5. After the edit becomes durable, publishing its matching in-memory state
+   must not depend on an allocation that can throw. Preparation also freezes
+   the exact edit state and snapshot bytes before concurrent counters may
+   advance.
+6. No. Read pins and shared owners can keep older installed Versions live.
+   Cleanup must include their files, pending outputs, and cache ownership.
+7. A complete appended edit can already be persistent before sync. An
+   output without an authoritative metadata reference remains an orphan.
+   This answer uses the table's prefix-loss model, not arbitrary corruption.
+8. Two fragments add fourteen header bytes, for 40974 stored bytes.
+   Starting in a partially occupied block can introduce different fragments
+   or padding, including the historical zero-payload boundary case.
+9. The durable MANIFEST selects a table whose file contents were synced
+   but whose directory entry can disappear. A complete edit does not make
+   its missing dependency recoverable.
+10. Persist new contents, establish their recoverable name, publish the
+    durable selector with the appropriate namespace barrier, and retain old
+    physical resources until their borrowers finish. Atomic visibility of
+    rename alone does not supply every durability edge.
+
+</details>
+
 ## Source tour
 
 | Entry point | Interface or symbol | Question to answer | Representative evidence |
@@ -302,35 +441,3 @@ without deleting disk files that an uncertain edit may already reference.
 `CreateRecoveryLog` owns acquisition and the optional file-sync-before-directory-sync
 barriers. Runtime rotation is deliberately a different path; it must preserve
 its old-WAL close and sticky-error protocol.
-
-## Self-check
-
-1. Does `Flush` mean an acknowledged write must survive power loss?
-2. Why can a table exist on disk but not belong to the recovered database?
-3. Why is an in-flight sync batch allowed to appear after a crash even
-   though its caller never received success?
-4. If closing the old WAL throws during rotation, should the engine install
-   the replacement log and memtable?
-5. Why does VersionSet allocate the candidate owner and reserve tracking
-   capacity before releasing the database mutex for MANIFEST I/O?
-6. Can cleanup delete every file absent from the newly published current
-   Version?
-
-<details>
-<summary>Answers</summary>
-
-1. No. File and relevant namespace durability require synchronization.
-2. Its installing MANIFEST edit may never have become durable.
-3. Durability can precede acknowledgement. Recovery may include the complete
-   in-flight batch, but must not manufacture a partially applied batch.
-4. No. It records a sticky error and leaves the installed state
-   unchanged; otherwise the rotation would publish a partially completed
-   transition.
-5. After the edit becomes durable, publishing its matching in-memory state
-   must not depend on an allocation that can throw. Preparation also freezes
-   the exact edit state and snapshot bytes before concurrent counters may
-   advance.
-6. No. Read pins and shared owners can keep older installed Versions live.
-   Cleanup must include their files, pending outputs, and cache ownership.
-
-</details>
