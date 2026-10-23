@@ -62,7 +62,7 @@ void CommitShortKey(std::vector<std::byte>& key, std::size_t index, std::byte su
 
 class BytewiseComparatorImpl final : public Comparator {
 public:
-    [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override {
+    [[nodiscard]] int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         const int order = CompareCommonPrefix(left, right);
         if (order != 0) {
             return order;

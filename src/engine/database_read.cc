@@ -63,7 +63,7 @@ const MemTable* DatabaseEngine::ReadSources::immutable_memtable() const noexcept
 
 const Version& DatabaseEngine::ReadSources::version() const noexcept { return version_->value(); }
 
-Result<bool> DatabaseEngine::Get(ByteView key, std::vector<std::byte>& value,
+Result<bool> DatabaseEngine::Get(const ByteView& key, std::vector<std::byte>& value,
                                  const DatabaseEngineReadOptions& options) {
     std::unique_lock lock(mutex_);
     const SequenceNumber sequence =

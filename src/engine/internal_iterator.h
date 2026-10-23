@@ -26,7 +26,7 @@ public:
 
     [[nodiscard]] virtual Status SeekToFirst() = 0;
     [[nodiscard]] virtual Status SeekToLast() = 0;
-    [[nodiscard]] virtual Status Seek(ByteView target) = 0;
+    [[nodiscard]] virtual Status Seek(const ByteView& target) = 0;
     [[nodiscard]] virtual Status Next() = 0;
     [[nodiscard]] virtual Status Prev() = 0;
 

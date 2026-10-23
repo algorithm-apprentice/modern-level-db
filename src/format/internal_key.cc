@@ -123,14 +123,14 @@ Result<InternalKeyView> ParseInternalKey(ByteView encoded) {
     return decoded;
 }
 
-Result<LookupKey> LookupKey::Create(ByteView user_key, SequenceNumber sequence) {
+Result<LookupKey> LookupKey::Create(const ByteView& user_key, SequenceNumber sequence) {
     if (sequence > MaxSequenceNumber) {
         return std::unexpected(Error::InvalidArgument("lookup key sequence exceeds 56 bits"));
     }
     return CreateTrusted(user_key, sequence);
 }
 
-LookupKey LookupKey::CreateTrusted(ByteView user_key, SequenceNumber sequence) {
+LookupKey LookupKey::CreateTrusted(const ByteView& user_key, SequenceNumber sequence) {
     const std::size_t internal_key_size = user_key.size() + InternalKeyTrailerSize;
     const auto encoded_internal_key_size = static_cast<std::uint32_t>(internal_key_size);
     const std::size_t prefix_size = VarintLength(encoded_internal_key_size);
@@ -236,7 +236,7 @@ ValueKind InternalKey::kind() const noexcept { return DecodeInternalKeyValueKind
 
 std::uint64_t InternalKey::trailer() const noexcept { return DecodeInternalKeyTrailer(encoded_); }
 
-int InternalKeyComparator::Compare(ByteView left, ByteView right) const noexcept {
+int InternalKeyComparator::Compare(const ByteView& left, const ByteView& right) const noexcept {
     const ByteView left_user_key = left.first(left.size() - InternalKeyTrailerSize);
     const ByteView right_user_key = right.first(right.size() - InternalKeyTrailerSize);
     const int user_order = user_comparator_.Compare(left_user_key, right_user_key);

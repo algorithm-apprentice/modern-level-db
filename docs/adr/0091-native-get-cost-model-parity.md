@@ -205,6 +205,7 @@ The reviewed boundary ledger is:
 | `LookupKey::Create` and `CreateTrusted` | User-key view | Existing owned encoding, inline/heap boundary, and moves |
 | Internal block comparison forwarding | Both input views | Actual configured comparator invocation |
 | Typed/core LRU lookup, hash, match, insertion and erase forwarding | Input cache-key view | Copied key ownership, full-key collision checks, pins, lists, and concurrency |
+| `Hash32` and Legacy Bloom/filter query forwarding | Input key/filter descriptors | Identical hash outputs, serialized filter bits, probe count, and malformed-filter policy |
 
 The LRU row includes `HandleTable::Lookup/FindPointer/PrepareInsert/Remove`,
 `Entry::Matches`, and the corresponding core helpers. CLOCK keeps its

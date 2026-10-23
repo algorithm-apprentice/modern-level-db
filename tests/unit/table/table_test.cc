@@ -103,7 +103,7 @@ std::vector<std::byte> Key(std::string_view user_key, SequenceNumber sequence,
 
 class CaseInsensitiveComparator final : public Comparator {
 public:
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         const std::size_t common = std::min(left.size(), right.size());
         for (std::size_t index = 0; index < common; ++index) {
             const unsigned int left_byte = Fold(left[index]);
@@ -393,7 +393,7 @@ std::vector<std::byte> FullFilterFor(std::string_view key) {
 
 class CountingBytewiseComparator final : public Comparator {
 public:
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         ++comparisons;
         return BytewiseComparator().Compare(left, right);
     }

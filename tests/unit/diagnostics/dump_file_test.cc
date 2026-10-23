@@ -106,7 +106,7 @@ std::vector<std::byte> Batch(SequenceNumber sequence, ByteView key, ByteView val
 
 class ReverseComparator final : public Comparator {
 public:
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         return -BytewiseComparator().Compare(left, right);
     }
     std::string_view Name() const noexcept override { return "test.Reverse"; }

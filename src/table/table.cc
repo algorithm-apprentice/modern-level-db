@@ -431,7 +431,7 @@ Status Table::Iterator::SeekToLast() {
     return EnterBlock(Edge::Last);
 }
 
-Status Table::Iterator::Seek(ByteView target) {
+Status Table::Iterator::Seek(const ByteView& target) {
     if (table_->block_key_format_ == BlockKeyFormat::Internal) {
         const Result<InternalKeyView> parsed = ParseInternalKey(target);
         if (!parsed.has_value()) {

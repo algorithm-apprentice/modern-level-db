@@ -20,6 +20,13 @@ Keys and values can contain zero bytes and arbitrary binary data.
 `ByteView` is a `std::span<const std::byte>`: a pointer and length, not an
 owning string and not a null-terminated C string.
 
+A view object and a C++ reference are different. Copying a `ByteView` copies
+its pointer/length descriptor, not the referenced bytes. A `const ByteView&`
+instead borrows the descriptor itself. Native LevelDB's `Slice` and
+`const Slice&` have the same distinction. Read-path interfaces use references
+at selected forwarding boundaries; stored/returned views and independent
+parser cursors remain values. Neither form extends backing-storage lifetime.
+
 This matters when comparing keys, computing checksums, decoding a length,
 and returning borrowed values. A zero byte does not end a key.
 The default comparator orders keys lexicographically by bytes.

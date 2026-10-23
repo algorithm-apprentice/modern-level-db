@@ -7,12 +7,16 @@
 #include <cstddef>
 #include <random>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include "modern_leveldb/base/bytes.h"
 
 namespace modern_leveldb {
 namespace {
+
+using CompareSignature = int (Comparator::*)(const ByteView&, const ByteView&) const noexcept;
+static_assert(std::is_same_v<decltype(&Comparator::Compare), CompareSignature>);
 
 std::vector<std::byte> OwnedBytes(std::string_view value) {
     const ByteView bytes = AsBytes(value);

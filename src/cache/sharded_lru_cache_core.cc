@@ -17,7 +17,7 @@ ByteView ShardedLruCacheCore::Entry::key() const noexcept {
     return ByteView(bytes, key_length);
 }
 
-bool ShardedLruCacheCore::Entry::Matches(ByteView candidate_key,
+bool ShardedLruCacheCore::Entry::Matches(const ByteView& candidate_key,
                                          std::uint32_t candidate_hash) const noexcept {
     if (hash != candidate_hash) {
         return false;
@@ -30,7 +30,7 @@ ShardedLruCacheCore::HandleTable::HandleTable() : length_(4), buckets_(AllocateB
 // GCOVR_EXCL_STOP
 
 ShardedLruCacheCore::Entry* ShardedLruCacheCore::HandleTable::Lookup(
-    ByteView key, std::uint32_t hash) const noexcept {
+    const ByteView& key, std::uint32_t hash) const noexcept {
     Entry* entry = buckets_[hash & (length_ - 1U)];
     while (entry != nullptr && !entry->Matches(key, hash)) {
         entry = entry->next_hash;
@@ -39,7 +39,7 @@ ShardedLruCacheCore::Entry* ShardedLruCacheCore::HandleTable::Lookup(
 }
 
 ShardedLruCacheCore::HandleTable::PreparedInsert ShardedLruCacheCore::HandleTable::PrepareInsert(
-    ByteView key, std::uint32_t hash) noexcept {
+    const ByteView& key, std::uint32_t hash) noexcept {
     Entry** position = FindPointer(key, hash);
     Entry* existing = *position;
     return PreparedInsert{
@@ -79,7 +79,7 @@ ShardedLruCacheCore::Entry* ShardedLruCacheCore::HandleTable::LinkEntry(Prepared
     return replaced;
 }
 
-ShardedLruCacheCore::Entry* ShardedLruCacheCore::HandleTable::Remove(ByteView key,
+ShardedLruCacheCore::Entry* ShardedLruCacheCore::HandleTable::Remove(const ByteView& key,
                                                                      std::uint32_t hash) noexcept {
     Entry** position = FindPointer(key, hash);
     Entry* removed = *position;
@@ -92,7 +92,7 @@ ShardedLruCacheCore::Entry* ShardedLruCacheCore::HandleTable::Remove(ByteView ke
 }
 
 ShardedLruCacheCore::Entry** ShardedLruCacheCore::HandleTable::FindPointer(
-    ByteView key, std::uint32_t hash) noexcept {
+    const ByteView& key, std::uint32_t hash) noexcept {
     Entry** position = &buckets_[hash & (length_ - 1U)];
     while (*position != nullptr && !(*position)->Matches(key, hash)) {
         position = &(*position)->next_hash;
@@ -162,7 +162,7 @@ void ShardedLruCacheCore::Destroy() noexcept {
     DeleteRetired(retired);
 }
 
-ShardedLruCacheCore::Pin ShardedLruCacheCore::Insert(ByteView key, const void* value,
+ShardedLruCacheCore::Pin ShardedLruCacheCore::Insert(const ByteView& key, const void* value,
                                                      ValueDeleter deleter, std::size_t charge) {
     PendingValue pending_value(value, ErasedValueDeleter{deleter});
     PendingEntry entry = CreateEntry(key, std::move(pending_value), charge);
@@ -201,14 +201,14 @@ void ShardedLruCacheCore::CommitAdmission(Shard& shard, Entry& entry,
     Evict(shard, retired);
 }
 
-ShardedLruCacheCore::Entry* ShardedLruCacheCore::LookupAndRef(ByteView key) {
+ShardedLruCacheCore::Entry* ShardedLruCacheCore::LookupAndRef(const ByteView& key) {
     const std::uint32_t hash = HashKey(key);
     Shard& shard = shards_[ShardIndex(hash)];
     std::lock_guard lock(shard.mutex);
     return LookupAndRef(shard, key, hash);
 }
 
-void ShardedLruCacheCore::Erase(ByteView key) {
+void ShardedLruCacheCore::Erase(const ByteView& key) {
     const std::uint32_t hash = HashKey(key);
     Shard& shard = shards_[ShardIndex(hash)];
     Entry* retired = nullptr;
@@ -242,7 +242,8 @@ bool ShardedLruCacheCore::TryAddCharge(std::size_t& total, std::size_t charge) n
     return true;
 }
 
-ShardedLruCacheCore::PendingEntry ShardedLruCacheCore::CreateEntry(ByteView key, PendingValue value,
+ShardedLruCacheCore::PendingEntry ShardedLruCacheCore::CreateEntry(const ByteView& key,
+                                                                   PendingValue value,
                                                                    std::size_t charge) {
     void* storage = ::operator new(sizeof(Entry) + key.size());
     auto* entry = static_cast<Entry*>(storage);
@@ -254,7 +255,7 @@ ShardedLruCacheCore::PendingEntry ShardedLruCacheCore::CreateEntry(ByteView key,
     return owned;
 }
 
-void ShardedLruCacheCore::CopyEntryKey(Entry& entry, ByteView key) {
+void ShardedLruCacheCore::CopyEntryKey(Entry& entry, const ByteView& key) {
     std::ranges::copy(key, reinterpret_cast<std::byte*>(&entry) + sizeof(Entry));
 }
 
@@ -301,7 +302,7 @@ void ShardedLruCacheCore::Unref(Shard& shard, Entry& entry, Entry*& retired) noe
     }
 }
 
-ShardedLruCacheCore::Entry* ShardedLruCacheCore::LookupAndRef(Shard& shard, ByteView key,
+ShardedLruCacheCore::Entry* ShardedLruCacheCore::LookupAndRef(Shard& shard, const ByteView& key,
                                                               std::uint32_t hash) noexcept {
     Entry* entry = shard.table.Lookup(key, hash);
     if (entry != nullptr) {
@@ -310,7 +311,7 @@ ShardedLruCacheCore::Entry* ShardedLruCacheCore::LookupAndRef(Shard& shard, Byte
     return entry;
 }
 
-void ShardedLruCacheCore::EraseMapping(Shard& shard, ByteView key, std::uint32_t hash,
+void ShardedLruCacheCore::EraseMapping(Shard& shard, const ByteView& key, std::uint32_t hash,
                                        Entry*& retired) noexcept {
     FinishErase(shard, shard.table.Remove(key, hash), retired);
 }

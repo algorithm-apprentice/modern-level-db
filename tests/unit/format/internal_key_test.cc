@@ -24,7 +24,7 @@ namespace {
 
 class TestComparator final : public Comparator {
 public:
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         return BytewiseComparator().Compare(left, right);
     }
 
@@ -41,7 +41,7 @@ public:
 
 class ReverseComparator final : public Comparator {
 public:
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         return BytewiseComparator().Compare(right, left);
     }
 
@@ -53,7 +53,7 @@ public:
 
 class InvalidSeparatorComparator final : public Comparator {
 public:
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         return BytewiseComparator().Compare(left, right);
     }
 
@@ -79,7 +79,7 @@ public:
     explicit RecordingShortener(std::string_view candidate, bool throws = false)
         : candidate_(candidate), throws_(throws) {}
 
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         Record('C', left, right);
         return 17 * BytewiseComparator().Compare(left, right);
     }

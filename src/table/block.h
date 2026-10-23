@@ -112,7 +112,7 @@ public:
 
     [[nodiscard]] Status SeekToFirst();
     [[nodiscard]] Status SeekToLast();
-    [[nodiscard]] Status Seek(ByteView target);
+    [[nodiscard]] Status Seek(const ByteView& target);
     [[nodiscard]] Status Next();
     [[nodiscard]] Status Prev();
 
@@ -120,10 +120,10 @@ private:
     struct ReverseCache;
 
     void BeginPositioning() noexcept;
-    [[nodiscard]] bool FindRestart(ByteView target, std::size_t left, std::size_t right,
+    [[nodiscard]] bool FindRestart(const ByteView& target, std::size_t left, std::size_t right,
                                    std::size_t& index) noexcept;
     [[nodiscard]] bool RestoreCheckpoint(std::size_t index, int current_key_compare) noexcept;
-    void ScanToLowerBound(ByteView target);
+    void ScanToLowerBound(const ByteView& target);
     [[nodiscard]] bool FindPreviousRestart(std::size_t original) noexcept;
     void ScanToPreviousEntry(std::size_t original);
     void ScanToLastEntry();
@@ -138,7 +138,7 @@ private:
     bool Corruption() noexcept;
     [[nodiscard]] Status CurrentStatus() const;
     [[nodiscard]] bool AcceptsKeySize(std::size_t size) const noexcept;
-    [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept;
+    [[nodiscard]] int Compare(const ByteView& left, const ByteView& right) const noexcept;
     void Invalidate() noexcept;
 
     Layout layout_;

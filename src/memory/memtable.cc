@@ -106,7 +106,8 @@ int MemTable::EntryComparator::operator()(const std::byte* left,
     return (*this)(left, DecodeMemTableInternalKey(right));
 }
 
-int MemTable::EntryComparator::operator()(const std::byte* left, ByteView right) const noexcept {
+int MemTable::EntryComparator::operator()(const std::byte* left,
+                                          const ByteView& right) const noexcept {
     return internal_comparator.Compare(DecodeMemTableInternalKey(left), right);
 }
 
@@ -118,6 +119,6 @@ ByteView MemTable::Iterator::key() const {
 
 ByteView MemTable::Iterator::value() const { return DecodeMemTableEntry(iterator_.entry()).value; }
 
-void MemTable::Iterator::Seek(ByteView internal_key) { iterator_.Seek(internal_key); }
+void MemTable::Iterator::Seek(const ByteView& internal_key) { iterator_.Seek(internal_key); }
 
 }  // namespace modern_leveldb

@@ -31,7 +31,7 @@ static_assert(MaxMemTableOutputLevel == 2);
 
 class ReverseComparator final : public Comparator {
 public:
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         return BytewiseComparator().Compare(right, left);
     }
     std::string_view Name() const noexcept override { return "test.ReverseComparator"; }

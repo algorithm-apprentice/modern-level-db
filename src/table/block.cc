@@ -342,7 +342,7 @@ void Block::Iterator::ScanToLastEntry() {
     }
 }
 
-Status Block::Iterator::Seek(ByteView target) {
+Status Block::Iterator::Seek(const ByteView& target) {
     BeginPositioning();
     if (!AcceptsKeySize(target.size())) {
         Corruption();
@@ -376,7 +376,7 @@ Status Block::Iterator::Seek(ByteView target) {
     return CurrentStatus();
 }
 
-bool Block::Iterator::FindRestart(ByteView target, std::size_t left, std::size_t right,
+bool Block::Iterator::FindRestart(const ByteView& target, std::size_t left, std::size_t right,
                                   std::size_t& index) noexcept {
     // Prefix-compressed entries require reconstruction from the last restart
     // strictly before the target, rather than a binary search over all entries.
@@ -405,7 +405,7 @@ bool Block::Iterator::RestoreCheckpoint(std::size_t index, int current_key_compa
     return true;
 }
 
-void Block::Iterator::ScanToLowerBound(ByteView target) {
+void Block::Iterator::ScanToLowerBound(const ByteView& target) {
     while (ParseNextEntry() && Compare(key(), target) < 0) {
     }
 }
@@ -592,7 +592,7 @@ bool Block::Iterator::AcceptsKeySize(std::size_t size) const noexcept {
     return format_ != BlockKeyFormat::Internal || size >= InternalKeyTrailerSize;
 }
 
-int Block::Iterator::Compare(ByteView left, ByteView right) const noexcept {
+int Block::Iterator::Compare(const ByteView& left, const ByteView& right) const noexcept {
     return comparator_->Compare(left, right);
 }
 

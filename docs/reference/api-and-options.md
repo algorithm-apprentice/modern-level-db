@@ -204,6 +204,22 @@ positive and adverse measurements.
 
 ## Comparator and Bloom requirements
 
+Read-path view inputs use `const ByteView&` at the public comparator, Get,
+Seek, and Hash32 boundaries. `ByteView` remains a standard span, not a new
+owning or reference-wrapper type. Keep both the input descriptor and its
+backing storage stable until the synchronous call returns; no reference to
+the descriptor is retained.
+
+Custom comparators implement
+`int Compare(const ByteView& left, const ByteView& right) const noexcept`.
+The result promises only negative, zero, or positive, not an exact magnitude.
+This signature migration changes the C++ source/ABI of those entry points:
+update overrides and rebuild the library and consumers together. Do not mix
+old comparator binaries with new headers. Persistent comparator identity,
+ordering, equality, file format, and default policies are unchanged; existing
+databases require no migration.
+See [ADR-0091](../adr/0091-native-get-cost-model-parity.md).
+
 A custom comparator must:
 
 - keep the same semantic identity on every reopen;

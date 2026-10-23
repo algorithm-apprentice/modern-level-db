@@ -56,7 +56,7 @@ std::vector<std::uint64_t> Numbers(const Version& version, std::uint32_t level) 
 
 class CountingComparator final : public Comparator {
 public:
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         comparisons_.fetch_add(1, std::memory_order_relaxed);
         return BytewiseComparator().Compare(left, right);
     }

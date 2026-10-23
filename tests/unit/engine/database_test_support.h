@@ -102,7 +102,7 @@ private:
 
 class BlockingComparator final : public Comparator {
 public:
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         {
             std::unique_lock lock(mutex_);
             if (!open_ && !reached_ &&

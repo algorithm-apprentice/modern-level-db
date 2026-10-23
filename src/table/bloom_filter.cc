@@ -19,7 +19,7 @@ constexpr std::uint32_t MaximumProbes = 30;
 constexpr std::uint64_t MinimumBits = 64;
 constexpr std::uint64_t MaximumBits = std::numeric_limits<std::uint64_t>::max();
 
-std::uint32_t BloomHash(ByteView key) noexcept { return Hash32(key, HashSeed); }
+std::uint32_t BloomHash(const ByteView& key) noexcept { return Hash32(key, HashSeed); }
 
 std::byte BitMask(std::uint64_t position) noexcept {
     return static_cast<std::byte>(1U << (position % 8));
@@ -79,7 +79,7 @@ void BloomFilterPolicy::CreateFilter(std::span<const ByteView> keys,
     }
 }
 
-bool BloomFilterPolicy::KeyMayMatch(ByteView key, ByteView filter) const noexcept {
+bool BloomFilterPolicy::KeyMayMatch(const ByteView& key, const ByteView& filter) const noexcept {
     if (filter.size() < 2) {
         return false;
     }

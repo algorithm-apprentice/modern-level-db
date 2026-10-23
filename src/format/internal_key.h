@@ -87,9 +87,10 @@ void EncodeInternalKeyTrusted(MutableByteView& output, ByteView user_key, Sequen
 class LookupKey final {
 public:
     // The user key follows the persistent uint32 length representation.
-    [[nodiscard]] static Result<LookupKey> Create(ByteView user_key, SequenceNumber sequence);
+    [[nodiscard]] static Result<LookupKey> Create(const ByteView& user_key,
+                                                  SequenceNumber sequence);
     // DatabaseEngine supplies a published sequence and practical user-key length.
-    [[nodiscard]] static LookupKey CreateTrusted(ByteView user_key, SequenceNumber sequence);
+    [[nodiscard]] static LookupKey CreateTrusted(const ByteView& user_key, SequenceNumber sequence);
 
     LookupKey(const LookupKey&) = delete;
     LookupKey& operator=(const LookupKey&) = delete;
@@ -150,7 +151,7 @@ public:
     InternalKeyComparator(Comparator&&) = delete;
     InternalKeyComparator(const Comparator&&) = delete;
 
-    [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override;
+    [[nodiscard]] int Compare(const ByteView& left, const ByteView& right) const noexcept override;
     // Both operands must contain a trailer. Encoders and checked read boundaries
     // establish this comparator domain; malformed bytes are errors, not sortable keys.
     [[nodiscard]] int Compare(const InternalKey& left, const InternalKey& right) const noexcept {

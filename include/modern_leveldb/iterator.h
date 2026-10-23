@@ -31,9 +31,10 @@ public:
     // Seeks establish a position; Seek chooses the first user key >= its target,
     // whose length follows the database key representation. A failed move leaves
     // the iterator invalid. A later seek can start over.
+    // The target descriptor and backing bytes must remain stable until return.
     [[nodiscard]] Status SeekToFirst();
     [[nodiscard]] Status SeekToLast();
-    [[nodiscard]] Status Seek(ByteView key);
+    [[nodiscard]] Status Seek(const ByteView& key);
     // Require valid(); these are not seek operations on an unpositioned iterator.
     [[nodiscard]] Status Next();
     [[nodiscard]] Status Prev();

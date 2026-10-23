@@ -284,7 +284,7 @@ class NameCountingComparator final : public Comparator {
 public:
     mutable std::atomic<unsigned> name_calls{0};
 
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         return BytewiseComparator().Compare(left, right);
     }
     std::string_view Name() const noexcept override {

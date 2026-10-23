@@ -139,7 +139,7 @@ public:
     [[nodiscard]] Status SeekToFirst();
     [[nodiscard]] Status SeekToLast();
     // Positions at the first entry not less than the target.
-    [[nodiscard]] Status Seek(ByteView target);
+    [[nodiscard]] Status Seek(const ByteView& target);
     [[nodiscard]] Status Next();
     [[nodiscard]] Status Prev();
 

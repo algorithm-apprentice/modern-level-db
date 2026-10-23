@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -24,6 +25,16 @@
 
 namespace modern_leveldb {
 namespace {
+
+using BufferedGetSignature = Result<bool> (Database::*)(const ByteView&, std::vector<std::byte>&,
+                                                        const ReadOptions&);
+using OwningGetSignature = OwningReadResult (Database::*)(const ByteView&, const ReadOptions&);
+using SeekSignature = Status (Iterator::*)(const ByteView&);
+static_assert(std::is_same_v<decltype(static_cast<BufferedGetSignature>(&Database::Get)),
+                             BufferedGetSignature>);
+static_assert(
+    std::is_same_v<decltype(static_cast<OwningGetSignature>(&Database::Get)), OwningGetSignature>);
+static_assert(std::is_same_v<decltype(&Iterator::Seek), SeekSignature>);
 
 class TemporaryDatabaseDirectory {
 public:
@@ -75,7 +86,7 @@ public:
 
     ~TrackingComparator() override { destroyed_->store(true); }
 
-    [[nodiscard]] int Compare(ByteView left, ByteView right) const noexcept override {
+    [[nodiscard]] int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         return BytewiseComparator().Compare(left, right);
     }
 
@@ -134,7 +145,7 @@ Result<FilterInspection> InspectFilters(const std::filesystem::path& directory) 
 
 class AutomaticFilterComparator final : public Comparator {
 public:
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         const auto common = std::min(left.size(), right.size());
         for (std::size_t index = 0; index < common; ++index) {
             const auto fold = [](std::byte value) {

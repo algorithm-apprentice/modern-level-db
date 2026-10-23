@@ -177,7 +177,7 @@ public:
         moves_->push_back(name_ + ":last");
         return child_.SeekToLast();
     }
-    Status Seek(ByteView target) override {
+    Status Seek(const ByteView& target) override {
         moves_->push_back(name_ + ":seek");
         return child_.Seek(target);
     }
@@ -220,7 +220,7 @@ public:
     ByteView value() const noexcept override { return child_.value(); }
     Status SeekToFirst() override { return child_.SeekToFirst(); }
     Status SeekToLast() override { return child_.SeekToLast(); }
-    Status Seek(ByteView target) override { return child_.Seek(target); }
+    Status Seek(const ByteView& target) override { return child_.Seek(target); }
     Status Next() override { return child_.Next(); }
     Status Prev() override { return child_.Prev(); }
 

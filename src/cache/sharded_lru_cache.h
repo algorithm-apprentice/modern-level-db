@@ -54,7 +54,7 @@ public:
     // Copies the key and transfers value ownership, including on allocation failure.
     // Replacement/Erase remove lookup reachability, not outstanding handle validity.
     // A zero-capacity shard or charge overflow still returns an uncached live handle.
-    [[nodiscard]] Result<Handle> Insert(ByteView key, std::unique_ptr<const Value> value,
+    [[nodiscard]] Result<Handle> Insert(const ByteView& key, std::unique_ptr<const Value> value,
                                         std::size_t charge) {
         if (value == nullptr) {
             return std::unexpected(Error::InvalidArgument("cache value is null"));
@@ -69,7 +69,7 @@ public:
     }
 
     // GCOVR_EXCL_START: identical typed conversion repeats for each cache value type
-    [[nodiscard]] std::optional<Handle> Lookup(ByteView key) {
+    [[nodiscard]] std::optional<Handle> Lookup(const ByteView& key) {
         std::optional<ShardedLruCacheCore::Pin> pin = core_.Lookup(key);
         if (!pin.has_value()) {
             return std::nullopt;
@@ -78,7 +78,7 @@ public:
     }
     // GCOVR_EXCL_STOP
 
-    void Erase(ByteView key) { core_.Erase(key); }
+    void Erase(const ByteView& key) { core_.Erase(key); }
 
     [[nodiscard]] std::size_t total_charge() const { return core_.total_charge(); }
 

@@ -85,7 +85,7 @@ Status DbIterator::SeekToLast() {
     return FindPrevUserEntry();
 }
 
-Status DbIterator::Seek(ByteView user_key) {
+Status DbIterator::Seek(const ByteView& user_key) {
     valid_ = false;
     forward_ = true;
     saved_value_.clear();

@@ -178,7 +178,8 @@ bool FilterBlockReader::OffsetsAreValid() const noexcept {
     return true;
 }
 
-bool FilterBlockReader::KeyMayMatch(std::uint64_t block_offset, ByteView key) const noexcept {
+bool FilterBlockReader::KeyMayMatch(std::uint64_t block_offset,
+                                    const ByteView& key) const noexcept {
     const std::uint64_t index = block_offset >> FilterRangeShift;
     if (index >= filter_count_) {
         return true;

@@ -55,7 +55,7 @@ public:
     [[nodiscard]] Status SeekToLast() override {
         return Move([this] { position_ = entries_.empty() ? End : entries_.size() - 1; });
     }
-    [[nodiscard]] Status Seek(ByteView target) override {
+    [[nodiscard]] Status Seek(const ByteView& target) override {
         return Move([this, target] {
             const auto found =
                 std::ranges::partition_point(entries_, [&](const ScriptedEntry& entry) {

@@ -42,7 +42,7 @@ Status Iterator::SeekToLast() {
     return impl_->iterator().SeekToLast();
 }
 
-Status Iterator::Seek(ByteView key) {
+Status Iterator::Seek(const ByteView& key) {
     if (impl_ == nullptr) {
         return MovedFromIterator();
     }

@@ -48,7 +48,7 @@ constexpr ValueKind Put = ValueKind::Value;
 
 class DeeperTrackingComparator final : public Comparator {
 public:
-    int Compare(ByteView left, ByteView right) const noexcept override {
+    int Compare(const ByteView& left, const ByteView& right) const noexcept override {
         if (AsStringView(left) == "zz-deeper" || AsStringView(right) == "zz-deeper") {
             ++deeper_comparisons;
         }
