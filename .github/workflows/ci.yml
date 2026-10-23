@@ -24,6 +24,8 @@ jobs:
         run: python3 tests/tools/ci_changes_test.py
       - name: Check documentation-gate contracts
         run: python3 tests/tools/check_documentation_test.py
+      - name: Check executable learning examples
+        run: python3 -m unittest discover -s tests/tools -p '*lesson_test.py'
       - name: Validate documentation
         run: python3 tools/check_documentation.py
       - name: Classify changed paths
