@@ -12,6 +12,7 @@
 #include <string_view>
 #include <vector>
 
+#include "base/coding_internal.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/result.h"
 
@@ -25,7 +26,7 @@ struct FixedGolden {
 };
 
 template <typename UInt>
-void CheckFixedGolden(const FixedGolden<UInt>& golden, auto decode, auto consume) {
+void CheckFixedGolden(const FixedGolden<UInt>& golden, auto encode, auto decode, auto consume) {
     constexpr std::size_t Width = sizeof(UInt);
     constexpr std::size_t PrefixSize = sizeof(std::uint64_t);
     constexpr std::size_t OffsetCount = 32;
@@ -36,6 +37,14 @@ void CheckFixedGolden(const FixedGolden<UInt>& golden, auto decode, auto consume
         std::byte* const begin = storage.data() + PrefixSize + offset;
         std::ranges::copy(golden.bytes, begin);
         const auto original = storage;
+
+        auto encoded = storage;
+        encoded.fill(std::byte{0x5a});
+        auto expected = encoded;
+        std::ranges::copy(golden.bytes, expected.data() + PrefixSize + offset);
+        encode(std::span<std::byte, Width>(encoded.data() + PrefixSize + offset, Width),
+               golden.value);
+        EXPECT_EQ(encoded, expected);
 
         EXPECT_EQ(decode(std::span<const std::byte, Width>(begin, Width)), golden.value);
         ByteView input(begin, Width + 1);
@@ -58,6 +67,11 @@ void CheckFixedGolden(const FixedGolden<UInt>& golden, auto decode, auto consume
     EXPECT_EQ(input.data(), exact.get() + Width);
     EXPECT_TRUE(input.empty());
     EXPECT_TRUE(std::ranges::equal(ByteView(exact.get(), Width), golden.bytes));
+
+    const auto exact_output = std::make_unique<std::byte[]>(Width);
+    std::fill_n(exact_output.get(), Width, std::byte{0x5a});
+    encode(std::span<std::byte, Width>(exact_output.get(), Width), golden.value);
+    EXPECT_TRUE(std::ranges::equal(ByteView(exact_output.get(), Width), golden.bytes));
 }
 
 template <typename UInt>
@@ -88,7 +102,7 @@ void CheckTruncatedFixed(const FixedGolden<UInt>& golden, auto consume, std::str
     }
 }
 
-TEST(CodingTest, LiteralFixed32DecodingPreservesEveryAlignmentAndExactWidth) {
+TEST(CodingTest, LiteralFixed32EncodingAndDecodingPreserveEveryAlignmentAndExactWidth) {
     using Golden = FixedGolden<std::uint32_t>;
     const std::array cases{
         Golden{0U, {std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}}},
@@ -99,11 +113,11 @@ TEST(CodingTest, LiteralFixed32DecodingPreservesEveryAlignmentAndExactWidth) {
     };
     for (const auto& golden : cases) {
         SCOPED_TRACE(golden.value);
-        CheckFixedGolden(golden, DecodeFixed32, ConsumeFixed32);
+        CheckFixedGolden(golden, EncodeFixed32, DecodeFixed32, ConsumeFixed32);
     }
 }
 
-TEST(CodingTest, LiteralFixed64DecodingPreservesEveryAlignmentAndExactWidth) {
+TEST(CodingTest, LiteralFixed64EncodingAndDecodingPreserveEveryAlignmentAndExactWidth) {
     using Golden = FixedGolden<std::uint64_t>;
     const std::array cases{
         Golden{0, {}},
@@ -120,7 +134,7 @@ TEST(CodingTest, LiteralFixed64DecodingPreservesEveryAlignmentAndExactWidth) {
     };
     for (const auto& golden : cases) {
         SCOPED_TRACE(golden.value);
-        CheckFixedGolden(golden, DecodeFixed64, ConsumeFixed64);
+        CheckFixedGolden(golden, EncodeFixed64, DecodeFixed64, ConsumeFixed64);
     }
 }
 
@@ -138,6 +152,46 @@ TEST(CodingTest, EveryTruncatedFixed64PreservesCursorBytesAndFailureContext) {
             {std::byte{0x10}, std::byte{0x32}, std::byte{0x54}, std::byte{0x76}, std::byte{0x98},
              std::byte{0xba}, std::byte{0xdc}, std::byte{0xfe}}},
         ConsumeFixed64, "truncated fixed64");
+}
+
+TEST(CodingTest, TrustedVarint64PreservesLiteralValuesAndExactCursorBoundaries) {
+    struct Golden {
+        std::uint64_t value;
+        std::vector<std::byte> bytes;
+    };
+    const std::array cases{
+        Golden{0, {std::byte{0}}},
+        Golden{1, {std::byte{0x81}, std::byte{0}}},
+        Golden{300, {std::byte{0xac}, std::byte{0x02}}},
+        Golden{
+            0x8000000000000000ULL,
+            {std::byte{0x80}, std::byte{0x80}, std::byte{0x80}, std::byte{0x80}, std::byte{0x80},
+             std::byte{0x80}, std::byte{0x80}, std::byte{0x80}, std::byte{0x80}, std::byte{0x01}}},
+        Golden{
+            0,
+            {std::byte{0x80}, std::byte{0x80}, std::byte{0x80}, std::byte{0x80}, std::byte{0x80},
+             std::byte{0x80}, std::byte{0x80}, std::byte{0x80}, std::byte{0x80}, std::byte{0x02}}},
+        Golden{
+            0xffffffffffffffffULL,
+            {std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0xff},
+             std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0xff}, std::byte{0x7f}}},
+    };
+    for (const auto& golden : cases) {
+        SCOPED_TRACE(golden.value);
+        std::vector<std::byte> storage = golden.bytes;
+        storage.push_back(std::byte{0x55});
+        ByteView checked = storage;
+        const auto decoded = ConsumeVarint64(checked);
+        ASSERT_TRUE(decoded.has_value());
+        EXPECT_EQ(*decoded, golden.value);
+        const std::byte* cursor = storage.data();
+        EXPECT_EQ(ConsumeVarint64Trusted(cursor), golden.value);
+        EXPECT_EQ(cursor, storage.data() + golden.bytes.size());
+        EXPECT_EQ(cursor, checked.data());
+        ASSERT_EQ(checked.size(), 1U);
+        EXPECT_EQ(checked.front(), std::byte{0x55});
+        EXPECT_EQ(storage.back(), std::byte{0x55});
+    }
 }
 
 TEST(CodingTest, LiteralVarintEmissionKeepsGuardedBytesAndAdmissionCursor) {

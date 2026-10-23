@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/coding_internal.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/result.h"
@@ -46,7 +47,8 @@ FilterLayoutIssue DecodeFilterLayout(ByteView data, FilterBlockLayout& layout) n
         return FilterLayoutIssue::UnsupportedRange;
     }
     const std::size_t offsets_end = data.size() - FilterTrailerSize;
-    const std::size_t array_offset = DecodeFixed32(data.subspan(offsets_end).first<Fixed32Size>());
+    const std::size_t array_offset =
+        DecodeFixedTrusted<std::uint32_t>(data.subspan(offsets_end).first<Fixed32Size>());
     if (array_offset > offsets_end || (offsets_end - array_offset) % Fixed32Size != 0) {
         return FilterLayoutIssue::MalformedArray;
     }
@@ -161,7 +163,7 @@ FilterBlockReader::FilterBlockReader(BlockContents contents, BloomFilterPolicy p
 // GCOVR_EXCL_STOP
 
 std::uint32_t FilterBlockReader::FilterOffset(std::size_t index) const noexcept {
-    return DecodeFixed32(
+    return DecodeFixedTrusted<std::uint32_t>(
         contents_.data().subspan(array_offset_ + Fixed32Size * index).first<Fixed32Size>());
 }
 

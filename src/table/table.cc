@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "base/bytes_internal.h"
+#include "base/coding_internal.h"
 #include "base/result_internal.h"
 #include "format/internal_key.h"
 #include "modern_leveldb/base/bytes.h"
@@ -89,13 +90,18 @@ Result<Block> ReadBlock(const RandomAccessFile& file, std::uint64_t blocks_end,
 }
 
 // Decodes an index value, which Open validated.
-BlockHandle IndexHandle(ByteView value) { return TakeTrusted(ConsumeBlockHandle(value)); }
+BlockHandle IndexHandle(ByteView value) {
+    const std::byte* input = value.data();
+    const std::uint64_t offset = ConsumeVarint64Trusted(input);
+    const std::uint64_t size = ConsumeVarint64Trusted(input);
+    return {.offset = offset, .size = size};
+}
 
 std::array<std::byte, 2 * sizeof(std::uint64_t)> BlockCacheKey(
     std::uint64_t cache_id, std::uint64_t block_offset) noexcept {
     std::array<std::byte, 2 * sizeof(std::uint64_t)> key{};
-    EncodeFixed64(std::span(key).first<sizeof(std::uint64_t)>(), cache_id);
-    EncodeFixed64(std::span(key).last<sizeof(std::uint64_t)>(), block_offset);
+    EncodeFixedTrusted(std::span(key).first<sizeof(std::uint64_t)>(), cache_id);
+    EncodeFixedTrusted(std::span(key).last<sizeof(std::uint64_t)>(), block_offset);
     return key;
 }
 

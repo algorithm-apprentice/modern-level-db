@@ -77,7 +77,7 @@ Result<std::size_t> ReadRestartCount(
     if (data.size() < Fixed32Size) {
         return std::unexpected(Error::Corruption("block is too short", location));
     }
-    const std::size_t restart_count = DecodeFixed32(data.last<Fixed32Size>());
+    const std::size_t restart_count = DecodeFixedTrusted<std::uint32_t>(data.last<Fixed32Size>());
     if (restart_count > (data.size() - Fixed32Size) / Fixed32Size) {
         return std::unexpected(Error::Corruption("block restart count is invalid", location));
     }
@@ -148,7 +148,8 @@ Status Block::ValidateRestartEntry(const Layout& layout, std::size_t offset, std
 }
 
 std::size_t Block::Layout::RestartPoint(std::size_t index) const noexcept {
-    return DecodeFixed32(contents.subspan(entries_end + Fixed32Size * index).first<Fixed32Size>());
+    return DecodeFixedTrusted<std::uint32_t>(
+        contents.subspan(entries_end + Fixed32Size * index).first<Fixed32Size>());
 }
 
 Result<Block> Block::Create(std::vector<std::byte> contents) {

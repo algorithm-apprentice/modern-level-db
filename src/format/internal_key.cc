@@ -68,8 +68,10 @@ std::vector<std::byte> EncodeUnchecked(ByteView user_key, SequenceNumber sequenc
 }
 
 int CompareDescendingTrailers(ByteView left, ByteView right) noexcept {
-    const std::uint64_t left_trailer = DecodeFixed64(left.last<InternalKeyTrailerSize>());
-    const std::uint64_t right_trailer = DecodeFixed64(right.last<InternalKeyTrailerSize>());
+    const std::uint64_t left_trailer =
+        DecodeFixedTrusted<std::uint64_t>(left.last<InternalKeyTrailerSize>());
+    const std::uint64_t right_trailer =
+        DecodeFixedTrusted<std::uint64_t>(right.last<InternalKeyTrailerSize>());
     if (left_trailer > right_trailer) {
         return -1;
     }
@@ -105,7 +107,7 @@ void EncodeInternalKeyTrusted(MutableByteView& output, ByteView user_key, Sequen
                               ValueKind kind) noexcept {
     std::ranges::copy(user_key, output.begin());
     output = output.subspan(user_key.size());
-    EncodeFixed64(
+    EncodeFixedTrusted(
         std::span<std::byte, InternalKeyTrailerSize>(output.data(), InternalKeyTrailerSize),
         PackInternalKeyTrailer(sequence, kind));
     output = output.subspan(InternalKeyTrailerSize);
@@ -202,9 +204,9 @@ void LookupKey::InitializeCanonicalEmpty() noexcept {
     encoded_size_ = 1U + InternalKeyTrailerSize;
     internal_key_offset_ = 1;
     inline_storage_[0] = static_cast<std::byte>(InternalKeyTrailerSize);
-    EncodeFixed64(std::span<std::byte, InternalKeyTrailerSize>(
-                      inline_storage_.data() + internal_key_offset_, InternalKeyTrailerSize),
-                  PackInternalKeyTrailer(0, SeekValueKind));
+    EncodeFixedTrusted(std::span<std::byte, InternalKeyTrailerSize>(
+                           inline_storage_.data() + internal_key_offset_, InternalKeyTrailerSize),
+                       PackInternalKeyTrailer(0, SeekValueKind));
 }
 
 Result<InternalKey> InternalKey::Create(ByteView user_key, SequenceNumber sequence,

@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/coding_internal.h"
 #include "modern_leveldb/base/bytes.h"
 #include "modern_leveldb/base/coding.h"
 #include "modern_leveldb/base/comparator.h"
@@ -62,7 +63,7 @@ inline constexpr ValueKind SeekValueKind = ValueKind::Value;
 
 // Requires a complete internal-key trailer.
 [[nodiscard]] inline std::uint64_t DecodeInternalKeyTrailer(ByteView encoded) noexcept {
-    return DecodeFixed64(encoded.last<InternalKeyTrailerSize>());
+    return DecodeFixedTrusted<std::uint64_t>(encoded.last<InternalKeyTrailerSize>());
 }
 
 [[nodiscard]] inline ValueKind DecodeInternalKeyValueKind(ByteView encoded) noexcept {

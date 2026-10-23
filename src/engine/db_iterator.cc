@@ -5,11 +5,12 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "modern_leveldb/base/coding.h"
+#include "base/coding_internal.h"
 
 namespace modern_leveldb {
 namespace {
@@ -92,7 +93,7 @@ Status DbIterator::Seek(const ByteView& user_key) {
     // The newest entry of the user key that the sequence sees sorts first.
     Assign(saved_key_, user_key);
     std::array<std::byte, InternalKeyTrailerSize> trailer;
-    EncodeFixed64(trailer, PackInternalKeyTrailer(sequence_, SeekValueKind));
+    EncodeFixedTrusted(std::span(trailer), PackInternalKeyTrailer(sequence_, SeekValueKind));
     saved_key_.append(AsStringView(trailer));
     const Status moved = internal_->Seek(AsBytes(saved_key_));
     if (!moved.has_value()) {
