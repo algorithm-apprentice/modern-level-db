@@ -2,18 +2,20 @@
 
 Modern LevelDB is small enough to study end to end, but reading its source
 from the first file to the last is not an effective learning strategy.
-These lessons connect storage-engine concepts to the implementation, one
-question at a time.
+These lessons develop storage-engine models and arguments before mapping
+them to the implementation, one problem at a time.
 
 The goal is to explain **why the engine works**, not to memorize class names.
-Each core lesson includes a worked example, a bounded source tour, and
-self-check questions with answers.
+Each core lesson separates its problem, model, derivation, correctness,
+costs, and exercises from the final bounded source tour. Treat model
+assumptions as part of the result, not as universal database guarantees.
 
 Lessons are organized from the point of view of a component's consumer:
 
 ```text
-purpose -> consumer -> interface/contract -> observable behavior
-        -> internal implementation -> tradeoffs -> source/tests
+problem -> observable specification -> model and assumptions
+        -> derivation -> correctness and cost -> exercises
+        -> implementation case study and evidence
 ```
 
 A consumer may be an application or another internal component. This lets a
@@ -32,6 +34,10 @@ before running filesystem-backed examples.
 
 You should recognize C++ functions, classes, containers, references, and
 basic unit tests. You do not need prior database implementation experience.
+The [reasoning toolkit](00-reasoning-toolkit.md) introduces the loop,
+probability, cost, and failure-model arguments used later. Optional executable
+teaching models use standard-library Python 3.10 or newer; they do not open
+a database or replace the production parsers.
 The lessons introduce LSM trees, binary formats, durability, MVCC, and the
 concurrency rules used here.
 
@@ -44,16 +50,32 @@ not a complete C++ or operating-systems textbook.
 
 | Lesson | Main question | What you should be able to explain afterward |
 |---|---|---|
-| [01. The engine map](01-the-engine-map.md) | Where does a key go? | LSM trees, the major files, and the four runtime flows |
-| [02. Bytes and formats](02-bytes-and-formats.md) | How are operations represented? | Fixed-width integers, varints, internal keys, batches, and validation boundaries |
-| [03. Memory and MVCC](03-memory-and-mvcc.md) | How can old and new values coexist? | Arenas, skip lists, sequence visibility, snapshots, and tombstones |
-| [04. WAL and recovery](04-wal-and-recovery.md) | What survives a crash? | WAL framing, file versus directory durability, MANIFEST installation, and recovery |
-| [05. Tables, filters, and caches](05-tables-filters-and-caches.md) | How are sorted bytes read efficiently? | Prefix compression, restart points, Bloom filters, block compression, caching, and mapped files |
-| [06. Reads and iterators](06-reads-and-iterators.md) | How does the engine find the visible value? | Read-source order, level selection, merging, seek semantics, and iterator lifetimes |
-| [07. Writes and compaction](07-writes-and-compaction.md) | How does the engine keep making progress? | Group commit, flushes, compaction selection, version retention, and backpressure |
-| [08. C++ and concurrency](08-cpp-ownership-errors-and-concurrency.md) **(advanced)** | What makes the implementation safe? | Ownership, explicit errors, publication, locks, condition variables, and shutdown |
-| [09. Verification and performance](09-verification-and-performance.md) **(advanced)** | What evidence supports correctness and speed? | Golden tests, models, differential tests, crash simulation, fuzzing, sanitizers, and fair measurement |
-| [10. Guided labs](10-guided-labs.md) | Can I predict and inspect the engine's behavior? | A runnable API example, focused tests, state observation, and storage-file diagnostics |
+| [00. Reasoning toolkit](00-reasoning-toolkit.md) | What would make an explanation convincing? | Specifications, loop invariants, termination, cost units, expected/amortized reasoning, and counterexamples |
+| [01. The engine map](01-the-engine-map.md) | Where does a key go? | Specify visible history, derive the log/index split, and separate logical, lifetime, and durable-installation proofs |
+| [02. Bytes and formats](02-bytes-and-formats.md) | How are operations represented? | Derive integer encodings and internal order, prove cursor commit, and distinguish byte compatibility from round trips |
+| [03. Memory and MVCC](03-memory-and-mvcc.md) | How can old and new values coexist? | Prove lower-bound visibility and publication, derive expected skip-list costs, and recognize the fixed-height limit |
+| [04. WAL and recovery](04-wal-and-recovery.md) | What survives a crash? | State a failure model, derive framing costs, and prove content/name/metadata dependencies across crash cuts |
+| [05. Tables, filters, and caches](05-tables-filters-and-caches.md) | How are sorted bytes read efficiently? | Derive restart/Bloom/cache tradeoffs with explicit cost units and retain borrowed storage correctly |
+| [06. Reads and iterators](06-reads-and-iterators.md) | How does the engine find the visible value? | Justify source dominance, internal-key routing, merged order, direction changes, and one-sequence batch reads |
+| [07. Writes and compaction](07-writes-and-compaction.md) | How does the engine keep making progress? | Analyze grouped barriers, prove snapshot/tombstone retention, and account for unfinished maintenance |
+| [08. C++ and concurrency](08-cpp-ownership-errors-and-concurrency.md) **(advanced)** | What makes the implementation safe? | Construct owner/borrow, move, publication, lock-restoration, and shutdown arguments without assuming cleanup is free |
+| [09. Verification and performance](09-verification-and-performance.md) **(advanced)** | What evidence supports correctness and speed? | Build independent oracles and falsifiable claims, calculate paired summaries, and design controlled measurements |
+| [10. Guided labs](10-guided-labs.md) | Can I solve an unfamiliar variant? | Submit predictions, counterexamples, safe observations, transfer challenges, and an independently defended capstone |
+
+### Executable study units
+
+After lesson 05's representation introduction, work through
+[searching a prefix-compressed block](05a-restart-search.md). Derive its
+fresh lower bound, prove the fallback-aware binary-search invariant, account
+for the k+1 replay boundary, and attempt the design/transfer exercises before
+opening the source. Its executable model checks worked tables against an
+independent lower-bound oracle.
+
+After lesson 07's retention argument, run the
+[one-key compaction model](examples/retention.py). Explain why its
+oldest-view and deeper-history premises are necessary, then construct a
+new history before reading the tests. Neither model parses persistent
+files or substitutes finite enumeration for the written proof.
 
 [The glossary](glossary.md) is a quick reference, not another prerequisite.
 [The concept-to-code index](concept-index.md) is the maintenance map from a
@@ -64,17 +86,19 @@ and decision history.
 
 | Reading | Use it when |
 |---|---|
-| [11. LevelDB comparison](11-leveldb-comparison.md) **(appendix)** | Separating existing capabilities, intentional differences, and unapproved learning-oriented proposals |
-| [12. Native filesystem lifecycles](12-native-filesystem-lifecycles.md) **(advanced)** | Auditing copied/mapped ownership, OVERLAPPED completion, teardown, locks, sync, and error priority |
+| [11. Comparing engines](11-leveldb-comparison.md) **(appendix)** | Separating semantic, representation, generated-work, and workload claims before transferring a design |
+| [12. Native filesystem lifecycles](12-native-filesystem-lifecycles.md) **(advanced)** | Proving terminal-event and rollback safety, error priority, and the limits of mapping-count budgets |
 
-The comparison appendix is a proposal list, not an approved implementation
-roadmap. Lesson 12 is a maintainer deep dive, not a first-pass prerequisite.
+The comparison appendix also retains an explicitly unapproved proposal list,
+not an implementation roadmap. Lesson 12 is a maintainer deep dive, not a
+first-pass prerequisite.
 
 ## Choose a route
 
-**First pass:** read lesson 01, then the explanations and examples in
-lessons 02-07. Skip implementation details that do not yet make sense.
-Finish with the snapshot example in lesson 10.
+**First pass:** use lesson 00 when a reasoning tool is unfamiliar, then
+read the problem/model, derivation, proof, and worked examples in 01-07.
+Attempt exercises before opening answer checks or source tours. Finish with
+the independent predictions and runnable assignments in lesson 10.
 
 **Implementation pass:** follow each source-tour table in order. Read a
 function together with its corresponding test before following its callees.
@@ -83,8 +107,8 @@ behind each function. For a concrete change, start from the
 [concept-to-code index](concept-index.md) and follow the
 [document-first development workflow](../development/document-first-development.md).
 
-**Deep pass:** do the labs, answer the self-checks without opening the
-answers, and then read the linked ADRs. Study the parity and profiling ADRs
+**Deep pass:** solve the design/transfer exercises and labs before opening
+their hints, and then read the linked ADRs. Study the parity and profiling ADRs
 only after you understand the ordinary execution paths. For native platform
 work, read lesson 12 after lessons 04, 05, and 08.
 
@@ -138,7 +162,7 @@ guides.
 
 ## Completion checkpoint
 
-You understand the core project when you can explain, without source open:
+Use these as an initial checkpoint, without source open:
 
 1. Why a write reaches the WAL before it becomes visible.
 2. Why a deletion can require a physical record.
@@ -147,6 +171,14 @@ You understand the core project when you can explain, without source open:
 5. Why level 0 needs different read and compaction treatment.
 6. Why an iterator or cache pin can delay reclamation.
 7. Why a clean benchmark or sanitizer run is evidence, not a proof.
+
+Then derive a restart-search bound, explain a Bloom-model assumption,
+calculate a paired cost example, and defend the independent
+[lab capstone](10-guided-labs.md#capstone-explain-a-complete-lifecycle).
+Being able to repeat the explanations is not enough: solve a changed
+assumption or unfamiliar representation and show where your proof changes.
+The course supplies that assessment structure; it does not claim measured
+learning effectiveness without reader evaluation.
 
 For the platform-maintainer deep pass, also explain why native resource
 cleanup must reach a terminal state before releasing a borrowed buffer,
