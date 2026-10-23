@@ -1,4 +1,4 @@
-# Appendix: Modern LevelDB, LevelDB, and Useful Next Features
+# 11. Comparing Storage Engines and Transferring Designs
 
 [Learning path](README.md)
 
@@ -11,6 +11,64 @@ side of the comparison.
 The remaining feature suggestions below are **unapproved proposals**, not
 API promises or implementation tasks. Adding one still requires a concrete
 requirement, an ADR, and sequential development.
+
+Prerequisites: the logical history in [lesson 01](01-the-engine-map.md),
+read visibility in [lesson 06](06-reads-and-iterators.md), and the evidence
+distinctions in [lesson 09](09-verification-and-performance.md).
+
+## Define what the comparison is allowed to conclude
+
+The problem is not to make two feature lists identical. It is to decide
+whether a mechanism preserves a required contract, solves an actual need,
+and earns its complexity under the relevant cost model.
+
+Separate four claims before inspecting an implementation:
+
+| Claim | Observable question | Evidence that does not establish it |
+|---|---|---|
+| Semantics | Do comparable histories and read views produce the required values/errors? | Matching method names |
+| Representation | Can the other reader interpret these bytes and metadata? | Matching values in an in-memory test |
+| Generated work | Which calls, copies, ownership operations, or barriers remain? | Similar pseudocode or object sizes |
+| Workload outcome | Does fixed comparable work improve under stated policies? | A shorter isolated function or one favorable sample |
+
+For a bounded semantic exercise, choose an ordered binary-key map, a stable
+comparator, permitted operations, and read sequence S. Define the reference
+answer as the last operation at or below S, with a deletion meaning absence.
+Both engines must produce that answer for every tested history.
+
+This supplies a reusable oracle, not a proof that every operation, failure
+mode, and configuration of both engines is equivalent. Normalize only
+incidental differences, such as diagnostic wording. Do not normalize away
+promised result order, error status, or visibility.
+
+For example, Native can emulate an ordered batch read by acquiring one
+snapshot and performing Gets against it. Comparing Modern MultiGet against
+uncoordinated latest Native Gets would instead compare different contracts:
+a concurrent batch could fall between the Native calls. The missing
+convenience API does not mean Native lacks snapshot visibility.
+
+The same separation applies to format changes. A reader can ignore optional
+filter metadata and still read the data correctly, while losing the filter's
+exclusion benefit. Compatibility of data access and equivalence of work
+are different claims.
+
+## Derive a transfer decision
+
+Start with the simplest implementation satisfying the chosen contract.
+Then identify the remaining cost: source probes, bytes decoded, cache
+misses, ownership operations, or durable barriers. Transfer the mechanism
+only after stating which cost it removes and which new invariant it needs.
+
+A cache policy can reduce hit maintenance while increasing misses.
+A trusted decoder can remove repeated checks only after a checked boundary
+proves validity for the object's whole immutable lifetime. A new filesystem
+can expose identical method names while supplying weaker persistence.
+Each is a counterexample to transferring a design by copying its interface.
+
+Use four gates: required semantics, valid lifetime/failure assumptions,
+bounded implementation cost, and independent evidence. A failed gate is a
+reason to revise the design or retain the simpler baseline, not to invent
+a favorable measurement.
 
 ## The core storage engine is already present
 
@@ -177,6 +235,45 @@ Do not implement every row above simply to match an API checklist.
 The decision rule remains [need-driven simplicity](../adr/0010-need-driven-simplicity.md):
 identify the caller, invariant, lifetime, failure model, and verification
 before adding a capability.
+
+## Exercises: compare contracts before copying mechanisms
+
+1. **Classify:** "the bytes match," "the snapshot results match," "the
+   wrapper is inlined," and "the workload is faster" belong to which four
+   claims above? Which implications are invalid?
+2. **Counterexample:** put two keys in one atomic batch between two latest
+   Gets. Explain why comparing those Gets with a one-sequence MultiGet can
+   report a false compatibility failure.
+3. **Derive:** design a test for a reader that ignores an unknown optional
+   filter. Separate successful data reads from saved I/O.
+4. **Transfer:** propose moving the installation protocol to a remote store.
+   State the required name, content, selection, and failure guarantees
+   without assuming that a method called `Sync` supplies them.
+5. **Design:** choose one proposed feature below the core capability table.
+   Specify a caller, an invariant made visible, a counterexample, and the
+   smallest independently testable boundary. Explain why adding a knob is
+   not itself the learning outcome.
+
+<details>
+<summary>Answer checks and design rubric</summary>
+
+1. Representation, semantics, generated work, and workload outcome.
+   None alone establishes all the others.
+2. The first Get can observe the old batch boundary and the second the new
+   one. That mixed pair is legal for separate latest reads, not evidence
+   that either engine violated atomic publication.
+3. Use matching comparator semantics and literal compatible table contents.
+   Check present and absent queries with and without the optional filter.
+   Instrumented reads can demonstrate saved probes; correct results alone
+   cannot.
+4. Define which acknowledged objects and selectors survive which failures,
+   plus atomicity and ordering assumptions. Object replacement and eventual
+   visibility do not automatically implement a local directory barrier.
+5. A valid design names observable completion and errors, retained resources,
+   and a rejecting test. Prefer one explicit contract over an unchecked
+   checklist of upstream methods.
+
+</details>
 
 ## Comparison sources
 

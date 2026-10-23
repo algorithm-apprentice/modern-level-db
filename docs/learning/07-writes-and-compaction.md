@@ -17,6 +17,12 @@ Prerequisites: [durability](04-wal-and-recovery.md) and
 
 ## One leader, many callers
 
+There are two linked specifications. Foreground commits must publish whole
+ordered batches and report their durability/error result. Background work
+must replace selected storage without changing any protected read view.
+Safety does not imply progress: both protocols can preserve state while
+waiting for I/O or a worker that must eventually run or report failure.
+
 Multiple application threads can call Write, but one queue leader performs
 a commit at a time. Its stack-owned writer remains in the queue until
 completion.
@@ -33,6 +39,12 @@ queue: [leader A] [B] [C] [D]
 Grouping amortizes log and synchronization work.
 It does not add a timer that deliberately waits for future callers.
 Only followers already queued during group construction are considered.
+
+In a simple model with m compatible queued writes, total encoded bytes B,
+one barrier cost F, and byte-processing cost c*B, separate commits pay
+`m*F+c*B`; one group pays `F+c*B` plus preparation. This derivation assumes
+that one barrier really covers the complete group. It neither eliminates
+publication ordering nor predicts caller tail latency.
 
 ### Sync compatibility
 
@@ -129,6 +141,18 @@ Compaction merges inputs in internal-key order.
 Let `S` be the oldest registered snapshot, or the current published sequence
 if there are none.
 
+The specification is stronger than "keep the latest value":
+
+```text
+for every user key x and protected read sequence Q >= S:
+    visible(original history, x, Q) = visible(compacted history, x, Q)
+```
+
+The model assumes the compaction inputs include the required overlapping
+history and that the lower-level range predicate conservatively detects
+outside older values. Current in-memory sources can still contain newer
+updates; compaction is not a global rewrite of the database.
+
 For one user key, suppose the entries are:
 
 ```text
@@ -147,6 +171,32 @@ from every retained snapshot and every newer reader.
 This rule is conservative. It need not retain only the exact minimal set
 for the individually registered snapshots.
 
+### Derive the one-key filtering state
+
+For entries of one user key in decreasing sequence order:
+
+```text
+previous_sequence = none
+for entry in merged input:
+    shadowed = previous_sequence exists and previous_sequence <= S
+    deletion_obsolete = entry is a deletion and entry.sequence <= S
+                        and no deeper range can hold an older value
+    if not shadowed and not deletion_obsolete:
+        emit entry
+    previous_sequence = entry.sequence
+```
+
+Reset this state at every new user key. Track the previous **observed**
+entry even if it was dropped.
+
+Once a visible predecessor at or below S has been encountered, every older
+entry is hidden from all protected Q. If that predecessor was itself an
+obsolete deletion, its absence is safe only because no outside older value
+can reappear, and the older input versions are also discarded. These cases
+preserve either the deciding retained record or the same absence.
+Updating state only for emitted records could drop a tombstone and then
+incorrectly keep an older input value.
+
 ### Tombstone safety
 
 A deletion at sequence `D` can be discarded only when:
@@ -161,6 +211,35 @@ For the running `color@42/41/40` example with snapshot 40 still registered,
 history cannot simply be collapsed to "absent."
 After snapshots are released, the deletion may disappear once lower-level
 overlap no longer requires it.
+
+<!-- retention-worked-cases -->
+
+| Oldest sequence S | Deeper older history possible | Input sequence/kind | Retained sequence/kind |
+|---|---|---|---|
+| 100 | no | `105V,101V,99V,70V` | `105V,101V,99V` |
+| 80 | no | `90D,70V` | `90D,70V` |
+| 100 | yes | `90D,70V` | `90D` |
+| 100 | no | `90D,70V` | `none` |
+
+The second row preserves a pre-deletion snapshot. The third protects against
+outside resurrection. The last can remove the deletion and all older input
+history. These are logical-history decisions, not permission to free files
+still pinned by readers.
+
+The [one-key executable model](examples/retention.py) implements only this
+filtering rule. Its independent visibility tests compare every protected
+read across bounded histories and include deliberately wrong snapshot/base
+assumptions that produce counterexamples. It is not an input picker, file
+writer, or proof that arbitrary compaction inputs are complete.
+
+### Analyze merge work and outstanding debt
+
+With I input entries and m sorted streams, linear head selection takes
+O(I*m) comparisons in the abstract model; a heap changes that component.
+Input decoding, variable-length comparisons, retained output bytes, syncing,
+and overlap bookkeeping need separate accounting. Physical write
+amplification requires actual bytes over an explicit interval, including
+the WAL and any maintenance counted by the claim.
 
 ## Output installation and reclamation
 
@@ -205,6 +284,62 @@ Backpressure does not guarantee a device-throughput or tail-latency target.
 It prevents unbounded foreground progress from overwhelming the chosen
 single-background-work pipeline.
 
+For a fluid debt model, let foreground rate be lambda updates/second,
+maintenance demand alpha bytes/update, and background service mu bytes/second.
+Sustained `alpha*lambda > mu` grows debt. More workers help only if they
+increase effective service without exhausting the same CPU, device, or
+memory resources. A stop threshold supplies waiting, not a proof that a
+failed or stopped background executor can make progress.
+
+## Exercises: preserve history while changing representation
+
+1. Can an async leader include a sync follower?
+2. Why is "this key is deleted" insufficient to drop its tombstone?
+3. Why can compaction finish without immediately reducing all disk usage?
+4. Are bytes reported as logical benchmark writes a measurement of write
+   amplification?
+5. If WAL append returns an error after writing some bytes, may the next
+   writer continue using that WAL?
+6. **Derive:** reproduce the retention table and state which protected
+   query would fail if the second row dropped its old value.
+7. **Counterexample:** remove a deletion at 90 with S = 100 while an
+   unselected deeper file contains value 70. Show the resurrected result.
+8. **State:** why does the pseudocode update previous_sequence even for a
+   dropped deletion? Construct the wrong output if it does not.
+9. **Cost:** four compatible commits have barrier cost 10 and total byte
+   work 4. Compare separate versus grouped cost, then list omitted latency
+   and durability assumptions.
+10. **Transfer:** design backpressure for a different background pipeline.
+    State its debt unit, arrival/service rates, stop condition, and what
+    happens when the worker fails permanently.
+
+<details>
+<summary>Answers</summary>
+
+1. No. That group would not supply the follower's requested sync.
+2. Old snapshots or lower-level values can still require the deletion/history.
+3. Retained old sources can keep input files alive, and other maintenance
+   work may remain outstanding.
+4. No. Write amplification also requires physical bytes for the explicitly
+   defined WAL/flush/compaction interval and accounting policy.
+5. No. The commit result is uncertain, so the database owner makes the error
+   sticky and rejects later writes.
+6. A read at 80 must still see value 70 before deletion 90. Rows three and
+   four differ because of possible history outside the inputs.
+7. Before dropping it, the visible deletion decides absence. Afterward,
+   lookup can reach the deeper value and return 70.
+8. Otherwise an empty output after dropping deletion 90 can make value 70
+   look unshadowed and retain it. Observed visibility, not output count,
+   determines whether older input history is obsolete.
+9. Separate cost is 44 units, grouped cost 14 in this model. Queued
+   compatibility, one covering barrier, preparation, scheduling, and caller
+   waiting are not all represented by that arithmetic.
+10. A complete design distinguishes bounded resource safety from liveness.
+    Waiting forever is not recovery; permanent failure needs an explicit
+    error/closing transition and retained-state policy.
+
+</details>
+
 ## Source tour
 
 | Entry point | Interface or symbol | Question to answer | Representative evidence |
@@ -221,27 +356,3 @@ single-background-work pipeline.
 Read [ADR-0032](../adr/0032-write-path.md),
 [ADR-0035](../adr/0035-running-compactions.md), and the completed write
 pipeline audit in [ADR-0060](../adr/0060-leveldb-write-path-parity.md).
-
-## Self-check
-
-1. Can an async leader include a sync follower?
-2. Why is "this key is deleted" insufficient to drop its tombstone?
-3. Why can compaction finish without immediately reducing all disk usage?
-4. Are bytes reported as logical benchmark writes a measurement of write
-   amplification?
-5. If WAL append returns an error after writing some bytes, may the next
-   writer continue using that WAL?
-
-<details>
-<summary>Answers</summary>
-
-1. No. That group would not supply the follower's requested sync.
-2. Old snapshots or lower-level values can still require the deletion/history.
-3. Retained old sources can keep input files alive, and other maintenance
-   work may remain outstanding.
-4. No. Write amplification also requires physical bytes for the explicitly
-   defined WAL/flush/compaction interval and accounting policy.
-5. No. The commit result is uncertain, so the database owner makes the error
-   sticky and rejects later writes.
-
-</details>

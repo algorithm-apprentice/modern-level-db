@@ -73,6 +73,12 @@ The default data restart interval is sixteen; the table's index block uses
 interval one. A smaller interval costs space but reduces reconstruction
 work. A larger interval saves restart metadata but can increase seeks.
 
+For a complete derivation rather than an implementation summary, work
+through [the restart-search study unit](05a-restart-search.md). Its proof
+explains why a fresh strict-before search can replay k+1 entries, including
+the first entry of the following region, and separates entry counts from
+variable-length byte work.
+
 `Block::Create` checks the restart-array region, not every entry.
 Data iterators check bounds and reconstructed keys lazily.
 Table-open validation walks all index entries. When a filter policy is
@@ -158,6 +164,40 @@ The legacy layout uses LevelDB's seeded hash and repeated probes from one hash p
 rotated delta. The probe count is `floor(bits_per_key * 0.69)`, clamped
 between one and thirty. Ten bits per key gives six probes and approximately
 a one-percent false-positive rate for a sufficiently large filter.
+
+### Derive the approximation and expose its limits
+
+Start with an idealized m-bit filter and kn independent uniform placements
+with replacement. A particular bit remains zero with probability
+`(1-1/m)^(kn)`. Linearity of expectation gives the same value for the expected
+zero fraction; it does not make all bits independent.
+
+Approximating query-bit occupancy as independent gives
+`(1-(1-1/m)^(kn))^k`; replacing the inner power by an exponential gives the
+formula above. Those are modeling approximations, not exact guarantees for
+double hashing, repeated positions, blocked probes, or adversarial keys.
+
+Let a = m/n and treat k as continuous. Taking logarithms of
+`f(k)=(1-exp(-k/a))^k` and differentiating gives the usual optimum
+`k=a*ln(2)` in this model. Integer policy, minimum size, and locality impose
+additional choices. Let b be the configured bits per key. The compatible
+legacy probe policy uses clamped integer `floor(69*b/100)`. Minimum size and
+byte rounding mean the actual ratio a need not equal b. The table assumes
+a = b and ignores those rounding/metadata effects.
+
+<!-- bloom-model-costs -->
+
+| Bits per key a | Legacy probes k | Approximate false-positive percent |
+|---|---|---|
+| 4 | 2 | 15.48 |
+| 8 | 5 | 2.17 |
+| 10 | 6 | 0.84 |
+| 16 | 11 | 0.05 |
+
+The table evaluates the approximation, not a measured Full-filter rate.
+A missing-key query pays filter work plus the false-positive probability
+times the subsequent lookup work in the chosen model. Whether an index
+seek belongs to that subsequent work depends on the layout.
 
 Filters cover user keys, not sequence-bearing internal keys. Otherwise a
 lookup at another snapshot could incorrectly reject a stored version.
@@ -267,6 +307,21 @@ and Get can improve while pressured concurrent reads and shifted hot sets
 regress. Automatic therefore retains LRU. Separate original/facade-LRU controls
 also matter: adding policy dispatch is not automatically free.
 
+### Derive a policy decision from hit and miss work
+
+For a simple model with hit-path work H, miss probability q, and additional
+miss work M:
+
+```text
+expected work per query = H + q*M
+```
+
+Policy A with H = 1, q = 0.1, and M = 100 costs 11 units. Policy B with
+H = 0.5 and q = 0.2 costs 20.5. Cheaper maintenance does not compensate
+for every miss-pattern change. Real M also varies with the OS cache,
+compression, and contention; this equation is a decision model, not a
+latency prediction.
+
 `fill_cache=false` avoids admitting newly read data blocks.
 It does not disable existing cache hits, the table cache, or the OS cache.
 
@@ -348,24 +403,7 @@ unsupported.
 For mapping admission, rollback, native handle ownership, and teardown order,
 see [lesson 12](12-native-filesystem-lifecycles.md).
 
-## Source tour
-
-| Entry point | Interface or symbol | Question to answer | Representative evidence |
-|---|---|---|---|
-| [`block_builder.cc`](../../src/table/block_builder.cc) | `BlockBuilder::Add`, `Finish` | How do prefix compression and restart offsets preserve seekability? | [`block_test.cc`](../../tests/unit/table/block_test.cc) |
-| [`block.cc`](../../src/table/block.cc) | `Block::Create`, iterator seek | Which checks establish safe lazy decoding? | [`block_test.cc`](../../tests/unit/table/block_test.cc) |
-| [`table_builder.cc`](../../src/table/table_builder.cc) | `Add`, `Finish`, pending index entry | How are data, filter, metaindex, index, and footer ordered? | [`table_builder_test.cc`](../../tests/unit/table/table_builder_test.cc) |
-| [`bloom_filter.cc`](../../src/table/bloom_filter.cc) | `CreateFilter`, `KeyMayMatch` | Why can a filter reject but not prove presence? | [`bloom_filter_test.cc`](../../tests/unit/table/bloom_filter_test.cc) |
-| [`table.cc`](../../src/table/table.cc) | `Open`, `Get`, data-block lookup | Which objects own or borrow index, filter, and block bytes? | [`table_test.cc`](../../tests/unit/table/table_test.cc) |
-| [`sharded_lru_cache_core.cc`](../../src/cache/sharded_lru_cache_core.cc) | `CommitAdmission`, `FinishErase`, `Retire`, `DeleteRetired`, `Release` | How are membership and references committed under the mutex while a reentrant value deleter runs after unlocking? | [`sharded_lru_cache_test.cc`](../../tests/unit/cache/sharded_lru_cache_test.cc) |
-
-Follow with [ADR-0014](../adr/0014-sharded-lru-cache.md),
-[ADR-0022](../adr/0022-sstable-block-format.md),
-[ADR-0023](../adr/0023-sstable-filter-blocks.md),
-[ADR-0039](../adr/0039-sstable-block-compression.md), and
-[ADR-0056](../adr/0056-leveldb-table-mmap-parity.md).
-
-## Self-check
+## Exercises: choose a representation and defend the tradeoff
 
 1. Why does increasing the restart interval potentially slow a seek?
 2. Can a Bloom "possibly present" result prove that a key exists?
@@ -377,6 +415,15 @@ Follow with [ADR-0014](../adr/0014-sharded-lru-cache.md),
    invoke its value deleter only after unlocking?
 7. After Open validates an index handle, can every entry in its data block
    use an unchecked decoder?
+8. **Derive:** reproduce the ten-bits-per-key approximation. Identify both
+   approximations and explain why it is not an exact Full-filter rate.
+9. **Design:** a comparator equates two different byte strings. Construct a
+   false-negative risk if a filter hashes the unnormalized byte strings.
+10. **Cost:** with the policy model above, derive the largest miss
+    probability B can tolerate before losing to A.
+11. **Transfer:** budget a cache for pinned readers and metadata as well as
+    retained blocks. Which quantities can the public block charge establish,
+    and which require additional accounting?
 
 <details>
 <summary>Answers</summary>
@@ -393,5 +440,31 @@ Follow with [ADR-0014](../adr/0014-sharded-lru-cache.md),
    otherwise destruction could deadlock or observe a partial mutation.
 7. No. The proof covers the complete handle in stable, retained index bytes.
    It does not validate the data block's entries; their lazy checks remain.
+8. With k = 6, `(1-exp(-0.6))^6` is about 0.84 percent. Query occupancy
+   independence and the exponential substitution are approximations;
+   blocked/local probes and correlated hashes change the model.
+9. Store one spelling and query an equivalent different spelling. If its
+   hash bits are absent, byte exclusion contradicts comparator equality.
+10. Require `0.5 + 100*q <= 11`, so q is at most 0.105 in that model.
+    Different miss costs or workloads require a new inequality.
+11. Retained block charge is not all live pinned values, allocator/cache
+    metadata, tables, mappings, or process RSS.
 
 </details>
+
+## Source tour
+
+| Entry point | Interface or symbol | Question to answer | Representative evidence |
+|---|---|---|---|
+| [`block_builder.cc`](../../src/table/block_builder.cc) | `BlockBuilder::Add`, `Finish` | How do prefix compression and restart offsets preserve seekability? | [`block_test.cc`](../../tests/unit/table/block_test.cc) |
+| [`block.cc`](../../src/table/block.cc) | `Block::Create`, iterator seek | Which checks establish safe lazy decoding? | [`block_test.cc`](../../tests/unit/table/block_test.cc) |
+| [`table_builder.cc`](../../src/table/table_builder.cc) | `Add`, `Finish`, pending index entry | How are data, filter, metaindex, index, and footer ordered? | [`table_builder_test.cc`](../../tests/unit/table/table_builder_test.cc) |
+| [`bloom_filter.cc`](../../src/table/bloom_filter.cc) | `CreateFilter`, `KeyMayMatch` | Why can a filter reject but not prove presence? | [`bloom_filter_test.cc`](../../tests/unit/table/bloom_filter_test.cc) |
+| [`table.cc`](../../src/table/table.cc) | `Open`, `Get`, data-block lookup | Which objects own or borrow index, filter, and block bytes? | [`table_test.cc`](../../tests/unit/table/table_test.cc) |
+| [`sharded_lru_cache_core.cc`](../../src/cache/sharded_lru_cache_core.cc) | `CommitAdmission`, `FinishErase`, `Retire`, `DeleteRetired`, `Release` | How are membership and references committed under the mutex while a reentrant value deleter runs after unlocking? | [`sharded_lru_cache_test.cc`](../../tests/unit/cache/sharded_lru_cache_test.cc) |
+
+Follow with [ADR-0014](../adr/0014-sharded-lru-cache.md),
+[ADR-0022](../adr/0022-sstable-block-format.md),
+[ADR-0023](../adr/0023-sstable-filter-blocks.md),
+[ADR-0039](../adr/0039-sstable-block-compression.md), and
+[ADR-0056](../adr/0056-leveldb-table-mmap-parity.md).

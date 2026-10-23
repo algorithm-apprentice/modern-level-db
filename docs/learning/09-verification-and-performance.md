@@ -26,6 +26,11 @@ It can pass a benchmark while returning stale data.
 
 The project combines independent evidence:
 
+First express a claim as something an observation could falsify. "The engine
+is safe" has no bounded oracle. "Every acknowledged sync batch survives each
+crash cut in this filesystem model" identifies acknowledged markers,
+failure points, and allowed recovery states.
+
 | Technique | Question it answers | Important limit |
 |---|---|---|
 | Unit tests | Does one contract handle success, boundaries, and failure? | Limited to specified cases |
@@ -238,7 +243,7 @@ is diagnostic evidence, not the saving an intervention will necessarily
 recover. Keep unclassified and unsampled CPU explicit rather than assigning
 it to a guessed cause.
 
-### Negative controls and combinations
+### Negative controls are not a correction factor
 
 A/A controls execute the same program without the proposed mechanism
 change. Differences can still expose host load, placement, cache, or
@@ -248,6 +253,30 @@ Keep systematic drift and adverse observations visible. Do not subtract
 control drift to manufacture a candidate gain or resample until it wins.
 Observed A/A variation is descriptive, not a confidence bound proving
 equivalence.
+
+### Work a reporting example before choosing a summary
+
+Use two fixed-work rounds with cost units:
+
+<!-- paired-cost-example -->
+
+| Round | Before cost | After cost |
+|---|---|---|
+| 1 | 100 | 90 |
+| 2 | 200 | 210 |
+
+Within-round ratios are 0.90 and 1.05. Their median is 0.975, a cost change
+of -2.5 percent. The ratio of aggregate medians is 150/150, or no change.
+These summaries answer different questions; silently substituting one for
+the other changes the report.
+
+Rates have another nonlinear transformation. Median per-round `1/cost`
+is not generally `1/median(cost)`. With these before costs the former is
+0.0075 and the latter about 0.00667 in reciprocal cost units. State the
+estimator, preserve pair identity, and do not label reciprocal median cost
+as median measured throughput.
+
+### A combination needs an incremental comparison
 
 Combinations need a second distinction. For identical fixed work, let
 `T` be elapsed cost and define interaction as:
@@ -281,6 +310,62 @@ negative controls, rejected interpretations, and integrated results. They
 are the evidence records; the transferable lesson is how to distinguish
 these claims.
 
+## Exercises: construct evidence that can reject your claim
+
+1. Why does cross-opening database files add evidence beyond comparing Gets?
+2. Why must a crash simulator freeze later cleanup?
+3. Why cannot mutable calibration simply reuse the read benchmark's loop?
+4. Can the production `mixed50` regression in
+   [ADR-0060](../adr/0060-leveldb-write-path-parity.md) be called a speedup?
+5. A helper microbenchmark improves while the end-to-end workload is
+   unchanged. What claim is justified?
+6. Only one engine has a decoder self symbol. Can its profile share explain
+   the performance gap without examining callers?
+7. In the illustrative combination above, does negative interaction prove
+   that adding B to A improves throughput?
+8. **Oracle:** design a test where an encoder and decoder share an endian
+   bug. Which independent evidence detects it?
+9. **Calculate:** reproduce both summaries of the paired-cost table and
+   explain why their disagreement is not an arithmetic error.
+10. **Design:** compare an ABI-changing read implementation with its
+    baseline. List the source/header, caller, provider, image, and timing
+    identities you must retain.
+11. **Transfer:** propose a counterexample to a performance claim that
+    reports only the best round. Design a predeclared protocol that would
+    keep that counterexample visible.
+
+<details>
+<summary>Answers</summary>
+
+1. It exercises persistent-format interoperability and recovery, not just
+   API results in each implementation's own process.
+2. Otherwise unwinding might sync or delete files after the modeled crash,
+   changing the image being tested.
+3. Each calibration changes history, layout, and background debt, so the
+   compared trials may no longer perform comparable work.
+4. No. The ADR preserves that observed regression separately from the
+   matched-reference improvements and explains the measurement limits.
+5. Only that the isolated helper improved under its defined workload. The
+   evidence does not establish an end-to-end application improvement.
+6. No. The other engine can charge inlined work to a caller. Comparable
+   phases help locate cost but do not replace a controlled intervention.
+7. No. A+B and A both cost 90. The direct incremental comparison shows no
+   benefit from adding B despite negative interaction.
+8. A big-endian encoder and matching decoder can round-trip. Literal
+   little-endian golden bytes or an independently checked native reference
+   reject the shared mistake.
+9. The paired estimator is -2.5 percent; the ratio of medians is zero.
+   One aggregates matched ratios, the other aggregates costs before taking
+   their ratio. Record which question each answers.
+10. Rebuild each caller against matching headers; retain ordinary options,
+    providers, binaries/symbols, dataset/policies/work, and all raw samples.
+    Do not force an old object across incompatible symbols to appear fair.
+11. A favorable noisy sample can win even when most pairs regress.
+    Fixed work/order, retained A/A/adverse observations, and publication
+    rules before measurement prevent choosing only that sample afterward.
+
+</details>
+
 ## Source tour
 
 | Entry point | Interface or symbol | Question to answer | Representative evidence |
@@ -300,37 +385,3 @@ the current
 [benchmarking and profiling guide](../development/benchmarking-and-profiling.md).
 Rejected experiments are also useful: they show why a plausible local
 optimization is not automatically an accepted end-to-end improvement.
-
-## Self-check
-
-1. Why does cross-opening database files add evidence beyond comparing Gets?
-2. Why must a crash simulator freeze later cleanup?
-3. Why cannot mutable calibration simply reuse the read benchmark's loop?
-4. Can the production `mixed50` regression in
-   [ADR-0060](../adr/0060-leveldb-write-path-parity.md) be called a speedup?
-5. A helper microbenchmark improves while the end-to-end workload is
-   unchanged. What claim is justified?
-6. Only one engine has a decoder self symbol. Can its profile share explain
-   the performance gap without examining callers?
-7. In the illustrative combination above, does negative interaction prove
-   that adding B to A improves throughput?
-
-<details>
-<summary>Answers</summary>
-
-1. It exercises persistent-format interoperability and recovery, not just
-   API results in each implementation's own process.
-2. Otherwise unwinding might sync or delete files after the modeled crash,
-   changing the image being tested.
-3. Each calibration changes history, layout, and background debt, so the
-   compared trials may no longer perform comparable work.
-4. No. The ADR preserves that observed regression separately from the
-   matched-reference improvements and explains the measurement limits.
-5. Only that the isolated helper improved under its defined workload. The
-   evidence does not establish an end-to-end application improvement.
-6. No. The other engine can charge inlined work to a caller. Comparable
-   phases help locate cost but do not replace a controlled intervention.
-7. No. A+B and A both cost 90. The direct incremental comparison shows no
-   benefit from adding B despite negative interaction.
-
-</details>

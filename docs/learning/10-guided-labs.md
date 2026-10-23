@@ -5,6 +5,21 @@
 The purpose is to predict behavior before running a test, then explain the
 result from the implementation. Passing commands alone do not complete a lab.
 
+## Assessment contract
+
+For each lab, keep a short independent submission:
+
+1. the observable claim and model assumptions;
+2. a predicted trace or calculation made before opening the assertions;
+3. a counterexample to a tempting wrong rule;
+4. the observed evidence and its limits;
+5. an answer to the transfer challenge without copying an implementation.
+
+Use the [reasoning toolkit](00-reasoning-toolkit.md) and chapter exercises
+first. Commands below supply evidence, not answer generators. When a
+prediction fails, revise the premise or argument explicitly instead of
+changing a test merely to make the prediction pass.
+
 ## Setup and safety
 
 Use the prerequisites in the current
@@ -68,6 +83,10 @@ Follow `WriteBatchReader::Open`, not the trusted reader.
 
 **Completion:** you can distinguish a valid WAL frame containing an invalid
 batch from a valid batch with an empty value.
+
+**Independent challenge:** choose a different binary key and a two-byte
+length prefix. Lay out its offsets, then remove one payload byte on paper.
+Specify the compound parser's result and unchanged-cursor requirement.
 
 ## Lab 2: run a snapshot example
 
@@ -242,6 +261,11 @@ ctest --preset windows-debug -L unit -R '^PublicDatabaseTest\.'
 an iterator that retained its registration, and why a child can keep the
 engine open after the Database handle disappears.
 
+**Independent challenge:** extend the disposable example to two keys changed
+by one atomic batch. Explain the permitted results from two latest Gets,
+two Gets sharing one Snapshot, and one MultiGet. Worker completion and
+snapshot consistency require separate arguments.
+
 ## Lab 3: find the WAL crash boundary
 
 Before running anything, sketch a batch fragmented across two WAL blocks.
@@ -263,6 +287,10 @@ Then compare EOF, corruption events, and I/O failures in `WalReader`.
 **Completion:** explain why no valid logical batch is produced from an
 incomplete fragment sequence, and why that is not permission to ignore all
 metadata corruption.
+
+**Independent challenge:** give one prefix-loss trace and one checksum-
+corruption trace with different recovery policies. State which model each
+trace uses and why they cannot be described as the same kind of EOF.
 
 ## Lab 4: predict group commit
 
@@ -291,6 +319,10 @@ Read `BuildGroup` and
 With A sync, all four can join subject to size limits.
 Explain why batching is not a background timer-based delay.
 
+**Independent challenge:** add a size limit that stops the group before D.
+Derive the number of barriers needed, then explain why fewer barriers alone
+does not establish lower waiting time for every caller.
+
 ## Lab 5: decide what compaction may drop
 
 Use the versions `105, 101, 99, 70` with oldest snapshot 100 from
@@ -310,6 +342,11 @@ Read that test and `BaseLevel::IsBaseLevelForKey` in
 
 **Completion:** explain both the oldest-snapshot rule and the
 lower-level-overlap rule. "Deleted means garbage" is not a sufficient answer.
+
+**Independent challenge:** construct your own history containing two values
+and a deletion. Compare every protected read before/after filtering using
+an independently written maximum-visible-sequence oracle. Deliberately
+make the oldest-snapshot or deeper-history premise wrong and exhibit failure.
 
 ## Lab 6: ownership is not cache membership
 
@@ -337,6 +374,10 @@ shard mutation under mutex -> retired entry -> unlock -> value deleter reenters
 memory limit, identify the owner of an uncompressed mapped block, and explain
 why a replacement pin can remain valid even when the old value's deleter
 erases the new mapping before `Insert` returns.
+
+**Independent challenge:** assign reference counts to a replacement, an
+erasure, a moved handle, and the final release. Identify precisely when
+lookup reachability ends and when the destructor may run.
 
 ## Lab 7: observe LSM and maintenance state
 
@@ -381,6 +422,11 @@ remain after an exceptional background termination.
 **Completion:** explain why a state value remains valid after the database
 changes or closes, why it performs no I/O, and why it is not a metrics stream
 or background-progress percentage.
+
+**Independent challenge:** a writer changes arena reservations while the
+database mutex is unlocked. Explain why a reader holding that mutex alone
+cannot safely inspect the live allocator, then propose a published-observation
+contract rather than an unrelated extra lock.
 
 ## Lab 8: inspect read costs, not just elapsed time
 
@@ -431,6 +477,11 @@ CPU samples do not establish exact I/O counts.
 Use the current
 [benchmarking and profiling guide](../development/benchmarking-and-profiling.md)
 before interpreting speed.
+
+**Independent challenge:** write a comparison plan before collecting another
+sample. Include matching header/caller ABI, an unchanged executable control,
+work/warmup boundaries, reader/process concurrency, raw-result publication,
+and one outcome that would make your claimed speedup unsupported.
 
 ## Lab 9: inspect persistent files without treating text as a backup
 
@@ -506,6 +557,10 @@ directory instead.
 custom comparator, why a truncated final WAL fragment is benign EOF, and why
 diagnostic output is not a checkpoint or repair operation.
 
+**Independent challenge:** distinguish a logical dump, a closed binary
+directory copy, and a live checkpoint protocol. For each, state the owner
+or consistency boundary that would justify its use.
+
 ## Capstone: explain a complete lifecycle
 
 Without source open, draw:
@@ -526,5 +581,23 @@ At every transition, label:
 
 Then check the drawing against the source tours, not against class names
 from memory.
-You have completed the core learning path when you can explain both the
-normal lifecycle and one failure boundary in each persistent transition.
+
+For the independent design part, choose one:
+
+- implement prefix-compressed lower bound in another language and verify it
+  against a separate sorted-array oracle;
+- model a persistent root replacement, enumerate crash cuts, and show why
+  changing one barrier order violates the chosen guarantee;
+- model snapshot-preserving one-key compaction and demonstrate the
+  resurrection counterexample when the base-level premise is removed.
+
+Submit a specification, assumptions, algorithm/state machine, correctness
+argument, explicit cost units, independent oracle, counterexample, and a
+short mapping to the engine. Assess them separately: passing tests cannot
+replace the proof, and a proof under a different failure model does not
+justify a platform guarantee.
+
+You have completed the core learning path when you can defend these
+artifacts and solve an unfamiliar variant, not only repeat the normal
+lifecycle or run all existing tests. This is an assessment rubric, not a
+claim that a particular reader has already mastered it.

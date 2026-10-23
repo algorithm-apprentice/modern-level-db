@@ -55,6 +55,33 @@ Not every patch needs a new ADR. Create one when the decision changes an
 ownership model, persistent format, public contract, durability boundary,
 concurrency model, module responsibility, or long-lived performance policy.
 
+## A learning chapter is more than a source tour
+
+Use the implementation as a case study after establishing a transferable
+argument. A revised chapter must provide:
+
+- a problem and observable specification, independent of class names;
+- an explicit model, assumptions, and prerequisite reasoning;
+- a derivation from a simple alternative to an algorithm or state machine;
+- a correctness argument using invariants, cases, or a stated failure model;
+- a cost analysis with units and expected/worst/amortized assumptions;
+- a worked trace plus a counterexample exposing a tempting wrong rule;
+- graduated tracing, derivation, design, and transfer exercises with separate
+  hints/answer checks;
+- a final mapping to current code, tests, and intentional model limitations.
+
+Do not add theorem-shaped headings without supplying the reasoning. For
+concurrency and durability, explicit ownership/publication dependencies and
+crash/interleaving counterexamples can be more appropriate than arithmetic.
+Do not infer real CPU or device latency from an abstract operation count.
+
+Check executable examples against independent oracles, and bind worked
+numeric tables to tests where practical. These checks support the written
+argument; finite test enumeration is not a proof for all inputs. Independent
+technical/pedagogical review must also inspect the assumptions, argument,
+and exercises. A structurally complete chapter is not evidence of measured
+learning effectiveness without evaluation by readers.
+
 ## Change workflow
 
 ### 1. State the concept and contract
