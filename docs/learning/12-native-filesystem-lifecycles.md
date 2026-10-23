@@ -49,6 +49,32 @@ What event proves the native operation is terminal?
 Which cleanup remains if the next acquisition fails?
 ```
 
+### Derive a lifecycle proof
+
+Model each acquisition as an obligation attached to one owner. Borrowers
+may use the resource only until their documented terminal event; moving an
+owner transfers the obligation rather than satisfying it.
+
+For a pending operation, use four states:
+
+```text
+not acquired -> owned/pending -> owned/terminal -> released
+                    ^                  |
+                    |                  +-> report operation result
+                    +-- cancellation request is not yet completion
+```
+
+The safety invariant is that every live native borrow has a live owner.
+Check it initially, then for acquisition, transfer, completion, and release.
+An acquisition failure must unwind the successful prefix in a valid order.
+Release is justified by terminal completion, not by the decision to return
+an error. Conversely, this safety proof does not show that a stalled kernel
+operation will eventually complete: progress is a separate assumption.
+
+The state model also explains why one universal "close everything" callback
+is insufficient. A file handle, pending request, event, mapping, and limiter
+slot have different borrowers and release preconditions.
+
 ## Copied reads
 
 ### POSIX positioned reads
@@ -110,6 +136,20 @@ permission to return while the operation is still pending.
 
 Each call has a separate event and operation record, so concurrent positioned
 reads do not share mutable per-request state.
+
+Consider the tempting failure trace:
+
+```text
+completion wait reports an error
+request is still pending
+caller requests cancellation, destroys event, and returns
+kernel later accesses the operation record or output buffer
+```
+
+Cancellation requested did not establish terminal completion. The correct
+trace preserves all owners while draining, then returns the captured primary
+error after the kernel's borrow ends. This is why error handling and lifetime
+handling cannot be proved as separate, unrelated functions.
 
 ## Mapped-read admission and rollback
 
@@ -189,6 +229,19 @@ Cleanup is still attempted because leaking the native resource does not make
 the earlier write failure safer. The cleanup error does not replace the first
 causal error because callers need the operation that first made the file
 uncertain.
+
+For ordinary reportable errors, define a left-biased composition:
+
+```text
+choose(primary, cleanup) = primary if primary is an error
+                          cleanup otherwise
+```
+
+Enumerating success/failure of both operands proves that a successful cleanup
+cannot erase the primary error, and a cleanup error is visible when no earlier
+stage failed. The operator is not commutative: swapping stages can change the
+diagnostic. It does not authorize unsafe cleanup or override an invariant-
+failure policy such as Windows' failed-unmap termination.
 
 POSIX retries interrupted `read`, `pread`, `write`, and sync operations where
 the syscall contract permits it. Linux uses `fdatasync` for file data and
@@ -275,6 +328,88 @@ step fails. Error priority is part of the lifecycle: cleanup runs, but it
 cannot silently replace the already captured cause unless the earlier stages
 succeeded.
 
+## Cost model: count the resource actually budgeted
+
+Let M be the mapping-slot limit and v the active admitted mappings. On
+ordinary successful teardown, admission and rollback maintain `0 <= v <= M`:
+acquire increases v only below M, and release follows view teardown.
+The exceptional POSIX `munmap` policy above prevents extending this to an
+unconditional bound on all still-existing kernel mappings after errors.
+
+This is a count budget, not a byte or resident-memory budget. Two slots can
+admit two large files; one tiny and one large view consume the same slot
+count. Pins can retain either view after a cache mapping is erased.
+
+Copied reads add native-call and copying work; a Windows request also creates
+and owns per-call completion state. Mapped reads can avoid that copy but
+still incur faults, storage access, and address-space costs. Without file
+sizes, residency, request distribution, concurrency, and fault/error policy,
+the count model cannot conclude which backend is faster or uses less memory.
+
+## Exercises: prove terminal events and error priority
+
+1. Why must a failed Windows completion wait cancel and drain an operation
+   before returning?
+2. Why does a mapped reader retain a shared limiter owner instead of borrowing
+   its creating filesystem?
+3. Why is "release mapping slot, then unmap" the wrong destructor order?
+4. Why does POSIX need a process-local lock reservation while Windows does not?
+5. If flushing buffered bytes and closing the native writer both fail, which
+   error is returned and why is close still attempted?
+6. Does successful Windows weak-mode `SyncDirectory` prove a renamed
+   `CURRENT` entry survives power loss?
+7. Why can copied reads provide typed I/O errors that mapped reads cannot
+   promise for every later byte access?
+8. **Trace:** after a failed completion wait, cancellation returns but the
+   request remains pending. Which resources must survive, and what event
+   permits returning?
+9. **Calculate:** with M=2 and two retained mapped files, can a third file
+   obtain a slot after its old cache mapping is erased but a pin remains?
+   Does the answer impose a byte-memory bound?
+10. **Counterexample:** a failing native operation sets an error code, then
+    successful cleanup changes the thread-local error state. Show how
+    formatting afterward can report the wrong cause.
+11. **Derive:** enumerate the four primary/cleanup success/failure pairs
+    for the left-biased rule. Why is using the last error a different contract?
+12. **Transfer:** design a lifecycle for an asynchronous network receive.
+    State the terminal event and buffer-borrow rule without assuming that
+    closing or cancelling a handle immediately ends native access.
+
+<details>
+<summary>Answers</summary>
+
+1. Until terminal completion, the kernel may still reference the stack
+   `OVERLAPPED`, its event, and the caller's output buffer.
+2. The returned file can outlive the filesystem and must still return its
+   reservation to the same process-wide or injected limiter.
+3. It can advertise capacity while the old view still exists. Teardown removes
+   the owned view before making its count slot reusable.
+4. POSIX record locks are process-associated, and opening then closing a
+   duplicate descriptor can disturb an existing lock. Windows locks are tied
+   to the successful handle.
+5. The earlier flush or retained sticky error wins because it first made the
+   file uncertain. Close is still attempted to release the native resource.
+6. No. Weak mode validates and preserves ordering but supplies no
+   POSIX-equivalent directory persistence barrier.
+7. A mapped byte can fault long after open or `Read` while an iterator or
+   decoder touches the borrowed view. Copied I/O performs the native access
+   inside the operation that returns the typed result.
+8. The reader handle, operation record, event, and output buffer must remain
+   valid until native completion ends the borrow. Cancellation acceptance
+   alone is not the terminal event.
+9. No slot is free while both views remain retained. This says nothing
+   about their lengths, resident pages, or the copied fallback's memory.
+10. Capture the first error before rollback. Formatting from the live native
+    error state instead can diagnose the cleanup or lose the failure.
+11. Success/success gives success; error/success preserves primary;
+    success/error reports cleanup; error/error preserves primary.
+    A last-error rule instead replaces the causal failure in the fourth case.
+12. A valid answer models issue, pending, cancellation, terminal completion,
+    and reclamation, including errors while waiting. It distinguishes safety
+    from the extra assumptions required for eventual completion.
+
+</details>
+
 ## Source tour
 
 | Entry point | Interface or symbol | Question to answer | Representative evidence |
@@ -301,40 +436,3 @@ Useful focused tests include:
 - `NativeMappingFailuresReportErrorsAndRollbackAllResources`;
 - `FailedOwnedViewUnmapDoesNotRecycleAnActiveSlot`;
 - `LocksContendAcrossInstancesAndReleaseThroughRaii`.
-
-## Self-check
-
-1. Why must a failed Windows completion wait cancel and drain an operation
-   before returning?
-2. Why does a mapped reader retain a shared limiter owner instead of borrowing
-   its creating filesystem?
-3. Why is "release mapping slot, then unmap" the wrong destructor order?
-4. Why does POSIX need a process-local lock reservation while Windows does not?
-5. If flushing buffered bytes and closing the native writer both fail, which
-   error is returned and why is close still attempted?
-6. Does successful Windows weak-mode `SyncDirectory` prove a renamed
-   `CURRENT` entry survives power loss?
-7. Why can copied reads provide typed I/O errors that mapped reads cannot
-   promise for every later byte access?
-
-<details>
-<summary>Answers</summary>
-
-1. Until terminal completion, the kernel may still reference the stack
-   `OVERLAPPED`, its event, and the caller's output buffer.
-2. The returned file can outlive the filesystem and must still return its
-   reservation to the same process-wide or injected limiter.
-3. It can advertise capacity while the old view still exists. Teardown removes
-   the owned view before making its count slot reusable.
-4. POSIX record locks are process-associated, and opening then closing a
-   duplicate descriptor can disturb an existing lock. Windows locks are tied
-   to the successful handle.
-5. The earlier flush or retained sticky error wins because it first made the
-   file uncertain. Close is still attempted to release the native resource.
-6. No. Weak mode validates and preserves ordering but supplies no
-   POSIX-equivalent directory persistence barrier.
-7. A mapped byte can fault long after open or `Read` while an iterator or
-   decoder touches the borrowed view. Copied I/O performs the native access
-   inside the operation that returns the typed result.
-
-</details>
