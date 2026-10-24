@@ -63,8 +63,10 @@ void operator delete(void* pointer) noexcept { std::free(pointer); }
 void operator delete[](void* pointer) noexcept { std::free(pointer); }
 void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
 void operator delete[](void* pointer, std::size_t) noexcept { std::free(pointer); }
-void operator delete(void* pointer, const std::nothrow_t&) noexcept { std::free(pointer); }
-void operator delete[](void* pointer, const std::nothrow_t&) noexcept { std::free(pointer); }
+void operator delete(void* pointer, const std::nothrow_t&) noexcept { ::operator delete(pointer); }
+void operator delete[](void* pointer, const std::nothrow_t&) noexcept {
+    ::operator delete[](pointer);
+}
 
 namespace modern_leveldb {
 namespace {
@@ -221,16 +223,19 @@ struct AllocationReset {
 };
 
 TEST(WriteAllocationTest, NothrowFormsUseTheSameAllocationAndReleaseFamily) {
+    // Direct calls cannot be elided like a new-expression's allocator calls.
     void* scalar = ::operator new(96, std::nothrow);
     void* array = ::operator new[](96, std::nothrow);
     ASSERT_NE(scalar, nullptr);
     ASSERT_NE(array, nullptr);
     ::operator delete(scalar);
     ::operator delete[](array);
-    struct FailsConstruction {
-        FailsConstruction() { throw std::bad_alloc(); }
-    };
-    EXPECT_THROW(static_cast<void>(new (std::nothrow) FailsConstruction), std::bad_alloc);
+    scalar = ::operator new(96, std::nothrow);
+    array = ::operator new[](96, std::nothrow);
+    ASSERT_NE(scalar, nullptr);
+    ASSERT_NE(array, nullptr);
+    ::operator delete(scalar, std::nothrow);
+    ::operator delete[](array, std::nothrow);
     {
         AllocationReset reset;
         allocation_failure_threshold = 0;

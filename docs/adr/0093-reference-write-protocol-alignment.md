@@ -403,6 +403,11 @@ the test executable's replacement free-based deletion during test startup.
 Complete the ordinary throwing/nothrow allocation and release family rather
 than disabling mismatch detection. Over-aligned allocation remains outside
 this ordinary-allocation injection model.
+The allocator-family probe invokes the replacement functions directly:
+new expressions can legally elide allocation calls, and an always-throwing
+constructor probe additionally triggered an optimized GCC mismatched-delete
+diagnostic. Explicit ordinary and nothrow release calls test the actual pairing
+without removing warnings-as-errors or relying on new-expression elision.
 
 GCC 13 also emits unmatched exception-type dispatch edges on the two
 `catch (bad_alloc)` lines. The valid Error copy uses only standard fields;
