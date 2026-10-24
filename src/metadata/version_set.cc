@@ -205,7 +205,7 @@ void CollectVersionFileNumbers(const Version& version, std::set<std::uint64_t>& 
 }  // namespace
 
 VersionSet::VersionSet(FileSystem& file_system, std::filesystem::path directory,
-                       const InternalKeyComparator& comparator) noexcept
+                       const InternalKeyComparator& comparator)
     : file_system_(&file_system), directory_(std::move(directory)), comparator_(&comparator) {}
 
 Result<std::unique_ptr<VersionSet>> VersionSet::Create(FileSystem& file_system,
@@ -256,7 +256,7 @@ struct VersionSet::ManifestRecovery {
         if (!applied.has_value()) {
             return std::unexpected(InManifest(record.offset, applied.error()));
         }
-        ApplyCompactPointerEdits(*edit, set.compact_pointers_);
+        ApplyCompactPointerEdits(*edit, *set.compact_pointers_);
         return AccumulateCounters(*edit, record.offset);
     }
 
@@ -454,8 +454,8 @@ Status VersionSet::ApplyPrepared(VersionEdit edit, Version version,
     const std::uint64_t log_number = edit.log_number().value_or(log_number_);
     const std::uint64_t prev_log_number = edit.prev_log_number().value_or(prev_log_number_);
     PrepareRuntimeEditCounters(edit, log_number, prev_log_number);
-    std::array<std::optional<InternalKey>, NumLevels> compact_pointers = compact_pointers_;
-    ApplyCompactPointerEdits(edit, compact_pointers);
+    auto compact_pointers = std::make_unique<CompactPointers>(*compact_pointers_);
+    ApplyCompactPointerEdits(edit, *compact_pointers);
     std::optional<std::vector<std::byte>> new_manifest_snapshot;
     PrepareManifestSnapshot(new_manifest_snapshot);
     // Prepare ownership/capacity before I/O: after the durable edit succeeds,
@@ -463,9 +463,10 @@ Status VersionSet::ApplyPrepared(VersionEdit edit, Version version,
     auto candidate = std::make_shared<const Version>(std::move(version));
     ReserveInstall();
 
-    Status written = WritePrepared(edit, new_manifest_snapshot, lock);
+    const std::vector<std::byte> encoded_edit = edit.Encode();
+    Status written = WritePrepared(encoded_edit, new_manifest_snapshot, lock);
     if (!written.has_value()) {
-        failure_ = written.error();
+        failure_.Record(written.error());
         return written;
     }
     // Persist first, publish second. Readers keep the old Version during I/O;
@@ -486,32 +487,39 @@ void VersionSet::PrepareManifestSnapshot(
     std::optional<std::vector<std::byte>>& new_manifest_snapshot) const {
     if (manifest_ == nullptr) {
         new_manifest_snapshot =
-            Snapshot(comparator_->user_comparator(), compact_pointers_, *current_).Encode();
+            Snapshot(comparator_->user_comparator(), *compact_pointers_, *current_).Encode();
     }
 }
 
-void VersionSet::PublishPreparedEdit(
-    std::array<std::optional<InternalKey>, NumLevels>& compact_pointers,
-    std::shared_ptr<const Version>& candidate, std::uint64_t log_number,
-    std::uint64_t prev_log_number) {
-    compact_pointers_ = std::move(compact_pointers);
+void VersionSet::PublishPreparedEdit(std::unique_ptr<CompactPointers>& compact_pointers,
+                                     std::shared_ptr<const Version>& candidate,
+                                     std::uint64_t log_number,
+                                     std::uint64_t prev_log_number) noexcept {
+    // Even a noexcept vector move can allocate Debug iterator bookkeeping.
+    compact_pointers_.swap(compact_pointers);
     log_number_ = log_number;
     prev_log_number_ = prev_log_number;
     InstallPrepared(std::move(candidate));
 }
 
-Status VersionSet::WritePrepared(const VersionEdit& edit,
+Status VersionSet::WritePrepared(ByteView encoded_edit,
                                  const std::optional<std::vector<std::byte>>& new_manifest_snapshot,
                                  std::unique_lock<std::mutex>* lock) {
     Status written;
     if (lock == nullptr) {
-        written = Write(edit, new_manifest_snapshot);
+        try {
+            written = Write(encoded_edit, new_manifest_snapshot);
+        } catch (...) {
+            failure_.RecordException("metadata persistence stopped with an exception");
+            throw;
+        }
     } else {
         lock->unlock();
         try {
-            written = Write(edit, new_manifest_snapshot);
+            written = Write(encoded_edit, new_manifest_snapshot);
         } catch (...) {
             lock->lock();
+            failure_.RecordException("metadata persistence stopped with an exception");
             throw;
         }
         lock->lock();
@@ -539,7 +547,7 @@ Status VersionSet::Validate(const VersionEdit& edit) const {
     return CheckAddedFileNumbers(edit, next_file_number_);
 }
 
-Status VersionSet::Write(const VersionEdit& edit,
+Status VersionSet::Write(ByteView encoded_edit,
                          const std::optional<std::vector<std::byte>>& new_manifest_snapshot) {
     std::unique_ptr<WalWriter> created;
     if (manifest_ == nullptr) {
@@ -550,7 +558,7 @@ Status VersionSet::Write(const VersionEdit& edit,
         created = std::move(*writer);
     }
     WalWriter& manifest = created != nullptr ? *created : *manifest_;
-    const Status appended = manifest.AddRecord(edit.Encode());
+    const Status appended = manifest.AddRecord(encoded_edit);
     if (!appended.has_value()) {
         return appended;
     }

@@ -118,6 +118,94 @@ TEST_F(DatabaseTest, StopsWritesAfterAFailedFlush) {
     }
 }
 
+TEST_F(DatabaseTest, LateTableCompletionFailuresKeepTheImmutableAndItsRecoveryLogs) {
+    for (const std::string_view boundary : {"sync", "close", "sync_directory"}) {
+        SCOPED_TRACE(boundary);
+        auto database = Open();
+        executor_.RunAll();
+        Fill(*database, "a");
+        const std::uint64_t old_log = Numbers(FileType::Log).back();
+        ASSERT_TRUE(Put(*database, "b", "acknowledged").has_value());
+        const auto before = database->GetState();
+        ASSERT_TRUE(before.has_value());
+        const std::size_t start = file_system_.operations().size();
+        bool reached = false;
+        file_system_.SetOperationHook([&](std::string_view operation) -> Status {
+            const bool matches = boundary == "sync_directory" ? operation == "sync_directory db"
+                                                              : operation.starts_with(boundary) &&
+                                                                    operation.ends_with(".ldb");
+            if (matches) {
+                reached = true;
+                return std::unexpected(Error::Io("late table completion failed"));
+            }
+            return {};
+        });
+
+        ASSERT_TRUE(executor_.RunOne());
+        file_system_.SetOperationHook({});
+
+        ASSERT_TRUE(reached);
+        const auto after = database->GetState();
+        ASSERT_TRUE(after.has_value());
+        ASSERT_TRUE(after->sticky_error.has_value());
+        EXPECT_EQ(after->sticky_error->message(), "late table completion failed");
+        EXPECT_TRUE(after->immutable_memtable_bytes.has_value());
+        EXPECT_FALSE(after->background_work_scheduled);
+        EXPECT_EQ(after->protected_output_count, 0U);
+        for (std::size_t level = 0; level < NumLevels; ++level) {
+            EXPECT_EQ(after->levels[level].file_count, before->levels[level].file_count);
+        }
+        for (const auto& operation : OperationsSince(start)) {
+            EXPECT_FALSE(operation.starts_with("append MANIFEST-")) << operation;
+        }
+        EXPECT_TRUE(Exists(Numbered(old_log, ".log")));
+        EXPECT_EQ(Get(*database, "a"), Large());
+        EXPECT_EQ(Get(*database, "b"), "acknowledged");
+        EXPECT_FALSE(Put(*database, "later", "rejected").has_value());
+        database.reset();
+        database = Open();
+        EXPECT_EQ(Get(*database, "a"), Large());
+        EXPECT_EQ(Get(*database, "b"), "acknowledged");
+        executor_.RunAll();
+    }
+}
+
+TEST_F(DatabaseTest, FinishesOnlyTheCleanupBatchSelectedBeforeAForegroundError) {
+    const auto database = Open();
+    Fill(*database, "a");
+    // A failed replacement-name barrier leaves a safely unused WAL number.
+    FailInOperations(1);
+    ASSERT_FALSE(Put(*database, "b", "not committed").has_value());
+    ASSERT_TRUE(Put(*database, "b", "acknowledged").has_value());
+    const auto logs = Numbers(FileType::Log);
+    ASSERT_EQ(logs.size(), 3U);
+    Gate cleanup;
+    const std::string first_removal = "remove " + Numbered(logs[0], ".log");
+    cleanup.Close([&](std::string_view operation) { return operation == first_removal; });
+    file_system_.SetOperationHook(std::ref(cleanup));
+    std::thread runner([&] { executor_.RunOne(); });
+    cleanup.WaitUntilReached();
+
+    FailInOperations(0);
+    const Status failed = Put(*database, "uncertain", "rejected");
+    cleanup.Open();
+    runner.join();
+    file_system_.SetOperationHook({});
+
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_FALSE(Exists(Numbered(logs[0], ".log")));
+    EXPECT_FALSE(Exists(Numbered(logs[1], ".log")));
+    EXPECT_TRUE(Exists(Numbered(logs[2], ".log")));
+    EXPECT_EQ(Get(*database, "a"), Large());
+    EXPECT_EQ(Get(*database, "b"), "acknowledged");
+    EXPECT_EQ(Get(*database, "uncertain"), "<none>");
+    EXPECT_EQ(executor_.queued(), 0U);
+    EXPECT_FALSE(database->WaitForBackgroundWork().has_value());
+    const std::size_t operations = file_system_.operations().size();
+    EXPECT_FALSE(Put(*database, "later", "rejected").has_value());
+    EXPECT_EQ(file_system_.operations().size(), operations);
+}
+
 TEST_F(DatabaseTest, KeepsObsoleteFilesAfterABackgroundError) {
     const auto database = Open();
     ASSERT_TRUE(Put(*database, "a", "1").has_value());

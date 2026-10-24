@@ -35,6 +35,30 @@ it concurrently with those reads. `Database`, `Iterator`, and `WriteBatch`
 operations reject their moved-from state; a moved-from snapshot is rejected
 when supplied through `ReadOptions`.
 
+### Write completion and uncertain failures
+
+A successful non-sync write waits for the complete WAL record to be submitted
+and the complete batch to become visible. `WriteOptions::sync=true` additionally
+requires the WAL content barrier; neither mode overrides the backend's
+[namespace durability boundary](platform-support-and-durability.md).
+
+An uncertain commit or maintenance failure stops new writes, background-task
+admission, and obsolete-file selection. Already-admitted work can finish its
+safe completion obligations. A failed write can appear in full after recovery;
+failure is not a promise that no bytes reached storage.
+
+Allocation and user-callback exceptions retain the ordinary throwing model.
+The terminal state itself does not require a new allocation: if retaining the
+detailed error fails, an already-owned `Aborted` diagnostic remains latched.
+Copying an error into a returned value or `GetState()` can still throw without
+clearing that state. Close and reopen through normal recovery rather than
+continuing writes on an uncertain owner.
+
+A group that cannot fit in the remaining 56-bit sequence space is rejected
+with `Aborted` before its WAL commit, without poisoning the owner. A smaller
+group may still fit; once all sequences are used, only empty batches can
+succeed without allocating another sequence.
+
 ## `Options`
 
 | Field | Default | Meaning |

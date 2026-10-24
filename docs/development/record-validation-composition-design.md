@@ -25,6 +25,9 @@ exactly that many records and rejects trailing bytes. Only complete success
 constructs a reader over the original unchanged borrowed record span.
 The codec deliberately does not enforce sequence exhaustion; callers own that
 policy. OpenTrusted and Next retain their existing invariant-based decoding.
+The current callers prove the 56-bit interval at group-commit and WAL-recovery
+admission, including the empty successor token; see
+[ADR-0093](../adr/0093-reference-write-protocol-alignment.md).
 
 Extract file-local `ValidateBatchRecord(ByteView& remaining)` returning Status:
 

@@ -711,7 +711,7 @@ TEST_F(VersionSetTest, PreparedCurrentPublicationKeepsLatePinsAndCapturedEditSta
     }
 }
 
-TEST_F(VersionSetTest, PreAppendExceptionPreservesPreparedStateAndAllowsRetry) {
+TEST_F(VersionSetTest, AppendExceptionPreservesPreparedStateButRejectsLaterEdits) {
     auto set = Create();
     ASSERT_NE(set, nullptr);
     VersionEdit edit;
@@ -738,14 +738,12 @@ TEST_F(VersionSetTest, PreAppendExceptionPreservesPreparedStateAndAllowsRetry) {
     EXPECT_EQ(file_system_.Contents(directory_ / "MANIFEST-000001"), manifest_before);
     EXPECT_EQ(file_system_.operations().size(), operations_before);
     file_system_.SetOperationHook({});
-    ASSERT_TRUE(set->LogAndApply(edit, lock).has_value());
+    const auto rejected = set->LogAndApply(edit, lock);
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().code(), ErrorCode::Aborted);
     EXPECT_TRUE(lock.owns_lock());
-    State after = before;
-    after.files[0].push_back(Summarize(File(2, "a", "b")));
-    after.compact_pointers[2] = Materialize(Key("c", 7).encoded());
-    after.log_number = 2;
-    after.prev_log_number = 1;
-    EXPECT_EQ(StateOf(*set), after);
+    EXPECT_EQ(file_system_.operations().size(), operations_before);
+    EXPECT_EQ(StateOf(*set), before);
 }
 
 TEST_F(VersionSetTest, RuntimeApplyStagesTheNewManifestSnapshotBeforeUnlocking) {

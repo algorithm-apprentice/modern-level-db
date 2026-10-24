@@ -179,5 +179,41 @@ TEST(ResultInternalTest, StickyContextAndReturnedOwnersRemainIndependent) {
     ExpectErrorContext(winning, ErrorCode::Busy, message, location);
 }
 
+TEST(ResultInternalTest, TerminalErrorKeepsTheFirstContextAndIndependentSnapshots) {
+    TerminalError failure;
+    EXPECT_FALSE(failure.has_value());
+    EXPECT_FALSE(failure.Snapshot().has_value());
+    const std::string message(256, 'x');
+    const std::source_location location = std::source_location::current();
+    const Error first = Error::Io(message, location);
+
+    failure.Record(first);
+    failure.Record(Error::Busy("later failure"));
+    failure.RecordException("later exception");
+
+    ASSERT_TRUE(failure.has_value());
+    ExpectErrorContext(*failure, ErrorCode::Io, message, location);
+    auto snapshot = failure.Snapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    ExpectErrorContext(*snapshot, ErrorCode::Io, message, location);
+    const Error& retained = *failure;
+    EXPECT_NE(snapshot->message().data(), retained.message().data());
+    *snapshot = Error::Aborted("replace the observer's copy");
+    ExpectErrorContext(*failure, ErrorCode::Io, message, location);
+    ExpectErrorContext(first, ErrorCode::Io, message, location);
+}
+
+TEST(ResultInternalTest, TerminalExceptionRetainsItsFirstCallSite) {
+    TerminalError failure;
+    const std::source_location location = std::source_location::current();
+
+    failure.RecordException("first exception", location);
+    failure.RecordException("later exception");
+    failure.Record(Error::Io("later storage error"));
+
+    ASSERT_TRUE(failure.has_value());
+    ExpectErrorContext(*failure, ErrorCode::Aborted, "first exception", location);
+}
+
 }  // namespace
 }  // namespace modern_leveldb

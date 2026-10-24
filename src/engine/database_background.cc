@@ -73,8 +73,9 @@ void DatabaseEngine::MaybeScheduleBackgroundWork() {
     try {
         scheduled = executor_.get()->Schedule([this](std::stop_token) { BackgroundCall(); });
     } catch (...) {
-        scheduled =
-            std::unexpected(Error::Aborted("scheduling background work threw an exception"));
+        background_scheduled_ = false;
+        RecordException("scheduling background work threw an exception");
+        return;
     }
     if (!scheduled.has_value()) {
         background_scheduled_ = false;
@@ -95,7 +96,7 @@ void DatabaseEngine::BackgroundCall() {
             if (!lock.owns_lock()) {
                 lock.lock();
             }
-            RecordStickyError(Error::Aborted("background work stopped with an exception"));
+            RecordException("background work stopped with an exception");
         }
     }
     background_scheduled_ = false;
@@ -284,9 +285,14 @@ Result<std::vector<std::filesystem::path>> DatabaseEngine::CollectObsoleteFiles(
     return obsolete;
 }
 
-void DatabaseEngine::RecordStickyError(Error error) {
-    // Keeps the first error.
-    sticky_error_ = sticky_error_.value_or(std::move(error));
+void DatabaseEngine::RecordStickyError(const Error& error) noexcept {
+    sticky_error_.Record(error);
+    background_finished_.notify_all();
+}
+
+void DatabaseEngine::RecordException(std::string_view context,
+                                     std::source_location location) noexcept {
+    sticky_error_.RecordException(context, location);
     background_finished_.notify_all();
 }
 

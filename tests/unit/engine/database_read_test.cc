@@ -237,6 +237,37 @@ TEST_F(DatabaseTest, StateKeepsThePublishedPairWhileACommitInsertsUnlocked) {
     EXPECT_EQ(after->write_queue_depth, 0U);
 }
 
+TEST_F(DatabaseTest, ReadersCannotObserveAPartiallyInsertedBatch) {
+    BlockingComparator comparator;
+    options_.comparator = &comparator;
+    const auto database = Open();
+    ASSERT_TRUE(Put(*database, "a", "old").has_value());
+    EncodedWriteBatch batch;
+    batch.Put(AsBytes("a"), AsBytes("new"));
+    batch.Put(AsBytes("z"), AsBytes("last"));
+    batch.Put(AsBytes("m"), AsBytes("middle"));
+    comparator.Close("z");
+    std::optional<Status> written;
+    std::thread writer([&] { written = database->Write(batch, false); });
+    comparator.WaitUntilReached();
+
+    // The first update is linked, but insertion of the second has not finished.
+    auto* during = database->GetSnapshot();
+    EXPECT_EQ(during->sequence(), 1U);
+    EXPECT_EQ(Get(*database, "a"), "old");
+    EXPECT_EQ(Get(*database, "z"), "<none>");
+    EXPECT_EQ(Scan(*database), (std::vector<std::string>{"a=old"}));
+    comparator.Open();
+    writer.join();
+
+    ASSERT_TRUE(written->has_value());
+    EXPECT_EQ(Get(*database, "a"), "new");
+    EXPECT_EQ(Get(*database, "z"), "last");
+    EXPECT_EQ(Get(*database, "m"), "middle");
+    EXPECT_EQ(Scan(*database, during->sequence()), (std::vector<std::string>{"a=old"}));
+    database->ReleaseSnapshot(during);
+}
+
 TEST_F(DatabaseTest, ReportsImmutableAndProtectedFlushState) {
     const auto database = Open();
     ASSERT_TRUE(Put(*database, "a", "1").has_value());

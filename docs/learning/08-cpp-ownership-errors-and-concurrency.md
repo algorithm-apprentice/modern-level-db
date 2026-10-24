@@ -211,6 +211,21 @@ acquisitions separately. Contention, callbacks, and I/O need their own
 latency assumptions; a field-operation count cannot bound their wall time.
 Inlining can remove empty bookkeeping, not required resource lifetime.
 
+### Nonthrowing is not the same as allocation-free
+
+`noexcept` constrains exception propagation; it does not prove that an
+operation allocates nothing. In the supported MSVC Debug configuration, moving
+a vector-backed key into a previously empty optional allocates iterator
+bookkeeping. If allocation fails inside that nonthrowing move, the process
+terminates rather than returning a recoverable error.
+
+This matters after a durable metadata edit: installation must not discover
+new allocation work. Prepare complete replacement ownership before I/O and
+publish by swapping owner handles, not by reconstructing contained keys.
+Test the actual post-durable boundary under allocation exhaustion; a
+nonthrowing type trait is not an allocation oracle. See
+[the write-protocol audit](../adr/0093-reference-write-protocol-alignment.md).
+
 ## Explicit error types
 
 `Result<T>` is an alias for `std::expected<T, Error>`.

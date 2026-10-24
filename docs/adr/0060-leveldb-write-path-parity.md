@@ -24,12 +24,20 @@ performance results are diagnostic evidence rather than a preset numerical
 acceptance gate; the retained outcome and engineering decision are recorded
 below.
 
+The composed failure audit in
+[ADR-0093](0093-reference-write-protocol-alignment.md) subsequently found that
+allocation of an owning error could defeat the intended sticky transition.
+It also found an allocating post-durable compact-pointer move and missing
+sequence-domain admission. That follow-up corrects these boundaries and verifies
+the current foreground/background protocol; this ADR's historical performance evidence
+does not establish allocation-failure safety.
+
 ## Context
 
 Modern LevelDB implements the complete LevelDB write pipeline and intentionally
 adds typed errors, exception containment, stronger WAL-creation durability,
-and defensive validation. The resulting behavior is correct, but
-the ordinary successful path still differs from pinned Google LevelDB revision
+and defensive validation. The ordinary successful path differed from pinned
+Google LevelDB revision
 `7ee830d02b623e8ffe0b95d59a74db1e58da04c5` in several avoidable ways:
 
 - a batch header and every appended record can allocate separately;
