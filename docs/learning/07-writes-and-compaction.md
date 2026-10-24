@@ -263,9 +263,20 @@ old Versions, iterators, and pending outputs can still keep files live.
 `RemoveObsoleteFiles` constructs a protected live set before deleting
 unneeded files outside the database mutex.
 
-After an uncertain mutation or maintenance failure becomes sticky, further
-writes, scheduling, and obsolete-file cleanup are stopped. Reads are not
-automatically converted into writes or repair attempts.
+After an uncertain mutation or maintenance failure becomes sticky, new
+writes, scheduling, and obsolete-file selection are stopped. This is an
+admission rule, not cancellation of every already-running operation: an
+admitted flush can finish installing protected history, and an already-selected
+deletion batch can finish removing files proven obsolete under the mutex.
+Reads are not automatically converted into writes or repair attempts.
+
+The terminal signal must not depend on allocating its diagnostic. Otherwise,
+handling an allocation failure after a partial WAL write could itself throw
+before writes are disabled. Modern prepares immutable fallback ownership
+before mutation, latches that handle first, and only then tries to retain the
+detailed error. A failed observation can throw without undoing the latch.
+This separation applies to foreground commits, metadata owners, and background
+task accounting, not just one catch block.
 
 Follow cleanup in `database_background.cc` as three responsibilities:
 `KeepFile` expresses retention policy, `CollectObsoleteFiles` snapshots pinned

@@ -1,6 +1,6 @@
 # ADR-0093: Reference-Driven Write Protocol Alignment
 
-- Status: Proposed
+- Status: Implemented
 
 ## Purpose and scope
 
@@ -366,6 +366,10 @@ Use isolated allocation-fault tests so global allocation replacement does
 not affect unrelated unit tests. Arm failure only at the required transition,
 after setup and after a real partial operation where applicable. Test both
 ordinary allocation exhaustion and failure of owning diagnostic allocations.
+Successful children restore allocation and use normal process exit so coverage
+and allocator exit hooks run. A detected invariant violation exits immediately:
+its injected failure or broken task state must not turn the negative test into
+an unbounded shutdown.
 
 Required cases include:
 
@@ -389,10 +393,9 @@ acceptance shortcut and is not a reason to retain an unverified protocol.
 The implemented source passed 1,150 ordinary unit selections in each local
 MSVC Debug and Release configuration. The isolated allocation executable
 contains 24 cases, including safe owner-allocation and compact-pointer-copy
-failures before persistence. The local extended Debug selection passed all
+failures before persistence. The final local extended Debug selection passed all
 19 model, cross-open/golden, deterministic power-loss and native Windows
-process-recovery cases before the final sequence guard; that selection must
-also run on the delivered source.
+process-recovery cases after the sequence-domain corrections.
 
 The original ordinary Debug selection additionally passed its CMake consumer
 and required-test contracts. Ordinary delivery CI retains the unmodified

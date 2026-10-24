@@ -15,8 +15,11 @@ existing version_set_test.cc and this document. Three small topics may share
 one non-draft implementation PR: ordered required-field/bound proof;
 compatible compact-pointer application and prepared-state stages; late
 read-pin retention and current-version registration.
-No public API, persistence/recovery/locking policy, allocation strategy,
-coverage threshold/exclusion or benchmark changes.
+The original extraction changed no public API, persistence/recovery/locking
+policy, allocation strategy, coverage threshold/exclusion or benchmark.
+The later correctness correction in
+[ADR-0093](../adr/0093-reference-write-protocol-alignment.md) supersedes its
+value-array publication and persistence-exception handling as described below.
 
 ## Required recovered fields before bounds
 
@@ -42,14 +45,14 @@ precedes replay pointer updates, which still precede recovered counters.
 ApplyRecord retains const decoded edit and const builder status through the
 shared call and counter accumulation. Remove the old nested helper rather than
 leave a pure forwarding wrapper. No comparator/key copy optimization.
-Staging still first copies compact_pointers_ into the parent-owned array;
+Staging first copies `*compact_pointers_` into a separately owned replacement array;
 ordered duplicate levels are last-present-wins in either destination.
 The copy/assignment can allocate and throw as before; do not mark it noexcept.
 
 ## Prepared transaction parent and owners
 
 ApplyPrepared retains its original const selected log/previous-log values,
-edit owner, staged compact-pointer array, optional snapshot and shared candidate
+edit owner, staged compact-pointer owner, optional snapshot and shared candidate
 through function exit. PrepareRuntimeEditCounters borrows edit and the two
 selected scalars, performs the same SetLogNumber/SetPrevLogNumber then ignored
 checked SetNextFileNumber/SetLastSequence calls in order, using existing trusted
@@ -57,20 +60,24 @@ state invariants. Do not invent new guards, assertions or error policy.
 
 After the array copy/shared pointer updates, PrepareManifestSnapshot borrows
 the parent's initially empty optional and retains the original manifest_ ==
-nullptr gate. Snapshot uses original compact_pointers_/current_, not staged
+nullptr gate. Snapshot uses original `*compact_pointers_`/current_, not staged
 pointers/candidate, before unlock. It materializes/encodes into the same parent
 optional; no returned owner, transfer, callback framework or new container.
 Candidate make_shared remains in the parent after the snapshot and before
-ReserveInstall; capacity/ownership preparation remains before WritePrepared.
+ReserveInstall; capacity, encoded edit, and ownership preparation remain before
+WritePrepared.
 
-WritePrepared and its explicit unlock/try-relock/rethrow/relock behavior stay
-unchanged. Failed written Status still latches failure_ and returns before
-publication. PublishPreparedEdit borrows staged array/candidate and selected
-scalars, moving pointers before log/previous-log assignment and the original
-InstallPrepared candidate move. It never overwrites next_file_number_ or
+WritePrepared preserves explicit unlock/try-relock/rethrow/relock behavior.
+Returned persistence failures and exceptions latch preowned terminal state;
+safe staging exceptions remain retryable. PublishPreparedEdit borrows staged
+array ownership/candidate and selected scalars, swapping the array owner before
+log/previous-log assignment and the original InstallPrepared candidate move.
+Moving optional/vector-backed elements was not allocation-free in MSVC Debug.
+The ownership-swap publication stage is now noexcept and independently tested
+under post-persistence allocation exhaustion. It never overwrites next_file_number_ or
 last_sequence_, which may advance under the mutex during unlocked I/O.
-Keep parent written Status/owners alive; no new noexcept for the publication
-stage, catch, rollback, success-shaped write fallback or early installation.
+Keep parent written Status/owners alive; no rollback, success-shaped write
+fallback or early installation.
 
 ## Late pin retention and registration
 
