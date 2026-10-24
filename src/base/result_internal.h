@@ -24,6 +24,7 @@ public:
     [[nodiscard]] std::optional<Error> Snapshot() const;
 
     void Record(const Error& error) noexcept;
+    // Context is a short, representable internal diagnostic, not external input.
     void RecordException(std::string_view context,
                          std::source_location location = std::source_location::current()) noexcept;
 

@@ -390,12 +390,27 @@ acceptance shortcut and is not a reason to retain an unverified protocol.
 
 ## Verification record and limits
 
-The implemented source passed 1,150 ordinary unit selections in each local
+The implemented source passed 1,151 ordinary unit selections in each local
 MSVC Debug and Release configuration. The isolated allocation executable
 contains 24 cases, including safe owner-allocation and compact-pointer-copy
-failures before persistence. The final local extended Debug selection passed all
+failures before persistence, plus an ordinary nothrow-allocation-family test.
+The final local extended Debug selection passed all
 19 model, cross-open/golden, deterministic power-loss and native Windows
 process-recovery cases after the sequence-domain corrections.
+
+The initial ASan delivery run detected default nothrow allocation mixed with
+the test executable's replacement free-based deletion during test startup.
+Complete the ordinary throwing/nothrow allocation and release family rather
+than disabling mismatch detection. Over-aligned allocation remains outside
+this ordinary-allocation injection model.
+
+GCC 13 also emits unmatched exception-type dispatch edges on the two
+`catch (bad_alloc)` lines. The valid Error copy uses only standard fields;
+exception context is bounded internal text, so no admitted length or user
+constructor exception can reach the other type edge. Independently reviewed
+`1/2` count-pinned markers exclude only that compiler dispatch shape, with
+the actual allocation-failure catch paths still required to execute.
+No reachable error path or coverage threshold is removed.
 
 The original ordinary Debug selection additionally passed its CMake consumer
 and required-test contracts. Ordinary delivery CI retains the unmodified

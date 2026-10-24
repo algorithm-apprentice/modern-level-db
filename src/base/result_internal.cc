@@ -34,7 +34,7 @@ void TerminalError::Record(const Error& error) noexcept {
     error_ = fallback_;
     try {
         error_ = std::make_shared<const Error>(error);
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 std-only error copy
         // The preallocated terminal diagnostic is already installed.
     }
 }
@@ -48,7 +48,7 @@ void TerminalError::RecordException(std::string_view context,
     try {
         const Error error = Error::Aborted(std::string(context), location);
         error_ = std::make_shared<const Error>(error);
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) {  // GCOVR_EXCL_BR_WITHOUT_HIT: 1/2 bounded std context
         // Keep the terminal state even when constructing its context fails.
     }
 }

@@ -45,10 +45,26 @@ void* Allocate(std::size_t size) {
 
 void* operator new(std::size_t size) { return Allocate(size); }
 void* operator new[](std::size_t size) { return Allocate(size); }
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
+    try {
+        return Allocate(size);
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+}
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
+    try {
+        return Allocate(size);
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+}
 void operator delete(void* pointer) noexcept { std::free(pointer); }
 void operator delete[](void* pointer) noexcept { std::free(pointer); }
 void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
 void operator delete[](void* pointer, std::size_t) noexcept { std::free(pointer); }
+void operator delete(void* pointer, const std::nothrow_t&) noexcept { std::free(pointer); }
+void operator delete[](void* pointer, const std::nothrow_t&) noexcept { std::free(pointer); }
 
 namespace modern_leveldb {
 namespace {
@@ -203,6 +219,27 @@ void RequireOrExit(bool condition, const char* message) {
 struct AllocationReset {
     ~AllocationReset() { allocation_failure_threshold = NoAllocationFailure; }
 };
+
+TEST(WriteAllocationTest, NothrowFormsUseTheSameAllocationAndReleaseFamily) {
+    void* scalar = ::operator new(96, std::nothrow);
+    void* array = ::operator new[](96, std::nothrow);
+    ASSERT_NE(scalar, nullptr);
+    ASSERT_NE(array, nullptr);
+    ::operator delete(scalar);
+    ::operator delete[](array);
+    struct FailsConstruction {
+        FailsConstruction() { throw std::bad_alloc(); }
+    };
+    EXPECT_THROW(static_cast<void>(new (std::nothrow) FailsConstruction), std::bad_alloc);
+    {
+        AllocationReset reset;
+        allocation_failure_threshold = 0;
+        scalar = ::operator new(96, std::nothrow);
+        array = ::operator new[](96, std::nothrow);
+    }
+    EXPECT_EQ(scalar, nullptr);
+    EXPECT_EQ(array, nullptr);
+}
 
 template <typename Operation>
 bool RejectedOrThrew(Operation&& operation) {
