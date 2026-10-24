@@ -54,10 +54,10 @@ Copying an error into a returned value or `GetState()` can still throw without
 clearing that state. Close and reopen through normal recovery rather than
 continuing writes on an uncertain owner.
 
-A group that cannot fit in the remaining 56-bit sequence space is rejected
-with `Aborted` before its WAL commit, without poisoning the owner. A smaller
-group may still fit; once all sequences are used, only empty batches can
-succeed without allocating another sequence.
+The protocol deliberately assumes that the 56-bit sequence space is not
+exhausted in practical operation, matching pinned LevelDB. Exhaustion is not
+a promised runtime `Aborted` or replay `Corruption` condition. This premise
+does not relax checked batch framing or replay sequence ordering.
 
 ## `Options`
 

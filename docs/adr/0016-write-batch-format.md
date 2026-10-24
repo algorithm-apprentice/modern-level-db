@@ -162,11 +162,12 @@ movable.
 - Parsed record count exactly matches the header.
 - No trailing bytes remain beyond the counted records.
 
-Current sequence policy is separate from this generic representation proof.
-[ADR-0060](0060-leveldb-write-path-parity.md) moved it to callers;
-[ADR-0093](0093-reference-write-protocol-alignment.md) proves the complete
-56-bit interval before group commit and recovery insertion. An empty batch
-can carry the next token `MaxSequenceNumber + 1` while using no sequence.
+Sequence capacity is separate from this generic representation proof.
+[ADR-0060](0060-leveldb-write-path-parity.md) deliberately adopts practical
+non-exhaustion instead of runtime capacity rejection. Checked replay still
+validates complete record structure and sequence ordering before trusted
+insertion; [ADR-0093](0093-reference-write-protocol-alignment.md) retains that
+policy rather than treating unchecked sequence headers as a third bug.
 
 Persistent malformed input returns `Corruption`. Validation performs no
 per-entry key/value allocation. To preserve original LevelDB behavior,
