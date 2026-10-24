@@ -390,10 +390,10 @@ acceptance shortcut and is not a reason to retain an unverified protocol.
 
 ## Verification record and limits
 
-The implemented source passed 1,151 ordinary unit selections in each local
+The implemented source passed 1,152 ordinary unit selections in each local
 MSVC Debug and Release configuration. The isolated allocation executable
 contains 24 cases, including safe owner-allocation and compact-pointer-copy
-failures before persistence, plus an ordinary nothrow-allocation-family test.
+failures before persistence, plus ordinary nothrow-family and null-return probes.
 The final local extended Debug selection passed all
 19 model, cross-open/golden, deterministic power-loss and native Windows
 process-recovery cases after the sequence-domain corrections.
@@ -403,11 +403,13 @@ the test executable's replacement free-based deletion during test startup.
 Complete the ordinary throwing/nothrow allocation and release family rather
 than disabling mismatch detection. Over-aligned allocation remains outside
 this ordinary-allocation injection model.
-The allocator-family probe invokes the replacement functions directly:
-new expressions can legally elide allocation calls, and an always-throwing
-constructor probe additionally triggered an optimized GCC mismatched-delete
-diagnostic. Explicit ordinary and nothrow release calls test the actual pairing
-without removing warnings-as-errors or relying on new-expression elision.
+The allocator-family client is compiled separately from the replacement
+implementation and invokes the functions directly. New expressions can legally
+elide allocation calls; same-translation-unit optimized GCC also inlined
+replacement deletion to free and misclassified replacement-new storage.
+Separating the provider and its client tests the actual ordinary/nothrow
+pairing without removing warnings-as-errors, suppressing diagnostics, or
+depending on new-expression elision.
 
 GCC 13 also emits unmatched exception-type dispatch edges on the two
 `catch (bad_alloc)` lines. The valid Error copy uses only standard fields;

@@ -196,6 +196,7 @@ gtest_discover_tests(
 add_executable(
   modern_leveldb_write_failure_tests
   unit/engine/write_allocation_failure_test.cc
+  unit/engine/write_allocation_protocol_test.cc
   support/memory_file_system.cc
 )
 target_include_directories(

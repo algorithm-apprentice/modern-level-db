@@ -222,20 +222,9 @@ struct AllocationReset {
     ~AllocationReset() { allocation_failure_threshold = NoAllocationFailure; }
 };
 
-TEST(WriteAllocationTest, NothrowFormsUseTheSameAllocationAndReleaseFamily) {
-    // Direct calls cannot be elided like a new-expression's allocator calls.
-    void* scalar = ::operator new(96, std::nothrow);
-    void* array = ::operator new[](96, std::nothrow);
-    ASSERT_NE(scalar, nullptr);
-    ASSERT_NE(array, nullptr);
-    ::operator delete(scalar);
-    ::operator delete[](array);
-    scalar = ::operator new(96, std::nothrow);
-    array = ::operator new[](96, std::nothrow);
-    ASSERT_NE(scalar, nullptr);
-    ASSERT_NE(array, nullptr);
-    ::operator delete(scalar, std::nothrow);
-    ::operator delete[](array, std::nothrow);
+TEST(WriteAllocationTest, NothrowFormsReturnNullUnderOrdinaryAllocationExhaustion) {
+    void* scalar = nullptr;
+    void* array = nullptr;
     {
         AllocationReset reset;
         allocation_failure_threshold = 0;
