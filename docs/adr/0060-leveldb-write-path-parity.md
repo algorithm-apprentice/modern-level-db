@@ -27,10 +27,12 @@ below.
 The composed failure audit in
 [ADR-0093](0093-reference-write-protocol-alignment.md) subsequently found that
 allocation of an owning error could defeat the intended sticky transition.
-It also found an allocating post-durable compact-pointer move and missing
-sequence-domain admission. That follow-up corrects these boundaries and verifies
-the current foreground/background protocol; this ADR's historical performance evidence
-does not establish allocation-failure safety.
+It also found an allocating post-durable compact-pointer move. That follow-up
+corrects these two failure-handling boundaries and verifies the current
+foreground/background protocol; this ADR's historical performance evidence
+does not establish allocation-failure safety. The deliberate practical
+sequence-capacity premise below is retained: omitted exhaustion guards are
+not a third defect.
 
 ## Context
 

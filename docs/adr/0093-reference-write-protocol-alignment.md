@@ -19,6 +19,9 @@ transactions, disabled WAL, or recycled log formats.
 The claim is bounded to this embedded engine's documented contract and
 admitted filesystem/failure model. It is not a promise to satisfy every
 possible storage engine's requirements or a formal proof of the entire codebase.
+The two confirmed failure-handling defects concern terminal-state recording
+and post-persistence publication. Sequence-space exhaustion remains an
+intentionally excluded practical limit, not a third defect.
 
 [ADR-0060](0060-leveldb-write-path-parity.md) establishes behavioral
 invariants; [ADR-0092](0092-native-write-cost-model-alignment.md) implements
@@ -118,7 +121,7 @@ matched against the pinned repository's blob identities; a parent repository's
 | API/batch | `src/api/database.cc`, owned batch codec; Native WriteBatch and DB write boundary | Public API batch tests; `InsertBatchTest`; batch codec tests | Preserve const-copying Write and explicit exclusive borrow. Validated owned bytes enter trusted iteration; external WAL bytes do not. |
 | Queue/group | `write_path.h/.cc`; Native Write/BuildBatchGroup | `GivesEveryWriterOfAGroupItsStatus`, exact size-limit and sync-membership cases, forced-barrier cases, exhausted leader/follower case | One front writer; compatible groups, Native size limits, sequence restoration and exact completion. Forced writers deliberately complete alone. |
 | WAL | `wal_io.cc`/fragmenter/native writable files; Native log Writer | WAL format/golden/native tests, `CommitGroupTest`, partial-prefix allocation cases | Byte-compatible logical/physical records. One complete-logical-record Flush is retained with equivalent acknowledgment ordering. Every uncertain commit failure stops later admission. |
-| Publication | `CommitWrite`, MemTable links and published sequence; Native DBImpl::Write | `ReadersCannotObserveAPartiallyInsertedBatch`, state-during-insertion, fitting-retry/sequence-limit and recovery-domain cases | Publish only a fully inserted group. Prove the 56-bit interval at commit/recovery boundaries; no per-entry revalidation. |
+| Publication | `CommitWrite`, MemTable links and published sequence; Native DBImpl::Write | `ReadersCannotObserveAPartiallyInsertedBatch`, state-during-insertion, `GroupsBatchesWhateverSequencesTheyHold`, unchecked codec-header and replay-order cases | Publish only a fully inserted group. Retain ADR-0060's practical non-exhaustion premise, not a new runtime capacity-rejection policy. |
 | Rotation/stalls | `MakeRoomForWrite`, prepared rotation, `WriteBufferState`; Native MakeRoomForWrite | WAL-create/barrier/Close failures, immutable wait, L0 slowdown/stop, schedule/re-schedule fault cases | Same trigger order and generation serialization. Prepare replacement ownership first, retain stronger default WAL-name durability, and never reuse failed file numbers while open. |
 | Flush | `BuildTable`, `FlushMemTable`, `FlushImmutable`; Native WriteLevel0Table/CompactMemTable | Flush placement and all-operation failure matrices; immutable/source protection; late Sync/Close/name failures and reopen | Preserve the immutable and recovery WALs until complete output and metadata installation. Same overlap/grandparent placement through level two. |
 | Compaction selection | picker, pinned Version, trusted version delta; Native PickCompaction/SetupOtherInputs | L0 closure, boundary-key chain, expansion budget, expanded-next boundaries, whole-range grandparents, reverse comparator | Same leveled selection, expansion and trivial-move rules. The compact pointer publishes with the successful edit rather than before a failed terminal operation. |
@@ -263,28 +266,29 @@ foreground counter advances, and recovered/new-MANIFEST publication after the
 final CURRENT namespace barrier. The corrected Debug cases pass without the
 temporary terminate hook.
 
-## Sequence-domain boundary correction
+## Sequence-capacity premise retained
 
-The audit also reproduced acceptance of a checksummed WAL batch whose sequence
-exceeded the internal key's 56-bit domain. A running engine recovered just below
-the limit likewise acknowledged a two-entry group that crossed the limit.
-Trusted trailer packing then truncated the high sequence bits. Both regression
-tests failed before correction; this was not an attribution from timing.
+ADR-0060 and the earlier batch-alignment work in
+[#136](https://github.com/algorithm-apprentice/modern-level-db/pull/136)
+deliberately removed sequence-exhaustion guards. Like pinned LevelDB, the
+protocol assumes that the 56-bit sequence space is not exhausted in practical
+operation. Its omission was a design decision, not an accidentally missing
+validation requirement.
 
-Check the entire reserved interval once before WAL commit, and validate decoded
-WAL intervals before trusted recovery insertion. An oversized foreground group
-returns Aborted without appending or advancing visibility; because this is a
-known pre-persistence rejection, a smaller fitting group can still succeed.
-After the final representable update, nonempty groups are rejected. An empty
-batch may carry the next sequence token, `MaxSequenceNumber + 1`, while using
-no sequence and leaving the published last sequence at the maximum.
+The initial version of this audit and
+[#308](https://github.com/algorithm-apprentice/modern-level-db/pull/308)
+incorrectly classified synthetic exhausted-counter and out-of-domain WAL
+states as a third bug. Those experiments changed the accepted premise; their
+failure to reject did not establish a defect within the supported workload.
+Reintroducing guards and promising new Aborted/Corruption outcomes changed
+policy rather than repairing the existing contract.
 
-Recovery rejects an out-of-domain first sequence, a crossing interval,
-uint64 overflow candidates, and an out-of-domain empty token without creating
-outputs or installing metadata. The last valid interval and its empty successor
-remain recoverable. This strengthens Native's practical unchecked arithmetic
-at explicit boundaries; it does not add redundant guards inside MemTable
-insertion or change representable WAL bytes.
+Withdraw those added commit/recovery guards and their three policy-specific
+tests. Retain complete batch-structure validation, WAL framing/checksums,
+replay sequence ordering, queue ownership, and caller-header restoration.
+The checked codec still accepts LevelDB-compatible unchecked sequence headers
+without defining an exhaustion policy. The two independently reproduced
+failure-handling defects above remain fixed.
 
 ## Output buffering: complete protocol argument
 
@@ -390,13 +394,17 @@ acceptance shortcut and is not a reason to retain an unverified protocol.
 
 ## Verification record and limits
 
-The implemented source passed 1,152 ordinary unit selections in each local
-MSVC Debug and Release configuration. The isolated allocation executable
+The original #308 source passed 1,152 ordinary unit selections in each local
+MSVC Debug and Release configuration. Restoring the accepted sequence policy
+withdraws only the three out-of-contract exhaustion-policy cases; the restored
+selection passed all 1,149 cases in both configurations. The isolated allocation
+executable
 contains 24 cases, including safe owner-allocation and compact-pointer-copy
 failures before persistence, plus ordinary nothrow-family and null-return probes.
 The final local extended Debug selection passed all
 19 model, cross-open/golden, deterministic power-loss and native Windows
-process-recovery cases after the sequence-domain corrections.
+process-recovery cases. The policy-restoration follow-up retains that same
+extended verification and all ordinary delivery gates.
 
 The initial ASan delivery run detected default nothrow allocation mixed with
 the test executable's replacement free-based deletion during test startup.
