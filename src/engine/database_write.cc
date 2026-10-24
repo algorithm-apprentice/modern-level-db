@@ -105,9 +105,14 @@ void DatabaseEngine::CloseOldLogForRotation() {
 
 Status DatabaseEngine::CommitWrite(std::unique_lock<std::mutex>& lock, EncodedWriteBatch& group,
                                    bool sync) {
-    const SequenceNumber first = versions_->last_sequence() + 1;
-    group.SetSequence(first);
+    const SequenceNumber last = versions_->last_sequence();
     const std::uint32_t count = group.count();
+    if (count > MaxSequenceNumber - last) {
+        return std::unexpected(
+            Error::Aborted("write group exceeds remaining sequence number space"));
+    }
+    const SequenceNumber first = last + 1;
+    group.SetSequence(first);
     // Only the front writer switches the log and the memtable, so they stay.
     WalWriter& log = write_buffers_.log();
     MemTable& memtable = write_buffers_.mutable_table();

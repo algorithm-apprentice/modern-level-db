@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -475,6 +476,44 @@ TEST_F(RecoveryTest, RejectsRecordsThatNoWriterProduces) {
     WriteLog(2, {Batch(5, {Put{"a", "new"}}), Batch(6, {Put{"a", "2"}})});
     const RecoveredDatabase recovered = Recover(splitting);
     EXPECT_EQ(TableEntries(*recovered.versions), (Entries{{"a@5", "new"}, {"a@6", "2"}}));
+}
+
+TEST_F(RecoveryTest, RejectsSequenceIntervalsOutsideTheInternalKeyDomain) {
+    static_cast<void>(Recover());
+    const std::vector records{
+        Batch(MaxSequenceNumber + 1, {Put{"a", "1"}}),
+        Batch(MaxSequenceNumber, {Put{"a", "1"}, Put{"b", "2"}}),
+        Batch(MaxSequenceNumber - 1, {Put{"a", "1"}, Put{"b", "2"}, Put{"c", "3"}}),
+        Batch(std::numeric_limits<SequenceNumber>::max(), {Put{"a", "1"}, Put{"b", "2"}}),
+        Batch(MaxSequenceNumber + 2, {}),
+    };
+    for (const auto& record : records) {
+        WriteLog(2, {record});
+        const auto current = file_system_.Contents(CurrentFileName(directory_));
+        const std::size_t start = file_system_.operations().size();
+
+        const auto recovered = TryRecover({});
+
+        ASSERT_FALSE(recovered.has_value());
+        EXPECT_EQ(recovered.error().code(), ErrorCode::Corruption);
+        EXPECT_EQ(file_system_.Contents(CurrentFileName(directory_)), current);
+        for (const auto& operation : OperationsSince(start)) {
+            EXPECT_FALSE(operation.starts_with("open_writable ")) << operation;
+        }
+    }
+}
+
+TEST_F(RecoveryTest, AcceptsTheFinalRepresentableIntervalAndItsEmptySuccessor) {
+    static_cast<void>(Recover());
+    WriteLog(2, {Batch(MaxSequenceNumber - 1, {Put{"a", "1"}, Put{"b", "2"}}),
+                 Batch(MaxSequenceNumber + 1, {})});
+
+    const RecoveredDatabase recovered = Recover({});
+
+    EXPECT_EQ(recovered.versions->last_sequence(), MaxSequenceNumber);
+    EXPECT_EQ(TableEntries(*recovered.versions),
+              (Entries{{"a@" + std::to_string(MaxSequenceNumber - 1), "1"},
+                       {"b@" + std::to_string(MaxSequenceNumber), "2"}}));
 }
 
 TEST_F(RecoveryTest, RejectsMissingTables) {
