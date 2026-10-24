@@ -1,6 +1,8 @@
 #include "base/result_internal.h"
 
 #include <expected>
+#include <new>
+#include <string>
 #include <utility>
 
 namespace modern_leveldb {
@@ -13,6 +15,43 @@ void CaptureFirstFailure(std::optional<Error>& first_error, Status& status) {
 }
 
 }  // namespace
+
+TerminalError::TerminalError()
+    : fallback_(std::make_shared<const Error>(Error::Aborted(
+          "operation aborted; detailed error unavailable during allocation failure"))) {}
+
+std::optional<Error> TerminalError::Snapshot() const {
+    if (!has_value()) {
+        return std::nullopt;
+    }
+    return *error_;
+}
+
+void TerminalError::Record(const Error& error) noexcept {
+    if (has_value()) {
+        return;
+    }
+    error_ = fallback_;
+    try {
+        error_ = std::make_shared<const Error>(error);
+    } catch (const std::bad_alloc&) {
+        // The preallocated terminal diagnostic is already installed.
+    }
+}
+
+void TerminalError::RecordException(std::string_view context,
+                                    std::source_location location) noexcept {
+    if (has_value()) {
+        return;
+    }
+    error_ = fallback_;
+    try {
+        const Error error = Error::Aborted(std::string(context), location);
+        error_ = std::make_shared<const Error>(error);
+    } catch (const std::bad_alloc&) {
+        // Keep the terminal state even when constructing its context fails.
+    }
+}
 
 Status RememberFirstError(std::optional<Error>& first_error, Status status) {
     CaptureFirstFailure(first_error, status);
