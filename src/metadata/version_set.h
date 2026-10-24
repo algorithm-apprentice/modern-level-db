@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/result_internal.h"
 #include "format/internal_key.h"
 #include "metadata/version.h"
 #include "metadata/version_edit.h"
@@ -80,9 +81,10 @@ public:
     // Requires the same external synchronization as current-version changes;
     // the pin must be destroyed under it too.
     [[nodiscard]] ReadPin PinCurrent() noexcept { return ReadPin(*this, *current_); }
+    // The borrowed view remains valid until the next successful LogAndApply.
     [[nodiscard]] std::span<const std::optional<InternalKey>, NumLevels> compact_pointers()
         const noexcept {
-        return compact_pointers_;
+        return *compact_pointers_;
     }
     // Returns the numbers of the files in every installed version still held,
     // including the current one.
@@ -108,8 +110,8 @@ public:
     // number below the current one or not below the next file number, a previous
     // log number or new file number not below the next file number, or files
     // that the version builder rejects. Fills absent log numbers and sets the
-    // next file number and last sequence. After a file operation fails, keeps
-    // the previous state and returns that error from every later call.
+    // next file number and last sequence. Once persistence starts, a failed
+    // operation or exception keeps the previous state and rejects later edits.
     [[nodiscard]] Status LogAndApply(VersionEdit edit);
     // Applies an internally generated edit through the trusted delta builder.
     // The lock must own the database mutex. MANIFEST I/O temporarily releases
@@ -117,11 +119,12 @@ public:
     [[nodiscard]] Status LogAndApply(VersionEdit edit, std::unique_lock<std::mutex>& lock);
 
 private:
+    using CompactPointers = std::array<std::optional<InternalKey>, NumLevels>;
     struct ManifestRecovery;
 
     // Leaves the version set without a current version until one is installed.
     VersionSet(FileSystem& file_system, std::filesystem::path directory,
-               const InternalKeyComparator& comparator) noexcept;
+               const InternalKeyComparator& comparator);
 
     [[nodiscard]] Status Validate(const VersionEdit& edit) const;
     [[nodiscard]] Status ApplyPrepared(VersionEdit edit, Version version,
@@ -130,14 +133,14 @@ private:
                                     std::uint64_t prev_log_number) const;
     void PrepareManifestSnapshot(
         std::optional<std::vector<std::byte>>& new_manifest_snapshot) const;
-    void PublishPreparedEdit(std::array<std::optional<InternalKey>, NumLevels>& compact_pointers,
+    void PublishPreparedEdit(std::unique_ptr<CompactPointers>& compact_pointers,
                              std::shared_ptr<const Version>& candidate, std::uint64_t log_number,
-                             std::uint64_t prev_log_number);
+                             std::uint64_t prev_log_number) noexcept;
     [[nodiscard]] Status WritePrepared(
-        const VersionEdit& edit, const std::optional<std::vector<std::byte>>& new_manifest_snapshot,
+        ByteView encoded_edit, const std::optional<std::vector<std::byte>>& new_manifest_snapshot,
         std::unique_lock<std::mutex>* lock);
     [[nodiscard]] Result<std::unique_ptr<WalWriter>> CreateManifest(ByteView snapshot);
-    [[nodiscard]] Status Write(const VersionEdit& edit,
+    [[nodiscard]] Status Write(ByteView encoded_edit,
                                const std::optional<std::vector<std::byte>>& new_manifest_snapshot);
     [[nodiscard]] Status InstallCurrent() const;
     void ReserveInstall();
@@ -153,14 +156,14 @@ private:
     std::shared_ptr<const Version> current_;
     std::vector<std::shared_ptr<const Version>> read_pinned_versions_;
     std::vector<std::weak_ptr<const Version>> versions_;
-    std::array<std::optional<InternalKey>, NumLevels> compact_pointers_;
+    std::unique_ptr<CompactPointers> compact_pointers_ = std::make_unique<CompactPointers>();
     std::uint64_t manifest_file_number_ = 1;
     std::uint64_t next_file_number_ = 2;
     SequenceNumber last_sequence_ = 0;
     std::uint64_t log_number_ = 0;
     std::uint64_t prev_log_number_ = 0;
     std::unique_ptr<WalWriter> manifest_;
-    std::optional<Error> failure_;
+    TerminalError failure_;
 };
 
 inline VersionSet::ReadPin::ReadPin(VersionSet& owner, const Version& version) noexcept

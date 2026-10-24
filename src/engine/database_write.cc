@@ -95,7 +95,7 @@ void DatabaseEngine::CloseOldLogForRotation() {
     try {
         closed = write_buffers_.log().Close();
     } catch (...) {
-        RecordStickyError(Error::Aborted("old WAL close threw during rotation"));
+        RecordException("old WAL close threw during rotation");
         throw;
     }
     if (!closed.has_value()) {
@@ -117,7 +117,7 @@ Status DatabaseEngine::CommitWrite(std::unique_lock<std::mutex>& lock, EncodedWr
         committed = CommitGroup(group, sync, log, memtable);
     } catch (...) {
         lock.lock();
-        RecordStickyError(Error::Aborted("a write stopped with an exception while it committed"));
+        RecordException("a write stopped with an exception while it committed");
         throw;
     }
     lock.lock();

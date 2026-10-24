@@ -154,7 +154,7 @@ Result<DatabaseEngineState> DatabaseEngine::GetState() {
     }
     state.protected_output_count = pending_outputs_.size();
     state.background_work_scheduled = background_scheduled_;
-    state.sticky_error = sticky_error_;
+    state.sticky_error = sticky_error_.Snapshot();
     return state;
 }
 

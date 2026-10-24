@@ -194,6 +194,26 @@ gtest_discover_tests(
 )
 
 add_executable(
+  modern_leveldb_write_failure_tests
+  unit/engine/write_allocation_failure_test.cc
+  support/memory_file_system.cc
+)
+target_include_directories(
+  modern_leveldb_write_failure_tests
+  PRIVATE "${PROJECT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+target_link_libraries(
+  modern_leveldb_write_failure_tests
+  PRIVATE modern_leveldb::modern_leveldb GTest::gtest_main
+)
+modern_leveldb_set_project_warnings(modern_leveldb_write_failure_tests PRIVATE)
+gtest_discover_tests(
+  modern_leveldb_write_failure_tests
+  DISCOVERY_TIMEOUT "${modern_leveldb_gtest_discovery_timeout}"
+  PROPERTIES LABELS unit TIMEOUT 10
+)
+
+add_executable(
   modern_leveldb_public_api_tests
   unit/api/block_cache_policy_test.cc
   unit/api/dependency_api_test.cc

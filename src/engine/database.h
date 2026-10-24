@@ -14,6 +14,7 @@
 #include <string_view>
 #include <vector>
 
+#include "base/result_internal.h"
 #include "engine/db_iterator.h"
 #include "engine/dependency.h"
 #include "engine/seek_statistics.h"
@@ -230,7 +231,9 @@ private:
     void RemoveObsoleteFiles(std::unique_lock<std::mutex>& lock);
     // Collects and evicts obsolete tables with mutex_ held; does not delete files.
     [[nodiscard]] Result<std::vector<std::filesystem::path>> CollectObsoleteFiles();
-    void RecordStickyError(Error error);
+    void RecordStickyError(const Error& error) noexcept;
+    void RecordException(std::string_view context,
+                         std::source_location location = std::source_location::current()) noexcept;
     [[nodiscard]] std::unexpected<Error> StickyError() const;
 
     // Dependencies outlive their users; injected objects remain borrowed.
@@ -254,7 +257,7 @@ private:
     SeekStatistics seek_statistics_;
     // The last seed of an iterator's read sampling.
     std::uint32_t seed_ = 0;
-    std::optional<Error> sticky_error_;
+    TerminalError sticky_error_;
     bool background_scheduled_ = false;
     // Mirror state that a compaction checks without the mutex.
     std::atomic<bool> closing_ = false;
