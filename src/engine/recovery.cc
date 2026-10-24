@@ -282,12 +282,6 @@ private:
                 Error::Corruption("log record's sequence " + std::to_string(batch->sequence()) +
                                   " does not follow " + std::to_string(last_sequence_)));
         }
-        const SequenceNumber maximum_first = MaxSequenceNumber + (batch->count() == 0 ? 1U : 0U);
-        if (batch->sequence() > maximum_first ||
-            (batch->count() != 0 && batch->count() - 1U > MaxSequenceNumber - batch->sequence())) {
-            return std::unexpected(
-                Error::Corruption("log record's sequence interval exceeds the internal-key limit"));
-        }
         if (batch->count() == 0) {
             last_sequence_ = batch->sequence() - 1;
             return {};

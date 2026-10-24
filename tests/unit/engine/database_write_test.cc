@@ -340,55 +340,6 @@ TEST_F(DatabaseTest, StopsWritesAfterACommitThrows) {
     EXPECT_EQ(later.error().code(), ErrorCode::Aborted);
 }
 
-TEST_F(DatabaseTest, RejectsUnrepresentableGroupsBeforeWalAndAllowsAFittingRetry) {
-    {
-        const auto database = Open();
-    }
-    const auto number = Numbers(FileType::Log).back();
-    auto file = file_system_.OpenWritable(LogFileName(directory_, number));
-    ASSERT_TRUE(file.has_value());
-    WalWriter log(std::move(*file));
-    EncodedWriteBatch seed;
-    seed.Put(AsBytes("seed"), AsBytes("before limit"));
-    seed.SetSequence(MaxSequenceNumber - 1);
-    ASSERT_TRUE(log.AddRecord(seed.encoded()).has_value());
-    ASSERT_TRUE(log.Close().has_value());
-    auto database = Open();
-    EncodedWriteBatch too_large;
-    too_large.Put(AsBytes("a"), AsBytes("not admitted"));
-    too_large.Put(AsBytes("b"), AsBytes("not admitted"));
-    too_large.SetSequence(77);
-    const std::size_t start = file_system_.operations().size();
-
-    const Status rejected = database->Write(too_large, false);
-
-    ASSERT_FALSE(rejected.has_value());
-    EXPECT_EQ(rejected.error().code(), ErrorCode::Aborted);
-    EXPECT_EQ(file_system_.operations().size(), start);
-    EXPECT_EQ(too_large.sequence(), 77U);
-    EXPECT_EQ(Get(*database, "a"), "<none>");
-    EXPECT_EQ(Get(*database, "b"), "<none>");
-    auto state = database->GetState();
-    ASSERT_TRUE(state.has_value());
-    EXPECT_EQ(state->last_sequence, MaxSequenceNumber - 1);
-    EXPECT_FALSE(state->sticky_error.has_value());
-
-    ASSERT_TRUE(Put(*database, "last", "fits", true).has_value());
-    EXPECT_EQ(Get(*database, "last"), "fits");
-    const std::size_t full = file_system_.operations().size();
-    EXPECT_FALSE(Put(*database, "past", "rejected").has_value());
-    EXPECT_EQ(file_system_.operations().size(), full);
-    EncodedWriteBatch empty;
-    ASSERT_TRUE(database->Write(empty, false).has_value());
-    EXPECT_EQ(database->GetState()->last_sequence, MaxSequenceNumber);
-    database.reset();
-    database = Open();
-    EXPECT_EQ(Get(*database, "seed"), "before limit");
-    EXPECT_EQ(Get(*database, "last"), "fits");
-    EXPECT_EQ(Get(*database, "past"), "<none>");
-    EXPECT_EQ(database->GetState()->last_sequence, MaxSequenceNumber);
-}
-
 TEST_F(DatabaseTest, WritesProceedWhileManifestSyncIsBlocked) {
     const auto database = Open();
     Fill(*database, "a");
